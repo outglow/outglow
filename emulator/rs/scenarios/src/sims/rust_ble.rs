@@ -140,8 +140,9 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let advs: Vec<u8> = sent.iter().filter(|(_, _, p)| p[0] & 0x0F == 0).map(|(_, ch, _)| *ch).collect();
     let good = scans >= 4
         && rsp.len() as i64 == scans
-        && rsp.iter().all(|r| r[1] == 16 && r[8..] == b"\x09\x09unpaired"[..]);
-    check(cx, "a scan request is answered with the scan response: the full mesh name", good,
+        // AwoX data of 29 octets, as the stock bulb: the app needs it to list the bulb
+        && rsp.iter().all(|r| r[1] == 37 && r[8..12] == [0x1e, 0xff, 0x60, 0x01]);
+    check(cx, "a scan request is answered with the scan response: the AwoX data the app reads", good,
           &format!("{scans} requests, {} responses, last {}", rsp.len(), rsp.last().map(|r| hx(r)).unwrap_or_else(|| "None".into())));
     let mut chs = advs.clone();
     chs.sort();

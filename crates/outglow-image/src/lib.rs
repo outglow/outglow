@@ -5,7 +5,7 @@
 //!   the end);
 //! - [`ota`]: Zigbee OTA upgrade files (ZCL OTA Upgrade cluster, the format
 //!   Zigbee2MQTT serves);
-//! - [`board`]: which board an image is for (the `open-eglo-board:` tag of an
+//! - [`board`]: which board an image is for (the `outglow-board:` tag of an
 //!   Outglow image, or the model and hardware revision strings of an original
 //!   one).
 

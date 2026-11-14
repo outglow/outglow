@@ -6,7 +6,7 @@
 //!
 //! For each Zigbee OTA file it reads the header (manufacturer code, image
 //! type, file version, header string), finds the board from the image's
-//! `open-eglo-board:` tag and writes an entry in the format of
+//! `outglow-board:` tag and writes an entry in the format of
 //! github.com/Koenkk/zigbee-OTA with the URL where the release puts the file:
 //! `<base-url>/<tag>/outglow-<board>-<version>.ota`.
 //!
@@ -103,7 +103,7 @@ pub fn run(a: Args) -> Result<()> {
         let f = ota::File::parse(&data).map_err(|e| anyhow!("{}: {e}", path.display()))?;
         let h = &f.header;
         let image = f.image().ok_or_else(|| anyhow!("{}: no upgrade image sub-element", path.display()))?;
-        let board = board::tag(image).ok_or_else(|| anyhow!("{}: no open-eglo-board: tag (not an Outglow image?)", path.display()))?;
+        let board = board::tag(image).ok_or_else(|| anyhow!("{}: no outglow-board: tag (not an Outglow image?)", path.display()))?;
         let name = format!("outglow-{board}-{}", a.version);
         let mut entry = json!({
             "fileName": format!("{name}.ota"),

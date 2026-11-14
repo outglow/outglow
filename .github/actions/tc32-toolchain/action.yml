@@ -1,12 +1,13 @@
 name: TC32 toolchain
 description: >
-  The llvm-tc32 fork (clang, lld and the LLVM tools `cargo xtask build` uses, ARM target
-  only), cached by commit, and the pinned Rust toolchain with rust-src.
-  Sets TC32_LLVM.
+  The llvm-tc32 fork (clang, lld and the LLVM tools `cargo xtask build` uses,
+  ARM target only) at the commit in xtask/llvm-tc32.ref: the prebuilt package
+  from this repository's releases (toolchain workflow), else cached, else built
+  (about an hour). Also the pinned Rust toolchain with rust-src. Sets TC32_LLVM.
 inputs:
   llvm-ref:
-    description: commit of goyamamoto/llvm-tc32 (branch tc32/23.1.2)
-    default: 27606ee65ffaa0f41a9a8beaabee654325732b62
+    description: commit of goyamamoto/llvm-tc32 (default xtask/llvm-tc32.ref)
+    default: ""
 runs:
   using: composite
   steps:
@@ -17,18 +18,51 @@ runs:
           --profile minimal --component rust-src
         rustc -vV
 
+    - name: Which llvm-tc32
+      id: ref
+      shell: bash
+      env:
+        INPUT: ${{ inputs.llvm-ref }}
+      run: |
+        sha=${INPUT:-$(cat xtask/llvm-tc32.ref)}
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+
+    - name: Prebuilt llvm-tc32 (release llvm-tc32-${{ steps.ref.outputs.short }})
+      id: prebuilt
+      shell: bash
+      env:
+        SHORT: ${{ steps.ref.outputs.short }}
+        REPO: ${{ github.repository }}
+      run: |
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) plat=linux-x86_64 ;;
+          macOS-ARM64) plat=macos-arm64 ;;
+          *) plat= ;;
+        esac
+        url="https://github.com/$REPO/releases/download/llvm-tc32-$SHORT/llvm-tc32-$SHORT-$plat.tar.xz"
+        mkdir -p "$RUNNER_TEMP/llvm-tc32"
+        if [ -n "$plat" ] && curl -fsSL "$url" | tar -xJ -C "$RUNNER_TEMP/llvm-tc32" --strip-components=1; then
+          echo "hit=true" >> "$GITHUB_OUTPUT"
+          echo "prebuilt: $url"
+        else
+          echo "hit=false" >> "$GITHUB_OUTPUT"
+          echo "no prebuilt package for $plat; cache or build"
+        fi
+
     - name: Cache llvm-tc32
+      if: steps.prebuilt.outputs.hit != 'true'
       id: cache
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/llvm-tc32
-        key: llvm-tc32-${{ runner.os }}-${{ inputs.llvm-ref }}-tools2
+        key: llvm-tc32-${{ runner.os }}-${{ steps.ref.outputs.sha }}-tools2
 
     - name: Build llvm-tc32 (first run only, about an hour)
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.prebuilt.outputs.hit != 'true' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
-        REF: ${{ inputs.llvm-ref }}
+        REF: ${{ steps.ref.outputs.sha }}
         PREFIX: ${{ runner.temp }}/llvm-tc32
       run: |
         sudo apt-get update && sudo apt-get install -y ninja-build

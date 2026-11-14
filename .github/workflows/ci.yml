@@ -74,8 +74,11 @@ jobs:
       - name: Zigbee conformance
         run: cargo spec -- --cpi 24
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: firmware-dimm
           path: |
             target/tc32/bulb-tc32-ota.bin
             target/tc32/bulb-tc32.ota
+            target/tc32/bulb-tc32.elf
+            target/tc32/bulb-tc32.map

@@ -2,6 +2,7 @@
 // proposal and the progress display around awox-ota.ts (the protocol, shared
 // with the tests).
 
+import { BADGES, productsFor, type BulbsFile } from "../bulbs.ts";
 import * as ota from "./awox-ota.ts";
 import { BulbArt } from "./bulb-art.ts";
 
@@ -17,7 +18,9 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 const ui = {
   support: el("support"), connect: el<HTMLButtonElement>("connect"), disconnect: el<HTMLButtonElement>("disconnect"),
   bulb: el("bulb"), proposal: el("proposal"), release: el<HTMLSelectElement>("release"), image: el("image"),
-  restore: el<HTMLButtonElement>("restore"),
+  detected: el("detected"),
+  pickOutglow: el<HTMLInputElement>("pick-outglow"), pickOriginal: el<HTMLInputElement>("pick-original"),
+  optOutglow: el("opt-outglow"), optOriginal: el("opt-original"),
   problems: el("problems"), confirm: el<HTMLInputElement>("confirm"), start: el<HTMLButtonElement>("start"),
   stop: el<HTMLButtonElement>("stop"), file: el<HTMLInputElement>("file"), stock: el<HTMLInputElement>("stock"),
   login: el<HTMLInputElement>("login"), meshName: el<HTMLInputElement>("mesh-name"), mac: el<HTMLInputElement>("mac"),
@@ -45,13 +48,23 @@ interface State {
   local: boolean;
   /** the image is the vendor's original firmware from the site's own copy (hash checked) */
   original: boolean;
+  /** the site's copy of the original firmware (original/manifest.json) */
+  originals: Original[];
+  /** what the loaded image is, for the start button */
+  label: string;
+  /** why the last download failed, shown under the choice */
+  loadError: string;
+  /** the products of every board (bulbs.json), for the picture of the bulb found */
+  bulbs: BulbsFile | null;
+  /** which choices the connected bulb has */
+  can: { outglow: boolean; original: boolean };
   busy: boolean;
   abort: AbortController | null;
 }
 
 const state: State = {
   boards: [], manifest: { schema: 1, images: [] }, device: null, chars: null, bulb: null, board: undefined,
-  img: null, info: null, local: false, original: false, busy: false, abort: null,
+  img: null, info: null, local: false, original: false, originals: [], label: "", loadError: "", can: { outglow: false, original: false }, bulbs: null, busy: false, abort: null,
 };
 const lines: string[] = [];
 
@@ -199,6 +212,7 @@ function takeImage(bytes: Uint8Array, source: string, local: boolean): void {
   state.img = null;
   state.info = null;
   state.original = false;
+  state.label = "";
   try {
     const info = ota.checkImage(bytes, state.boards);
     state.img = bytes;
@@ -228,67 +242,118 @@ function fillReleases(): void {
   ui.release.replaceChildren(new Option("—", ""), ...sorted.map((r) => new Option(`${r.board} — ${r.version}`, JSON.stringify(r))));
 }
 
-/** The newest release for the connected bulb's board, chosen and downloaded. */
+type Original = { board: string; file: string; size: number; sha256: string; firmware_version: string };
+
+const ORIGINAL_BASE = () => new URL(`${BASE}original/`, location.href);
+
+async function loadOriginals(): Promise<void> {
+  try {
+    const r = await fetch(new URL("manifest.json", ORIGINAL_BASE()), { cache: "no-cache" });
+    if (r.ok) state.originals = ((await r.json()) as { images: Original[] }).images;
+  } catch {
+    // not on this site: the option stays unavailable
+  }
+}
+
+/** What can go on the connected bulb: Outglow's newest release and the original firmware. */
 function propose(): void {
   fillReleases();
   const b = state.bulb!;
+  const latest = state.board ? ota.latestFor(state.manifest, state.board.name) : undefined;
+  const original = state.board ? state.originals.find((o) => o.board === state.board!.name) : undefined;
   if (!state.board) {
-    ui.proposal.textContent = `This bulb (${b.model ?? "?"}, hardware ${b.revision ?? "?"}, product ${hexId(b.product)}) ` +
-      "is not a board Outglow supports. Nothing is proposed.";
-    return;
+    ui.proposal.textContent = `This bulb (${b.model ?? "?"}, hardware ${b.revision ?? "?"}) is not one Outglow supports.`;
+  } else {
+    ui.proposal.textContent = b.running === "outglow" ? "This bulb runs Outglow." :
+      b.running === "stock" ? "This bulb runs its original firmware." : "";
   }
-  const latest = ota.latestFor(state.manifest, state.board.name);
-  if (!latest) {
-    ui.proposal.textContent = `Board ${state.board.name}, running ${running(b.running)}. ` +
-      "There is no release for it yet; a local image can be chosen under Advanced options.";
-    return;
+  state.can = { outglow: !!latest, original: !!original };
+  ui.pickOutglow.disabled = !latest;
+  ui.optOutglow.textContent = latest
+    ? `Version ${latest.version}${b.running === "outglow" ? ": update" : ""}`
+    : state.board ? "No release for this bulb yet" : "—";
+  ui.pickOriginal.disabled = !original;
+  ui.optOriginal.textContent = original
+    ? `${original.firmware_version} from the manufacturer${b.running === "stock" ? ": already on the bulb" : ""}`
+    : state.board ? "Not available on this site" : "—";
+  // the obvious choice: Outglow, unless there is nothing to install but the original
+  const pick = latest ? ui.pickOutglow : original && b.running === "outglow" ? ui.pickOriginal : null;
+  ui.pickOutglow.checked = pick === ui.pickOutglow;
+  ui.pickOriginal.checked = pick === ui.pickOriginal;
+  void loadChoice();
+}
+
+/** Forgets the image loaded before: a new choice starts empty. */
+function clearImage(note: string): number {
+  state.img = null;
+  state.info = null;
+  state.original = false;
+  state.local = false;
+  state.label = "";
+  state.loadError = "";
+  ui.image.textContent = note;
+  render();
+  return ++loadSeq;
+}
+
+/** Every load gets a number; one that finishes after a newer choice is dropped. */
+let loadSeq = 0;
+
+/** Downloads what the choice says. */
+async function loadChoice(): Promise<void> {
+  if (ui.pickOriginal.checked) return restoreOriginal();
+  if (ui.pickOutglow.checked && state.board) {
+    if (!ui.release.value) {
+      const latest = ota.latestFor(state.manifest, state.board.name);
+      if (latest) ui.release.value = JSON.stringify(latest);
+    }
+    return chooseRelease();
   }
-  ui.proposal.textContent = `Board ${state.board.name}, running ${running(b.running)}. Proposed: Outglow ${latest.version}` +
-    (latest.notes ? ` — ${latest.notes}` : "") + ".";
-  ui.release.value = JSON.stringify(latest);
-  void chooseRelease();
 }
 
 async function chooseRelease(): Promise<void> {
   if (!ui.release.value) return;
   const r = JSON.parse(ui.release.value) as ota.Release;
+  const seq = clearImage(`Downloading Outglow ${r.version}…`);
   try {
-    log(`downloading ${r.url}`);
+    log(`downloading Outglow ${r.version} for ${r.board}`);
     const res = await fetch(new URL(r.url, new URL(BASE, location.href)));
     if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (r.size && bytes.length !== r.size) throw new Error(`downloaded ${bytes.length} B, the release says ${r.size} B`);
     if (r.sha256 && (await sha256Hex(bytes)) !== r.sha256.toLowerCase()) throw new Error("SHA-256 differs from the release list");
+    if (seq !== loadSeq) return;
     takeImage(bytes, `${r.board} ${r.version}`, false);
+    if (state.info) state.label = `Install Outglow ${r.version}`;
   } catch (e) {
+    if (seq !== loadSeq) return;
     log((e as Error).message, "err");
+    state.loadError = `Outglow ${r.version} could not be downloaded: ${(e as Error).message}`;
   }
+  render();
 }
 
-/** The original firmware of the connected bulb's board, from the site's copy (original/manifest.json). */
+/** The original firmware of the connected bulb's board, from the site's copy. */
 async function restoreOriginal(): Promise<void> {
-  if (!state.board) return;
-  const board = state.board.name;
+  const e = state.board && state.originals.find((o) => o.board === state.board!.name);
+  if (!e) return;
+  const seq = clearImage(`Downloading the original firmware ${e.firmware_version}…`);
   try {
-    const base = new URL(`${BASE}original/`, location.href);
-    const res = await fetch(new URL("manifest.json", base), { cache: "no-cache" });
-    if (!res.ok) throw new Error("the original firmware is not available on this site");
-    const m = (await res.json()) as { images: { board: string; file: string; size: number; sha256: string; firmware_version: string }[] };
-    const e = m.images.find((i) => i.board === board);
-    if (!e) throw new Error(`no original firmware for ${board}`);
-    log(`downloading the original firmware ${e.firmware_version} for ${board}`);
-    const r = await fetch(new URL(e.file, base));
+    log(`downloading the original firmware ${e.firmware_version} for ${e.board}`);
+    const r = await fetch(new URL(e.file, ORIGINAL_BASE()));
     if (!r.ok) throw new Error(`download failed: HTTP ${r.status}`);
     const bytes = new Uint8Array(await r.arrayBuffer());
     if (bytes.length !== e.size || (await sha256Hex(bytes)) !== e.sha256) throw new Error("the original firmware does not match its checksum");
-    ui.release.value = "";
-    takeImage(bytes, `original ${board} ${e.firmware_version}`, false);
+    if (seq !== loadSeq) return;
+    takeImage(bytes, `original ${e.board} ${e.firmware_version}`, false);
     if (state.info && !state.info.outglow) {
       state.original = true;
-      ui.proposal.textContent = `Board ${board}: the original firmware ${e.firmware_version} is ready to go back on.`;
+      state.label = "Restore the original firmware";
     }
   } catch (err) {
+    if (seq !== loadSeq) return;
     log((err as Error).message, "err");
+    state.loadError = `The original firmware could not be downloaded: ${(err as Error).message}`;
   }
   render();
 }
@@ -401,6 +466,44 @@ async function start(): Promise<void> {
   }
 }
 
+/** The bulb found: a picture and the name of the product it most likely is. */
+function renderDetected(b: ota.Bulb | null): void {
+  const found = b && state.bulbs && b.model && b.revision ? productsFor(state.bulbs, b.model, b.revision) : null;
+  const best = found?.products[0];
+  ui.detected.hidden = !found;
+  if (!found) {
+    ui.detected.replaceChildren();
+    return;
+  }
+  const make = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) =>
+    Object.assign(document.createElement(tag), cls ? { className: cls } : {}, text !== undefined ? { textContent: text } : {});
+  const pic = make("div", "detected-pic");
+  if (best?.image) {
+    const img = make("img");
+    img.src = BASE + best.image;
+    img.alt = "";
+    pic.append(img);
+  }
+  const text = make("div", "detected-text");
+  text.append(make("span", "muted small", "Found"));
+  if (best) {
+    text.append(make("strong", undefined, best.name));
+    text.append(make("span", "muted", `${best.brand} ${best.article}`));
+    const others = found.products.length - 1;
+    if (others > 0) {
+      const a = make("a", "small", `or one of ${others} other product${others > 1 ? "s" : ""} with this board`);
+      a.href = `${BASE}bulbs.html?q=${encodeURIComponent(found.b.board)}`;
+      a.target = "_blank";
+      text.append(a);
+    }
+  } else {
+    text.append(make("strong", undefined, found.b.board));
+    text.append(make("span", "muted", "No product known with this board yet"));
+  }
+  text.append(make("span", `badge kind-${found.b.kind.replace("outglow-", "")}`, BADGES[found.b.kind] ?? found.b.kind));
+  ui.detected.replaceChildren(pic, text);
+}
+
 /** A label, a value and an optional badge kind. */
 type Fact = [string, string, ("ok" | "bad" | "info")?];
 
@@ -422,9 +525,14 @@ function render(): void {
   ui.disconnect.disabled = state.busy || !connected;
   ui.stop.disabled = !state.busy;
   ui.release.disabled = state.busy;
-  ui.restore.disabled = state.busy || !connected || !state.board;
+  ui.pickOutglow.disabled = state.busy || !state.can.outglow;
+  ui.pickOriginal.disabled = state.busy || !state.can.original;
+  ui.pickOutglow.closest("label")?.classList.toggle("off", ui.pickOutglow.disabled);
+  ui.pickOriginal.closest("label")?.classList.toggle("off", ui.pickOriginal.disabled);
+  ui.start.textContent = state.label || (state.local && state.info ? (state.info.outglow ? "Install this image" : "Install this original firmware") : "Start the update");
   ui.anyRevisionConfirm.hidden = !ui.anyRevision.checked;
   const b = state.bulb;
+  renderDetected(connected && b ? b : null);
   if (connected && b) {
     const rows: Fact[] = [
       ["Model", b.model ?? "unknown"],
@@ -444,9 +552,9 @@ function render(): void {
     }));
   }
   ui.image.textContent = state.info && state.img
-    ? `${state.info.model} ${state.info.revision}, ${state.img.length} B, ${state.info.outglow ? "Outglow" : "original firmware"}` +
-      `${state.local ? " (local file)" : ""}`
-    : "No image chosen.";
+    ? `Ready: ${state.local ? "local file, " : ""}${state.info.outglow ? "Outglow" : "original firmware"} for ` +
+      `${state.info.model} ${state.info.revision}, ${Math.round(state.img.length / 1024)} KB, checked.`
+    : state.loadError || ui.image.textContent || "";
   const p = state.busy ? [] : problems();
   ui.problems.replaceChildren(...p.map((s) => Object.assign(document.createElement("li"), { textContent: s })));
   ui.start.disabled = state.busy || p.length > 0;
@@ -468,16 +576,29 @@ async function main(): Promise<void> {
     log("could not load the board list (boards.json)", "err");
   }
   await loadManifest();
+  await loadOriginals();
+  try {
+    state.bulbs = (await (await fetch(`${BASE}bulbs.json`)).json()) as BulbsFile;
+  } catch {
+    // no pictures, the facts are enough
+  }
   ui.connect.onclick = () => connect().catch((e: Error) => {
     phase("connect", "failed");
     log(`connect: ${e.message}`, "err");
   });
   ui.disconnect.onclick = () => state.device?.gatt?.disconnect();
-  ui.release.onchange = () => void chooseRelease();
-  ui.restore.onclick = () => void restoreOriginal();
+  ui.release.onchange = () => {
+    ui.pickOutglow.checked = true;
+    void chooseRelease();
+  };
+  ui.pickOutglow.onchange = () => void loadChoice();
+  ui.pickOriginal.onchange = () => void loadChoice();
   ui.file.onchange = async () => {
     const f = ui.file.files?.[0];
-    if (f) takeImage(new Uint8Array(await f.arrayBuffer()), f.name, true);
+    if (!f) return;
+    ui.pickOutglow.checked = ui.pickOriginal.checked = false;
+    clearImage("");
+    takeImage(new Uint8Array(await f.arrayBuffer()), f.name, true);
   };
   for (const e of [ui.login, ui.mac, ui.password, ui.confirm, ui.stock, ui.anyRevision, ui.anyRevisionText, ui.chunk, ui.meshName]) {
     e.addEventListener("input", render);

@@ -137,3 +137,8 @@ progress { width: 100%; height: 1rem; accent-color: var(--accent); }
 .reset-now.off { background: var(--surface, transparent); }
 @media (prefers-reduced-motion: reduce) { .reset-timeline .seg { transition: none; } }
 .reset-now[hidden] { display: none; }
+
+/* the home page's short list of what you get */
+.perks { list-style: none; padding: 0; margin: 1rem 0 2rem; display: grid; gap: .55rem; }
+.perks li { position: relative; padding-left: 1.8rem; font-size: 1.05rem; }
+.perks li::before { content: ""; position: absolute; left: .2rem; top: .45em; width: .7rem; height: .7rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 .6rem var(--accent); }

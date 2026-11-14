@@ -32,7 +32,8 @@ fn advertises_like_the_stock_bulb() {
         fields(adv),
         [
             (0x01, vec![0x05]),
-            (0x03, vec![0x00, 0x18]),
+            // the GAP service as an incomplete list, as the stock bulb sends it (byte for byte in the emulator)
+            (0x02, vec![0x00, 0x18]),
             (0x09, b"unpaired".to_vec()),
             // AwoX: vendor 0x0160, product, low four bytes of the address
             (0xff, vec![0x60, 0x01, 0xa7, 0x20, 0x33, 0x22, 0x11, 0x38]),
@@ -40,7 +41,12 @@ fn advertises_like_the_stock_bulb() {
     );
     let rsp = &c.scan_responses[0];
     assert_eq!(rsp[0], 0x04, "SCAN_RSP");
-    assert_eq!(fields(rsp), [(0x09, b"unpaired".to_vec())]);
+    // the stock bulb's scan response: AwoX data of 29 octets, which the app
+    // needs to list the bulb (product, MAC, firmware 3.0.2, mesh address 0,
+    // on at full, no temperature, hue or saturation shown)
+    let mut stock = vec![0x60, 0x01, 0xa7, 0x20, 0x33, 0x22, 0x11, 0x38, 0x03, 0x00, 0x02, 0x00, 0x00];
+    stock.extend_from_slice(&[0x01, 0xfe, 0xff, 0xff, 0xff, 0xff, 0x04, 0x3f, 0x20, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(fields(rsp), [(0xff, stock)]);
 }
 
 #[test]
@@ -379,7 +385,8 @@ fn a_long_name_is_advertised_as_shortened() {
     rig.run(400);
     let c = rig.central();
     assert_eq!(fields(c.advertisements.last().unwrap())[2], (0x08, b"SixteenByteN".to_vec()), "Shortened Local Name");
-    assert_eq!(fields(c.scan_responses.last().unwrap()), [(0x09, b"SixteenByteName!".to_vec())]);
+    // the scan response carries the AwoX data, not the name
+    assert_eq!(fields(c.scan_responses.last().unwrap())[0].0, 0xff);
 }
 
 #[test]

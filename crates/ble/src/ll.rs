@@ -282,7 +282,8 @@ impl<H: Hal> Ble<H> {
             out[n..n + bytes.len()].copy_from_slice(bytes);
             n += bytes.len();
         };
-        put(&[0x02, 0x01, if self.link.limited { 0x05 } else { 0x06 }, 0x03, 0x03, 0x00, 0x18]);
+        // the GAP service as an incomplete list (0x02), as the stock firmware has it
+        put(&[0x02, 0x01, if self.link.limited { 0x05 } else { 0x06 }, 0x03, 0x02, 0x00, 0x18]);
         // Complete Local Name, or Shortened when it does not fit
         put(&[shown.len() as u8 + 1, if shown.len() == name.len() { 0x09 } else { 0x08 }]);
         put(shown);
@@ -297,13 +298,10 @@ impl<H: Hal> Ble<H> {
         let n = self.advertising_data(&mut data);
         let mut adv = [0u8; ADV_PDU_MAX];
         let adv_len = pdu::advertising(pdu::ADV_IND, &self.addr, &data[..n], &mut adv);
-        let name = self.mesh.name();
         let mut data = [0u8; 31];
-        data[0] = name.len() as u8 + 1;
-        data[1] = 0x09;
-        data[2..2 + name.len()].copy_from_slice(name);
+        let n = self.scan_response_data(&mut data);
         let mut rsp = [0u8; ADV_PDU_MAX];
-        let rsp_len = pdu::advertising(pdu::SCAN_RSP, &self.addr, &data[..2 + name.len()], &mut rsp);
+        let rsp_len = pdu::advertising(pdu::SCAN_RSP, &self.addr, &data[..n], &mut rsp);
 
         // An event due while the other radio user has traffic
         // (`Hal::radio_busy`) waits for a quiet moment, but no longer than

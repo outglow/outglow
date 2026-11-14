@@ -1,6 +1,6 @@
 // Zigbee2MQTT external converter for EGLO / AwoX bulbs running the open
-// Rust firmware (crates/bulb-tc32: Basic ModelIdentifier "open-eglo-dimm",
-// "open-eglo-tw", "open-eglo-rgbtw", "open-eglo-rgbw" or "open-eglo-ebf",
+// Rust firmware (crates/bulb-tc32: Basic ModelIdentifier "outglow-dimm",
+// "outglow-tw", "outglow-rgbtw", "outglow-rgbw" or "outglow-ebf",
 // ManufacturerName "EGLO"). Optional: without it Zigbee2MQTT generates a
 // definition from what the bulb shows (light, identify, the diagnostic values
 // of endpoints 2-6, the settings of endpoints 7-8). This converter gives the
@@ -93,72 +93,72 @@ const STANDARD = [
     ["lastMessageRssi", , , "radio", "last_message_rssi", "Signal strength of the frame that asked", "dBm"],
 ];
 const MANUFACTURER = [
-    ["openEgloUptime", 0x5000, UINT32, "health", "uptime", "Time since the last start", "s"],
-    ["openEgloResetCause", 0x5001, ENUM8, "health", "reset_cause", "Why the bulb last started", undefined, "cause"],
-    ["openEgloWatchdogResets", 0x5002, UINT16, "health", "watchdog_resets", "Restarts by the watchdog (a hang)"],
-    ["openEgloNeighbors", 0x5003, UINT8, "health", "neighbors", "Router neighbours heard lately"],
-    ["openEgloChildren", 0x5004, UINT8, "routing", "children", "End devices joined through this bulb"],
-    ["openEgloRelayDropQueueFull", 0x5005, UINT16, "routing", "relay_drop_queue_full", "Relayed frames lost: no room to keep them"],
-    ["openEgloRelayDropNoRoute", 0x5006, UINT16, "routing", "relay_drop_no_route", "Relayed frames lost: no route"],
-    ["openEgloRelayDropMacFail", 0x5007, UINT16, "routing", "relay_drop_mac_fail", "Relayed frames lost: next hop did not acknowledge"],
-    ["openEgloRelayDropDuplicate", 0x5008, UINT16, "routing", "relay_drop_duplicate", "Copies of relayed frames dropped (replays)"],
-    ["openEgloNwkStatusSent", 0x5009, UINT16, "routing", "nwk_status_sent", "Network Status reports sent"],
-    ["openEgloBroadcastDropTableFull", 0x500a, UINT16, "queues", "broadcast_drop_table_full", "Broadcasts dropped: transaction table full"],
-    ["openEgloBroadcastQueueFull", 0x500b, UINT16, "queues", "broadcast_queue_full", "Broadcasts sent once only: queue full"],
-    ["openEgloCcaBusy", 0x500c, UINT32, "radio", "cca_busy", "Channel assessments that found the channel busy"],
-    ["openEgloChannelAccessFailures", 0x500d, UINT16, "radio", "channel_access_failures", "Transmissions given up: channel busy"],
-    ["openEgloRxQueuePeak", 0x500e, UINT8, "queues", "rx_queue_peak", "Most frames waiting in the radio queue (of 16)"],
-    ["openEgloIndirectPeak", 0x500f, UINT8, "queues", "indirect_peak", "Most frames held for sleeping children (of 24)"],
-    ["openEgloIndirectDropped", 0x5010, UINT16, "queues", "indirect_dropped", "Frames for sleeping children dropped (no room)"],
-    ["openEgloIndirectExpired", 0x5011, UINT16, "queues", "indirect_expired", "Frames for sleeping children not collected in time"],
-    ["openEgloBleLends", 0x5012, UINT32, "bluetooth", "ble_lends", "Times the radio was lent to Bluetooth"],
-    ["openEgloBleMs", 0x5013, UINT32, "bluetooth", "ble_ms", "Time the radio was lent to Bluetooth", "ms"],
-    ["openEgloFlashErases", 0x5014, UINT16, "system", "flash_erases", "Flash sector erases of the settings"],
-    ["openEgloRssiBelow90", 0x5015, UINT32, "radio", "rssi_below_90", "Frames received below -90 dBm"],
-    ["openEgloRssi90to80", 0x5016, UINT32, "radio", "rssi_90_to_80", "Frames received at -90..-80 dBm"],
-    ["openEgloRssi80to70", 0x5017, UINT32, "radio", "rssi_80_to_70", "Frames received at -80..-70 dBm"],
-    ["openEgloRssi70to60", 0x5018, UINT32, "radio", "rssi_70_to_60", "Frames received at -70..-60 dBm"],
-    ["openEgloRssiAbove60", 0x5019, UINT32, "radio", "rssi_above_60", "Frames received at -60 dBm and above"],
-    ["openEgloNoiseNow", 0x501a, INT8, "health", "noise_floor", "Noise floor of the channel (measured each minute, passively)", "dBm", "dbm"],
-    ["openEgloNoiseMax", 0x501b, INT8, "radio", "noise_floor_max", "Highest noise floor since the start", "dBm", "dbm"],
-    ["openEgloCoordNextHop", 0x5020, UINT16, "routing", "coordinator_next_hop", "First hop to the coordinator", undefined, "address"],
-    ["openEgloCoordCost", 0x5021, UINT8, "routing", "coordinator_link_cost", "Link cost to that hop (1 best, 7 worst)"],
-    ["openEgloCoordManyToOne", 0x5022, UINT8, "routing", "coordinator_many_to_one", "That way came from the coordinator's many-to-one request", undefined, "bool"],
-    ["openEgloRoutesUsed", 0x5023, UINT8, "routing", "routes_used", "Entries in the routing table"],
-    ["openEgloNwkStatusRx", 0x5024, UINT16, "routing", "nwk_status_received", "Network Status reports received"],
-    ["openEgloLastStatusRx", 0x5025, UINT8, "routing", "last_nwk_status_received", "The last Network Status received", undefined, "status"],
-    ["openEgloLastStatusTx", 0x5026, UINT8, "routing", "last_nwk_status_sent", "The last Network Status sent", undefined, "status"],
-    ["openEgloChannel", 0x5030, UINT8, "network", "nwk_channel", "Zigbee channel"],
-    ["openEgloPan", 0x5031, UINT16, "network", "nwk_pan_id", "PAN identifier", undefined, "address"],
-    ["openEgloExtPan", 0x5032, OCTETS, "network", "nwk_ext_pan_id", "Extended PAN identifier", undefined, "eui64"],
-    ["openEgloUpdateId", 0x5033, UINT8, "network", "nwk_update_id", "Network update identifier"],
-    ["openEgloKeySeq", 0x5034, UINT8, "network", "nwk_key_seq", "Sequence number of the network key in use"],
-    ["openEgloFrameCounter", 0x5035, UINT32, "network", "nwk_frame_counter", "Outgoing NWK frame counter"],
-    ["openEgloDepth", 0x5036, UINT8, "network", "nwk_depth", "Depth in the network tree"],
-    ["openEgloParent", 0x5037, UINT16, "network", "nwk_parent", "The device it joined through", undefined, "address"],
-    ["openEgloLoopMax", 0x5040, UINT32, "system", "loop_max", "Longest main loop round (the watchdog bites at 2 s)", "µs"],
-    ["openEgloBleLendMax", 0x5041, UINT32, "bluetooth", "ble_lend_max", "Longest single loan of the radio to Bluetooth", "µs"],
-    ["openEgloFlashBusyMax", 0x5042, UINT32, "system", "flash_busy_max", "Longest flash sector erase (interrupts off)", "µs"],
-    ["openEgloStackFree", 0x5043, UINT32, "system", "stack_free", "Main stack (and the free RAM below it) never used since the start", "B"],
-    ["openEgloIrqStackFree", 0x5044, UINT16, "system", "irq_stack_free", "Interrupt stack never used since the start", "B"],
-    ["openEgloBleConnections", 0x5048, UINT32, "bluetooth", "ble_connections", "Connections since the start"],
-    ["openEgloBleDisconnects", 0x5049, UINT32, "bluetooth", "ble_disconnects", "Disconnections since the start"],
-    ["openEgloBleLinksLost", 0x504a, UINT32, "bluetooth", "ble_links_lost", "Links lost (the central went silent)"],
-    ["openEgloBleEvents", 0x504b, UINT32, "bluetooth", "ble_events", "Connection events run"],
-    ["openEgloBleEventsSkipped", 0x504c, UINT32, "bluetooth", "ble_events_skipped", "Connection events missed (radio or loop busy)"],
-    ["openEgloNeighbors0", 0x5050, OCTETS, "table"],
-    ["openEgloNeighbors1", 0x5051, OCTETS, "table"],
-    ["openEgloNeighbors2", 0x5052, OCTETS, "table"],
-    ["openEgloNeighbors3", 0x5053, OCTETS, "table"],
-    ["openEgloEvents0", 0x5058, OCTETS, "table"],
-    ["openEgloEvents1", 0x5059, OCTETS, "table"],
-    ["openEgloEvents2", 0x505a, OCTETS, "table"],
-    ["openEgloEvents3", 0x505b, OCTETS, "table"],
-    ["openEgloEvents4", 0x505c, OCTETS, "table"],
-    ["openEgloEvents5", 0x505d, OCTETS, "table"],
+    ["outglowUptime", 0x5000, UINT32, "health", "uptime", "Time since the last start", "s"],
+    ["outglowResetCause", 0x5001, ENUM8, "health", "reset_cause", "Why the bulb last started", undefined, "cause"],
+    ["outglowWatchdogResets", 0x5002, UINT16, "health", "watchdog_resets", "Restarts by the watchdog (a hang)"],
+    ["outglowNeighbors", 0x5003, UINT8, "health", "neighbors", "Router neighbours heard lately"],
+    ["outglowChildren", 0x5004, UINT8, "routing", "children", "End devices joined through this bulb"],
+    ["outglowRelayDropQueueFull", 0x5005, UINT16, "routing", "relay_drop_queue_full", "Relayed frames lost: no room to keep them"],
+    ["outglowRelayDropNoRoute", 0x5006, UINT16, "routing", "relay_drop_no_route", "Relayed frames lost: no route"],
+    ["outglowRelayDropMacFail", 0x5007, UINT16, "routing", "relay_drop_mac_fail", "Relayed frames lost: next hop did not acknowledge"],
+    ["outglowRelayDropDuplicate", 0x5008, UINT16, "routing", "relay_drop_duplicate", "Copies of relayed frames dropped (replays)"],
+    ["outglowNwkStatusSent", 0x5009, UINT16, "routing", "nwk_status_sent", "Network Status reports sent"],
+    ["outglowBroadcastDropTableFull", 0x500a, UINT16, "queues", "broadcast_drop_table_full", "Broadcasts dropped: transaction table full"],
+    ["outglowBroadcastQueueFull", 0x500b, UINT16, "queues", "broadcast_queue_full", "Broadcasts sent once only: queue full"],
+    ["outglowCcaBusy", 0x500c, UINT32, "radio", "cca_busy", "Channel assessments that found the channel busy"],
+    ["outglowChannelAccessFailures", 0x500d, UINT16, "radio", "channel_access_failures", "Transmissions given up: channel busy"],
+    ["outglowRxQueuePeak", 0x500e, UINT8, "queues", "rx_queue_peak", "Most frames waiting in the radio queue (of 16)"],
+    ["outglowIndirectPeak", 0x500f, UINT8, "queues", "indirect_peak", "Most frames held for sleeping children (of 24)"],
+    ["outglowIndirectDropped", 0x5010, UINT16, "queues", "indirect_dropped", "Frames for sleeping children dropped (no room)"],
+    ["outglowIndirectExpired", 0x5011, UINT16, "queues", "indirect_expired", "Frames for sleeping children not collected in time"],
+    ["outglowBleLends", 0x5012, UINT32, "bluetooth", "ble_lends", "Times the radio was lent to Bluetooth"],
+    ["outglowBleMs", 0x5013, UINT32, "bluetooth", "ble_ms", "Time the radio was lent to Bluetooth", "ms"],
+    ["outglowFlashErases", 0x5014, UINT16, "system", "flash_erases", "Flash sector erases of the settings"],
+    ["outglowRssiBelow90", 0x5015, UINT32, "radio", "rssi_below_90", "Frames received below -90 dBm"],
+    ["outglowRssi90to80", 0x5016, UINT32, "radio", "rssi_90_to_80", "Frames received at -90..-80 dBm"],
+    ["outglowRssi80to70", 0x5017, UINT32, "radio", "rssi_80_to_70", "Frames received at -80..-70 dBm"],
+    ["outglowRssi70to60", 0x5018, UINT32, "radio", "rssi_70_to_60", "Frames received at -70..-60 dBm"],
+    ["outglowRssiAbove60", 0x5019, UINT32, "radio", "rssi_above_60", "Frames received at -60 dBm and above"],
+    ["outglowNoiseNow", 0x501a, INT8, "health", "noise_floor", "Noise floor of the channel (measured each minute, passively)", "dBm", "dbm"],
+    ["outglowNoiseMax", 0x501b, INT8, "radio", "noise_floor_max", "Highest noise floor since the start", "dBm", "dbm"],
+    ["outglowCoordNextHop", 0x5020, UINT16, "routing", "coordinator_next_hop", "First hop to the coordinator", undefined, "address"],
+    ["outglowCoordCost", 0x5021, UINT8, "routing", "coordinator_link_cost", "Link cost to that hop (1 best, 7 worst)"],
+    ["outglowCoordManyToOne", 0x5022, UINT8, "routing", "coordinator_many_to_one", "That way came from the coordinator's many-to-one request", undefined, "bool"],
+    ["outglowRoutesUsed", 0x5023, UINT8, "routing", "routes_used", "Entries in the routing table"],
+    ["outglowNwkStatusRx", 0x5024, UINT16, "routing", "nwk_status_received", "Network Status reports received"],
+    ["outglowLastStatusRx", 0x5025, UINT8, "routing", "last_nwk_status_received", "The last Network Status received", undefined, "status"],
+    ["outglowLastStatusTx", 0x5026, UINT8, "routing", "last_nwk_status_sent", "The last Network Status sent", undefined, "status"],
+    ["outglowChannel", 0x5030, UINT8, "network", "nwk_channel", "Zigbee channel"],
+    ["outglowPan", 0x5031, UINT16, "network", "nwk_pan_id", "PAN identifier", undefined, "address"],
+    ["outglowExtPan", 0x5032, OCTETS, "network", "nwk_ext_pan_id", "Extended PAN identifier", undefined, "eui64"],
+    ["outglowUpdateId", 0x5033, UINT8, "network", "nwk_update_id", "Network update identifier"],
+    ["outglowKeySeq", 0x5034, UINT8, "network", "nwk_key_seq", "Sequence number of the network key in use"],
+    ["outglowFrameCounter", 0x5035, UINT32, "network", "nwk_frame_counter", "Outgoing NWK frame counter"],
+    ["outglowDepth", 0x5036, UINT8, "network", "nwk_depth", "Depth in the network tree"],
+    ["outglowParent", 0x5037, UINT16, "network", "nwk_parent", "The device it joined through", undefined, "address"],
+    ["outglowLoopMax", 0x5040, UINT32, "system", "loop_max", "Longest main loop round (the watchdog bites at 2 s)", "µs"],
+    ["outglowBleLendMax", 0x5041, UINT32, "bluetooth", "ble_lend_max", "Longest single loan of the radio to Bluetooth", "µs"],
+    ["outglowFlashBusyMax", 0x5042, UINT32, "system", "flash_busy_max", "Longest flash sector erase (interrupts off)", "µs"],
+    ["outglowStackFree", 0x5043, UINT32, "system", "stack_free", "Main stack (and the free RAM below it) never used since the start", "B"],
+    ["outglowIrqStackFree", 0x5044, UINT16, "system", "irq_stack_free", "Interrupt stack never used since the start", "B"],
+    ["outglowBleConnections", 0x5048, UINT32, "bluetooth", "ble_connections", "Connections since the start"],
+    ["outglowBleDisconnects", 0x5049, UINT32, "bluetooth", "ble_disconnects", "Disconnections since the start"],
+    ["outglowBleLinksLost", 0x504a, UINT32, "bluetooth", "ble_links_lost", "Links lost (the central went silent)"],
+    ["outglowBleEvents", 0x504b, UINT32, "bluetooth", "ble_events", "Connection events run"],
+    ["outglowBleEventsSkipped", 0x504c, UINT32, "bluetooth", "ble_events_skipped", "Connection events missed (radio or loop busy)"],
+    ["outglowNeighbors0", 0x5050, OCTETS, "table"],
+    ["outglowNeighbors1", 0x5051, OCTETS, "table"],
+    ["outglowNeighbors2", 0x5052, OCTETS, "table"],
+    ["outglowNeighbors3", 0x5053, OCTETS, "table"],
+    ["outglowEvents0", 0x5058, OCTETS, "table"],
+    ["outglowEvents1", 0x5059, OCTETS, "table"],
+    ["outglowEvents2", 0x505a, OCTETS, "table"],
+    ["outglowEvents3", 0x505b, OCTETS, "table"],
+    ["outglowEvents4", 0x505c, OCTETS, "table"],
+    ["outglowEvents5", 0x505d, OCTETS, "table"],
 ];
-const NEIGHBOR_PAGES = MANUFACTURER.filter((a) => a[0].startsWith("openEgloNeighbors") && a[0] !== "openEgloNeighbors").map((a) => a[0]);
-const EVENT_PAGES = MANUFACTURER.filter((a) => a[0].startsWith("openEgloEvents")).map((a) => a[0]);
+const NEIGHBOR_PAGES = MANUFACTURER.filter((a) => a[0].startsWith("outglowNeighbors") && a[0] !== "outglowNeighbors").map((a) => a[0]);
+const EVENT_PAGES = MANUFACTURER.filter((a) => a[0].startsWith("outglowEvents")).map((a) => a[0]);
 const BY_NAME = Object.fromEntries([...STANDARD, ...MANUFACTURER].map((a) => [a[0], a]));
 const GROUPS = {
     network: "Network: the parameters to compare with the coordinator's",
@@ -317,14 +317,14 @@ function health(g) {
 // the black box: pages of 64 bytes from 0x6000 (blackbox.rs BOX_FIRST, BOX_PAGES)
 const BOX_FIRST = 0x6000;
 const BOX_PAGES = 93;
-const BOX = Array.from({length: BOX_PAGES}, (_, i) => [`openEgloBox${i}`, BOX_FIRST + i, OCTETS]);
+const BOX = Array.from({length: BOX_PAGES}, (_, i) => [`outglowBox${i}`, BOX_FIRST + i, OCTETS]);
 
 const diagnosticCluster = m.deviceAddCustomCluster("haDiagnostic", {
     name: "haDiagnostic",
     ID: 0x0b05,
     attributes: Object.fromEntries([...MANUFACTURER, ...BOX].map(([name, ID, type]) => [name, {name, ID, type, manufacturerCode: MFR}])),
     commands: {
-        openEgloClearCounters: {name: "openEgloClearCounters", ID: 0x00, parameters: [], manufacturerCode: MFR},
+        outglowClearCounters: {name: "outglowClearCounters", ID: 0x00, parameters: [], manufacturerCode: MFR},
     },
     commandsResponse: {},
 });
@@ -369,8 +369,8 @@ const diagnostics = {
                     return groups[name];
                 };
                 for (const [name, value] of Object.entries(msg.data)) {
-                    if (name.startsWith("openEgloBox")) {
-                        result.black_box_page = {page: Number(name.slice(11)), hex: Buffer.from(value).toString("hex")};
+                    if (name.startsWith("outglowBox")) {
+                        result.black_box_page = {page: Number(name.slice("outglowBox".length)), hex: Buffer.from(value).toString("hex")};
                         continue;
                     }
                     const a = BY_NAME[name];
@@ -419,7 +419,7 @@ const diagnostics = {
         {
             key: ["diagnostics_clear"],
             convertSet: async (entity, key, value, meta) => {
-                await entity.command("haDiagnostic", "openEgloClearCounters", {}, {...mfr, disableDefaultResponse: false});
+                await entity.command("haDiagnostic", "outglowClearCounters", {}, {...mfr, disableDefaultResponse: false});
                 await readAll(meta.device);
             },
         },
@@ -520,8 +520,8 @@ const poll = m.poll({
 });
 
 // the settings cluster 0xFC5F (docs/rust-ble.md): when Bluetooth runs, with "off" that endpoint 8 cannot say
-const settingsCluster = m.deviceAddCustomCluster("openEgloSettings", {
-    name: "openEgloSettings",
+const settingsCluster = m.deviceAddCustomCluster("outglowSettings", {
+    name: "outglowSettings",
     ID: 0xfc5f,
     manufacturerCode: MFR,
     attributes: {
@@ -536,7 +536,7 @@ const settingsCluster = m.deviceAddCustomCluster("openEgloSettings", {
 
 const bleMode = m.enumLookup({
     name: "ble_mode",
-    cluster: "openEgloSettings",
+    cluster: "outglowSettings",
     attribute: "bleMode",
     lookup: {always: 0, window_after_power_on: 1, off: 2},
     description:
@@ -551,7 +551,7 @@ bleMode.configure = [];
 
 const bleActive = m.binary({
     name: "ble_active",
-    cluster: "openEgloSettings",
+    cluster: "outglowSettings",
     attribute: "bleActive",
     valueOn: [true, 1],
     valueOff: [false, 0],
@@ -625,9 +625,10 @@ const endpoints = m.deviceEndpoints({
 
 function definition(model, description, light) {
     return {
-        zigbeeModel: [model],
+        // versions 0.x reported open-eglo-<kind>
+        zigbeeModel: [model, model.replace("outglow-", "open-eglo-")],
         model,
-        vendor: "EGLO",
+        vendor: "Outglow",
         description,
         extend: [endpoints, diagnosticCluster, settingsCluster, m.identify(), m.light(light), ...objects, bleMode, bleActive, diagnostics, poll],
         ota: true,
@@ -635,28 +636,28 @@ function definition(model, description, light) {
 }
 
 export default [
-    definition("open-eglo-dimm", "Dimmable filament bulb (AwoX TLSR8258) with the open firmware", {
+    definition("outglow-dimm", "Dimmable filament bulb (AwoX TLSR8258) running Outglow", {
         levelConfig: {features: ["current_level_startup"]},
     }),
     // the boards of this kind span 153..370 or 153..454 mireds; the bulb reports its own (ColorTempPhysicalMin/Max)
-    definition("open-eglo-tw", "Tunable white bulb (AwoX TLSR8258) with the open firmware", {
+    definition("outglow-tw", "Tunable white bulb (AwoX TLSR8258) running Outglow", {
         colorTemp: {range: [153, 454]},
         levelConfig: {features: ["current_level_startup"]},
     }),
     // colour bulbs (docs/stock-colour.md): hue and saturation, CIE xy, the colour temperature on the white LEDs
-    definition("open-eglo-rgbtw", "Colour and tunable white bulb (AwoX TLSR8258) with the open firmware", {
+    definition("outglow-rgbtw", "Colour and tunable white bulb (AwoX TLSR8258) running Outglow", {
         colorTemp: {range: [153, 370]},
         color: {modes: ["xy", "hs"], enhancedHue: false},
         levelConfig: {features: ["current_level_startup"]},
     }),
     // one white channel of 3000 K: a colour temperature command of 333 mireds switches to it
-    definition("open-eglo-rgbw", "Colour and white bulb (AwoX TLSR8258) with the open firmware", {
+    definition("outglow-rgbw", "Colour and white bulb (AwoX TLSR8258) running Outglow", {
         colorTemp: {range: [333, 333]},
         color: {modes: ["xy", "hs"], enhancedHue: false},
         levelConfig: {features: ["current_level_startup"]},
     }),
     // a tunable white ring and a colour strip, both lit: the strip at full value whatever the brightness
-    definition("open-eglo-ebf", "Tunable white light with a colour strip (AwoX TLSR8258) with the open firmware", {
+    definition("outglow-ebf", "Tunable white light with a colour strip (AwoX TLSR8258) running Outglow", {
         colorTemp: {range: [153, 370]},
         color: {modes: ["xy", "hs"], enhancedHue: false},
         levelConfig: {features: ["current_level_startup"]},

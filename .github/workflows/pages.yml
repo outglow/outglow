@@ -43,7 +43,7 @@ jobs:
           echo '[]' > site/dist/ota/index.json
           echo '{"schema": 1, "images": []}' > site/dist/firmware.json
           # the newest releases first; older ones stay downloadable from GitHub
-          for tag in $(gh release list --exclude-drafts --limit 10 --json tagName --jq '.[].tagName'); do
+          for tag in $(gh release list --exclude-drafts --limit 30 --json tagName --jq '[.[].tagName | select(startswith("v"))][:10][]'); do
             mkdir -p "rel/$tag" "site/dist/firmware/$tag"
             gh release download "$tag" -D "rel/$tag" -p 'outglow-*.json' -p '*-ota.bin' || continue
             mv rel/$tag/*-ota.bin "site/dist/firmware/$tag/" 2>/dev/null || true

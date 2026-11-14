@@ -108,7 +108,7 @@ pub const IDENTITY_TW: Identity = Identity { model: "ESMLFzm_w6_TW", color_tempe
 
 /// A colour bulb (EGLO RGB+TW): an Extended Color Light, colour temperature 153..370.
 pub const IDENTITY_COLOR: Identity =
-    Identity { model: "open-eglo-rgbtw", color_temperature: true, color: true, ct_min: 153, ct_max: 370, image_type: 0x0399, ..IDENTITY };
+    Identity { model: "outglow-rgbtw", color_temperature: true, color: true, ct_min: 153, ct_max: 370, image_type: 0x0399, ..IDENTITY };
 
 /// A bulb whose firmware has BLE: with the settings cluster 0xFC5F.
 pub const IDENTITY_BLE: Identity = Identity { ble: true, ..IDENTITY };

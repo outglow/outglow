@@ -34,7 +34,7 @@ pub struct Out {
 pub struct Board {
     /// `model-revision`, as `cargo xtask build --board` names it.
     pub name: &'static str,
-    /// `open-eglo-board:` and the name, kept in the image (`BOARD_TAG`).
+    /// `outglow-board:` and the name, kept in the image (`BOARD_TAG`).
     pub tag: &'static str,
     /// modelId (Zigbee Basic, BLE Device Information).
     pub model: &'static str,
@@ -53,7 +53,7 @@ pub struct Board {
     pub rgb_beside_white: bool,
     /// Hue and saturation of a factory-new colour bulb.
     pub colour_default: (u8, u8),
-    /// The Zigbee model id: ours, one per kind of light (`open-eglo-dimm`, `-tw`,
+    /// The Zigbee model id: ours, one per kind of light (`outglow-dimm`, `-tw`,
     /// `-rgbtw`, `-rgbw`, `-ebf`).
     pub kind: &'static str,
     /// PWM period in PWM clock ticks (the clock undivided): 48000, or 3000 on revision 4.69.

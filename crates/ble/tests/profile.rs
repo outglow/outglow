@@ -395,10 +395,14 @@ fn pairing_sets_a_new_network_that_survives_a_restart() {
         b[..s.len()].copy_from_slice(s);
         b
     };
-    for (op, value) in [(4u8, &b"EgloTest"[..]), (5, b"s3cret"), (6, b"0123456789abcdef")] {
-        assert_ne!(rig.read(PAIR)[0], 0x07);
-        rig.write(PAIR, &[&[op][..], &tl_aes_encrypt(&key, &pad(value))].concat());
-    }
+    assert_ne!(rig.read(PAIR)[0], 0x07);
+    rig.write(PAIR, &[&[4u8][..], &tl_aes_encrypt(&key, &pad(b"EgloTest"))].concat());
+    assert_ne!(rig.read(PAIR)[0], 0x07, "the name alone is not a network");
+    // name and password are enough (the app pairs Zigbee bulbs without an LTK) ...
+    rig.write(PAIR, &[&[5u8][..], &tl_aes_encrypt(&key, &pad(b"s3cret"))].concat());
+    assert_eq!(rig.read(PAIR)[0], 0x07, "name and password arrived");
+    // ... and an LTK after them is taken too
+    rig.write(PAIR, &[&[6u8][..], &tl_aes_encrypt(&key, &pad(b"0123456789abcdef"))].concat());
     assert_eq!(rig.read(PAIR)[0], 0x07, "all three parts arrived");
     assert_eq!(rig.read(0x03), b"EgloTest", "the device name is the network name");
 
@@ -412,7 +416,8 @@ fn pairing_sets_a_new_network_that_survives_a_restart() {
         let adv = c.advertisements.last().unwrap();
         assert_eq!(adv[15..17], [9, 0x09]);
         assert_eq!(&adv[17..25], b"EgloTest", "advertised under the new name");
-        assert_eq!(&c.scan_responses.last().unwrap()[10..], b"EgloTest");
+        // the scan response is the AwoX data block, the same before and after pairing
+        assert_eq!(c.scan_responses.last().unwrap()[9], 0xff);
     }
     rig.connect();
     assert!(!rig.login(b"unpaired", &Rig::secure_password()), "the factory password is gone");
@@ -643,4 +648,64 @@ fn the_apps_colour_its_animation_and_its_status() {
     send(&mut rig, 0, &tunnel(0x0006, &[0x02]), 400);
     assert!(!rig.is_on());
     assert_eq!(rig.app_statuses().1, 0, "no mesh notification to the app at all");
+}
+
+#[test]
+fn the_apps_zigbee_installation_pairs_and_is_told_it_is_done() {
+    // AwoX HomeControl, ZigbeeMeshController: name and password without an
+    // LTK, read 0x07, then the network to join (0x03) and its key (0x04),
+    // 17 and 18 octets of payload, and wait for the 0x83 notification
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    rig.enable_status();
+    let pad = |s: &[u8]| {
+        let mut b = [0u8; 16];
+        b[..s.len()].copy_from_slice(s);
+        b
+    };
+    rig.write(PAIR, &[&[4u8][..], &tl_aes_encrypt(&key, &pad(b"ICCsTest"))].concat());
+    rig.write(PAIR, &[&[5u8][..], &tl_aes_encrypt(&key, &pad(b"pw"))].concat());
+    assert_eq!(rig.read(PAIR)[0], 0x07);
+    let long = |payload: &[u8]| -> Vec<u8> {
+        let mut whole = vec![payload.len() as u8];
+        whole.extend_from_slice(payload);
+        let mut plain = [0u8; 16];
+        plain[0] = crc8_6c(&whole);
+        let head = whole.len().min(15);
+        plain[1..1 + head].copy_from_slice(&whole[..head]);
+        let mut v = vec![2u8];
+        v.extend_from_slice(&tl_aes_encrypt(&key, &plain));
+        v.extend_from_slice(&whole[head..]);
+        v
+    };
+    rig.central().notifications.clear();
+    let network = [0x03, 0x14, 0x31, 0x32, 0x36, 0x35, 0x34, 0x33, 0x32, 0x31, 0xc1, 0xa4, 0, 0, 0, 0, 0];
+    rig.write(COMMAND, &long(&network));
+    rig.run(200);
+    let mut nwk_key = vec![0x04];
+    nwk_key.extend_from_slice(&[0x5a; 16]);
+    nwk_key.push(0);
+    rig.write(COMMAND, &long(&nwk_key));
+    rig.run(200);
+    let all: Vec<Vec<u8>> = rig.central().notifications.clone();
+    let done: Vec<_> = all.iter().filter(|n| n.len() >= 4 && n[3] == 0x83).collect();
+    assert_eq!(done.len(), 2, "a 0x83 notification for each: {all:?}");
+    assert!(done.iter().all(|n| n.len() >= 3 + 17), "17 octets and more after the handle");
+
+    // from now on the status says "installed by the app" (0x60), which the
+    // app reads back to keep the bulb usable
+    rig.central().notifications.clear();
+    rig.write(COMMAND, &long(&[0x0a, 0x00, 0x00]));
+    rig.run(600);
+    let (statuses, _) = rig.app_statuses();
+    assert!(!statuses.is_empty(), "a status in answer to the app's request");
+    assert!(statuses.iter().all(|d| d[18] == 0x60), "provision state 0x60: {statuses:?}");
+    // and so does the scan response, also after a restart
+    rig.central().terminate();
+    let mut rig = rig.restart();
+    rig.central().scan = true;
+    rig.run(400);
+    let rsp = rig.central().scan_responses.last().unwrap().clone();
+    assert_eq!(rsp[8..10], [0x1e, 0xff]);
+    assert_eq!(rsp[10 + 20], 0x60, "provision state in the scan response");
 }

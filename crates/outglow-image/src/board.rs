@@ -1,6 +1,6 @@
 //! Which board an image is for.
 //!
-//! An Outglow image carries `open-eglo-board:<model>-<hardware revision>`
+//! An Outglow image carries `outglow-board:<model>-<hardware revision>`
 //! (crates/bulb-tc32/src/board.rs). An original image carries its model name
 //! as a C string and its hardware revision as the only "4.6x" in it.
 
@@ -17,7 +17,7 @@ pub struct Known {
     pub hw_revision: &'static str,
     /// the product id in the original firmware's BLE advertisement
     pub ble_product: u16,
-    /// the Zigbee model id Outglow reports (open-eglo-dimm, -tw, ...)
+    /// the Zigbee model id Outglow reports (outglow-dimm, -tw, ...)
     pub kind: &'static str,
     /// the Zigbee OTA image type of the board
     pub image_type: u16,
@@ -25,8 +25,10 @@ pub struct Known {
 
 include!("boards_table.rs");
 
-pub const TAG: &[u8] = b"open-eglo-board:";
-pub const KINDS: [&str; 5] = ["open-eglo-rgbtw", "open-eglo-rgbw", "open-eglo-dimm", "open-eglo-tw", "open-eglo-ebf"];
+pub const TAG: &[u8] = b"outglow-board:";
+/// The tag of images built before the project was named Outglow (versions 0.x).
+pub const LEGACY_TAG: &[u8] = b"open-eglo-board:";
+pub const KINDS: [&str; 5] = ["outglow-rgbtw", "outglow-rgbw", "outglow-dimm", "outglow-tw", "outglow-ebf"];
 
 pub fn known(name: &str) -> Option<&'static Known> {
     BOARDS.iter().find(|b| b.name == name)
@@ -38,7 +40,7 @@ pub fn by_model(model: &str, hw_revision: &str) -> Option<&'static Known> {
 
 /// The board tag of an Outglow image: `<model>-<revision>`.
 pub fn tag(image: &[u8]) -> Option<String> {
-    let at = find(image, TAG)? + TAG.len();
+    let at = find(image, TAG).map(|i| i + TAG.len()).or_else(|| find(image, LEGACY_TAG).map(|i| i + LEGACY_TAG.len()))?;
     let rest = &image[at..];
     let end = rest.iter().position(|&c| !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c == b'.'))
         .unwrap_or(rest.len());
@@ -53,17 +55,19 @@ pub fn tag(image: &[u8]) -> Option<String> {
     ok.then(|| name.to_string())
 }
 
-/// The Zigbee model id an Outglow image reports: the first `open-eglo-<kind>`
+/// The Zigbee model id an Outglow image reports: the first `outglow-<kind>`
 /// in it (strings in the image may follow each other without a separator).
+/// Images of versions 0.x said `open-eglo-<kind>`; the kind is the same.
 pub fn kind(image: &[u8]) -> Option<&'static str> {
-    const PREFIX: &[u8] = b"open-eglo-";
-    let mut from = 0;
-    while let Some(i) = find(&image[from..], PREFIX) {
-        let rest = &image[from + i + PREFIX.len()..];
-        if let Some(k) = KINDS.iter().find(|k| rest.starts_with(&k.as_bytes()[PREFIX.len()..])) {
-            return Some(k);
+    for prefix in [&b"outglow-"[..], &b"open-eglo-"[..]] {
+        let mut from = 0;
+        while let Some(i) = find(&image[from..], prefix) {
+            let rest = &image[from + i + prefix.len()..];
+            if let Some(k) = KINDS.iter().find(|k| rest.starts_with(&k.as_bytes()["outglow-".len()..])) {
+                return Some(k);
+            }
+            from += i + 1;
         }
-        from += i + 1;
     }
     None
 }
@@ -134,17 +138,20 @@ mod tests {
 
     #[test]
     fn the_tag_of_an_outglow_image() {
-        let img = b"\x00\x01open-eglo-board:ESMLFzm_w6_Dimm-4.63\x00open-eglo-dimm\x00";
+        let img = b"\x00\x01outglow-board:ESMLFzm_w6_Dimm-4.63\x00outglow-dimm\x00";
         assert_eq!(tag(img).as_deref(), Some("ESMLFzm_w6_Dimm-4.63"));
-        assert_eq!(kind(img), Some("open-eglo-dimm"));
+        assert_eq!(kind(img), Some("outglow-dimm"));
         assert_eq!(identify(img), Ok(Identity::Outglow { board: "ESMLFzm_w6_Dimm-4.63".into() }));
         assert!(known("ESMLFzm_w6_Dimm-4.63").is_some_and(|b| b.ble_product == 0x20a7 && b.image_type == 0x0390));
     }
 
     #[test]
     fn the_first_kind_in_the_image() {
-        assert_eq!(kind(b"x open-eglo-rgbtw\0"), Some("open-eglo-rgbtw"));
-        assert_eq!(kind(b"x open-eglo-board:A-4.60 open-eglo-dimmopen-eglo-tw"), Some("open-eglo-dimm"));
+        assert_eq!(kind(b"x outglow-rgbtw\0"), Some("outglow-rgbtw"));
+        assert_eq!(kind(b"x outglow-board:A-4.60 outglow-dimmoutglow-tw"), Some("outglow-dimm"));
+        // images of versions 0.x
+        assert_eq!(kind(b"x open-eglo-board:A-4.60 open-eglo-tw\0"), Some("outglow-tw"));
+        assert_eq!(tag(b"x open-eglo-board:ESMLFzm_w6_Dimm-4.63\0").as_deref(), Some("ESMLFzm_w6_Dimm-4.63"));
     }
 
     #[test]

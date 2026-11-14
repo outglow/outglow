@@ -62,6 +62,9 @@ pub(crate) struct Mesh {
     pub ltk: [u8; 16],
     address: u16,
     paired: bool,
+    /// The app installed the bulb as a Zigbee bulb (its 0x03/0x04 commands,
+    /// answered with 0x83): the provision state it then expects back is 0x60
+    provisioned: bool,
     secure_password: [u8; 16],
     address_low: u8,
     session: Option<[u8; 16]>,
@@ -98,6 +101,7 @@ impl Mesh {
             password: [0; 16],
             ltk: [0; 16],
             address: 0,
+            provisioned: false,
             paired: false,
             secure_password: padded(&hash[..16]),
             address_low: addr[0],
@@ -127,6 +131,7 @@ impl Mesh {
         self.ltk = DEFAULT_LTK;
         self.address = 0;
         self.paired = false;
+        self.provisioned = false;
     }
 
     /// The network name without its padding.
@@ -168,7 +173,7 @@ impl Mesh {
         b[17..33].copy_from_slice(&self.password);
         b[33..49].copy_from_slice(&self.ltk);
         b[49..51].copy_from_slice(&self.address.to_le_bytes());
-        b[51] = self.paired as u8;
+        b[51] = self.paired as u8 | (self.provisioned as u8) << 1;
         b
     }
 
@@ -180,7 +185,8 @@ impl Mesh {
         self.password.copy_from_slice(&b[17..33]);
         self.ltk.copy_from_slice(&b[33..49]);
         self.address = u16::from_le_bytes([b[49], b[50]]);
-        self.paired = b[51] != 0;
+        self.paired = b[51] & 1 != 0;
+        self.provisioned = b[51] & 2 != 0;
         true
     }
 
@@ -289,6 +295,37 @@ impl<H: Hal> Ble<H> {
         self.notify_status(&packet)
     }
 
+    /// The scan response, as the stock firmware sends it: one manufacturer
+    /// data block of 29 octets, which the AwoX app needs to list a bulb at
+    /// all (n7.a / n7.f in the app: a shorter block gives no product, and
+    /// an unknown product is dropped before it connects). `60 01`,
+    /// product(le), mac[0..4], firmware version (3 octets, `3.0.2` → 03 00
+    /// 02), mesh address(le), on, level, `ff` (temperature, not shown), hue,
+    /// saturation (`ff ff` without them), `ff 04 3f 20` and seven zeros: the
+    /// stock bulb's `1eff6001a720…030002000001feffffffff043f2000000000000000`.
+    pub(crate) fn scan_response_data(&self, out: &mut [u8; 31]) -> usize {
+        let l = &self.light;
+        let hs = self.identity.colour && l.mode == ColorMode::HueSaturation;
+        let mut v = [0u8; 3];
+        for (i, part) in self.identity.firmware_revision.split(['.', '_']).take(3).enumerate() {
+            v[i] = part.parse().unwrap_or(0);
+        }
+        out[0] = 30;
+        out[1] = 0xff;
+        out[2..4].copy_from_slice(&[0x60, 0x01]);
+        out[4..6].copy_from_slice(&self.identity.product.to_le_bytes());
+        out[6..10].copy_from_slice(&self.addr[..4]);
+        out[10..13].copy_from_slice(&v);
+        out[13..15].copy_from_slice(&self.mesh.address.to_le_bytes());
+        out[15] = l.on as u8;
+        out[16] = l.level;
+        out[17] = 0xff;
+        (out[18], out[19]) = if hs { (l.hue, l.sat) } else { (0xff, 0xff) };
+        out[20..24].copy_from_slice(&[0xff, 0x04, if self.mesh.provisioned { 0x60 } else { 0x3f }, 0x20]);
+        out[24..31].fill(0);
+        31
+    }
+
     /// The status the AwoX HomeControl app reads (its transport for these
     /// bulbs, g9.j / n7.k in the app), as the stock firmware of every
     /// TLSR8258 lamp sends it: `0x80`, then 16 octets in one AES block of the
@@ -313,8 +350,10 @@ impl<H: Hal> Ble<H> {
         d[13] = l.level;
         d[14..16].copy_from_slice(&if ct { l.mireds } else { 0xFFFF }.to_le_bytes());
         (d[16], d[17]) = if hs { (l.hue, l.sat) } else { (0xFF, 0xFF) };
-        // 0x20 in every stock image (its meaning not known)
-        d[18] = 0x20;
+        // the provision state: 0x20 as every stock image sends it, 0x60 once the
+        // app has installed the bulb as a Zigbee bulb (the app reads it back
+        // and takes a bulb without it for one it cannot use)
+        d[18] = if self.mesh.provisioned { 0x60 } else { 0x20 };
         let mut v = [0u8; 20];
         v[0] = 0x80;
         let mut block = [0u8; 16];
@@ -540,12 +579,24 @@ impl<H: Hal> Ble<H> {
         block.copy_from_slice(&value[1..17]);
         let plain = tl_aes_decrypt(key, &block);
         let len = plain[1] as usize;
-        if !(1..=14).contains(&len) || crc8_6c(&plain[1..2 + len]) != plain[0] {
+        // Up to 14 octets of payload fit in the encrypted block; the app's
+        // Zigbee provisioning commands are longer and go on in the clear
+        // after it (up to 18 in all).
+        if !(1..=18).contains(&len) || 17 + len.saturating_sub(14) > value.len() {
+            return false;
+        }
+        let mut whole = [0u8; 19];
+        whole[0] = plain[1];
+        whole[1..1 + len.min(14)].copy_from_slice(&plain[2..2 + len.min(14)]);
+        if len > 14 {
+            whole[15..1 + len].copy_from_slice(&value[17..17 + len - 14]);
+        }
+        if crc8_6c(&whole[..1 + len]) != plain[0] {
             return false;
         }
         self.mesh.att_command = [0; 20];
         self.mesh.att_command[..16].copy_from_slice(&plain);
-        let payload = &plain[2..2 + len];
+        let payload = &whole[1..1 + len];
         match value[0] {
             0 | 1 => {
                 // the stock firmware answers every command with its status
@@ -563,6 +614,25 @@ impl<H: Hal> Ble<H> {
             }
             // and its "kick" (leave the network)
             2 if payload[0] == 0x01 => self.factory_mesh(false),
+            // The app's Zigbee provisioning after pairing (g9.j): the network
+            // to join (0x03: channel, PAN, extended PAN) and its key (0x04).
+            // The bulb stays in the Zigbee network it is in (Zigbee2MQTT's);
+            // the app only waits for the "Zigbee provisioning done"
+            // notification, 0x83, to finish the installation.
+            2 if len >= 17 && (payload[0] == 0x03 || payload[0] == 0x04) => {
+                if !self.mesh.provisioned {
+                    self.mesh.provisioned = true;
+                    self.mesh_save();
+                }
+                let mut v = [0u8; 20];
+                v[0] = 0x83;
+                v[1..17].copy_from_slice(&tl_aes_encrypt(key, &[0u8; 16]));
+                if !self.notify_status(&v) {
+                    if let Some(slot) = self.mesh.unsent.iter_mut().find(|s| s.is_none()) {
+                        *slot = Some(v);
+                    }
+                }
+            }
             2 => {}
             _ => return false,
         }
@@ -651,14 +721,22 @@ impl<H: Hal> Ble<H> {
             let field = (op - 0x04) as usize;
             self.mesh.pending_fields[field] = tl_aes_decrypt(&key, &block);
             self.mesh.pending_mask |= 1 << field;
-            if self.mesh.pending_mask == 0x07 {
+            // a read now says nothing about the login any more
+            self.mesh.att_pair = [0; 20];
+            // The app pairs a Zigbee bulb with the name and the password only
+            // (its ZigbeeMeshController, g9.j, sends no LTK) and reads 0x07
+            // right after: name and password are enough, an LTK that comes
+            // later is taken too.
+            if self.mesh.pending_mask & 0x03 == 0x03 {
                 let m = &mut self.mesh;
                 m.name = m.pending_fields[0];
                 m.password = m.pending_fields[1];
-                m.ltk = m.pending_fields[2];
+                if m.pending_mask & 0x04 != 0 {
+                    m.ltk = m.pending_fields[2];
+                    m.pending_mask = 0;
+                }
                 m.paired = true;
-                m.pending_mask = 0;
-                m.att_pair = [0; 20];
+                m.provisioned = false;
                 m.att_pair[0] = 0x07;
                 self.mesh_save();
             }

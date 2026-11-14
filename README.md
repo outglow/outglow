@@ -20,7 +20,7 @@ Written from scratch in Rust, with no vendor code: the chip start-up, the
 - **A router you can look into**: the ZCL Diagnostics cluster with all its
   counters plus manufacturer attributes (neighbour table with link quality,
   routes, event log, noise floor, stack depth, a black box of the last frames
-  and attempts). A [Zigbee2MQTT converter](z2m/open-eglo.mjs) shows them.
+  and attempts). A [Zigbee2MQTT converter](z2m/outglow.mjs) shows them.
 - **Steadier routing**: link cost from measured delivery with smoothing and
   hysteresis, so routes do not flap.
 - **Bluetooth LE kept**: the bulb still speaks the vendor app's profile, so the
@@ -54,10 +54,11 @@ Written from scratch in Rust, with no vendor code: the chip start-up, the
 
 The TC32 core of the TLSR8258 has no backend in upstream LLVM, so the build
 goes through LLVM bitcode and the [llvm-tc32](https://github.com/goyamamoto/llvm-tc32)
-fork:
+fork. `cargo xtask toolchain` downloads a build of it from this repository's
+releases; elsewhere, build it yourself and set `TC32_LLVM` to its `bin`:
 
 ```sh
-export TC32_LLVM=/path/to/llvm-tc32/build/bin
+cargo xtask toolchain                          # downloads llvm-tc32 (Linux x86-64, macOS arm64)
 cargo xtask build                              # dimmable filament bulb
 cargo xtask build --board EGLO_ZM_TW-4.62      # any board of crates/bulb-tc32/boards.tsv
 cargo xtask build --all                        # every board

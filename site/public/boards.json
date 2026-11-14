@@ -3,7 +3,7 @@
     "ble_product": 8359,
     "hw_revision": "4.63",
     "image_type": 912,
-    "kind": "open-eglo-dimm",
+    "kind": "outglow-dimm",
     "model": "ESMLFzm_w6_Dimm",
     "name": "ESMLFzm_w6_Dimm-4.63"
   },
@@ -11,7 +11,7 @@
     "ble_product": 8358,
     "hw_revision": "4.63",
     "image_type": 913,
-    "kind": "open-eglo-tw",
+    "kind": "outglow-tw",
     "model": "ESMLFzm_w6_TW",
     "name": "ESMLFzm_w6_TW-4.63"
   },
@@ -19,7 +19,7 @@
     "ble_product": 8344,
     "hw_revision": "4.60",
     "image_type": 914,
-    "kind": "open-eglo-dimm",
+    "kind": "outglow-dimm",
     "model": "EGLO_ZM_Dimmable",
     "name": "EGLO_ZM_Dimmable-4.60"
   },
@@ -27,7 +27,7 @@
     "ble_product": 8344,
     "hw_revision": "4.62",
     "image_type": 915,
-    "kind": "open-eglo-dimm",
+    "kind": "outglow-dimm",
     "model": "EGLO_ZM_Dimmable",
     "name": "EGLO_ZM_Dimmable-4.62"
   },
@@ -35,7 +35,7 @@
     "ble_product": 8343,
     "hw_revision": "4.60",
     "image_type": 916,
-    "kind": "open-eglo-tw",
+    "kind": "outglow-tw",
     "model": "EGLO_ZM_TW",
     "name": "EGLO_ZM_TW-4.60"
   },
@@ -43,7 +43,7 @@
     "ble_product": 8343,
     "hw_revision": "4.62",
     "image_type": 917,
-    "kind": "open-eglo-tw",
+    "kind": "outglow-tw",
     "model": "EGLO_ZM_TW",
     "name": "EGLO_ZM_TW-4.62"
   },
@@ -51,7 +51,7 @@
     "ble_product": 8343,
     "hw_revision": "4.69",
     "image_type": 918,
-    "kind": "open-eglo-tw",
+    "kind": "outglow-tw",
     "model": "EGLO_ZM_TW",
     "name": "EGLO_ZM_TW-4.69"
   },
@@ -59,7 +59,7 @@
     "ble_product": 8356,
     "hw_revision": "4.60",
     "image_type": 919,
-    "kind": "open-eglo-tw",
+    "kind": "outglow-tw",
     "model": "EGLO_ZM_TW_CLP",
     "name": "EGLO_ZM_TW_CLP-4.60"
   },
@@ -67,7 +67,7 @@
     "ble_product": 8254,
     "hw_revision": "4.63",
     "image_type": 920,
-    "kind": "open-eglo-tw",
+    "kind": "outglow-tw",
     "model": "ESMLzm_TW_GU10",
     "name": "ESMLzm_TW_GU10-4.63"
   },
@@ -75,7 +75,7 @@
     "ble_product": 8342,
     "hw_revision": "4.60",
     "image_type": 921,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "EGLO_ZM_RGB_TW",
     "name": "EGLO_ZM_RGB_TW-4.60"
   },
@@ -83,7 +83,7 @@
     "ble_product": 8342,
     "hw_revision": "4.62",
     "image_type": 922,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "EGLO_ZM_RGB_TW",
     "name": "EGLO_ZM_RGB_TW-4.62"
   },
@@ -91,7 +91,7 @@
     "ble_product": 8342,
     "hw_revision": "4.69",
     "image_type": 923,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "EGLO_ZM_RGB_TW",
     "name": "EGLO_ZM_RGB_TW-4.69"
   },
@@ -99,7 +99,7 @@
     "ble_product": 8354,
     "hw_revision": "4.60",
     "image_type": 924,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "EGLO_ZM_RGBTW_CLP",
     "name": "EGLO_ZM_RGBTW_CLP-4.60"
   },
@@ -107,7 +107,7 @@
     "ble_product": 8253,
     "hw_revision": "4.62",
     "image_type": 925,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "ESMLzm_c5_E14",
     "name": "ESMLzm_c5_E14-4.62"
   },
@@ -115,7 +115,7 @@
     "ble_product": 8252,
     "hw_revision": "4.62",
     "image_type": 926,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "ESMLzm_c5_GU10",
     "name": "ESMLzm_c5_GU10-4.62"
   },
@@ -123,7 +123,7 @@
     "ble_product": 8227,
     "hw_revision": "4.62",
     "image_type": 927,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "ESMLzm_c9",
     "name": "ESMLzm_c9-4.62"
   },
@@ -131,7 +131,7 @@
     "ble_product": 8282,
     "hw_revision": "4.62",
     "image_type": 928,
-    "kind": "open-eglo-rgbtw",
+    "kind": "outglow-rgbtw",
     "model": "ESMLzm_c13g",
     "name": "ESMLzm_c13g-4.62"
   },
@@ -139,7 +139,7 @@
     "ble_product": 8384,
     "hw_revision": "4.62",
     "image_type": 929,
-    "kind": "open-eglo-rgbw",
+    "kind": "outglow-rgbw",
     "model": "EGLO_ZM_RGB_W",
     "name": "EGLO_ZM_RGB_W-4.62"
   },
@@ -147,7 +147,7 @@
     "ble_product": 8368,
     "hw_revision": "4.60",
     "image_type": 930,
-    "kind": "open-eglo-ebf",
+    "kind": "outglow-ebf",
     "model": "EBF_RGB_Zm",
     "name": "EBF_RGB_Zm-4.60"
   },
@@ -155,7 +155,7 @@
     "ble_product": 8368,
     "hw_revision": "4.69",
     "image_type": 931,
-    "kind": "open-eglo-ebf",
+    "kind": "outglow-ebf",
     "model": "EBF_RGB_Zm",
     "name": "EBF_RGB_Zm-4.69"
   },
@@ -163,7 +163,7 @@
     "ble_product": 8370,
     "hw_revision": "4.60",
     "image_type": 932,
-    "kind": "open-eglo-ebf",
+    "kind": "outglow-ebf",
     "model": "EBF_RGB_Zm_CLP",
     "name": "EBF_RGB_Zm_CLP-4.60"
   }

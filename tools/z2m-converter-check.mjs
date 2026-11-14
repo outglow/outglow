@@ -1,4 +1,4 @@
-// Loads z2m/open-eglo.mjs against the zigbee-herdsman-converters in ZHC (as
+// Loads z2m/outglow.mjs against the zigbee-herdsman-converters in ZHC (as
 // Zigbee2MQTT does with an external converter), checks that a bulb with the
 // device model the emulator dumped (examples/device_model.rs) is matched to
 // it and not to a generated or built-in definition, lists its exposes, and
@@ -6,7 +6,7 @@
 // (standard and manufacturer-specific attributes) and an Analog Input
 // report, as zigbee-herdsman decodes them.
 //
-//   node tools/z2m-converter-check.mjs model.json [z2m/open-eglo.mjs]
+//   node tools/z2m-converter-check.mjs model.json [z2m/outglow.mjs]
 
 import {createRequire} from "node:module";
 import fs from "node:fs";
@@ -21,7 +21,7 @@ const zhc = require(path.join(ZHC, "dist", "index.js"));
 const {Zcl} = require("zigbee-herdsman");
 
 const model = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const file = process.argv[3] ?? path.join(here, "..", "z2m", "open-eglo.mjs");
+const file = process.argv[3] ?? path.join(here, "..", "z2m", "outglow.mjs");
 
 // the converter imports zigbee-herdsman-converters by package name: resolve it to ZHC
 const text = fs.readFileSync(file, "utf8").replace(/"zigbee-herdsman-converters\/lib\/(\w+)"/g, (_, mod) => `"file://${path.join(ZHC, "dist", "lib", mod)}.js"`);
@@ -128,7 +128,7 @@ function MFR() {
     return 0x1141;
 }
 check("the manufacturer-specific attributes are known under code 0x1141",
-      Zcl.Utils.getClusterAttribute(c, 0x5007, 0x1141)?.name === "openEgloRelayDropMacFail");
+      Zcl.Utils.getClusterAttribute(c, 0x5007, 0x1141)?.name === "outglowRelayDropMacFail");
 
 async function convert(cluster, type, data, endpointId = 1) {
     const payload = {};
@@ -143,11 +143,11 @@ async function convert(cluster, type, data, endpointId = 1) {
     return payload;
 }
 const p = await convert("haDiagnostic", "readResponse",
-                        {macTxUcastRetry: 42, relayedUcast: 7, lastMessageRssi: -61, openEgloUptime: 3600, openEgloResetCause: 1, openEgloRelayDropMacFail: 3});
+                        {macTxUcastRetry: 42, relayedUcast: 7, lastMessageRssi: -61, outglowUptime: 3600, outglowResetCause: 1, outglowRelayDropMacFail: 3});
 check("a read response of the Diagnostics cluster becomes state", p.radio?.mac_tx_ucast_retry === 42 && p.routing?.relayed_ucast === 7 &&
       p.radio?.last_message_rssi === -61 && p.uptime === 3600 && p.reset_cause === "watchdog" && p.routing?.relay_drop_mac_fail === 3, JSON.stringify(p));
-const hp = await convert("haDiagnostic", "readResponse", {macTxUcast: 200, macTxUcastRetry: 30, macTxUcastFail: 1, openEgloCoordNextHop: 0,
-                                                         openEgloCoordCost: 2, openEgloLastStatusRx: 0, openEgloPan: 0x1a62});
+const hp = await convert("haDiagnostic", "readResponse", {macTxUcast: 200, macTxUcastRetry: 30, macTxUcastFail: 1, outglowCoordNextHop: 0,
+                                                         outglowCoordCost: 2, outglowLastStatusRx: 0, outglowPan: 0x1a62});
 check("health from the counters", hp.mac_retry_rate === 15 && hp.mac_fail_rate === 0.5 && hp.link_health === "fair" &&
       hp.coordinator_route === "direct, cost 2" && hp.routing?.last_nwk_status_received === "no route" && hp.network?.nwk_pan_id === "0x1a62",
       JSON.stringify(hp));
@@ -161,7 +161,7 @@ const evp = Buffer.alloc(24);
 // newest first: #1 start 2 at 15 s a neighbor went stale (0x1a2b, LQI 80); #0 start 2 began (watchdog, resets 2)
 Buffer.from([1, 0, 2, 6, 15, 0, 0, 0, 0x2b, 0x1a, 80, 0]).copy(evp, 0);
 Buffer.from([0, 0, 2, 1, 0, 0, 0, 0, 1, 0, 2, 0]).copy(evp, 12);
-const tb = await convert("haDiagnostic", "readResponse", {openEgloNeighbors0: nb, openEgloEvents0: evp, openEgloExtPan: Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])});
+const tb = await convert("haDiagnostic", "readResponse", {outglowNeighbors0: nb, outglowEvents0: evp, outglowExtPan: Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])});
 const n0 = tb.neighbor_table?.[0];
 check("a neighbor table page becomes neighbor_table",
       tb.neighbor_table?.length === 1 && n0.address === "0x1a2b" && n0.lqi === 200 && n0.relays && n0.stale === 3 && n0.rx === 120 &&
@@ -183,13 +183,13 @@ Buffer.from([2, 0, 2, 3, 19, 0, 0, 0, 1, 0, 0, 0]).copy(evp3, 12);
 const fz = definition.fromZigbee.find((x) => x.cluster === "haDiagnostic");
 const ep = device.getEndpoint(1);
 const run = (data, state) => fz.convert(definition, {type: "readResponse", cluster: "haDiagnostic", data, endpoint: ep, device, meta: {}}, () => {}, {}, {device, logger: console, state});
-const s1 = run({openEgloEvents0: evp3}, {});
-const s2 = run({openEgloEvents1: evp2}, s1);
+const s1 = run({outglowEvents0: evp3}, {});
+const s2 = run({outglowEvents1: evp2}, s1);
 check("the event log pages overlap: every event once, in order", s2.event_log?.map((x) => x.seq).join(",") === "3,2,1,0",
       s2.event_log?.map((x) => x.seq).join(","));
 const q = await convert("genAnalogInput", "attributeReport", {presentValue: 2}, 5);
 check("an Analog Input report of endpoint 5 becomes analog_in_count_5", q.analog_in_count_5 === 2, JSON.stringify(q));
-const bx = await convert("haDiagnostic", "readResponse", {openEgloBox3: Buffer.from([1, 2, 0xff])});
+const bx = await convert("haDiagnostic", "readResponse", {outglowBox3: Buffer.from([1, 2, 0xff])});
 check("a black box page is published as hex", bx.black_box_page?.page === 3 && bx.black_box_page?.hex === "0102ff", JSON.stringify(bx.black_box_page));
 check("black_box_read can be set", Boolean(definition.toZigbee.find((x) => x.key?.includes("black_box_read"))?.convertSet));
 const t = definition.toZigbee.find((x) => x.key?.includes("diagnostics_clear"));

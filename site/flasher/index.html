@@ -50,6 +50,7 @@
     <section class="controls">
       <div class="panel">
         <h2>1. Bulb</h2>
+        <div id="detected" class="detected" hidden></div>
         <div id="bulb" class="facts"><p class="muted">Not connected. Switch the bulb off and on, then connect within
           20 minutes.</p></div>
         <div class="row">
@@ -60,12 +61,14 @@
 
       <div class="panel">
         <h2>2. Firmware</h2>
-        <p id="proposal" class="muted">Connect, and the matching release is proposed here.</p>
-        <div class="row">
-          <label>Release <select id="release"><option value="">—</option></select></label>
+        <p id="proposal" class="muted">Connect to a bulb to see what can go on it.</p>
+        <div class="choice" role="radiogroup" aria-label="Firmware to install">
+          <label class="option"><input type="radio" name="target" id="pick-outglow" value="outglow" disabled>
+            <span><strong>Outglow</strong><small id="opt-outglow">—</small></span></label>
+          <label class="option"><input type="radio" name="target" id="pick-original" value="original" disabled>
+            <span><strong>Original firmware</strong><small id="opt-original">—</small></span></label>
         </div>
-        <p id="image" class="muted">No image chosen.</p>
-        <div class="row"><button id="restore" type="button">Restore original firmware</button></div>
+        <p id="image" class="muted small"></p>
       </div>
 
       <div class="panel">
@@ -81,6 +84,7 @@
 
       <details class="panel advanced">
         <summary>Advanced options</summary>
+        <div class="row"><label>Outglow version <select id="release"><option value="">—</option></select></label></div>
         <div class="row"><label>Local image <input id="file" type="file" accept=".bin"></label></div>
         <div class="row"><label><input id="stock" type="checkbox"> Allow the original firmware from a local file</label></div>
         <div class="row">

@@ -8,7 +8,7 @@ pub const BOARDS: [Board; 21] = [
     // PC1
     Board {
         name: "ESMLFzm_w6_Dimm-4.63",
-        tag: "open-eglo-board:ESMLFzm_w6_Dimm-4.63",
+        tag: "outglow-board:ESMLFzm_w6_Dimm-4.63",
         model: "ESMLFzm_w6_Dimm",
         ble_product: 0x20a7,
         hw_revision: "4.63",
@@ -18,7 +18,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-dimm",
+        kind: "outglow-dimm",
         period: 48000,
         ct_min: 153,
         ct_max: 454,
@@ -27,7 +27,7 @@ pub const BOARDS: [Board; 21] = [
     // PC1 warm, PB5 cold
     Board {
         name: "ESMLFzm_w6_TW-4.63",
-        tag: "open-eglo-board:ESMLFzm_w6_TW-4.63",
+        tag: "outglow-board:ESMLFzm_w6_TW-4.63",
         model: "ESMLFzm_w6_TW",
         ble_product: 0x20a6,
         hw_revision: "4.63",
@@ -37,7 +37,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-tw",
+        kind: "outglow-tw",
         period: 48000,
         ct_min: 153,
         ct_max: 454,
@@ -46,7 +46,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4
     Board {
         name: "EGLO_ZM_Dimmable-4.60",
-        tag: "open-eglo-board:EGLO_ZM_Dimmable-4.60",
+        tag: "outglow-board:EGLO_ZM_Dimmable-4.60",
         model: "EGLO_ZM_Dimmable",
         ble_product: 0x2098,
         hw_revision: "4.60",
@@ -56,7 +56,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-dimm",
+        kind: "outglow-dimm",
         period: 48000,
         ct_min: 153,
         ct_max: 454,
@@ -65,7 +65,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4
     Board {
         name: "EGLO_ZM_Dimmable-4.62",
-        tag: "open-eglo-board:EGLO_ZM_Dimmable-4.62",
+        tag: "outglow-board:EGLO_ZM_Dimmable-4.62",
         model: "EGLO_ZM_Dimmable",
         ble_product: 0x2098,
         hw_revision: "4.62",
@@ -75,7 +75,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-dimm",
+        kind: "outglow-dimm",
         period: 48000,
         ct_min: 153,
         ct_max: 454,
@@ -84,7 +84,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold
     Board {
         name: "EGLO_ZM_TW-4.60",
-        tag: "open-eglo-board:EGLO_ZM_TW-4.60",
+        tag: "outglow-board:EGLO_ZM_TW-4.60",
         model: "EGLO_ZM_TW",
         ble_product: 0x2097,
         hw_revision: "4.60",
@@ -94,7 +94,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-tw",
+        kind: "outglow-tw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -103,7 +103,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC3 cold
     Board {
         name: "EGLO_ZM_TW-4.62",
-        tag: "open-eglo-board:EGLO_ZM_TW-4.62",
+        tag: "outglow-board:EGLO_ZM_TW-4.62",
         model: "EGLO_ZM_TW",
         ble_product: 0x2097,
         hw_revision: "4.62",
@@ -113,7 +113,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-tw",
+        kind: "outglow-tw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -122,7 +122,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold
     Board {
         name: "EGLO_ZM_TW-4.69",
-        tag: "open-eglo-board:EGLO_ZM_TW-4.69",
+        tag: "outglow-board:EGLO_ZM_TW-4.69",
         model: "EGLO_ZM_TW",
         ble_product: 0x2097,
         hw_revision: "4.69",
@@ -132,7 +132,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-tw",
+        kind: "outglow-tw",
         period: 3000,
         ct_min: 153,
         ct_max: 370,
@@ -141,7 +141,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold
     Board {
         name: "EGLO_ZM_TW_CLP-4.60",
-        tag: "open-eglo-board:EGLO_ZM_TW_CLP-4.60",
+        tag: "outglow-board:EGLO_ZM_TW_CLP-4.60",
         model: "EGLO_ZM_TW_CLP",
         ble_product: 0x20a4,
         hw_revision: "4.60",
@@ -151,7 +151,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-tw",
+        kind: "outglow-tw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -160,7 +160,7 @@ pub const BOARDS: [Board; 21] = [
     // PC1 warm, PB5 cold
     Board {
         name: "ESMLzm_TW_GU10-4.63",
-        tag: "open-eglo-board:ESMLzm_TW_GU10-4.63",
+        tag: "outglow-board:ESMLzm_TW_GU10-4.63",
         model: "ESMLzm_TW_GU10",
         ble_product: 0x203e,
         hw_revision: "4.63",
@@ -170,7 +170,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: None,
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-tw",
+        kind: "outglow-tw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -179,7 +179,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold, PD2/PB1/PC3 red/green/blue
     Board {
         name: "EGLO_ZM_RGB_TW-4.60",
-        tag: "open-eglo-board:EGLO_ZM_RGB_TW-4.60",
+        tag: "outglow-board:EGLO_ZM_RGB_TW-4.60",
         model: "EGLO_ZM_RGB_TW",
         ble_product: 0x2096,
         hw_revision: "4.60",
@@ -189,7 +189,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 3, gpio: 0x59e, bit: 0x04, mux: 0x5ae, shift: 4, value: 2 }, Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }, Out { pwm: 1, gpio: 0x596, bit: 0x08, mux: 0x5ac, shift: 6, value: 0 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -198,7 +198,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC3 cold, PB4/PB5/PC1 red/green/blue
     Board {
         name: "EGLO_ZM_RGB_TW-4.62",
-        tag: "open-eglo-board:EGLO_ZM_RGB_TW-4.62",
+        tag: "outglow-board:EGLO_ZM_RGB_TW-4.62",
         model: "EGLO_ZM_RGB_TW",
         ble_product: 0x2096,
         hw_revision: "4.62",
@@ -208,7 +208,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 4, gpio: 0x58e, bit: 0x10, mux: 0x5ab, shift: 0, value: 1 }, Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }, Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -217,7 +217,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold, PD2/PB1/PC3 red/green/blue
     Board {
         name: "EGLO_ZM_RGB_TW-4.69",
-        tag: "open-eglo-board:EGLO_ZM_RGB_TW-4.69",
+        tag: "outglow-board:EGLO_ZM_RGB_TW-4.69",
         model: "EGLO_ZM_RGB_TW",
         ble_product: 0x2096,
         hw_revision: "4.69",
@@ -227,7 +227,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 3, gpio: 0x59e, bit: 0x04, mux: 0x5ae, shift: 4, value: 2 }, Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }, Out { pwm: 1, gpio: 0x596, bit: 0x08, mux: 0x5ac, shift: 6, value: 0 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 3000,
         ct_min: 153,
         ct_max: 370,
@@ -236,7 +236,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold, PD2/PB1/PC3 red/green/blue
     Board {
         name: "EGLO_ZM_RGBTW_CLP-4.60",
-        tag: "open-eglo-board:EGLO_ZM_RGBTW_CLP-4.60",
+        tag: "outglow-board:EGLO_ZM_RGBTW_CLP-4.60",
         model: "EGLO_ZM_RGBTW_CLP",
         ble_product: 0x20a2,
         hw_revision: "4.60",
@@ -246,7 +246,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 3, gpio: 0x59e, bit: 0x04, mux: 0x5ae, shift: 4, value: 2 }, Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }, Out { pwm: 1, gpio: 0x596, bit: 0x08, mux: 0x5ac, shift: 6, value: 0 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -255,7 +255,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC3 cold, PB4/PB5/PC1 red/green/blue
     Board {
         name: "ESMLzm_c5_E14-4.62",
-        tag: "open-eglo-board:ESMLzm_c5_E14-4.62",
+        tag: "outglow-board:ESMLzm_c5_E14-4.62",
         model: "ESMLzm_c5_E14",
         ble_product: 0x203d,
         hw_revision: "4.62",
@@ -265,7 +265,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 4, gpio: 0x58e, bit: 0x10, mux: 0x5ab, shift: 0, value: 1 }, Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }, Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -274,7 +274,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC3 cold, PB4/PB5/PC1 red/green/blue
     Board {
         name: "ESMLzm_c5_GU10-4.62",
-        tag: "open-eglo-board:ESMLzm_c5_GU10-4.62",
+        tag: "outglow-board:ESMLzm_c5_GU10-4.62",
         model: "ESMLzm_c5_GU10",
         ble_product: 0x203c,
         hw_revision: "4.62",
@@ -284,7 +284,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 4, gpio: 0x58e, bit: 0x10, mux: 0x5ab, shift: 0, value: 1 }, Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }, Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -293,7 +293,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC3 cold, PB4/PB5/PC1 red/green/blue
     Board {
         name: "ESMLzm_c9-4.62",
-        tag: "open-eglo-board:ESMLzm_c9-4.62",
+        tag: "outglow-board:ESMLzm_c9-4.62",
         model: "ESMLzm_c9",
         ble_product: 0x2023,
         hw_revision: "4.62",
@@ -303,7 +303,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 4, gpio: 0x58e, bit: 0x10, mux: 0x5ab, shift: 0, value: 1 }, Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }, Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -312,7 +312,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC3 cold, PB4/PB5/PC1 red/green/blue
     Board {
         name: "ESMLzm_c13g-4.62",
-        tag: "open-eglo-board:ESMLzm_c13g-4.62",
+        tag: "outglow-board:ESMLzm_c13g-4.62",
         model: "ESMLzm_c13g",
         ble_product: 0x205a,
         hw_revision: "4.62",
@@ -322,7 +322,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 4, gpio: 0x58e, bit: 0x10, mux: 0x5ab, shift: 0, value: 1 }, Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }, Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbtw",
+        kind: "outglow-rgbtw",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -331,7 +331,7 @@ pub const BOARDS: [Board; 21] = [
     // PC3, PB4/PB5/PC1 red/green/blue
     Board {
         name: "EGLO_ZM_RGB_W-4.62",
-        tag: "open-eglo-board:EGLO_ZM_RGB_W-4.62",
+        tag: "outglow-board:EGLO_ZM_RGB_W-4.62",
         model: "EGLO_ZM_RGB_W",
         ble_product: 0x20c0,
         hw_revision: "4.62",
@@ -341,7 +341,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 4, gpio: 0x58e, bit: 0x10, mux: 0x5ab, shift: 0, value: 1 }, Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }, Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }]),
         rgb_beside_white: false,
         colour_default: (170, 254),
-        kind: "open-eglo-rgbw",
+        kind: "outglow-rgbw",
         period: 48000,
         ct_min: 333,
         ct_max: 333,
@@ -350,7 +350,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold, PD2/PB1/PC3 red/green/blue
     Board {
         name: "EBF_RGB_Zm-4.60",
-        tag: "open-eglo-board:EBF_RGB_Zm-4.60",
+        tag: "outglow-board:EBF_RGB_Zm-4.60",
         model: "EBF_RGB_Zm",
         ble_product: 0x20b0,
         hw_revision: "4.60",
@@ -360,7 +360,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 3, gpio: 0x59e, bit: 0x04, mux: 0x5ae, shift: 4, value: 2 }, Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }, Out { pwm: 1, gpio: 0x596, bit: 0x08, mux: 0x5ac, shift: 6, value: 0 }]),
         rgb_beside_white: true,
         colour_default: (160, 254),
-        kind: "open-eglo-ebf",
+        kind: "outglow-ebf",
         period: 48000,
         ct_min: 153,
         ct_max: 370,
@@ -369,7 +369,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold, PD2/PB1/PC3 red/green/blue
     Board {
         name: "EBF_RGB_Zm-4.69",
-        tag: "open-eglo-board:EBF_RGB_Zm-4.69",
+        tag: "outglow-board:EBF_RGB_Zm-4.69",
         model: "EBF_RGB_Zm",
         ble_product: 0x20b0,
         hw_revision: "4.69",
@@ -379,7 +379,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 3, gpio: 0x59e, bit: 0x04, mux: 0x5ae, shift: 4, value: 2 }, Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }, Out { pwm: 1, gpio: 0x596, bit: 0x08, mux: 0x5ac, shift: 6, value: 0 }]),
         rgb_beside_white: true,
         colour_default: (160, 254),
-        kind: "open-eglo-ebf",
+        kind: "outglow-ebf",
         period: 3000,
         ct_min: 153,
         ct_max: 370,
@@ -388,7 +388,7 @@ pub const BOARDS: [Board; 21] = [
     // PC4 warm, PC2 cold, PD2/PB1/PC3 red/green/blue
     Board {
         name: "EBF_RGB_Zm_CLP-4.60",
-        tag: "open-eglo-board:EBF_RGB_Zm_CLP-4.60",
+        tag: "outglow-board:EBF_RGB_Zm_CLP-4.60",
         model: "EBF_RGB_Zm_CLP",
         ble_product: 0x20b2,
         hw_revision: "4.60",
@@ -398,7 +398,7 @@ pub const BOARDS: [Board; 21] = [
         rgb: Some([Out { pwm: 3, gpio: 0x59e, bit: 0x04, mux: 0x5ae, shift: 4, value: 2 }, Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }, Out { pwm: 1, gpio: 0x596, bit: 0x08, mux: 0x5ac, shift: 6, value: 0 }]),
         rgb_beside_white: true,
         colour_default: (160, 254),
-        kind: "open-eglo-ebf",
+        kind: "outglow-ebf",
         period: 48000,
         ct_min: 153,
         ct_max: 370,

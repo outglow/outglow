@@ -182,7 +182,7 @@ export interface ImageInfo {
   board: Board | undefined;
 }
 
-const BOARD_TAG = /open-eglo-board:([A-Za-z0-9_]+)-(\d\.\d+)/;
+const BOARD_TAG = /(?:outglow|open-eglo)-board:([A-Za-z0-9_]+)-(\d\.\d+)/;
 
 function latin1(b: Uint8Array): string {
   let s = "";

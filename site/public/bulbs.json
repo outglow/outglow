@@ -6,7 +6,7 @@
       "revisions": [
         "4.63"
       ],
-      "kind": "open-eglo-dimm",
+      "kind": "outglow-dimm",
       "hardware_tested": true,
       "products": [
         {
@@ -424,7 +424,7 @@
       "revisions": [
         "4.63"
       ],
-      "kind": "open-eglo-tw",
+      "kind": "outglow-tw",
       "hardware_tested": false,
       "products": [
         {
@@ -663,7 +663,7 @@
         "4.60",
         "4.62"
       ],
-      "kind": "open-eglo-dimm",
+      "kind": "outglow-dimm",
       "hardware_tested": false,
       "note": "No product has been seen reporting this name; probably dimmable luminaires.",
       "products": []
@@ -675,7 +675,7 @@
         "4.62",
         "4.69"
       ],
-      "kind": "open-eglo-tw",
+      "kind": "outglow-tw",
       "hardware_tested": false,
       "products": [
         {
@@ -866,7 +866,7 @@
       "revisions": [
         "4.60"
       ],
-      "kind": "open-eglo-tw",
+      "kind": "outglow-tw",
       "hardware_tested": false,
       "products": [
         {
@@ -897,7 +897,7 @@
       "revisions": [
         "4.63"
       ],
-      "kind": "open-eglo-tw",
+      "kind": "outglow-tw",
       "hardware_tested": false,
       "products": [
         {
@@ -934,7 +934,7 @@
         "4.62",
         "4.69"
       ],
-      "kind": "open-eglo-rgbtw",
+      "kind": "outglow-rgbtw",
       "hardware_tested": false,
       "products": [
         {
@@ -1081,7 +1081,7 @@
       "revisions": [
         "4.60"
       ],
-      "kind": "open-eglo-rgbtw",
+      "kind": "outglow-rgbtw",
       "hardware_tested": false,
       "note": "No product has been seen reporting this name; the CLP suffix is used for ceiling lights.",
       "products": []
@@ -1091,7 +1091,7 @@
       "revisions": [
         "4.62"
       ],
-      "kind": "open-eglo-rgbtw",
+      "kind": "outglow-rgbtw",
       "hardware_tested": false,
       "note": "Only the module name (5 W colour, E14) points to these.",
       "products": [
@@ -1141,7 +1141,7 @@
       "revisions": [
         "4.62"
       ],
-      "kind": "open-eglo-rgbtw",
+      "kind": "outglow-rgbtw",
       "hardware_tested": false,
       "products": [
         {
@@ -1176,7 +1176,7 @@
       "revisions": [
         "4.62"
       ],
-      "kind": "open-eglo-rgbtw",
+      "kind": "outglow-rgbtw",
       "hardware_tested": false,
       "note": "A bulb reporting ESMLzm_c9 4.62 is known, but not its article; the name suggests a 9 W colour bulb.",
       "products": [
@@ -1212,7 +1212,7 @@
       "revisions": [
         "4.62"
       ],
-      "kind": "open-eglo-rgbtw",
+      "kind": "outglow-rgbtw",
       "hardware_tested": false,
       "note": "Only the module name (13 W colour globe) points to this.",
       "products": [
@@ -1244,7 +1244,7 @@
       "revisions": [
         "4.62"
       ],
-      "kind": "open-eglo-rgbw",
+      "kind": "outglow-rgbw",
       "hardware_tested": false,
       "products": [
         {
@@ -1280,7 +1280,7 @@
         "4.60",
         "4.69"
       ],
-      "kind": "open-eglo-ebf",
+      "kind": "outglow-ebf",
       "hardware_tested": false,
       "products": [
         {
@@ -1425,7 +1425,7 @@
       "revisions": [
         "4.60"
       ],
-      "kind": "open-eglo-ebf",
+      "kind": "outglow-ebf",
       "hardware_tested": false,
       "products": [
         {

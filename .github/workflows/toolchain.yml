@@ -1,0 +1,80 @@
+name: Toolchain
+
+# Builds the llvm-tc32 fork (goyamamoto/llvm-tc32, Apache-2.0 with LLVM
+# exceptions) at the commit in xtask/llvm-tc32.ref and publishes it as the
+# pre-release llvm-tc32-<commit>: llvm-tc32-<commit>-<platform>.tar.xz with
+# clang, lld and the LLVM tools `cargo xtask build` uses (ARM target only),
+# its license and where the source is. CI and `cargo xtask toolchain` download
+# it instead of building LLVM for an hour.
+#
+# Run it by hand (Actions -> Toolchain -> Run workflow) after changing
+# xtask/llvm-tc32.ref.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: macos-14
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source
+        id: ref
+        run: |
+          sha=$(cat xtask/llvm-tc32.ref)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:7}" >> "$GITHUB_OUTPUT"
+          git init -q "$RUNNER_TEMP/src" && cd "$RUNNER_TEMP/src"
+          git remote add origin https://github.com/goyamamoto/llvm-tc32
+          git fetch -q --depth 1 origin "$sha" && git checkout -q FETCH_HEAD
+      - name: Tools
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update && sudo apt-get install -y ninja-build; else brew install ninja; fi
+      - name: Build
+        env:
+          PREFIX: ${{ runner.temp }}/llvm-tc32-${{ steps.ref.outputs.short }}
+        run: |
+          cd "$RUNNER_TEMP/src"
+          # no optional system libraries, so that the binaries run on other machines
+          cmake -S llvm -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DLLVM_ENABLE_PROJECTS="clang;lld" -DLLVM_TARGETS_TO_BUILD=ARM \
+            -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_LIBEDIT=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX"
+          ninja -C build install-clang install-clang-resource-headers install-lld \
+            install-llvm-link install-llvm-dis install-llvm-ar install-llvm-size install-llvm-objdump
+          cp llvm/LICENSE.TXT "$PREFIX/LICENSE.TXT"
+          cat > "$PREFIX/README.txt" <<TXT
+          llvm-tc32: LLVM with a backend for the Telink TC32 core (clang -mcpu=tc32),
+          built for Outglow (https://github.com/outglow/outglow).
+          Source: https://github.com/goyamamoto/llvm-tc32/tree/${{ steps.ref.outputs.sha }}
+          License: Apache License 2.0 with LLVM Exceptions (LICENSE.TXT).
+          Use: export TC32_LLVM=\$PWD/bin; cargo xtask build
+          TXT
+          "$PREFIX/bin/clang" --version
+      - name: Package
+        run: |
+          cd "$RUNNER_TEMP"
+          tar -cJf "llvm-tc32-${{ steps.ref.outputs.short }}-${{ matrix.platform }}.tar.xz" "llvm-tc32-${{ steps.ref.outputs.short }}"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: llvm-tc32-${{ steps.ref.outputs.short }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+            --title "llvm-tc32 ${{ steps.ref.outputs.short }} (toolchain)" \
+            --notes "The llvm-tc32 compiler for building Outglow, from https://github.com/goyamamoto/llvm-tc32/tree/${{ steps.ref.outputs.sha }} (Apache-2.0 with LLVM Exceptions). Not a firmware release. \`cargo xtask toolchain\` downloads it."
+          gh release upload "$TAG" "$RUNNER_TEMP/llvm-tc32-${{ steps.ref.outputs.short }}-${{ matrix.platform }}.tar.xz" --clobber

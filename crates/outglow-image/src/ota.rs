@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn round_trip_and_layout() {
-        let f = File::with_image(Header::new(0x1141, 0x0390, 0x0002_0005, "eglo-rs ESMLFzm_w6_Dimm-4.63"), vec![1, 2, 3]);
+        let f = File::with_image(Header::new(0x1141, 0x0390, 0x0002_0005, "outglow ESMLFzm_w6_Dimm-4.63"), vec![1, 2, 3]);
         let b = f.pack();
         assert_eq!(b.len(), 56 + 6 + 3);
         assert_eq!(&b[..4], &[0x1E, 0xF1, 0xEE, 0x0B]);

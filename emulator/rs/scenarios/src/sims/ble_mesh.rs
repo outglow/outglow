@@ -113,7 +113,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let product = if md.len() >= 8 { Some(u16::from_le_bytes([md[2], md[3]])) } else { None };
     let exp_product = if tw { 0x20A6 } else { 0x20A7 };
     let good = adv_get(&adv, 0x01).as_deref() == Some(&[0x05][..])
-        && adv_get(&adv, 0x03).as_deref() == Some(&[0x00, 0x18][..])
+        && adv_get(&adv, 0x02).as_deref() == Some(&[0x00, 0x18][..]) // incomplete list, as the stock bulb
         && adv_get(&adv, 0x09).as_deref() == Some(&b"unpaired"[..])
         && md.get(..2) == Some(&[0x60, 0x01][..])
         && product == Some(exp_product)

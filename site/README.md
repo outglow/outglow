@@ -44,7 +44,7 @@ checks it against `boards.json` and the picture files.
   "boards": [{
     "board": "ESMLFzm_w6_TW",        // module name, as the bulb reports it
     "revisions": ["4.63"],           // hardware revisions with an image (board = module-revision)
-    "kind": "open-eglo-tw",          // as in boards.json; the page groups dimm / tw / colour
+    "kind": "outglow-tw",          // as in boards.json; the page groups dimm / tw / colour
     "hardware_tested": false,        // has Outglow run on a real bulb of this board
     "note": "…",                     // optional, shown when no product is confirmed
     "products": [{

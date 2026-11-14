@@ -36,11 +36,11 @@ static mut BLE_STATS: ble::Stats =
 /// version is the board's revision (63 for 4.63). Over BLE it is still the
 /// stock bulb of its board (`ble.rs`), for the AwoX app.
 const IDENTITY: Identity = Identity {
-    manufacturer: "EGLO",
+    manufacturer: "Outglow",
     model: BOARD.kind,
-    sw_build: "open-eglo-rs",
+    sw_build: "outglow",
     manufacturer_code: 0x1141,
-    app_version: 2,
+    app_version: 1,
     hw_version: BOARD.hw_version,
     color_temperature: BOARD.cold.is_some() || BOARD.rgb.is_some(),
     ct_min: BOARD.ct_min,
@@ -89,7 +89,7 @@ pub const IMAGE_TYPE: u16 = BOARD.image_type;
 /// environment variable BULB_FILE_VERSION at build time (`cargo xtask build` sets it).
 pub const FILE_VERSION: u32 = match option_env!("BULB_FILE_VERSION") {
     Some(s) => parse_hex(s),
-    None => 0x0002_0000,
+    None => 0x0100_0000,
 };
 
 const fn parse_hex(s: &str) -> u32 {

@@ -192,11 +192,11 @@ fn board(p: &Value, image_type: u16) -> Result<Board> {
     }
     let beside = model.starts_with("EBF");
     let kind = match (&rgb, cold) {
-        (Some(_), _) if beside => "open-eglo-ebf",
-        (Some(_), Some(_)) => "open-eglo-rgbtw",
-        (Some(_), None) => "open-eglo-rgbw",
-        (None, Some(_)) => "open-eglo-tw",
-        (None, None) => "open-eglo-dimm",
+        (Some(_), _) if beside => "outglow-ebf",
+        (Some(_), Some(_)) => "outglow-rgbtw",
+        (Some(_), None) => "outglow-rgbw",
+        (None, Some(_)) => "outglow-tw",
+        (None, None) => "outglow-dimm",
     };
     let product = p["ble_product"][0].as_str().and_then(|s| u16::from_str_radix(s.trim_start_matches("0x"), 16).ok())
         .ok_or_else(|| anyhow!("{name}: no BLE product"))?;
@@ -246,7 +246,7 @@ fn firmware_table(boards: &[Board]) -> String {
         let _ = writeln!(s, "{pins}");
         let _ = writeln!(s, "    Board {{");
         let _ = writeln!(s, "        name: \"{}\",", b.name);
-        let _ = writeln!(s, "        tag: \"open-eglo-board:{}\",", b.name);
+        let _ = writeln!(s, "        tag: \"outglow-board:{}\",", b.name);
         let _ = writeln!(s, "        model: \"{}\",", b.model);
         let _ = writeln!(s, "        ble_product: {:#06x},", b.product);
         let _ = writeln!(s, "        hw_revision: \"{}\",", b.hw_revision);

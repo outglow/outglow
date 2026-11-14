@@ -1,4 +1,4 @@
-//! The diagnostics report: what the converter (z2m/open-eglo.mjs) made of
+//! The diagnostics report: what the converter (z2m/outglow.mjs) made of
 //! the Diagnostics cluster and its manufacturer attributes, one state of
 //! Zigbee2MQTT flattened.
 

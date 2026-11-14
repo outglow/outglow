@@ -1,0 +1,21 @@
+# Categories of the changes GitHub lists in a release (generated release notes),
+# by the labels of the merged pull requests.
+changelog:
+  exclude:
+    labels: [skip-changelog]
+    authors: [dependabot]
+  categories:
+    - title: New bulbs and boards
+      labels: [boards]
+    - title: Features
+      labels: [feature, enhancement]
+    - title: Fixes
+      labels: [fix, bug]
+    - title: Network and radio
+      labels: [zigbee, ble, radio]
+    - title: Website and flasher
+      labels: [site, flasher]
+    - title: Tools, tests and CI
+      labels: [tools, tests, ci]
+    - title: Other changes
+      labels: ["*"]

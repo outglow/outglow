@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn outglow_only_when_allowed() {
-        let img = image(b"open-eglo-board:ESMLFzm_w6_TW-4.63\0");
+        let img = image(b"outglow-board:ESMLFzm_w6_TW-4.63\0");
         let e = check_image(&img, false).unwrap_err().to_string();
         assert!(e.contains("--allow-outglow"), "{e}");
         let i = check_image(&img, true).unwrap();
@@ -239,7 +239,7 @@ mod tests {
         assert!(check_image(&img, true).unwrap_err().to_string().contains("CRC"));
         assert!(check_image(&image(b"something else 4.63\0"), true).is_err());
         assert!(check_image(&image(b"ESMLFzm_w6_Dimm\0 4.60 4.63\0"), true).is_err());
-        assert!(check_image(&image(b"open-eglo-board:Nonexistent-4.63\0"), true).is_err());
+        assert!(check_image(&image(b"outglow-board:Nonexistent-4.63\0"), true).is_err());
     }
 
     #[test]

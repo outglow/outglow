@@ -20,8 +20,8 @@
 //! bulb-tc32.elf, .bin (the image as linked), bulb-tc32-ota.bin (with size
 //! and CRC: what goes into the OTA staging area) and bulb-tc32.ota.
 //!
-//! Needs: `TC32_LLVM`, the bin directory of a built llvm-tc32 (default
-//! ~/oss/llvm-tc32/build/bin); the Rust standard library sources for
+//! Needs: llvm-tc32, from `cargo xtask toolchain` (downloaded), or `TC32_LLVM`,
+//! the bin directory of one you built (default ~/oss/llvm-tc32/build/bin); the Rust standard library sources for
 //! build-std (the rust-src component, or `RUST_LIB_SRC`). rustc is the stable
 //! one; RUSTC_BOOTSTRAP=1 lets it take build-std.
 //!
@@ -52,7 +52,7 @@ pub struct Args {
     /// diagnostics for the emulator's test harness (suffix -trace); not for bulbs
     #[arg(long)]
     trace: bool,
-    /// OTA file version, hexadecimal (default $BULB_FILE_VERSION or 00020000)
+    /// OTA file version, hexadecimal: MAJOR, MINOR (a byte each), PATCH (16 bits); default $BULB_FILE_VERSION or 01000000 (1.0.0)
     #[arg(long)]
     file_version: Option<String>,
     /// output directory (one board only)
@@ -118,11 +118,15 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         let names: Vec<&str> = board::BOARDS.iter().map(|b| b.name).collect();
         anyhow!("unknown board {board_name}; the boards: {}", names.join(", "))
     })?;
-    let llvm = std::env::var_os("TC32_LLVM").map(PathBuf::from).unwrap_or_else(|| home().join("oss/llvm-tc32/build/bin"));
+    // TC32_LLVM, else the compiler `cargo xtask toolchain` downloaded, else a build in ~/oss/llvm-tc32
+    let llvm = std::env::var_os("TC32_LLVM").map(PathBuf::from).unwrap_or_else(|| {
+        let cached = crate::toolchain::installed_bin();
+        if cached.join("clang").exists() { cached } else { home().join("oss/llvm-tc32/build/bin") }
+    });
     if !llvm.join("clang").exists() {
-        bail!("no clang in {} (set TC32_LLVM to the bin directory of a built llvm-tc32)", llvm.display());
+        bail!("no clang in {}: run `cargo xtask toolchain` (downloads llvm-tc32) or set TC32_LLVM", llvm.display());
     }
-    let version = a.file_version.clone().or_else(|| std::env::var("BULB_FILE_VERSION").ok()).unwrap_or_else(|| "00020000".into());
+    let version = a.file_version.clone().or_else(|| std::env::var("BULB_FILE_VERSION").ok()).unwrap_or_else(|| "01000000".into());
     let file_version = u32::from_str_radix(version.trim_start_matches("0x"), 16).with_context(|| format!("file version {version}"))?;
     let version = format!("{file_version:08x}");
     let mut features = Vec::new();
@@ -234,7 +238,7 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     let staged = telink::finalize(&image);
     telink::check(&staged).map_err(|e| anyhow!("the finished image fails its own check: {e}"))?;
     std::fs::write(out.join("bulb-tc32-ota.bin"), &staged)?;
-    let file = ota::File::with_image(ota::Header::new(MANUFACTURER, known.image_type, file_version, &format!("eglo-rs {board_name}")), staged.clone());
+    let file = ota::File::with_image(ota::Header::new(MANUFACTURER, known.image_type, file_version, &format!("outglow {board_name}")), staged.clone());
     let packed = file.pack();
     std::fs::write(out.join("bulb-tc32.ota"), &packed)?;
     println!("OK: {} ({} B), firmware {} B, mfg={MANUFACTURER:#06x} imageType={:#06x} fileVersion={file_version:#010x}",

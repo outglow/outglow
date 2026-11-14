@@ -20,7 +20,7 @@ in use, so the bulbs' other neighbours keep getting their vendors' updates.
 
 Zigbee2MQTT offers updates only to devices whose definition says they support
 OTA. For Outglow that definition is the external converter
-[`z2m/open-eglo.mjs`](../z2m/open-eglo.mjs), so install it.
+[`z2m/outglow.mjs`](../z2m/outglow.mjs), so install it.
 
 ## What updates on its own and what does not
 
@@ -76,7 +76,7 @@ For each `bulb-tc32.ota` (one per board, `cargo xtask build --all`) it:
 - reads the OTA header and the board tag of the image inside;
 - adds an entry with `fileName`, `fileVersion`, `fileSize`, `url`, `imageType`,
   `manufacturerCode`, `sha512`, `otaHeaderString`, `modelId` (the model id the
-  image reports: `open-eglo-dimm`, `open-eglo-tw`, …) and `releaseNotes`;
+  image reports: `outglow-dimm`, `outglow-tw`, …) and `releaseNotes`;
 - writes the Bluetooth image next to it into the web flasher's release list.
 
 Entries of other versions stay, so the previous release remains available for

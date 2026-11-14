@@ -6,6 +6,8 @@ mod boards;
 mod build;
 mod index;
 mod mutants;
+mod notes;
+mod toolchain;
 
 #[derive(Parser)]
 #[command(name = "cargo xtask")]
@@ -24,6 +26,10 @@ enum Task {
     Index(index::Args),
     /// Mutation tests: break the code on purpose, the tests must notice
     Mutants(mutants::Args),
+    /// The top of a release's notes: how to install, the files of every board
+    ReleaseNotes(notes::Args),
+    /// Download the prebuilt llvm-tc32 compiler (or say how to build it)
+    Toolchain(toolchain::Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -32,6 +38,8 @@ fn main() -> anyhow::Result<()> {
         Task::Boards(a) => boards::run(a),
         Task::Index(a) => index::run(a),
         Task::Mutants(a) => mutants::run(a),
+        Task::ReleaseNotes(a) => notes::run(a),
+        Task::Toolchain(a) => toolchain::run(a),
     }
 }
 

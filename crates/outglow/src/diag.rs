@@ -1,5 +1,5 @@
 //! Diagnostics and black box of a bulb on Outglow, read through Zigbee2MQTT
-//! with the external converter z2m/open-eglo.mjs (docs/diagnostics.md).
+//! with the external converter z2m/outglow.mjs (docs/diagnostics.md).
 //!
 //! `diag` presses `diagnostics_refresh` (every counter and table read anew),
 //! waits for the state and prints: the start (uptime, resets, why), the

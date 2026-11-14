@@ -40,19 +40,19 @@ export interface BulbsFile {
 
 /** The filter groups of the page, by board kind. */
 export const GROUPS: Record<string, "dimmable" | "tunable" | "colour"> = {
-  "open-eglo-dimm": "dimmable",
-  "open-eglo-tw": "tunable",
-  "open-eglo-rgbtw": "colour",
-  "open-eglo-rgbw": "colour",
-  "open-eglo-ebf": "colour",
+  "outglow-dimm": "dimmable",
+  "outglow-tw": "tunable",
+  "outglow-rgbtw": "colour",
+  "outglow-rgbw": "colour",
+  "outglow-ebf": "colour",
 };
 
-const BADGES: Record<string, string> = {
-  "open-eglo-dimm": "Dimmable white",
-  "open-eglo-tw": "Tunable white",
-  "open-eglo-rgbtw": "Colour + tunable white",
-  "open-eglo-rgbw": "Colour + white",
-  "open-eglo-ebf": "White + colour ring",
+export const BADGES: Record<string, string> = {
+  "outglow-dimm": "Dimmable white",
+  "outglow-tw": "Tunable white",
+  "outglow-rgbtw": "Colour + tunable white",
+  "outglow-rgbw": "Colour + white",
+  "outglow-ebf": "White + colour ring",
 };
 
 const CONFIDENCE: Record<Confidence, string> = {
@@ -60,6 +60,15 @@ const CONFIDENCE: Record<Confidence, string> = {
   likely: "Likely: same product family and light, not seen reporting the board",
   inferred: "Inferred from the module name; unconfirmed",
 };
+
+const RANK: Record<Confidence, number> = { confirmed: 0, likely: 1, inferred: 2 };
+
+/** The products known with a board (model and hardware revision), the surest first. */
+export function productsFor(data: BulbsFile, model: string, revision: string): { b: BulbBoard; products: Product[] } | null {
+  const b = data.boards.find((x) => x.board === model && x.revisions.includes(revision));
+  if (!b) return null;
+  return { b, products: [...b.products].sort((x, y) => RANK[x.confidence] - RANK[y.confidence]) };
+}
 
 /** Lower-case text a search term is matched against. */
 export function haystack(b: BulbBoard, p: Product): string {
@@ -213,8 +222,8 @@ async function main(): Promise<void> {
     });
   }
   search.addEventListener("input", apply);
-  const q = new URLSearchParams(location.search).get("q");
-  if (q) search.value = q;
+  const start = new URLSearchParams(location.search).get("q");
+  if (start) search.value = start;
   apply();
 }
 
