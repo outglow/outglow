@@ -59,6 +59,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: emulator/rs
+      - name: tc32-devtools (instruction form check of rust_fw; the build does not need it)
+        run: |
+          git clone -q https://github.com/goyamamoto/tc32-devtools "$RUNNER_TEMP/tc32-devtools"
+          git -C "$RUNNER_TEMP/tc32-devtools" checkout -q 2e1bcaed762e3124b024047db981172d2b0395ba
+          echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
       - name: Build the firmware (dimmable filament bulb)
         run: crates/bulb-tc32/build.sh
       - name: Scenarios

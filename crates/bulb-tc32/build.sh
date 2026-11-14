@@ -13,7 +13,7 @@
 #   clang -mcpu=tc32 -Oz                     ->  TC32 object
 #   clang -mcpu=tc32 boot/start.S            ->  TC32 object
 #   ld.lld -T boot/link.ld --gc-sections     ->  ELF
-#   tc32-devtools elf2bin.py                 ->  flash image
+#   ota-packer/elf2bin.py                    ->  flash image
 #   ota-packer                               ->  image with CRC, Zigbee .ota file
 #
 # Variables:
@@ -41,7 +41,6 @@
 # Needs:
 #   TC32_LLVM      bin directory of a built llvm-tc32
 #                  (default ~/oss/llvm-tc32/build/bin)
-#   TC32_DEVTOOLS  checkout of goyamamoto/tc32-devtools (default ~/oss/tc32-devtools)
 #   RUST_LIB_SRC   the Rust standard library sources of the installed rustc,
 #                  for build-std (default: nixpkgs#rustPlatform.rustLibSrc, or
 #                  the rust-src component in the sysroot)
@@ -56,7 +55,6 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 llvm=${TC32_LLVM:-$HOME/oss/llvm-tc32/build/bin}
-devtools=${TC32_DEVTOOLS:-$HOME/oss/tc32-devtools}
 variant=${VARIANT:-dimm}
 version=${BULB_FILE_VERSION:-00020000}
 case "${BLE:-1}" in
@@ -94,7 +92,6 @@ features="--no-default-features --features=$ble,"
 target=thumbv4t-none-eabi
 
 [ -x "$llvm/clang" ] || { echo "build.sh: no clang in $llvm (set TC32_LLVM)" >&2; exit 1; }
-[ -f "$devtools/compiler/elf2bin.py" ] || { echo "build.sh: no tc32-devtools in $devtools (set TC32_DEVTOOLS)" >&2; exit 1; }
 
 if [ -z "${RUST_LIB_SRC:-}" ]; then
     sysroot_src=$(rustc --print sysroot)/lib/rustlib/src/rust/library
@@ -163,7 +160,7 @@ cflags="--target=$target -mcpu=tc32 -mthumb -mfloat-abi=soft"
 echo "== link"
 "$llvm/ld.lld" -T "$here/boot/link.ld" --gc-sections -Map="$out/bulb-tc32.map" \
     "$out/start.o" "$out/rust.o" -o "$out/bulb-tc32.elf"
-python3 "$devtools/compiler/elf2bin.py" "$out/bulb-tc32.elf" "$out/bulb-tc32.bin"
+python3 "$root/ota-packer/elf2bin.py" "$out/bulb-tc32.elf" "$out/bulb-tc32.bin"
 "$llvm/llvm-size" "$out/bulb-tc32.elf"
 
 echo "== OTA image"

@@ -1,15 +1,12 @@
 name: TC32 toolchain
 description: >
   The llvm-tc32 fork (clang, lld and the LLVM tools build.sh uses, ARM target
-  only), cached by commit, tc32-devtools, and the pinned Rust toolchain with
-  rust-src. Sets TC32_LLVM and TC32_DEVTOOLS.
+  only), cached by commit, and the pinned Rust toolchain with rust-src.
+  Sets TC32_LLVM.
 inputs:
   llvm-ref:
     description: commit of goyamamoto/llvm-tc32 (branch tc32/23.1.2)
     default: 27606ee65ffaa0f41a9a8beaabee654325732b62
-  devtools-ref:
-    description: commit of goyamamoto/tc32-devtools
-    default: 2e1bcaed762e3124b024047db981172d2b0395ba
 runs:
   using: composite
   steps:
@@ -25,7 +22,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/llvm-tc32
-        key: llvm-tc32-${{ runner.os }}-${{ inputs.llvm-ref }}
+        key: llvm-tc32-${{ runner.os }}-${{ inputs.llvm-ref }}-tools2
 
     - name: Build llvm-tc32 (first run only, about an hour)
       if: steps.cache.outputs.cache-hit != 'true'
@@ -43,15 +40,8 @@ runs:
           -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF \
           -DLLVM_INCLUDE_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$PREFIX"
         ninja -C build install-clang install-clang-resource-headers install-lld \
-          install-llvm-link install-llvm-dis install-llvm-ar install-llvm-size
+          install-llvm-link install-llvm-dis install-llvm-ar install-llvm-size install-llvm-objdump
 
-    - name: tc32-devtools
+    - name: Environment
       shell: bash
-      env:
-        REF: ${{ inputs.devtools-ref }}
-      run: |
-        git init -q "$RUNNER_TEMP/tc32-devtools" && cd "$RUNNER_TEMP/tc32-devtools"
-        git remote add origin https://github.com/goyamamoto/tc32-devtools
-        git fetch -q --depth 1 origin "$REF" && git checkout -q FETCH_HEAD
-        echo "TC32_LLVM=$RUNNER_TEMP/llvm-tc32/bin" >> "$GITHUB_ENV"
-        echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
+      run: echo "TC32_LLVM=$RUNNER_TEMP/llvm-tc32/bin" >> "$GITHUB_ENV"

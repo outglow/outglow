@@ -163,9 +163,15 @@ impl Out<'_> {
     }
 }
 
-/// tc32-devtools' compiler checks, run as the Python script runs them.
+/// tc32-devtools' compiler checks, run as the Python script runs them, when a
+/// checkout is there (TC32_DEVTOOLS, default ~/oss/tc32-devtools); the build
+/// does not need it.
 fn tool_check(o: &mut Out, name: &str, script: &str, args: &[&str]) {
     let root = std::env::var("TC32_DEVTOOLS").unwrap_or_else(|_| format!("{}/oss/tc32-devtools", std::env::var("HOME").unwrap_or_default()));
+    if !std::path::Path::new(&format!("{root}/compiler/{script}")).exists() {
+        o.say(&format!("  (not checked: {name}; no tc32-devtools in {root}, set TC32_DEVTOOLS)"));
+        return;
+    }
     let llvm = llvm_dir();
     let r = Command::new("python3")
         .arg(format!("{root}/compiler/{script}"))

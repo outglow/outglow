@@ -51,11 +51,10 @@ Written from scratch in Rust, with no vendor code: the chip start-up, the
 
 The TC32 core of the TLSR8258 has no backend in upstream LLVM, so the build
 goes through LLVM bitcode and the [llvm-tc32](https://github.com/goyamamoto/llvm-tc32)
-fork, with [tc32-devtools](https://github.com/goyamamoto/tc32-devtools) for the
-image tools:
+fork:
 
 ```sh
-TC32_LLVM=/path/to/llvm-tc32/build/bin TC32_DEVTOOLS=/path/to/tc32-devtools \
+TC32_LLVM=/path/to/llvm-tc32/build/bin \
   crates/bulb-tc32/build.sh                    # dimmable filament bulb
 crates/bulb-tc32/build.sh BOARD=EGLO_ZM_TW-4.62  # any board of boards.tsv
 ```
