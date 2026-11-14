@@ -4,91 +4,79 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Outglow</title>
-<meta name="description" content="Open firmware for Zigbee bulbs on the Telink TLSR8258: a Zigbee router written in Rust, flashed over Bluetooth without opening the bulb.">
+<meta name="description" content="Open-source firmware for EGLO connect.z and AwoX Zigbee bulbs: a dependable Zigbee router you can look inside, installed from your browser.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
 <header class="site">
-  <a class="logo" href="./">out<span>glow</span></a>
+  <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <nav>
     <a href="./" aria-current="page">Overview</a>
+    <a href="bulbs.html">Supported bulbs</a>
     <a href="install.html">Install</a>
     <a href="flasher/">Flasher</a>
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
 <main>
-  <h1>Open firmware for sealed smart bulbs</h1>
-  <p class="lead">Outglow replaces the closed firmware of Zigbee bulbs built on the Telink TLSR8258
-    with an open one: a Zigbee router written in Rust that you can read, test and change.
-    It goes on over Bluetooth, straight from the original firmware, so the bulb never has to be opened.</p>
+  <h1>Open firmware for your smart bulbs</h1>
+  <p class="lead">Outglow is open-source firmware for EGLO connect.z and AwoX Zigbee bulbs. It turns them into
+    dependable Zigbee routers you can look inside, keeps the Bluetooth app working, and installs from your browser
+    in about five minutes.</p>
   <div class="cta">
     <a class="button primary" href="install.html">How to install</a>
-    <a class="button" href="flasher/">Open the flasher</a>
+    <a class="button" href="bulbs.html">Supported bulbs</a>
     <a class="button" href="https://github.com/outglow/outglow">Source code</a>
   </div>
 
-  <div class="note">
-    <strong>Experimental.</strong>
-    Outglow runs on one real bulb (a dimmable filament bulb, ESMLFzm_w6_Dimm 4.63) in a home network.
-    Every other board below is built and tested in an emulator of the chip against that board's original
-    firmware, but has not run on real hardware yet. Flashing firmware can leave a bulb unusable; do it only
-    if you accept that risk.
-  </div>
-
-  <h2>What it does</h2>
+  <h2>What you get</h2>
   <div class="grid">
     <div class="card">
-      <h3>A Zigbee router in Rust</h3>
-      <p>Its own Zigbee PRO stack, without allocation or <code>unsafe</code>: network security, mesh routing,
-        children for end devices, groups, scenes, colour, OTA updates with resume, touchlink and a Green Power proxy.
-        Not certified by the Connectivity Standards Alliance.</p>
+      <h3>A steadier mesh</h3>
+      <p>Every mains-powered bulb relays traffic for the rest of your network. Outglow picks routes by how many frames
+        actually get through, and does not jump between them at the first lost frame.</p>
+    </div>
+    <div class="card">
+      <h3>Works with your hub</h3>
+      <p>A standard Zigbee 3.0 light: on/off, brightness, colour temperature and colour, groups and scenes. Tested with
+        Zigbee2MQTT, which can also install Outglow updates for you.</p>
+    </div>
+    <div class="card">
+      <h3>The same light</h3>
+      <p>Brightness curves, colours and power-on behaviour copy the original firmware of each bulb, checked level by
+        level against it.</p>
     </div>
     <div class="card">
       <h3>Bluetooth stays</h3>
-      <p>The bulb keeps the Bluetooth profile of the original firmware, so the vendor app still controls it and the
-        same Bluetooth update path takes you back. From Zigbee you can switch Bluetooth off or limit it to a window after power-on.</p>
+      <p>The vendor app still works, and so does the way back to the original firmware. If you don't use Bluetooth,
+        switch it off in Zigbee2MQTT, or keep it on only for a few minutes after power-on.</p>
     </div>
     <div class="card">
-      <h3>Light as before</h3>
-      <p>Brightness curves, colour and power-on behaviour are taken from each board's original firmware and compared
-        with it level by level in the emulator.</p>
+      <h3>See what your bulb sees</h3>
+      <p>Neighbours, link quality, retries, radio noise and a black box of the last frames, readable in Zigbee2MQTT.
+        When the network misbehaves, you can find out why.</p>
     </div>
     <div class="card">
-      <h3>A router you can see into</h3>
-      <p>Diagnostics over Zigbee: counters, neighbours and link costs, noise floor, stack depth and a black box of the
-        last frames sent. A Zigbee2MQTT converter shows them.</p>
-    </div>
-    <div class="card">
-      <h3>Tested before it ships</h3>
-      <p>Hundreds of host tests and scenarios in an emulator of the TLSR8258 that runs the real firmware images,
-        including the original firmware side by side, so anyone can check a change between bulbs before flashing it.</p>
-    </div>
-    <div class="card">
-      <h3>Free software</h3>
-      <p>GPL-3.0-or-later: whoever ships Outglow on a device must give you the source and a way to install your own
-        version.</p>
+      <h3>Open, from the ground up</h3>
+      <p>Written from scratch in Rust, with no vendor code, and tested in an emulator that runs the real firmware
+        images. GPL-3.0-or-later. Not certified by the Connectivity Standards Alliance.</p>
     </div>
   </div>
 
-  <h2>Supported bulbs</h2>
-  <p>Bulbs with the Telink TLSR8258 module and the AwoX Bluetooth profile, sold under the EGLO Connect.Z name among
-    others. The board is the model and hardware revision the bulb reports over Bluetooth; each needs its own image.</p>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Board</th><th>Light</th><th>Bluetooth product</th><th>Zigbee OTA image type</th></tr></thead>
-      <tbody id="boards"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
-    </table>
-  </div>
-  <noscript><p>The list needs JavaScript; it is also in the repository, <code>crates/bulb-tc32/boards.tsv</code>.</p></noscript>
+  <h2>Which bulbs?</h2>
+  <p>Zigbee bulbs and lights sold as EGLO connect.z and AwoX that use the Telink TLSR8258 module: filament bulbs,
+    GU10 and E14 spots, colour bulbs and ceiling lights. Outglow has a firmware image for each of the 21 module
+    versions inside them, and the flasher picks the right one.</p>
+  <p><a href="bulbs.html">See the list of products →</a></p>
 
   <h2>How it gets onto a bulb</h2>
   <ol class="steps">
-    <li><strong>First time, over Bluetooth.</strong> The original firmware accepts a firmware update over Bluetooth
-      without a password. The <a href="flasher/">browser flasher</a> sends the Outglow image the same way the vendor app sends updates.</li>
-    <li><strong>Then over Zigbee.</strong> Outglow is an ordinary Zigbee OTA client: Zigbee2MQTT can offer it new versions
-      from the <a href="https://github.com/outglow/outglow/tree/main/ota">Outglow OTA index</a>.</li>
-    <li><strong>Back to the original.</strong> The original firmware goes back by the same Bluetooth path (or by Zigbee OTA).</li>
+    <li><strong>The first time, over Bluetooth.</strong> Open the <a href="flasher/">flasher</a> in Chrome or Edge,
+      pick the bulb, and it installs the right image, the same way the vendor app installs its updates.</li>
+    <li><strong>After that, over Zigbee.</strong> Zigbee2MQTT offers new Outglow versions like any other firmware
+      update.</li>
+    <li><strong>Changed your mind?</strong> The original firmware goes back the same way.</li>
   </ol>
   <p><a href="install.html">Step-by-step guide →</a></p>
 </main>
@@ -97,6 +85,5 @@
   EGLO, AwoX, Telink and Zigbee are trademarks of their owners; Outglow is not affiliated with or endorsed by them,
   and their names only say which devices it works with.
 </footer>
-<script type="module" src="/src/home.ts"></script>
 </body>
 </html>

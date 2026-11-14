@@ -1,6 +1,6 @@
 name: TC32 toolchain
 description: >
-  The llvm-tc32 fork (clang, lld and the LLVM tools build.sh uses, ARM target
+  The llvm-tc32 fork (clang, lld and the LLVM tools `cargo xtask build` uses, ARM target
   only), cached by commit, and the pinned Rust toolchain with rust-src.
   Sets TC32_LLVM.
 inputs:

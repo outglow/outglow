@@ -854,7 +854,7 @@ impl Rig {
         rsp[1..].to_vec()
     }
 
-    /// The factory mesh password of this bulb (reference value from flasher/awox_ota.py).
+    /// The factory mesh password of this bulb (reference value from crates/outglow/src/flash/protocol.rs).
     pub fn secure_password() -> [u8; 16] {
         // sha256(a4 c1 38 11 22 33, 56e850edcfdd8b99, 00 00)[..16]
         [0x82, 0xbf, 0x5e, 0x36, 0x56, 0xb2, 0xc0, 0xa6, 0xe4, 0x6f, 0xa4, 0x3c, 0xaa, 0x90, 0x4a, 0xcd]

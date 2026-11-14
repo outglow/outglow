@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supported bulbs · Outglow</title>
+<meta name="description" content="Which EGLO connect.z and AwoX Zigbee bulbs and lights each Outglow firmware board runs on, with article numbers and how sure the match is.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
+  <nav>
+    <a href="./">Overview</a>
+    <a href="bulbs.html" aria-current="page">Supported bulbs</a>
+    <a href="install.html">Install</a>
+    <a href="flasher/">Flasher</a>
+    <a href="https://github.com/outglow/outglow">Source</a>
+  </nav>
+</header>
+<main>
+  <h1>Supported bulbs</h1>
+  <p class="lead">Products known to work with Outglow. Inside each is one of 21 module versions, called boards;
+    Outglow has a firmware image for each.</p>
+
+  <div class="note">
+    <strong>Check the bulb, not the box.</strong>
+    The same product has shipped with different modules, and a vendor update can change what a bulb reports. The
+    <a href="flasher/">flasher</a> reads the board from the bulb itself and only installs the image made for it, so
+    use this list to find candidates.
+  </div>
+
+  <div class="bulb-tools">
+    <div class="filters" role="group" aria-label="Light type">
+      <button type="button" data-filter="all" aria-pressed="true">All</button>
+      <button type="button" data-filter="dimmable" aria-pressed="false">Dimmable</button>
+      <button type="button" data-filter="tunable" aria-pressed="false">Tunable white</button>
+      <button type="button" data-filter="colour" aria-pressed="false">Colour</button>
+    </div>
+    <label class="search">
+      <span class="visually-hidden">Search</span>
+      <input id="search" type="search" placeholder="Article number, name or board" autocomplete="off">
+    </label>
+    <span id="count" class="muted" aria-live="polite"></span>
+  </div>
+
+  <div id="bulbs" class="bulb-grid"><p class="muted">Loading…</p></div>
+  <noscript><p>The list needs JavaScript; the data is in <code>site/public/bulbs.json</code> in the repository.</p></noscript>
+
+  <h2>How sure is each match?</h2>
+  <ul>
+    <li><span class="badge conf-confirmed">confirmed</span> a bulb with that article number was seen reporting this
+      board (in Zigbee2MQTT reports, its device database, or on a bulb we own).</li>
+    <li><span class="badge conf-likely">likely</span> the same product family and light as a confirmed one, but nobody
+      has reported its board yet.</li>
+    <li><span class="badge conf-inferred">inferred</span> only the board's name points to it (for example
+      <code>c5_E14</code>: 5&nbsp;W colour, E14 socket). Treat it as a guess until the flasher confirms it.</li>
+  </ul>
+
+  <h2>Boards without a confirmed product</h2>
+  <ul id="unknown"><li class="muted">Loading…</li></ul>
+  <p>Have one of these, or a bulb that is not listed? Connect it in the flasher (nothing is written until you start
+    an update) and <a href="https://github.com/outglow/outglow/issues">open an issue</a> with the model and hardware
+    revision it shows and the article number from the box.</p>
+
+  <h2>Picture credits</h2>
+  <p class="muted">Product pictures and names © their owners; shown to identify compatible devices. Backgrounds were
+    removed and the pictures scaled for this page.</p>
+  <ul id="credits" class="credits"></ul>
+</main>
+<footer class="site">
+  Outglow is free software under the GNU GPL version 3 or later.
+  EGLO, AwoX, Telink and Zigbee are trademarks of their owners; Outglow is not affiliated with or endorsed by them,
+  and their names only say which devices it works with.
+</footer>
+<script type="module" src="/src/bulbs.ts"></script>
+</body>
+</html>

@@ -66,12 +66,12 @@ when the bulb asks. Manual checks and scheduled updates still work.
 ## Making the index
 
 ```sh
-python3 ota/make-index.py --version 0.2.4 --tag v0.2.4 --notes "..." \
+cargo xtask index --version 0.2.4 --tag v0.2.4 --notes "..." \
     --site site/public/firmware.json --assets release-assets/ \
     target/tc32*/bulb-tc32.ota
 ```
 
-For each `bulb-tc32.ota` (one per board, `crates/bulb-tc32/build.sh BOARD=...`) the script:
+For each `bulb-tc32.ota` (one per board, `cargo xtask build --all`) it:
 
 - reads the OTA header and the board tag of the image inside;
 - adds an entry with `fileName`, `fileVersion`, `fileSize`, `url`, `imageType`,

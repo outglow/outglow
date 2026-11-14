@@ -19,12 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Bluetooth headers (btleplug)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             .
             emulator/rs
       - run: cargo test --workspace
+      - name: Board tables up to date
+        run: cargo xtask boards --check
       - name: Emulator unit tests
         run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble
 
@@ -41,10 +45,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install pycryptodome
+      - name: Bluetooth headers (btleplug; the tests run `outglow ble vectors`)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
       - run: npm ci
       - run: npm test
       - run: npm run build
@@ -65,7 +68,7 @@ jobs:
           git -C "$RUNNER_TEMP/tc32-devtools" checkout -q 2e1bcaed762e3124b024047db981172d2b0395ba
           echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
       - name: Build the firmware (dimmable filament bulb)
-        run: crates/bulb-tc32/build.sh
+        run: cargo xtask build
       - name: Scenarios
         run: cargo sims-quick
       - name: Zigbee conformance

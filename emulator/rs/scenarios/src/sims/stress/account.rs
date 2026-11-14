@@ -4,7 +4,7 @@
 //! Two sources besides the air:
 //! - every bulb radio's fate log (`zbnode::radio154::RxFate`): what became of
 //!   each frame that reached it (received, collision, receiver off and why);
-//! - for Rust images built with `TRACE=1` (`crates/bulb-tc32/build.sh`), the
+//! - for Rust images built with `cargo xtask build --trace`, the
 //!   firmware's own record of what it did with each frame (`ZB_TRACE`, the
 //!   kinds in `zigbee::hal::trace` and `bulb-tc32/src/trace.rs`) and the radio
 //!   queue's drop counter (`RADIO_DROPPED`).

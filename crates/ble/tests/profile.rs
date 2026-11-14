@@ -48,7 +48,7 @@ fn block_packet(key: &[u8; 16], kind: u8, payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn the_test_client_builds_what_the_python_clients_build() {
-    // vectors from flasher/awox_ota.py and emulator/awox_mesh.py for the
+    // vectors from crates/outglow/src/flash/protocol.rs and emulator/awox_mesh.py for the
     // address a4:c1:38:11:22:33, random 01..08, device random 11..18
     let mut rig = Rig::new(DIMMABLE);
     rig.key = Some(hex("3c048be01d5756b9cfb9c7e0798f7871").try_into().unwrap());

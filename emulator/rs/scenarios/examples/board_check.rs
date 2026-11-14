@@ -7,7 +7,7 @@
 //!   cargo run --release -p scenarios --example board_check -- --only EGLO_ZM_TW
 //!
 //! Options: --only TEXT (board names containing it), --build (run
-//! crates/bulb-tc32/build.sh BOARD=<name> for each first), --jobs N (all
+//! cargo xtask build --board <name> for each first), --jobs N (all
 //! cores), --cpi N (3), --out DIR (keep our profiles there), --level-step,
 //! --ct-step, --hue-step, --sat-step N. Exit status 1 when a check failed.
 

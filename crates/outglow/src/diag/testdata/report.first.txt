@@ -1,0 +1,20 @@
+== start: uptime 1176 s, resets 8, last cause software, watchdog resets 0
+== network: channel 15, PAN 0x1a2b, ext PAN 0x00124b0000001234, update id 1, key seq 0, frame counter 29249, depth 1, parent 0x0000
+== health: good; to the coordinator: direct, cost 3, many-to-one False, routes 2, route discoveries ?
+   Network Status received 2 (last: no route available (0x1003)), sent 0 (last: -)
+== radio: noise floor -105 dBm (max -102), CCA busy 481, channel access failures 0
+   MAC unicasts sent 7830, retries 591 (7.5%), failed 7 (0.1%)
+   RSSI of frames heard: <-90 26.1%  -90..-80 31.8%  -80..-70 20.9%  -70..-60 9.0%  >-60 12.2%
+   neighbours added 72, removed 14, stale 994; NWK counter failures 36, decrypt failures 1.0
+   relayed 9; lost: queue 0, no route 0, next hop 0
+== Bluetooth: connections 1, disconnects 1, links lost 0, events 146, skipped 3 (2.0%), radio lent 455899 ms
+== worst cases: main loop 293462 µs (watchdog 2 000 000), BLE loan 3205 µs, flash erase 0 µs; stack never used 7676 B (interrupts None B)
+== neighbours (L = LQI, cost = what it says of our frames, age in link status periods, st = times stale,
+   link = cost routing uses, m = measured, deliv = attempts acknowledged)
+   addr    LQI cost age flags  st    rx RSSI avg/min   tx retry fail link deliv
+   0x1001  127    1   1 RL-     0   447   -55/-59       0     0    0    1     -
+   0x0000   60    1   0 RL-     0   486   -76/-79     205    14    0   1m   95%
+   0x1002    3    0   8 --C     3     1   -98/-101      9     1    2    ? 97.5%
+== events, newest first (#start, seconds since that start)
+   #8 +707s neighbour 0x1001 added (LQI 9)
+   {'a': 2, 'b': 8, 'kind': 'start', 'seq': 0, 'start': 8, 't': 0}

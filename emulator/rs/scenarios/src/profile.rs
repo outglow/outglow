@@ -18,7 +18,7 @@
 //!   1..254, colour temperature over its range, hue and saturation (images
 //!   with hue/saturation), level at a saturated colour, four xy points.
 //!
-//! The JSON is the one emulator/gen_boards.py reads (key names and value forms
+//! The JSON is the one `cargo xtask boards` reads (key names and value forms
 //! as the former Python tool wrote them).
 
 use std::collections::{BTreeSet, VecDeque};
@@ -651,7 +651,7 @@ pub fn boards() -> Result<Vec<(String, bool, String)>, String> {
         .collect())
 }
 
-/// Where crates/bulb-tc32/build.sh BOARD=<name> puts the image.
+/// Where `cargo xtask build --board <name>` puts the image.
 pub fn image_dir(name: &str) -> PathBuf {
     let d = match name {
         "ESMLFzm_w6_Dimm-4.63" => "tc32".to_string(),
@@ -796,12 +796,13 @@ pub fn check_board(name: &str, a: &Opts) -> (Vec<Row>, Option<J>) {
     }
 }
 
-/// Builds the image of a board (crates/bulb-tc32/build.sh BOARD=<name>).
+/// Builds the image of a board (`cargo xtask build --board <name>`).
 pub fn build_board(name: &str) -> Result<(), String> {
-    let r = std::process::Command::new(repo_root().join("crates/bulb-tc32/build.sh"))
-        .env("BOARD", name)
+    let r = std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .current_dir(repo_root())
+        .args(["xtask", "build", "--board", name])
         .output()
-        .map_err(|e| format!("build.sh: {e}"))?;
+        .map_err(|e| format!("cargo xtask build: {e}"))?;
     if !r.status.success() {
         let tail = |b: &[u8]| {
             let s = String::from_utf8_lossy(b);

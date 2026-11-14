@@ -126,7 +126,7 @@ impl SimCtx {
         if path.starts_with("stock/") {
             "the original firmware: tools/extract-stock-images.sh"
         } else {
-            "the Rust firmware: crates/bulb-tc32/build.sh"
+            "the Rust firmware: cargo xtask build (--board, --file-version)"
         }
     }
 

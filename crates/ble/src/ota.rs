@@ -1,5 +1,5 @@
 //! Firmware update in AwoX's format, on the two update characteristics of
-//! the mesh service: what the AwoX app and `flasher/ble_ota.py` speak.
+//! the mesh service: what the AwoX app and `outglow ble push` speak.
 //!
 //! - data packet `index (LE16), block, crc16 (LE)`: CRC-16/MODBUS over index
 //!   and block; the block goes to `index * block size` of the staging area,

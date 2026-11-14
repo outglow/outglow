@@ -12,6 +12,7 @@ export default defineConfig({
       input: {
         index: resolve(import.meta.dirname, "index.html"),
         install: resolve(import.meta.dirname, "install.html"),
+        bulbs: resolve(import.meta.dirname, "bulbs.html"),
         flasher: resolve(import.meta.dirname, "flasher/index.html"),
       },
     },

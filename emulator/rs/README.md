@@ -34,7 +34,7 @@ cargo sims-quick                 # a few scenarios for every change
 cargo stress                     # the house mesh under loss, noise and power cuts
 ```
 
-The Rust image is `target/tc32/bulb-tc32.bin` (`crates/bulb-tc32/build.sh`).
+The Rust image is `target/tc32/bulb-tc32.bin` (`cargo xtask build`).
 Scenarios that need another image (another board, a second OTA version, the
 original firmware) are skipped when it is missing, and say how to get it. The
 original firmware comes from the vendor's app on your machine:
@@ -146,7 +146,7 @@ relayed frame a bulb acknowledged and never passed on, and for each MAC
 retransmission: why the attempt before it got no acknowledgement. Sources:
 every bulb radio's fate log (each frame that reached the radio and what became
 of it: "collision", "off at start: transmitting", "BLE mode", ...) and, for a
-Rust image built with `TRACE=1 crates/bulb-tc32/build.sh` (`target/tc32-trace`,
+Rust image built with `cargo xtask build --trace` (`target/tc32-trace`,
 not for real bulbs), the firmware's own record of every frame, flash write and
 BLE event.
 

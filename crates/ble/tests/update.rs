@@ -7,7 +7,7 @@ use sim::{make_image, ota_packet, Rig, DIMMABLE};
 const OTA: u16 = 0x1b;
 const OTA_CLASSIC: u16 = 0x18;
 
-/// Sends an image the way flasher/awox_ota.py does: 16-byte blocks, the
+/// Sends an image the way crates/outglow/src/flash/protocol.rs does: 16-byte blocks, the
 /// last one padded with 0xff. Returns the number of blocks.
 fn send_blocks(rig: &mut Rig, handle: u16, image: &[u8]) -> u16 {
     for (i, block) in image.chunks(16).enumerate() {

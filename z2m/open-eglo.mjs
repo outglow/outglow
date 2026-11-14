@@ -20,7 +20,7 @@
 // - the black box (crates/zigbee/src/stack/blackbox.rs), not exposed and
 //   never polled: setting `black_box_read` to "all" (or a page number) reads
 //   its pages, each published as `black_box_page` {page, hex};
-//   tools/bulb-diag.py --dump does that and decodes them.
+//   `outglow box` does that and decodes them.
 //
 // Everything is read every `diagnostics_poll_interval` seconds (default 600;
 // 0: only on demand): 13 + 10 Read Attributes frames, nothing reported.

@@ -17,6 +17,7 @@ function el<T extends HTMLElement = HTMLElement>(id: string): T {
 const ui = {
   support: el("support"), connect: el<HTMLButtonElement>("connect"), disconnect: el<HTMLButtonElement>("disconnect"),
   bulb: el("bulb"), proposal: el("proposal"), release: el<HTMLSelectElement>("release"), image: el("image"),
+  restore: el<HTMLButtonElement>("restore"),
   problems: el("problems"), confirm: el<HTMLInputElement>("confirm"), start: el<HTMLButtonElement>("start"),
   stop: el<HTMLButtonElement>("stop"), file: el<HTMLInputElement>("file"), stock: el<HTMLInputElement>("stock"),
   login: el<HTMLInputElement>("login"), meshName: el<HTMLInputElement>("mesh-name"), mac: el<HTMLInputElement>("mac"),
@@ -42,13 +43,15 @@ interface State {
   img: Uint8Array | null;
   info: ota.ImageInfo | null;
   local: boolean;
+  /** the image is the vendor's original firmware from the site's own copy (hash checked) */
+  original: boolean;
   busy: boolean;
   abort: AbortController | null;
 }
 
 const state: State = {
   boards: [], manifest: { schema: 1, images: [] }, device: null, chars: null, bulb: null, board: undefined,
-  img: null, info: null, local: false, busy: false, abort: null,
+  img: null, info: null, local: false, original: false, busy: false, abort: null,
 };
 const lines: string[] = [];
 
@@ -195,6 +198,7 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
 function takeImage(bytes: Uint8Array, source: string, local: boolean): void {
   state.img = null;
   state.info = null;
+  state.original = false;
   try {
     const info = ota.checkImage(bytes, state.boards);
     state.img = bytes;
@@ -261,14 +265,42 @@ async function chooseRelease(): Promise<void> {
   }
 }
 
+/** The original firmware of the connected bulb's board, from the site's copy (original/manifest.json). */
+async function restoreOriginal(): Promise<void> {
+  if (!state.board) return;
+  const board = state.board.name;
+  try {
+    const base = new URL(`${BASE}original/`, location.href);
+    const res = await fetch(new URL("manifest.json", base), { cache: "no-cache" });
+    if (!res.ok) throw new Error("the original firmware is not available on this site");
+    const m = (await res.json()) as { images: { board: string; file: string; size: number; sha256: string; firmware_version: string }[] };
+    const e = m.images.find((i) => i.board === board);
+    if (!e) throw new Error(`no original firmware for ${board}`);
+    log(`downloading the original firmware ${e.firmware_version} for ${board}`);
+    const r = await fetch(new URL(e.file, base));
+    if (!r.ok) throw new Error(`download failed: HTTP ${r.status}`);
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length !== e.size || (await sha256Hex(bytes)) !== e.sha256) throw new Error("the original firmware does not match its checksum");
+    ui.release.value = "";
+    takeImage(bytes, `original ${board} ${e.firmware_version}`, false);
+    if (state.info && !state.info.outglow) {
+      state.original = true;
+      ui.proposal.textContent = `Board ${board}: the original firmware ${e.firmware_version} is ready to go back on.`;
+    }
+  } catch (err) {
+    log((err as Error).message, "err");
+  }
+  render();
+}
+
 // ---- the update ---------------------------------------------------------------------------
 
 function problems(): string[] {
   const out: string[] = [];
   if (!state.chars || !state.bulb) out.push("Connect to a bulb.");
   if (!state.img || !state.info) out.push("Choose a firmware image.");
-  if (state.info && !state.info.outglow && !(state.local && ui.stock.checked)) {
-    out.push("This is the original firmware: allow it under Advanced options to go back to it.");
+  if (state.info && !state.info.outglow && !state.original && !(state.local && ui.stock.checked)) {
+    out.push("This is the original firmware: use Restore original firmware, or allow a local file under Advanced options.");
   }
   if (state.bulb && state.info) {
     let p = ota.matchBulb(state.info, state.bulb);
@@ -390,6 +422,7 @@ function render(): void {
   ui.disconnect.disabled = state.busy || !connected;
   ui.stop.disabled = !state.busy;
   ui.release.disabled = state.busy;
+  ui.restore.disabled = state.busy || !connected || !state.board;
   ui.anyRevisionConfirm.hidden = !ui.anyRevision.checked;
   const b = state.bulb;
   if (connected && b) {
@@ -407,7 +440,7 @@ function render(): void {
   } else {
     ui.bulb.replaceChildren(Object.assign(document.createElement("p"), {
       className: "muted",
-      textContent: "Not connected. Switch the bulb off and on first: the original firmware accepts Bluetooth for about 20 minutes after power-on.",
+      textContent: "Not connected. Switch the bulb off and on, then connect within 20 minutes.",
     }));
   }
   ui.image.textContent = state.info && state.img
@@ -441,6 +474,7 @@ async function main(): Promise<void> {
   });
   ui.disconnect.onclick = () => state.device?.gatt?.disconnect();
   ui.release.onchange = () => void chooseRelease();
+  ui.restore.onclick = () => void restoreOriginal();
   ui.file.onchange = async () => {
     const f = ui.file.files?.[0];
     if (f) takeImage(new Uint8Array(await f.arrayBuffer()), f.name, true);

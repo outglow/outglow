@@ -1,6 +1,6 @@
 //! The AwoX application protocol (Telink light mesh over GATT), only as a means
 //! to make the bulb do something observable in the BLE tests (`MeshApp` of
-//! spec_ble/harness.py with emulator/awox_mesh.py and flasher/awox_ota.py).
+//! spec_ble/harness.py with emulator/awox_mesh.py and crates/outglow/src/flash/protocol.rs).
 
 use super::harness::{hx, BleSession};
 use crate::crypto::{sha256, telink_aes};

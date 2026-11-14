@@ -1,0 +1,28 @@
+[package]
+name = "outglow"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Outglow command line: flash a bulb over Bluetooth, read its diagnostics and black box, inspect images"
+publish = false
+
+[[bin]]
+name = "outglow"
+path = "src/main.rs"
+
+[dependencies]
+outglow-image = { path = "../outglow-image" }
+zigbee = { path = "../zigbee" }
+libc = "0.2"
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+btleplug = "0.11"
+rumqttc = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aes = "0.8"
+sha2 = "0.10"
+futures = "0.3"
+uuid = "1"
+getrandom = "0.2"

@@ -31,25 +31,25 @@ pub(crate) const RING: usize = 64;
 pub(crate) const ROWS: usize = 360;
 pub(crate) const ROW_MS: u32 = 120_000;
 
-const HEADER: usize = 24;
+pub const HEADER: usize = 24;
 pub(crate) const LINK_ENTRY: usize = 36;
 pub(crate) const RING_ENTRY: usize = 16;
 pub(crate) const ROW_ENTRY: usize = 12;
 const LINKS_AT: usize = HEADER;
 const RING_AT: usize = LINKS_AT + NEIGHBORS * LINK_ENTRY;
 const ROWS_AT: usize = RING_AT + RING * RING_ENTRY;
-pub(crate) const BOX_LEN: usize = ROWS_AT + ROWS * ROW_ENTRY;
-pub(crate) const BOX_PAGE: usize = 64;
-pub(crate) const BOX_PAGES: usize = BOX_LEN.div_ceil(BOX_PAGE);
+pub const BOX_LEN: usize = ROWS_AT + ROWS * ROW_ENTRY;
+pub const BOX_PAGE: usize = 64;
+pub const BOX_PAGES: usize = BOX_LEN.div_ceil(BOX_PAGE);
 /// The first attribute of the pages (manufacturer's code).
-pub(crate) const BOX_FIRST: u16 = 0x6000;
-const VERSION: u8 = 1;
+pub const BOX_FIRST: u16 = 0x6000;
+pub const VERSION: u8 = 1;
 
 /// Kind of a frame sent (ring entry byte 10): bits 0-1 the NWK frame type,
 /// bit 2 secured, bit 3 to everyone in range (MAC broadcast), bit 4 relayed
 /// for another device, bits 5-6 what `id` is: 0 nothing, 1 a NWK command,
 /// 2 an APS cluster, 3 an APS acknowledgement of that cluster.
-pub(crate) mod kind {
+pub mod kind {
     pub const SECURED: u8 = 1 << 2;
     pub const BROADCAST: u8 = 1 << 3;
     pub const RELAYED: u8 = 1 << 4;

@@ -847,7 +847,7 @@ fn the_black_box_keeps_the_unicasts_per_neighbor_the_frames_sent_and_rows() {
     // past five rows of two minutes
     net.run(10 * 60_000);
     let b = black_box(&mut net, short);
-    // BLACK_BOX_OUT=file keeps the blob, for tools/bulb-diag.py's decoder
+    // BLACK_BOX_OUT=file keeps the blob, for `outglow box --from`
     if let Ok(path) = std::env::var("BLACK_BOX_OUT") {
         std::fs::write(path, &b).unwrap();
     }

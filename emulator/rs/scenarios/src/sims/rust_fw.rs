@@ -447,7 +447,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let bin_img = cx.image("bin", "target/tc32/bulb-tc32.bin");
     for p in [&elf_img.path, &bin_img.path] {
         if !p.exists() {
-            return Err(Stop::Error(format!("{} not found: build the firmware with crates/bulb-tc32/build.sh", p.display())));
+            return Err(Stop::Error(format!("{} not found: build the firmware with `cargo xtask build`", p.display())));
         }
     }
     let image = bin_img.bytes().map_err(Stop::Error)?;

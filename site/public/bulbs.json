@@ -1,0 +1,1696 @@
+{
+  "schema": 1,
+  "boards": [
+    {
+      "board": "ESMLFzm_w6_Dimm",
+      "revisions": [
+        "4.63"
+      ],
+      "kind": "open-eglo-dimm",
+      "hardware_tested": true,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "12224",
+          "name": "connect.z G95 filament bulb, amber",
+          "shape": "G95 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 4.9 W, 500 lm",
+          "image": "bulbs/eglo-12224.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12224",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Outglow test bulb reports this board"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12226",
+          "name": "connect.z A60 filament bulb, clear",
+          "shape": "A60 filament",
+          "socket": "E27",
+          "light": "dimmable 2700 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12226.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12226",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            },
+            {
+              "label": "Zigbee2MQTT #17932",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/17932"
+            },
+            {
+              "label": "EGLO datasheet 12226",
+              "url": "https://tools.eglo.com/tds/eng-GB/12226"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12221",
+          "name": "connect.z A60 filament bulb, amber",
+          "shape": "A60 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 4.9 W, 500 lm",
+          "image": "bulbs/eglo-12221.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12221",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12221",
+              "url": "https://tools.eglo.com/tds/eng-GB/12221"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12222",
+          "name": "connect.z ST64 filament bulb, amber",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 4.9 W, 500 lm",
+          "image": "bulbs/eglo-12222.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12222",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12222",
+              "url": "https://tools.eglo.com/tds/eng-GB/12222"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12223",
+          "name": "connect.z G80 filament bulb, amber",
+          "shape": "G80 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 4.9 W, 500 lm",
+          "image": "bulbs/eglo-12223.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12223",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12223",
+              "url": "https://tools.eglo.com/tds/eng-GB/12223"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12225",
+          "name": "connect.z G125 filament bulb, amber",
+          "shape": "G125 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 6 W, 650 lm",
+          "image": "bulbs/eglo-12225.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12225",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12225",
+              "url": "https://tools.eglo.com/tds/eng-GB/12225"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12227",
+          "name": "connect.z ST64 filament bulb, clear",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "dimmable 2700 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12227.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12227",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12227",
+              "url": "https://tools.eglo.com/tds/eng-GB/12227"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12228",
+          "name": "connect.z G80 filament bulb, clear",
+          "shape": "G80 filament",
+          "socket": "E27",
+          "light": "dimmable 2700 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12228.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12228",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12228",
+              "url": "https://tools.eglo.com/tds/eng-GB/12228"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12229",
+          "name": "connect.z G95 filament bulb, clear",
+          "shape": "G95 filament",
+          "socket": "E27",
+          "light": "dimmable 2700 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12229.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12229",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12229",
+              "url": "https://tools.eglo.com/tds/eng-GB/12229"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12231",
+          "name": "connect.z A60 filament bulb, clear",
+          "shape": "A60 filament",
+          "socket": "E27",
+          "light": "dimmable 4000 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12231.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12231",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12231",
+              "url": "https://tools.eglo.com/tds/eng-GB/12231"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12232",
+          "name": "connect.z ST64 filament bulb, clear",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "dimmable 4000 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12232.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12232",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12232",
+              "url": "https://tools.eglo.com/tds/eng-GB/12232"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12233",
+          "name": "connect.z G80 filament bulb, clear",
+          "shape": "G80 filament",
+          "socket": "E27",
+          "light": "dimmable 4000 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12233.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12233",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12233",
+              "url": "https://tools.eglo.com/tds/eng-GB/12233"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12234",
+          "name": "connect.z G95 filament bulb, clear",
+          "shape": "G95 filament",
+          "socket": "E27",
+          "light": "dimmable 4000 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12234.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12234",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12234",
+              "url": "https://tools.eglo.com/tds/eng-GB/12234"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12256",
+          "name": "connect.z ST64 filament bulbs, amber, 2 pack with remote",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 4.9 W, 500 lm",
+          "image": "bulbs/eglo-12256.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12256",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12256",
+              "url": "https://tools.eglo.com/tds/eng-GB/12256"
+            },
+            {
+              "label": "Zigbee2MQTT AwoX-light",
+              "url": "https://www.zigbee2mqtt.io/devices/AwoX-light.html"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "AwoX",
+          "article": "33948",
+          "name": "SmartLIGHT ST64 filament bulb, amber",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K, 500 lm",
+          "image": "bulbs/awox-33948.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33948",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 33948",
+              "url": "https://tools.eglo.com/tds/eng-GB/33948"
+            },
+            {
+              "label": "zigbee.blakadder.com AwoX_33948",
+              "url": "https://zigbee.blakadder.com/AwoX_33948.html"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ]
+        },
+        {
+          "brand": "AwoX",
+          "article": "33951",
+          "name": "SmartLIGHT G125 filament bulb, amber",
+          "shape": "G125 filament",
+          "socket": "E27",
+          "light": "dimmable 2200 K",
+          "image": "bulbs/awox-33951.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33951",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 33951",
+              "url": "https://tools.eglo.com/tds/eng-GB/33951"
+            },
+            {
+              "label": "zigbee.blakadder.com AwoX_33951",
+              "url": "https://zigbee.blakadder.com/AwoX_33951.html"
+            },
+            {
+              "label": "EGLO datasheet 12224",
+              "url": "https://tools.eglo.com/tds/eng-GB/12224"
+            },
+            {
+              "label": "Zigbee2MQTT 12226",
+              "url": "https://www.zigbee2mqtt.io/devices/12226.html"
+            }
+          ],
+          "note": "Sources disagree on its light output (500 or 850 lm)."
+        }
+      ]
+    },
+    {
+      "board": "ESMLFzm_w6_TW",
+      "revisions": [
+        "4.63"
+      ],
+      "kind": "open-eglo-tw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "12242",
+          "name": "connect.z ST64 filament bulb, amber",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 4.9 W, 360 lm",
+          "image": "bulbs/eglo-12242.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12242",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            },
+            {
+              "label": "zigbee.blakadder.com Eglo_12242",
+              "url": "https://zigbee.blakadder.com/Eglo_12242.html"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12245",
+          "name": "connect.z G125 filament bulb, amber",
+          "shape": "G125 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 4.9 W, 360 lm",
+          "image": "bulbs/eglo-12245.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12245",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Outglow test bulb reports this board"
+            },
+            {
+              "label": "EGLO datasheet 12245",
+              "url": "https://tools.eglo.com/tds/eng-GB/12245"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12241",
+          "name": "connect.z A60 filament bulb, amber",
+          "shape": "A60 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 4.9 W, 360 lm",
+          "image": "bulbs/eglo-12241.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12241",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12241",
+              "url": "https://tools.eglo.com/tds/eng-GB/12241"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12243",
+          "name": "connect.z G80 filament bulb, amber",
+          "shape": "G80 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 4.9 W, 360 lm",
+          "image": "bulbs/eglo-12243.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12243",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12243",
+              "url": "https://tools.eglo.com/tds/eng-GB/12243"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12244",
+          "name": "connect.z G95 filament bulb, amber",
+          "shape": "G95 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 4.9 W, 360 lm",
+          "image": "bulbs/eglo-12244.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12244",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12244",
+              "url": "https://tools.eglo.com/tds/eng-GB/12244"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12235",
+          "name": "connect.z A60 filament bulb, clear",
+          "shape": "A60 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12235.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12235",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12235",
+              "url": "https://tools.eglo.com/tds/eng-GB/12235"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12236",
+          "name": "connect.z ST64 filament bulb, clear",
+          "shape": "ST64 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12236.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12236",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12236",
+              "url": "https://tools.eglo.com/tds/eng-GB/12236"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12237",
+          "name": "connect.z G80 filament bulb, clear",
+          "shape": "G80 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12237.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12237",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12237",
+              "url": "https://tools.eglo.com/tds/eng-GB/12237"
+            },
+            {
+              "label": "zigbee.blakadder.com Eglo_12237",
+              "url": "https://zigbee.blakadder.com/Eglo_12237.html"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12239",
+          "name": "connect.z G95 filament bulb, clear",
+          "shape": "G95 filament",
+          "socket": "E27",
+          "light": "tunable white 2200–6500 K, 6 W, 806 lm",
+          "image": "bulbs/eglo-12239.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12239",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "EGLO datasheet 12239",
+              "url": "https://tools.eglo.com/tds/eng-GB/12239"
+            },
+            {
+              "label": "Zigbee2MQTT 33957 (white label)",
+              "url": "https://www.zigbee2mqtt.io/devices/33957.html"
+            },
+            {
+              "label": "EGLO datasheet 12242",
+              "url": "https://tools.eglo.com/tds/eng-GB/12242"
+            },
+            {
+              "label": "Zigbee2MQTT 12242",
+              "url": "https://www.zigbee2mqtt.io/devices/12242.html"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "EGLO_ZM_Dimmable",
+      "revisions": [
+        "4.60",
+        "4.62"
+      ],
+      "kind": "open-eglo-dimm",
+      "hardware_tested": false,
+      "note": "No product has been seen reporting this name; probably dimmable luminaires.",
+      "products": []
+    },
+    {
+      "board": "EGLO_ZM_TW",
+      "revisions": [
+        "4.60",
+        "4.62",
+        "4.69"
+      ],
+      "kind": "open-eglo-tw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "900053",
+          "name": "SALOBRENA-Z ceiling light, 1200 × 300 mm",
+          "shape": "ceiling panel",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900053.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900053",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "zigbee.blakadder.com Eglo_900053",
+              "url": "https://zigbee.blakadder.com/Eglo_900053.html"
+            },
+            {
+              "label": "Zigbee2MQTT 33955",
+              "url": "https://www.zigbee2mqtt.io/devices/33955.html"
+            },
+            {
+              "label": "EGLO datasheet 900053",
+              "url": "https://tools.eglo.com/tds/eng-GB/900053"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900061",
+          "name": "TURCONA-Z ceiling light, 1200 × 300 mm",
+          "shape": "ceiling panel",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900061.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900061",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "zigbee.blakadder.com Eglo_900061",
+              "url": "https://zigbee.blakadder.com/Eglo_900061.html"
+            },
+            {
+              "label": "EGLO datasheet 900061",
+              "url": "https://tools.eglo.com/tds/eng-GB/900061"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900316",
+          "name": "PARANDAY-Z ceiling light, 525 mm",
+          "shape": "ceiling light",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900316.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900316",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "zigbee.blakadder.com Eglo_900316",
+              "url": "https://zigbee.blakadder.com/Eglo_900316.html"
+            },
+            {
+              "label": "Zigbee2MQTT 33955",
+              "url": "https://www.zigbee2mqtt.io/devices/33955.html"
+            },
+            {
+              "label": "EGLO datasheet 900316",
+              "url": "https://tools.eglo.com/tds/eng-GB/900316"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900317",
+          "name": "PARANDAY-Z ceiling light, 650 mm",
+          "shape": "ceiling light",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900317.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900317",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "zigbee.blakadder.com Eglo_900317",
+              "url": "https://zigbee.blakadder.com/Eglo_900317.html"
+            },
+            {
+              "label": "Zigbee2MQTT 33955",
+              "url": "https://www.zigbee2mqtt.io/devices/33955.html"
+            },
+            {
+              "label": "EGLO datasheet 900317",
+              "url": "https://tools.eglo.com/tds/eng-GB/900317"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900084",
+          "name": "TOTARI-Z ceiling light, ⌀ 380 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900084.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900084",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #31533",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/31533"
+            },
+            {
+              "label": "EGLO datasheet 900084",
+              "url": "https://tools.eglo.com/tds/eng-GB/900084"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900001",
+          "name": "TOTARI-Z ceiling light, ⌀ 380 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900001.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900001",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #31533",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/31533"
+            },
+            {
+              "label": "EGLO datasheet 900001",
+              "url": "https://tools.eglo.com/tds/eng-GB/900001"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900102",
+          "name": "FUEVA-Z recessed light, ⌀ 165 mm",
+          "shape": "recessed downlight",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900102.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900102",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #23450",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/23450"
+            },
+            {
+              "label": "EGLO datasheet 900102",
+              "url": "https://tools.eglo.com/tds/eng-GB/900102"
+            }
+          ],
+          "note": "Some units of the same order reported the factory name TLSR82xx instead."
+        },
+        {
+          "brand": "AwoX",
+          "article": "33955",
+          "name": "Ceiling panel, tunable white",
+          "shape": "ceiling panel",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/awox-33955.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33955",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 33955",
+              "url": "https://www.zigbee2mqtt.io/devices/33955.html"
+            },
+            {
+              "label": "Zigbee2MQTT #14483",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/14483"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "EGLO_ZM_TW_CLP",
+      "revisions": [
+        "4.60"
+      ],
+      "kind": "open-eglo-tw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "98847",
+          "name": "FUEVA-Z surface-mounted light, IP44, ⌀ 285 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white 2700–6500 K",
+          "image": "bulbs/eglo-98847.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/98847",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 98847",
+              "url": "https://www.zigbee2mqtt.io/devices/98847.html"
+            },
+            {
+              "label": "EGLO datasheet 98847",
+              "url": "https://tools.eglo.com/tds/eng-GB/98847"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "ESMLzm_TW_GU10",
+      "revisions": [
+        "4.63"
+      ],
+      "kind": "open-eglo-tw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "110308",
+          "name": "connect.z GU10 spot",
+          "shape": "GU10 reflector",
+          "socket": "GU10",
+          "light": "tunable white 2700–6500 K, 4.9 W, 400 lm",
+          "image": "bulbs/eglo-110308.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/110308",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 110308",
+              "url": "https://www.zigbee2mqtt.io/devices/110308.html"
+            },
+            {
+              "label": "zigbee-herdsman-converters #12481",
+              "url": "https://github.com/Koenkk/zigbee-herdsman-converters/issues/12481"
+            },
+            {
+              "label": "EGLO datasheet 110308",
+              "url": "https://tools.eglo.com/tds/eng-GB/110308"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "EGLO_ZM_RGB_TW",
+      "revisions": [
+        "4.60",
+        "4.62",
+        "4.69"
+      ],
+      "kind": "open-eglo-rgbtw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "12253",
+          "name": "connect.z A60 bulb, opal",
+          "shape": "A60",
+          "socket": "E27",
+          "light": "colour + tunable white 2700–6500 K, 9 W, 806 lm",
+          "image": "bulbs/eglo-12253.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12253",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 900024/12253",
+              "url": "https://www.zigbee2mqtt.io/devices/900024_12253.html"
+            },
+            {
+              "label": "zigbee.blakadder.com Eglo_12253",
+              "url": "https://zigbee.blakadder.com/Eglo_12253.html"
+            },
+            {
+              "label": "EGLO datasheet 12253",
+              "url": "https://tools.eglo.com/tds/eng-GB/12253"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "12254",
+          "name": "connect.z G95 bulb, opal",
+          "shape": "G95",
+          "socket": "E27",
+          "light": "colour + tunable white 2700–6500 K, 13.5 W, 1300 lm",
+          "image": "bulbs/eglo-12254.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12254",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #25407",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/25407"
+            },
+            {
+              "label": "EGLO datasheet 12254",
+              "url": "https://tools.eglo.com/tds/eng-GB/12254"
+            }
+          ],
+          "note": "Seen with EGLO_ZM_RGB_TW after a vendor firmware update. Other units carry the newer EZMB-RGB-TW-I2C module, which Outglow does not support."
+        },
+        {
+          "brand": "EGLO",
+          "article": "12251",
+          "name": "connect.z GU10 spot, opal",
+          "shape": "GU10 reflector",
+          "socket": "GU10",
+          "light": "colour + tunable white 2700–6500 K, 4.9 W, 345 lm",
+          "image": "bulbs/eglo-12251.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12251",
+          "confidence": "likely",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #23005",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/23005"
+            },
+            {
+              "label": "EGLO datasheet 12251",
+              "url": "https://tools.eglo.com/tds/eng-GB/12251"
+            }
+          ],
+          "note": "A GU10 RGB+CCT spot sold as CROSSLINK-Z reported this board; its AwoX twin 33946 reports ESMLzm_c5_GU10. Check with the flasher."
+        },
+        {
+          "brand": "EGLO",
+          "article": "900024",
+          "name": "SALITERAS-Z ceiling light, 1160 mm",
+          "shape": "ceiling light",
+          "socket": null,
+          "light": "colour + tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900024.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900024",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 900024/12253",
+              "url": "https://www.zigbee2mqtt.io/devices/900024_12253.html"
+            },
+            {
+              "label": "zigbee.blakadder.com Eglo_900024",
+              "url": "https://zigbee.blakadder.com/Eglo_900024.html"
+            },
+            {
+              "label": "EGLO datasheet 900024",
+              "url": "https://tools.eglo.com/tds/eng-GB/900024"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900878",
+          "name": "ANDREAS-Z pendant light, 1170 mm",
+          "shape": "pendant light",
+          "socket": null,
+          "light": "colour + tunable white 2700–6500 K",
+          "image": "bulbs/eglo-900878.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900878",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 900024/12253 (white label)",
+              "url": "https://www.zigbee2mqtt.io/devices/900024_12253.html"
+            },
+            {
+              "label": "EGLO datasheet 900878",
+              "url": "https://tools.eglo.com/tds/eng-GB/900878"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "99671",
+          "name": "SALICETO-Z recessed spot, ⌀ 88 mm",
+          "shape": "recessed spot",
+          "socket": null,
+          "light": "colour + tunable white 2700–6500 K",
+          "image": "bulbs/eglo-99671.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/99671",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #19722",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/19722"
+            },
+            {
+              "label": "EGLO datasheet 99671",
+              "url": "https://tools.eglo.com/tds/eng-GB/99671"
+            }
+          ],
+          "note": "Units of the same set reported either this board or the factory name TLSR82xx."
+        }
+      ]
+    },
+    {
+      "board": "EGLO_ZM_RGBTW_CLP",
+      "revisions": [
+        "4.60"
+      ],
+      "kind": "open-eglo-rgbtw",
+      "hardware_tested": false,
+      "note": "No product has been seen reporting this name; the CLP suffix is used for ceiling lights.",
+      "products": []
+    },
+    {
+      "board": "ESMLzm_c5_E14",
+      "revisions": [
+        "4.62"
+      ],
+      "kind": "open-eglo-rgbtw",
+      "hardware_tested": false,
+      "note": "Only the module name (5 W colour, E14) points to these.",
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "12252",
+          "name": "connect.z P45 bulb, opal",
+          "shape": "P45 mini globe",
+          "socket": "E14",
+          "light": "colour + tunable white 2700–6500 K, 4.9 W, 470 lm",
+          "image": "bulbs/eglo-12252.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/12252",
+          "confidence": "inferred",
+          "source": [
+            {
+              "label": "EGLO datasheet 12252",
+              "url": "https://tools.eglo.com/tds/eng-GB/12252"
+            },
+            {
+              "label": "zigbee.blakadder.com Eglo_12252",
+              "url": "https://zigbee.blakadder.com/Eglo_12252.html"
+            }
+          ]
+        },
+        {
+          "brand": "AwoX",
+          "article": "33945",
+          "name": "SmartLIGHT E14 bulb, opal",
+          "shape": "P45 mini globe",
+          "socket": "E14",
+          "light": "colour + tunable white",
+          "image": "bulbs/eglo-12252.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33945",
+          "confidence": "inferred",
+          "source": [
+            {
+              "label": "EGLO datasheet 33945",
+              "url": "https://tools.eglo.com/tds/eng-GB/33945"
+            }
+          ],
+          "note": "Picture: the EGLO twin 12252."
+        }
+      ]
+    },
+    {
+      "board": "ESMLzm_c5_GU10",
+      "revisions": [
+        "4.62"
+      ],
+      "kind": "open-eglo-rgbtw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "AwoX",
+          "article": "33946",
+          "name": "SmartLIGHT GU10 spot",
+          "shape": "GU10 reflector",
+          "socket": "GU10",
+          "light": "colour + tunable white, 5 W, 345 lm",
+          "image": "bulbs/awox-33946.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33946",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 33943/33944/33946",
+              "url": "https://www.zigbee2mqtt.io/devices/33943_33944_33946.html"
+            },
+            {
+              "label": "Zigbee2MQTT #28472",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/28472"
+            },
+            {
+              "label": "zigbee.blakadder.com AwoX_33946",
+              "url": "https://zigbee.blakadder.com/AwoX_33946.html"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "ESMLzm_c9",
+      "revisions": [
+        "4.62"
+      ],
+      "kind": "open-eglo-rgbtw",
+      "hardware_tested": false,
+      "note": "A bulb reporting ESMLzm_c9 4.62 is known, but not its article; the name suggests a 9 W colour bulb.",
+      "products": [
+        {
+          "brand": "AwoX",
+          "article": "33943",
+          "name": "SmartLIGHT A60 bulb, opal",
+          "shape": "A60",
+          "socket": "E27",
+          "light": "colour + tunable white, 9 W, 806 lm",
+          "image": "bulbs/awox-33943.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33943",
+          "confidence": "inferred",
+          "source": [
+            {
+              "label": "zigbee.blakadder.com AwoX_33943",
+              "url": "https://zigbee.blakadder.com/AwoX_33943.html"
+            },
+            {
+              "label": "EGLO datasheet 33943",
+              "url": "https://tools.eglo.com/tds/eng-GB/33943"
+            },
+            {
+              "label": "python-awox-mesh-light #24",
+              "url": "https://github.com/Leiaz/python-awox-mesh-light/issues/24"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "ESMLzm_c13g",
+      "revisions": [
+        "4.62"
+      ],
+      "kind": "open-eglo-rgbtw",
+      "hardware_tested": false,
+      "note": "Only the module name (13 W colour globe) points to this.",
+      "products": [
+        {
+          "brand": "AwoX",
+          "article": "33944",
+          "name": "SmartLIGHT G95 bulb, opal",
+          "shape": "G95",
+          "socket": "E27",
+          "light": "colour + tunable white, 1300 lm",
+          "image": "bulbs/awox-33944.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/33944",
+          "confidence": "inferred",
+          "source": [
+            {
+              "label": "zigbee.blakadder.com AwoX_33944",
+              "url": "https://zigbee.blakadder.com/AwoX_33944.html"
+            },
+            {
+              "label": "EGLO datasheet 33944",
+              "url": "https://tools.eglo.com/tds/eng-GB/33944"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "EGLO_ZM_RGB_W",
+      "revisions": [
+        "4.62"
+      ],
+      "kind": "open-eglo-rgbw",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "113135",
+          "name": "connect.z A60 spiral filament bulb, smoked",
+          "shape": "A60 filament",
+          "socket": "E27",
+          "light": "colour + white 3000 K",
+          "image": "bulbs/eglo-113135.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/113135",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT EGLO_ZM_RGB_W",
+              "url": "https://www.zigbee2mqtt.io/devices/EGLO_ZM_RGB_W.html"
+            },
+            {
+              "label": "zigbee-herdsman-converters #10557",
+              "url": "https://github.com/Koenkk/zigbee-herdsman-converters/issues/10557"
+            },
+            {
+              "label": "EGLO datasheet 113135",
+              "url": "https://tools.eglo.com/tds/eng-GB/113135"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "EBF_RGB_Zm",
+      "revisions": [
+        "4.60",
+        "4.69"
+      ],
+      "kind": "open-eglo-ebf",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "900091",
+          "name": "ROVITO-Z ceiling light, ⌀ 295 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white + colour backlight",
+          "image": "bulbs/eglo-900091.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900091",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT 900091",
+              "url": "https://www.zigbee2mqtt.io/devices/900091.html"
+            },
+            {
+              "label": "zigbee.blakadder.com Eglo_900091",
+              "url": "https://zigbee.blakadder.com/Eglo_900091.html"
+            },
+            {
+              "label": "Zigbee2MQTT #16431",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/16431"
+            },
+            {
+              "label": "EGLO datasheet 900091",
+              "url": "https://tools.eglo.com/tds/eng-GB/900091"
+            }
+          ],
+          "note": "Vendor firmware updates rename it to EBF_RGB_Zm_CLP."
+        },
+        {
+          "brand": "EGLO",
+          "article": "900092",
+          "name": "ROVITO-Z ceiling light, ⌀ 420 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white + colour backlight",
+          "image": "bulbs/eglo-900092.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900092",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #21460",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/21460"
+            },
+            {
+              "label": "EGLO datasheet 900092",
+              "url": "https://tools.eglo.com/tds/eng-GB/900092"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "901463",
+          "name": "ROVITO-Z ceiling light, ⌀ 300 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white + colour backlight",
+          "image": "bulbs/eglo-901463.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/901463",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT EBF_RGB_Zm",
+              "url": "https://www.zigbee2mqtt.io/devices/EBF_RGB_Zm.html"
+            },
+            {
+              "label": "EGLO datasheet 901463",
+              "url": "https://tools.eglo.com/tds/eng-GB/901463"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "901466",
+          "name": "ROVITO-Z ceiling light, 290 × 290 mm",
+          "shape": "square ceiling light",
+          "socket": null,
+          "light": "tunable white + colour backlight",
+          "image": "bulbs/eglo-901466.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/901466",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #31956",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/31956"
+            },
+            {
+              "label": "EGLO datasheet 901466",
+              "url": "https://tools.eglo.com/tds/eng-GB/901466"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900566",
+          "name": "CALAGRANO-Z ceiling light, 656 mm",
+          "shape": "ceiling light",
+          "socket": null,
+          "light": "tunable white + colour backlight",
+          "image": "bulbs/eglo-900566.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900566",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT EBF_RGB_Zm",
+              "url": "https://www.zigbee2mqtt.io/devices/EBF_RGB_Zm.html"
+            },
+            {
+              "label": "EGLO datasheet 900566",
+              "url": "https://tools.eglo.com/tds/eng-GB/900566"
+            }
+          ]
+        },
+        {
+          "brand": "EGLO",
+          "article": "900481",
+          "name": "PADROGIANO-Z ceiling light, 450 × 450 mm",
+          "shape": "square ceiling light",
+          "socket": null,
+          "light": "tunable white + colour",
+          "image": "bulbs/eglo-900481.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900481",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "zha-device-handlers #1927",
+              "url": "https://github.com/zigpy/zha-device-handlers/issues/1927"
+            },
+            {
+              "label": "EGLO datasheet 900481",
+              "url": "https://tools.eglo.com/tds/eng-GB/900481"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "board": "EBF_RGB_Zm_CLP",
+      "revisions": [
+        "4.60"
+      ],
+      "kind": "open-eglo-ebf",
+      "hardware_tested": false,
+      "products": [
+        {
+          "brand": "EGLO",
+          "article": "900091",
+          "name": "ROVITO-Z ceiling light, ⌀ 295 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white + colour backlight",
+          "image": "bulbs/eglo-900091.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900091",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #18322",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/18322"
+            },
+            {
+              "label": "Zigbee2MQTT 900091",
+              "url": "https://www.zigbee2mqtt.io/devices/900091.html"
+            },
+            {
+              "label": "EGLO datasheet 900091",
+              "url": "https://tools.eglo.com/tds/eng-GB/900091"
+            }
+          ],
+          "note": "Reports this name after a vendor firmware update; earlier EBF_RGB_Zm."
+        },
+        {
+          "brand": "EGLO",
+          "article": "900486",
+          "name": "PADROGIANO-Z ceiling light, ⌀ 450 mm",
+          "shape": "round ceiling light",
+          "socket": null,
+          "light": "tunable white + colour",
+          "image": "bulbs/eglo-900486.webp",
+          "datasheet": "https://tools.eglo.com/tds/eng-GB/900486",
+          "confidence": "confirmed",
+          "source": [
+            {
+              "label": "Zigbee2MQTT #18322",
+              "url": "https://github.com/Koenkk/zigbee2mqtt/issues/18322"
+            },
+            {
+              "label": "EGLO datasheet 900486",
+              "url": "https://tools.eglo.com/tds/eng-GB/900486"
+            }
+          ],
+          "note": "Reported after a vendor firmware update."
+        }
+      ]
+    }
+  ],
+  "images": {
+    "bulbs/awox-33943.webp": {
+      "label": "zigbee.blakadder.com, AwoX 33943",
+      "url": "https://zigbee.blakadder.com/AwoX_33943.html"
+    },
+    "bulbs/awox-33944.webp": {
+      "label": "zigbee.blakadder.com, AwoX 33944",
+      "url": "https://zigbee.blakadder.com/AwoX_33944.html"
+    },
+    "bulbs/awox-33946.webp": {
+      "label": "zigbee.blakadder.com, AwoX 33946",
+      "url": "https://zigbee.blakadder.com/AwoX_33946.html"
+    },
+    "bulbs/awox-33948.webp": {
+      "label": "zigbee.blakadder.com, AwoX 33948",
+      "url": "https://zigbee.blakadder.com/AwoX_33948.html"
+    },
+    "bulbs/awox-33951.webp": {
+      "label": "zigbee.blakadder.com, AwoX 33951",
+      "url": "https://zigbee.blakadder.com/AwoX_33951.html"
+    },
+    "bulbs/awox-33955.webp": {
+      "label": "EGLO technical datasheet 33955",
+      "url": "https://tools.eglo.com/tds/eng-GB/33955"
+    },
+    "bulbs/eglo-110308.webp": {
+      "label": "EGLO technical datasheet 110308",
+      "url": "https://tools.eglo.com/tds/eng-GB/110308"
+    },
+    "bulbs/eglo-113135.webp": {
+      "label": "EGLO technical datasheet 113135",
+      "url": "https://tools.eglo.com/tds/eng-GB/113135"
+    },
+    "bulbs/eglo-12221.webp": {
+      "label": "EGLO technical datasheet 12221",
+      "url": "https://tools.eglo.com/tds/eng-GB/12221"
+    },
+    "bulbs/eglo-12222.webp": {
+      "label": "EGLO technical datasheet 12222",
+      "url": "https://tools.eglo.com/tds/eng-GB/12222"
+    },
+    "bulbs/eglo-12223.webp": {
+      "label": "EGLO technical datasheet 12223",
+      "url": "https://tools.eglo.com/tds/eng-GB/12223"
+    },
+    "bulbs/eglo-12224.webp": {
+      "label": "EGLO technical datasheet 12224",
+      "url": "https://tools.eglo.com/tds/eng-GB/12224"
+    },
+    "bulbs/eglo-12225.webp": {
+      "label": "EGLO technical datasheet 12225",
+      "url": "https://tools.eglo.com/tds/eng-GB/12225"
+    },
+    "bulbs/eglo-12226.webp": {
+      "label": "EGLO technical datasheet 12226",
+      "url": "https://tools.eglo.com/tds/eng-GB/12226"
+    },
+    "bulbs/eglo-12227.webp": {
+      "label": "EGLO technical datasheet 12227",
+      "url": "https://tools.eglo.com/tds/eng-GB/12227"
+    },
+    "bulbs/eglo-12228.webp": {
+      "label": "EGLO technical datasheet 12228",
+      "url": "https://tools.eglo.com/tds/eng-GB/12228"
+    },
+    "bulbs/eglo-12229.webp": {
+      "label": "EGLO technical datasheet 12229",
+      "url": "https://tools.eglo.com/tds/eng-GB/12229"
+    },
+    "bulbs/eglo-12231.webp": {
+      "label": "EGLO technical datasheet 12231",
+      "url": "https://tools.eglo.com/tds/eng-GB/12231"
+    },
+    "bulbs/eglo-12232.webp": {
+      "label": "EGLO technical datasheet 12232",
+      "url": "https://tools.eglo.com/tds/eng-GB/12232"
+    },
+    "bulbs/eglo-12233.webp": {
+      "label": "EGLO technical datasheet 12233",
+      "url": "https://tools.eglo.com/tds/eng-GB/12233"
+    },
+    "bulbs/eglo-12234.webp": {
+      "label": "EGLO technical datasheet 12234",
+      "url": "https://tools.eglo.com/tds/eng-GB/12234"
+    },
+    "bulbs/eglo-12235.webp": {
+      "label": "EGLO technical datasheet 12235",
+      "url": "https://tools.eglo.com/tds/eng-GB/12235"
+    },
+    "bulbs/eglo-12236.webp": {
+      "label": "EGLO technical datasheet 12236",
+      "url": "https://tools.eglo.com/tds/eng-GB/12236"
+    },
+    "bulbs/eglo-12237.webp": {
+      "label": "EGLO technical datasheet 12237",
+      "url": "https://tools.eglo.com/tds/eng-GB/12237"
+    },
+    "bulbs/eglo-12239.webp": {
+      "label": "EGLO technical datasheet 12239",
+      "url": "https://tools.eglo.com/tds/eng-GB/12239"
+    },
+    "bulbs/eglo-12241.webp": {
+      "label": "EGLO technical datasheet 12241",
+      "url": "https://tools.eglo.com/tds/eng-GB/12241"
+    },
+    "bulbs/eglo-12242.webp": {
+      "label": "EGLO technical datasheet 12242",
+      "url": "https://tools.eglo.com/tds/eng-GB/12242"
+    },
+    "bulbs/eglo-12243.webp": {
+      "label": "EGLO technical datasheet 12243",
+      "url": "https://tools.eglo.com/tds/eng-GB/12243"
+    },
+    "bulbs/eglo-12244.webp": {
+      "label": "EGLO technical datasheet 12244",
+      "url": "https://tools.eglo.com/tds/eng-GB/12244"
+    },
+    "bulbs/eglo-12245.webp": {
+      "label": "EGLO technical datasheet 12245",
+      "url": "https://tools.eglo.com/tds/eng-GB/12245"
+    },
+    "bulbs/eglo-12251.webp": {
+      "label": "EGLO technical datasheet 12251",
+      "url": "https://tools.eglo.com/tds/eng-GB/12251"
+    },
+    "bulbs/eglo-12252.webp": {
+      "label": "EGLO technical datasheet 12252",
+      "url": "https://tools.eglo.com/tds/eng-GB/12252"
+    },
+    "bulbs/eglo-12253.webp": {
+      "label": "EGLO technical datasheet 12253",
+      "url": "https://tools.eglo.com/tds/eng-GB/12253"
+    },
+    "bulbs/eglo-12254.webp": {
+      "label": "EGLO technical datasheet 12254",
+      "url": "https://tools.eglo.com/tds/eng-GB/12254"
+    },
+    "bulbs/eglo-12256.webp": {
+      "label": "EGLO technical datasheet 12256",
+      "url": "https://tools.eglo.com/tds/eng-GB/12256"
+    },
+    "bulbs/eglo-900001.webp": {
+      "label": "EGLO technical datasheet 900001",
+      "url": "https://tools.eglo.com/tds/eng-GB/900001"
+    },
+    "bulbs/eglo-900024.webp": {
+      "label": "EGLO technical datasheet 900024",
+      "url": "https://tools.eglo.com/tds/eng-GB/900024"
+    },
+    "bulbs/eglo-900053.webp": {
+      "label": "EGLO technical datasheet 900053",
+      "url": "https://tools.eglo.com/tds/eng-GB/900053"
+    },
+    "bulbs/eglo-900061.webp": {
+      "label": "EGLO technical datasheet 900061",
+      "url": "https://tools.eglo.com/tds/eng-GB/900061"
+    },
+    "bulbs/eglo-900084.webp": {
+      "label": "EGLO technical datasheet 900084",
+      "url": "https://tools.eglo.com/tds/eng-GB/900084"
+    },
+    "bulbs/eglo-900091.webp": {
+      "label": "EGLO technical datasheet 900091",
+      "url": "https://tools.eglo.com/tds/eng-GB/900091"
+    },
+    "bulbs/eglo-900092.webp": {
+      "label": "EGLO technical datasheet 900092",
+      "url": "https://tools.eglo.com/tds/eng-GB/900092"
+    },
+    "bulbs/eglo-900102.webp": {
+      "label": "EGLO technical datasheet 900102",
+      "url": "https://tools.eglo.com/tds/eng-GB/900102"
+    },
+    "bulbs/eglo-900316.webp": {
+      "label": "EGLO technical datasheet 900316",
+      "url": "https://tools.eglo.com/tds/eng-GB/900316"
+    },
+    "bulbs/eglo-900317.webp": {
+      "label": "EGLO technical datasheet 900317",
+      "url": "https://tools.eglo.com/tds/eng-GB/900317"
+    },
+    "bulbs/eglo-900481.webp": {
+      "label": "EGLO technical datasheet 900481",
+      "url": "https://tools.eglo.com/tds/eng-GB/900481"
+    },
+    "bulbs/eglo-900486.webp": {
+      "label": "EGLO technical datasheet 900486",
+      "url": "https://tools.eglo.com/tds/eng-GB/900486"
+    },
+    "bulbs/eglo-900566.webp": {
+      "label": "EGLO technical datasheet 900566",
+      "url": "https://tools.eglo.com/tds/eng-GB/900566"
+    },
+    "bulbs/eglo-900878.webp": {
+      "label": "EGLO technical datasheet 900878",
+      "url": "https://tools.eglo.com/tds/eng-GB/900878"
+    },
+    "bulbs/eglo-901463.webp": {
+      "label": "EGLO technical datasheet 901463",
+      "url": "https://tools.eglo.com/tds/eng-GB/901463"
+    },
+    "bulbs/eglo-901466.webp": {
+      "label": "EGLO technical datasheet 901466",
+      "url": "https://tools.eglo.com/tds/eng-GB/901466"
+    },
+    "bulbs/eglo-98847.webp": {
+      "label": "EGLO technical datasheet 98847",
+      "url": "https://tools.eglo.com/tds/eng-GB/98847"
+    },
+    "bulbs/eglo-99671.webp": {
+      "label": "EGLO technical datasheet 99671",
+      "url": "https://tools.eglo.com/tds/eng-GB/99671"
+    }
+  }
+}

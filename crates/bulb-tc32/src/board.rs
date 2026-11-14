@@ -32,7 +32,7 @@ pub struct Out {
 /// One product and hardware revision of the range (`boards.rs`).
 #[derive(Clone, Copy)]
 pub struct Board {
-    /// `model-revision`, as build.sh's `BOARD=` names it.
+    /// `model-revision`, as `cargo xtask build --board` names it.
     pub name: &'static str,
     /// `open-eglo-board:` and the name, kept in the image (`BOARD_TAG`).
     pub tag: &'static str,
@@ -66,7 +66,7 @@ pub struct Board {
     pub image_type: u16,
 }
 
-/// The board of this build: `BULB_BOARD` (build.sh sets it), the dimmable
+/// The board of this build: `BULB_BOARD` (`cargo xtask build` sets it), the dimmable
 /// filament bulb without it.
 pub const BOARD: Board = board_named(match option_env!("BULB_BOARD") {
     Some(name) => name,
@@ -74,7 +74,7 @@ pub const BOARD: Board = board_named(match option_env!("BULB_BOARD") {
 });
 
 /// What the image says it was built for, for tools that read the image
-/// (flasher/ble_ota.py checks it against the bulb's own hardware revision).
+/// (`outglow ble push` checks it against the bulb's own hardware revision).
 #[used]
 static BOARD_TAG: &str = BOARD.tag;
 

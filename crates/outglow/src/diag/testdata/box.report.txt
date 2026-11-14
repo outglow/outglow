@@ -1,0 +1,86 @@
+== black box v1: 981 frames sent since the start, 14 rows of 120 s
+== unicasts per neighbour, oldest first (digit = attempts, x = not acknowledged), and the runs of lost attempts
+   0x1002:  6 frames,   6 attempts, delivered 100%, runs of losses -
+      111111
+   0x0000: 64 frames,  68 attempts, delivered 94%, runs of losses {1: 2, 2: 1}
+      1131121111111111111111111111112111111111111111111111111111111111
+== frames sent, newest first
+   -     0.0s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #77  1 attempts, ok
+   -     5.6s  to 0xffff  0x100d->0xfffc  -BS command link status                  #76  1 attempts, ok
+   -     8.9s  to 0xffff  0x0000->0xfffc  RBS command route request                #217 1 attempts, ok
+   -     9.1s  to 0xffff  0x0000->0xfffc  RBS command route request                #217 1 attempts, ok
+   -     9.4s  to 0xffff  0x0000->0xfffc  RBS command route request                #217 1 attempts, ok
+   -    10.0s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #75  1 attempts, ok
+   -    10.0s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #74  1 attempts, ok
+   -    10.0s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #73  1 attempts, ok
+   -    10.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #72  1 attempts, ok
+   -    10.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #71  1 attempts, ok
+   -    10.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #70  1 attempts, ok
+   -    10.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #69  1 attempts, ok
+   -    10.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #68  1 attempts, ok
+   -    10.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #67  1 attempts, ok
+   -    10.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #66  1 attempts, ok
+   -    10.3s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #65  1 attempts, ok
+   -    10.3s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #64  1 attempts, ok
+   -    10.3s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #63  1 attempts, ok
+   -    10.3s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #62  1 attempts, ok
+   -    10.4s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #61  1 attempts, ok
+   -    10.4s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #60  1 attempts, ok
+   -    10.4s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #59  1 attempts, ok
+   -    10.4s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #58  1 attempts, ok
+   -    10.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #57  1 attempts, ok
+   -    10.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #56  1 attempts, ok
+   -    10.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #55  1 attempts, ok
+   -    10.6s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #54  1 attempts, ok
+   -    10.6s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #53  1 attempts, ok
+   -    10.6s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #52  1 attempts, ok
+   -    10.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #51  1 attempts, ok
+   -    10.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #50  1 attempts, ok
+   -    10.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #49  1 attempts, ok
+   -    10.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #48  1 attempts, ok
+   -    10.8s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #47  1 attempts, ok
+   -    10.8s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #46  1 attempts, ok
+   -    10.9s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #45  1 attempts, ok
+   -    10.9s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #44  1 attempts, ok
+   -    10.9s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #43  2 attempts, ok
+   -    10.9s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #42  1 attempts, ok
+   -    11.0s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #41  1 attempts, ok
+   -    11.0s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #40  1 attempts, ok
+   -    11.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #39  1 attempts, ok
+   -    11.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #38  1 attempts, ok
+   -    11.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #37  1 attempts, ok
+   -    11.1s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #36  1 attempts, ok
+   -    11.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #35  1 attempts, ok
+   -    11.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #34  1 attempts, ok
+   -    11.2s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #33  1 attempts, ok
+   -    11.3s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #32  1 attempts, ok
+   -    16.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #31  1 attempts, ok
+   -    16.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #30  1 attempts, ok
+   -    16.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #29  1 attempts, ok
+   -    16.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #28  1 attempts, ok
+   -    16.5s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #27  1 attempts, ok
+   -    16.6s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #26  1 attempts, ok
+   -    16.6s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #25  1 attempts, ok
+   -    16.6s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #24  1 attempts, ok
+   -    16.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #23  1 attempts, ok
+   -    16.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #22  1 attempts, ok
+   -    16.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #21  1 attempts, ok
+   -    16.7s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #20  1 attempts, ok
+   -    16.8s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #19  1 attempts, ok
+   -    16.8s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #18  2 attempts, ok
+   -    16.8s  to 0x0000  0x100d->0x0000  --S data    Diagnostics                  #17  1 attempts, ok
+== rows (every 120 s): minute, unicasts sent, heard, retries, failures, coordinator, stale, noise
+       0 min  tx 7687  rx 65535  retry 255  fail  7  via cost 0 p 0%              disc 4  stale  0  noise -128
+       2 min  tx    8  rx   358  retry   0  fail  0  direct cost 5 p 0%           disc 1  stale  0  noise -105
+       4 min  tx   44  rx   237  retry   0  fail  0  direct cost 1m p 100%        disc 0  stale  0  noise -104
+       6 min  tx   44  rx   225  retry   1  fail  0  direct cost 1m p 99%         disc 0  stale  0  noise -103
+       8 min  tx    0  rx   197  retry   0  fail  0  direct cost 1m p 99%         disc 0  stale  0  noise -105
+      10 min  tx    2  rx   206  retry   0  fail  0  direct cost 1m p 99%         disc 0  stale  0  noise -104
+      12 min  tx    0  rx   584  retry   0  fail  0  direct cost 1m p 99%         disc 0  stale  0  noise -104
+      14 min  tx    0  rx  1236  retry   0  fail  0  direct cost 1m p 99%         disc 0  stale  0  noise -105
+      16 min  tx   44  rx   231  retry   6  fail  0  direct cost 1m p 84%         disc 0  stale  0  noise -104
+      18 min  tx    0  rx   194  retry   0  fail  0  direct cost 1m p 84%         disc 0  stale  0  noise -105
+      20 min  tx   44  rx   227  retry   5  fail  0  direct cost 1m p 91%         disc 0  stale  0  noise -105
+      22 min  tx    0  rx   212  retry   0  fail  0  direct cost 1m p 91%         disc 0  stale  0  noise -105
+      24 min  tx    0  rx   212  retry   0  fail  0  direct cost 1m p 91%         disc 0  stale  0  noise -105
+      26 min  tx  280  rx   358  retry  25  fail  0  direct cost 1m p 93%         disc 0  stale  0  noise -103

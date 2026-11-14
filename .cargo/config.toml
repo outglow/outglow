@@ -6,6 +6,7 @@
 #   cargo stress [-- --full] [--sets stock,c,rust,rust+stock] [--out docs/stress-results.md] [filters]
 # The scenarios crate lives in the emulator's own workspace, hence the manifest path.
 [alias]
+xtask = "run --quiet --release --package xtask --"
 spec = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test spec"
 ble-spec = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test ble"
 sims = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims"

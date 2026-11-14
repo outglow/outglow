@@ -42,10 +42,13 @@ Written from scratch in Rust, with no vendor code: the chip start-up, the
 | `crates/bulb-tc32` | the firmware for the chip: start-up, radio drivers, flash |
 | `crates/bulb-sim` | host-side model of the bulb for tests |
 | `emulator/rs` | TC32/TLSR8258 emulator and the scenario tests (whole bulbs on a simulated air) |
-| `ota-packer` | builds Zigbee OTA files and images with the CRC |
-| `flasher` | first flash over BLE (`ble_ota.py`) and Zigbee OTA helpers |
+| `crates/outglow` | the `outglow` command: flash a bulb over BLE, read its diagnostics and black box, inspect images |
+| `crates/outglow-image` | image formats: ELF to flash image, header and CRC, Zigbee OTA files, boards |
+| `xtask` | `cargo xtask`: build the firmware, board tables, OTA index, mutation tests |
+| `site` | the website and the web flasher |
+| `ota` | the Zigbee2MQTT OTA index |
 | `z2m` | Zigbee2MQTT external converter |
-| `tools` | diagnostics reader, stock image extraction, converter checks |
+| `tools` | stock image extraction from the vendor app, Zigbee2MQTT converter checks |
 
 ## Building
 
@@ -54,10 +57,15 @@ goes through LLVM bitcode and the [llvm-tc32](https://github.com/goyamamoto/llvm
 fork:
 
 ```sh
-TC32_LLVM=/path/to/llvm-tc32/build/bin \
-  crates/bulb-tc32/build.sh                    # dimmable filament bulb
-crates/bulb-tc32/build.sh BOARD=EGLO_ZM_TW-4.62  # any board of boards.tsv
+export TC32_LLVM=/path/to/llvm-tc32/build/bin
+cargo xtask build                              # dimmable filament bulb
+cargo xtask build --board EGLO_ZM_TW-4.62      # any board of crates/bulb-tc32/boards.tsv
+cargo xtask build --all                        # every board
 ```
+
+Other tasks: `cargo xtask boards` (the board table from the stock profiles),
+`cargo xtask index` (the Zigbee2MQTT OTA index), `cargo xtask mutants`
+(mutation tests).
 
 Output in `target/tc32*/`: `bulb-tc32-ota.bin` (BLE update image) and
 `bulb-tc32.ota` (Zigbee OTA file).
@@ -77,12 +85,12 @@ Scenarios whose image is missing are skipped and say where to get it.
 
 ## Flashing
 
-1. **First time, over BLE from the original firmware** (Python with `bleak`
-   and `pycryptodome`):
+1. **First time, over BLE from the original firmware**: the web flasher on
+   the website (Chrome or Edge), or from a computer:
 
    ```sh
-   python3 flasher/ble_ota.py push <bulb MAC> target/tc32/bulb-tc32-ota.bin \
-       --allow-nonstock --login --confirm-write --seconds 120
+   cargo run --release -p outglow -- ble scan
+   cargo run --release -p outglow -- ble push <bulb> target/tc32/bulb-tc32-ota.bin --allow-outglow --confirm-write
    ```
 
    The image must match the bulb's board and hardware revision (the flasher

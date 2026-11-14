@@ -1,6 +1,6 @@
 // Firmware update over Bluetooth LE for bulbs with the AwoX/Telink mesh
 // profile: the original firmware and Outglow. Transport-independent: the same
-// steps as flasher/awox_ota.py (packets, CRC, erase wait, status polling and
+// steps as crates/outglow/src/flash/protocol.rs (packets, CRC, erase wait, status polling and
 // resends), so the browser flasher and the command-line one send the same
 // bytes (test/awox-ota.test.ts compares them).
 //
@@ -19,7 +19,7 @@ export const OTA = 0x15;
 export type Char = typeof PAIR | typeof OTA;
 export const AWOX_VENDOR = 0x0160;
 export const BLOCK = 16;
-/** Largest block each firmware's OTA handler takes (flasher/awox_ota.py CHUNK_CAP). */
+/** Largest block each firmware's OTA handler takes (crates/outglow/src/flash/protocol.rs). */
 export const CHUNK_CAP = { stock: 240, outglow: 57, unknown: BLOCK } as const;
 export const STAGING_MAX = 0x64000;
 export const STOCK_ERRORS: Record<number, string> = {
@@ -191,7 +191,7 @@ function latin1(b: Uint8Array): string {
 }
 
 /**
- * Checks an image the way the bootloader and flasher/ble_ota.py do and says
+ * Checks an image the way the bootloader and `outglow ble push` do and says
  * which board it is for. Throws OtaError.
  */
 export function checkImage(img: Uint8Array, boards: Board[]): ImageInfo {

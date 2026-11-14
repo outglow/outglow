@@ -48,21 +48,20 @@ jobs:
             gh release download "$tag" -D "rel/$tag" -p 'outglow-*.json' -p '*-ota.bin' || continue
             mv rel/$tag/*-ota.bin "site/dist/firmware/$tag/" 2>/dev/null || true
           done
-          python3 - <<'PY'
-          import glob, json
-          index, images = [], []
-          for d in sorted(glob.glob("rel/*")):
-              try:
-                  index += json.load(open(f"{d}/outglow-index.json"))
-                  images += json.load(open(f"{d}/outglow-firmware.json"))["images"]
-              except FileNotFoundError:
-                  pass
-          index.sort(key=lambda e: (e["imageType"], e["fileVersion"]))
-          images.sort(key=lambda r: (r["board"], int(r["fileVersion"], 16)))
-          json.dump(index, open("site/dist/ota/index.json", "w"), indent=2)
-          json.dump({"schema": 1, "images": images}, open("site/dist/firmware.json", "w"), indent=2)
-          print(f"{len(index)} OTA images, {len(images)} flasher images")
-          PY
+          # one index and one release list over all of them (fileVersion strings sort as numbers: fixed width)
+          if ls rel/*/outglow-index.json >/dev/null 2>&1; then
+            jq -s 'add | sort_by(.imageType, .fileVersion)' rel/*/outglow-index.json > site/dist/ota/index.json
+            jq -s '{schema: 1, images: (map(.images) | add | sort_by(.board, .fileVersion))}' \
+              rel/*/outglow-firmware.json > site/dist/firmware.json
+          fi
+          echo "$(jq length site/dist/ota/index.json) OTA images, $(jq '.images | length' site/dist/firmware.json) flasher images"
+
+      - name: The original firmware (outglow/original-firmware), for "Restore original firmware"
+        continue-on-error: true
+        run: |
+          git clone -q --depth 1 https://github.com/outglow/original-firmware /tmp/original
+          mkdir -p site/dist/original
+          cp -R /tmp/original/manifest.json /tmp/original/firmware site/dist/original/
 
       - uses: actions/upload-pages-artifact@v3
         with:

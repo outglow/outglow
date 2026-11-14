@@ -5,14 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Outglow Flasher</title>
 <meta name="description" content="Put Outglow on a bulb over Bluetooth from the browser.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/src/style.css">
 <link rel="stylesheet" href="/src/flasher/flasher.css">
 </head>
 <body>
 <header class="site">
-  <a class="logo" href="../">out<span>glow</span></a>
+  <a class="logo" href="../"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <nav>
     <a href="../">Overview</a>
+    <a href="../bulbs.html">Supported bulbs</a>
     <a href="../install.html">Install</a>
     <a href="./" aria-current="page">Flasher</a>
     <a href="https://github.com/outglow/outglow">Source</a>
@@ -20,8 +22,8 @@
 </header>
 <main>
   <h1>Flasher</h1>
-  <p class="lead">Puts Outglow on a bulb over Bluetooth, the way the vendor app sends its updates. Read the
-    <a href="../install.html">install guide</a> first.</p>
+  <p class="lead">Installs Outglow on a bulb over Bluetooth, the same way the vendor app installs its updates.
+    New here? Read the <a href="../install.html">install guide</a> first.</p>
 
   <div id="support" class="note" hidden>
     <strong>This browser has no Web Bluetooth.</strong>
@@ -48,8 +50,8 @@
     <section class="controls">
       <div class="panel">
         <h2>1. Bulb</h2>
-        <div id="bulb" class="facts"><p class="muted">Not connected. Switch the bulb off and on first: the original
-          firmware accepts Bluetooth for about 20 minutes after power-on.</p></div>
+        <div id="bulb" class="facts"><p class="muted">Not connected. Switch the bulb off and on, then connect within
+          20 minutes.</p></div>
         <div class="row">
           <button id="connect" class="primary">Connect to a bulb</button>
           <button id="disconnect">Disconnect</button>
@@ -63,14 +65,14 @@
           <label>Release <select id="release"><option value="">—</option></select></label>
         </div>
         <p id="image" class="muted">No image chosen.</p>
+        <div class="row"><button id="restore" type="button">Restore original firmware</button></div>
       </div>
 
       <div class="panel">
         <h2>3. Update</h2>
         <ul id="problems"></ul>
         <label class="confirm"><input id="confirm" type="checkbox">
-          I understand that this replaces the bulb's firmware, that Outglow is experimental, and that a bulb can be
-          left unusable.</label>
+          I understand that this replaces the bulb's firmware and that a failed update can leave a bulb unusable.</label>
         <div class="row">
           <button id="start" class="primary">Start the update</button>
           <button id="stop">Stop</button>
@@ -80,9 +82,9 @@
       <details class="panel advanced">
         <summary>Advanced options</summary>
         <div class="row"><label>Local image <input id="file" type="file" accept=".bin"></label></div>
-        <div class="row"><label><input id="stock" type="checkbox"> Allow the original firmware (going back; local file only)</label></div>
+        <div class="row"><label><input id="stock" type="checkbox"> Allow the original firmware from a local file</label></div>
         <div class="row">
-          <label><input id="login" type="checkbox"> Mesh login before the update (not needed: the update channel takes no login)</label>
+          <label><input id="login" type="checkbox"> Log in to the bulb's Bluetooth mesh first (usually not needed)</label>
         </div>
         <div class="row">
           <label>Mesh name <input id="mesh-name" type="text" value="unpaired" size="12"></label>

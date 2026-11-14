@@ -5,7 +5,7 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Bare-metal bulb firmware for the Telink TLSR8258 (TC32 core): startup, register-level HAL and bulb-core, no vendor code"
 
-# Built only for the target, through build.sh (rustc -> LLVM bitcode -> the
+# Built only for the target, through `cargo xtask build` (rustc -> LLVM bitcode -> the
 # llvm-tc32 clang/lld). It is not a member of the host workspace.
 [workspace]
 
@@ -15,11 +15,11 @@ crate-type = ["staticlib"]
 [features]
 default = ["ble"]
 # Bluetooth LE next to Zigbee: the stock bulb's profile for the AwoX app and
-# for updates over BLE (build.sh: BLE=0 leaves it out).
+# for updates over BLE (`cargo xtask build --no-ble` leaves it out).
 ble = ["dep:ble"]
 # Diagnostics: a ring in SRAM (ZB_TRACE) with what became of every frame
 # the stack handled and what kept the radio from 802.15.4, for the
-# emulator's test harness (build.sh: TRACE=1). Not for the bulbs.
+# emulator's test harness (`cargo xtask build --trace`). Not for the bulbs.
 trace = []
 
 [dependencies]

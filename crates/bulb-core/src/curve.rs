@@ -1,9 +1,8 @@
 //! Brightness curves of the original bulbs: level (0..=254) to PWM duty on a
-//! 0..=65535 scale. Measured on the stock firmware in the emulator
-//! (`emulator/zigbee_sim.py --sweep`: Move to Level 1..254, duty after the
-//! output has settled; for the tunable-white bulb the sum of both channels).
-//! The same tables as `firmware/eglo_curve.h` and `firmware/eglo_curve_tw.h`
-//! of the C firmware (`emulator/gen_curve.py` generates those).
+//! 0..=65535 scale. Measured on the stock firmware in the emulator (Move to
+//! Level 1..254, duty after the output has settled; for the tunable-white bulb
+//! the sum of both channels; `board_check` compares every board's curve with
+//! its stock firmware).
 
 /// The dimmable bulb (level 128: 25.2 %).
 pub const DIMM: [u16; 255] = [

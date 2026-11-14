@@ -2,7 +2,7 @@
 //! emulator node (BLECONNECT / BLESTATE / ATT / ... of the zbnode protocol,
 //! `GoEngine.ble_*` in emulator/engines.py) in-process, the attribute
 //! transport and discovery of emulator/ble_ota_sim.py, and the app side of
-//! the AwoX protocol (flasher/awox_ota.py, emulator/awox_mesh.py).
+//! the AwoX protocol (crates/outglow/src/flash/protocol.rs, emulator/awox_mesh.py).
 
 use std::rc::Rc;
 

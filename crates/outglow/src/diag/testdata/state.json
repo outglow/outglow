@@ -1,0 +1,21 @@
+{"uptime": 1176, "reset_cause": "software", "number_of_resets": 8, "watchdog_resets": 0,
+ "nwk_channel": 15, "nwk_pan_id": "0x1a2b", "nwk_ext_pan_id": "0x00124b0000001234", "nwk_update_id": 1, "nwk_key_seq": 0,
+ "nwk_frame_counter": 29249, "nwk_depth": 1, "nwk_parent": "0x0000",
+ "link_health": "good", "coordinator_route": "direct, cost 3", "coordinator_many_to_one": false, "routes_used": 2,
+ "nwk_status_received": 2, "last_nwk_status_received": "no route available (0x1003)", "nwk_status_sent": 0, "last_nwk_status_sent": "none",
+ "noise_floor": -105, "noise_floor_max": -102, "cca_busy": 481, "channel_access_failures": 0,
+ "mac_tx_ucast": 7830, "mac_tx_ucast_retry": 591, "mac_tx_ucast_fail": 7, "loop_max_ms": 293.5,
+ "rssi_below_90": 954, "rssi_90_to_80": 1163, "rssi_80_to_70": 765, "rssi_70_to_60": 330, "rssi_above_60": 448,
+ "neighbor_added": 72, "neighbor_removed": 14, "neighbor_stale": 994, "nwk_fc_failure": 36, "nwk_decrypt_failures": 1.0,
+ "relayed_ucast": 9, "relay_drop_queue_full": 0, "relay_drop_no_route": 0, "relay_drop_mac_fail": 0,
+ "ble_connections": 1, "ble_disconnects": 1, "ble_links_lost": 0, "ble_events": 146, "ble_events_skipped": 3, "ble_ms": 455899,
+ "loop_max": 293462, "ble_lend_max": 3205, "flash_busy_max": 0, "stack_free": 7676, "irq_stack_free": null,
+ "neighbor_table": [
+  {"address": "0x1001", "age": 1, "child": false, "cost_measured": false, "delivery": null, "fails": 0, "in_link_status": true, "link_cost": 1, "lqi": 127, "out_cost": 1, "relays": true, "retries": 0, "rssi_avg": -55, "rssi_min": -59, "rx": 447, "stale": 0, "tx": 0},
+  {"address": "0x0000", "age": 0, "child": false, "cost_measured": true, "delivery": 95, "fails": 0, "in_link_status": true, "link_cost": 1, "lqi": 60, "out_cost": 1, "relays": true, "retries": 14, "rssi_avg": -76, "rssi_min": -79, "rx": 486, "stale": 0, "tx": 205},
+  {"address": "0x1002", "age": 8, "child": true, "delivery": 97.5, "fails": 2, "in_link_status": false, "lqi": 3, "out_cost": 0, "relays": false, "retries": 1, "rssi_avg": -98, "rssi_min": -101, "rx": 1, "stale": 3, "tx": 9}
+ ],
+ "event_log": [
+  {"a": 4097, "b": 9, "kind": "nb_added", "seq": 16, "start": 8, "t": 707, "text": "#8 +707s neighbour 0x1001 added (LQI 9)"},
+  {"a": 2, "b": 8, "kind": "start", "seq": 0, "start": 8, "t": 0}
+ ]}

@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && vite build && mkdir -p dist/ota && cp ../ota/index.json dist/ota/index.json",
     "preview": "vite preview",
     "test": "vitest run",
-    "boards": "python3 gen-boards.py"
+    "boards": "cd .. && cargo xtask boards"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

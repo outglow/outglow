@@ -3,7 +3,7 @@ name: Release
 # A published GitHub release (tag vMAJOR.MINOR.PATCH) gets the firmware of every
 # board as assets: the Zigbee OTA file (outglow-<board>-<version>.ota, for
 # Zigbee2MQTT) and the Bluetooth image (outglow-<board>-<version>-ota.bin, for
-# the web flasher and flasher/ble_ota.py), plus the index entries of this
+# the web flasher and `outglow ble push`), plus the index entries of this
 # release (outglow-index.json, outglow-firmware.json). The site workflow then
 # puts them on the website.
 
@@ -39,10 +39,7 @@ jobs:
           BULB_FILE_VERSION: ${{ steps.v.outputs.file }}
           # key index 4 for commercial touchlink initiators (not in the repository)
           TOUCHLINK_MASTER_KEY: ${{ secrets.TOUCHLINK_MASTER_KEY }}
-        run: |
-          for board in $(grep -v '^#' crates/bulb-tc32/boards.tsv | cut -f1); do
-            BOARD=$board crates/bulb-tc32/build.sh
-          done
+        run: cargo xtask build --all
 
       - name: Index and assets
         env:
@@ -54,7 +51,7 @@ jobs:
           mkdir -p assets
           echo '[]' > assets/outglow-index.json
           echo '{"schema": 1, "images": []}' > assets/outglow-firmware.json
-          python3 ota/make-index.py --version "$VERSION" --tag "$TAG" --notes "$NOTES" \
+          cargo xtask index --version "$VERSION" --tag "$TAG" --notes "$NOTES" \
             --index assets/outglow-index.json --site assets/outglow-firmware.json --assets assets \
             $(ls target/tc32*/bulb-tc32.ota | grep -vE -- '-(noble|trace)/')
           gh release upload "$TAG" assets/* --clobber

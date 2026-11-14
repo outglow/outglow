@@ -1,22 +1,24 @@
 // The browser flasher's protocol module against the command-line flasher
-// (flasher/awox_ota.py): the same packets, CRCs and login bytes.
+// (`outglow ble`, crates/outglow/src/flash): the same packets, CRCs and login
+// bytes. The reference values come from `outglow ble vectors [image]`.
 //
 //   npm test
-//   PYTHON=/path/to/python3 OUTGLOW_IMAGE=../target/tc32/bulb-tc32-ota.bin npm test
+//   OUTGLOW=../target/debug/outglow OUTGLOW_IMAGE=../target/tc32/bulb-tc32-ota.bin npm test
 //
-// Needs python3 with pycryptodome (PYTHON says which one). With OUTGLOW_IMAGE
+// By default the tool runs through `cargo run -q -p outglow` from the
+// repository root; OUTGLOW names a built binary instead. With OUTGLOW_IMAGE
 // the packets of that image are compared as well.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import * as ota from "../src/flasher/awox-ota.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const boards = JSON.parse(readFileSync(join(here, "..", "public", "boards.json"), "utf8")) as ota.Board[];
-const py = process.env.PYTHON ?? "python3";
+const root = join(here, "..", "..");
 
 interface Reference {
   image: string;
@@ -33,9 +35,12 @@ interface Reference {
 }
 
 function reference(image?: string): Reference {
-  const args = [join(here, "reference.py")];
-  if (image) args.push(image);
-  return JSON.parse(execFileSync(py, args, { maxBuffer: 1 << 26 }).toString()) as Reference;
+  const args = ["ble", "vectors"];
+  if (image) args.push(resolve(image));
+  const [cmd, all] = process.env.OUTGLOW
+    ? [resolve(process.env.OUTGLOW), args]
+    : ["cargo", ["run", "-q", "-p", "outglow", "--", ...args]];
+  return JSON.parse(execFileSync(cmd, all, { cwd: root, maxBuffer: 1 << 26 }).toString()) as Reference;
 }
 
 const bytes = (b64: string) => new Uint8Array(Buffer.from(b64, "base64"));
@@ -51,7 +56,7 @@ function compare(ref: Reference): Uint8Array {
 
 const ref = reference();
 
-describe("against flasher/awox_ota.py", () => {
+describe("against outglow ble", () => {
   test("packets of a synthetic image", () => {
     const img = compare(ref);
     expect(ref.verify).toBe(true);

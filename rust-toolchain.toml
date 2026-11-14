@@ -1,4 +1,4 @@
-# The stable rustc whose LLVM bitcode the llvm-tc32 fork reads (crates/bulb-tc32/build.sh).
+# The stable rustc whose LLVM bitcode the llvm-tc32 fork reads (cargo xtask build).
 [toolchain]
 channel = "1.99.0"
 components = ["rust-src"]

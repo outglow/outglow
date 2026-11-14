@@ -82,11 +82,11 @@ const fn parse_key(s: &str) -> [u8; 16] {
 
 /// OTA image type: this firmware's own, one per board, so that no server
 /// hands it an image built for something else. `boot/start.S` puts the same
-/// value into the image header (build.sh takes it from boards.tsv).
+/// value into the image header (`cargo xtask build` takes it from the board table).
 pub const IMAGE_TYPE: u16 = BOARD.image_type;
 
 /// Version of this build as the OTA cluster sees it: hexadecimal in the
-/// environment variable BULB_FILE_VERSION at build time (`build.sh` sets it).
+/// environment variable BULB_FILE_VERSION at build time (`cargo xtask build` sets it).
 pub const FILE_VERSION: u32 = match option_env!("BULB_FILE_VERSION") {
     Some(s) => parse_hex(s),
     None => 0x0002_0000,

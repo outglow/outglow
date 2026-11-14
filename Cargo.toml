@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble"]
+members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble", "crates/outglow-image", "crates/outglow", "xtask"]
 
 # Alternative firmware for the EGLO/AwoX Connect.Z bulb (Telink TLSR825x chip,
 # TC32 core). Written as a portable `no_std` logic core + a hardware emulator
@@ -12,7 +12,7 @@ members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble"]
 # Rust/LLVM. The core is fully portable (zero dependencies on std or on specific
 # hardware) and all the logic is tested on the host through a mocked HAL (the
 # `bulb-sim` crate). For the chip itself, `crates/bulb-tc32` (its own package,
-# not a member of this workspace) is built by `crates/bulb-tc32/build.sh`:
+# not a member of this workspace) is built by `cargo xtask build` (xtask/src/build.rs):
 # rustc emits LLVM bitcode and the llvm-tc32 fork generates the TC32 code
 # (docs/rust-tc32.md).
 
