@@ -20,7 +20,7 @@ pub struct Args {
     assets: PathBuf,
 }
 
-const SITE: &str = "https://outglow.github.io/outglow";
+const SITE: &str = "https://outglow.github.io";
 
 fn light(kind: &str) -> &'static str {
     match kind {

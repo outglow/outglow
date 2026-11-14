@@ -1,0 +1,89 @@
+name: Website (build and deploy)
+
+# The website with the web flasher, built from site/ of outglow/outglow and
+# deployed to GitHub Pages of the repository that calls this workflow: this
+# one (https://outglow.github.io/outglow/, base /outglow/) and
+# outglow/outglow.github.io (https://outglow.github.io/, base /). The firmware
+# it offers comes from the published releases of outglow/outglow: their
+# Bluetooth images are served by the site itself (firmware/<tag>/...; release
+# assets carry no CORS headers, a browser cannot download them), and the
+# Zigbee2MQTT OTA index (ota/index.json) lists their OTA files, which
+# Zigbee2MQTT downloads from the release.
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        description: "Path the site is served under (/outglow/ or /)"
+        type: string
+        default: /outglow/
+      ref:
+        description: "Commit of outglow/outglow to build"
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: outglow/outglow
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build the site
+        working-directory: site
+        env:
+          OUTGLOW_BASE: ${{ inputs.base }}
+        run: npm ci && npm run build
+
+      - name: Firmware of the releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p rel
+          echo '[]' > site/dist/ota/index.json
+          echo '{"schema": 1, "images": []}' > site/dist/firmware.json
+          # the newest releases first; older ones stay downloadable from GitHub
+          for tag in $(gh release list -R outglow/outglow --exclude-drafts --limit 30 --json tagName --jq '[.[].tagName | select(startswith("v"))][:10][]'); do
+            mkdir -p "rel/$tag" "site/dist/firmware/$tag"
+            gh release download -R outglow/outglow "$tag" -D "rel/$tag" -p 'outglow-*.json' -p '*-ota.bin' || continue
+            mv rel/$tag/*-ota.bin "site/dist/firmware/$tag/" 2>/dev/null || true
+          done
+          # one index and one release list over all of them (fileVersion strings sort as numbers: fixed width)
+          if ls rel/*/outglow-index.json >/dev/null 2>&1; then
+            jq -s 'add | sort_by(.imageType, .fileVersion)' rel/*/outglow-index.json > site/dist/ota/index.json
+            jq -s '{schema: 1, images: (map(.images) | add | sort_by(.board, .fileVersion))}' \
+              rel/*/outglow-firmware.json > site/dist/firmware.json
+          fi
+          echo "$(jq length site/dist/ota/index.json) OTA images, $(jq '.images | length' site/dist/firmware.json) flasher images"
+
+      - name: The original firmware (outglow/original-firmware), for "Restore original firmware"
+        continue-on-error: true
+        run: |
+          git clone -q --depth 1 https://github.com/outglow/original-firmware /tmp/original
+          mkdir -p site/dist/original
+          cp -R /tmp/original/manifest.json /tmp/original/firmware site/dist/original/
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

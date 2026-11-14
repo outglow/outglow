@@ -1,7 +1,9 @@
 # Outglow site and web flasher
 
 A static site (Vite + TypeScript, no framework): an overview, a list of
-supported bulbs, an install guide and a Web Bluetooth flasher. GitHub Pages serves it under `/outglow/`.
+supported bulbs, an install guide and a Web Bluetooth flasher. GitHub Pages serves it at https://outglow.github.io/ (built with the base `/` by
+`outglow/outglow.github.io`, `.github/workflows/site.yml`) and still under `/outglow/`
+(the project site, for links and Zigbee2MQTT configurations made before).
 
 ```sh
 cd site

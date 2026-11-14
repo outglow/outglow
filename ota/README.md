@@ -5,14 +5,16 @@
 uses by default). Point Zigbee2MQTT at it, and bulbs running Outglow are
 offered new versions.
 
-The site build publishes it at `https://outglow.github.io/outglow/ota/index.json`;
-the files it points to are GitHub release assets.
+The site build publishes it at `https://outglow.github.io/ota/index.json` (and, for
+configurations made before the site moved to the root, still at
+`https://outglow.github.io/outglow/ota/index.json`); the files it points to are GitHub
+release assets.
 
 ## Zigbee2MQTT configuration
 
 ```yaml
 ota:
-  zigbee_ota_override_index_location: https://outglow.github.io/outglow/ota/index.json
+  zigbee_ota_override_index_location: https://outglow.github.io/ota/index.json
 ```
 
 Entries of the override index take precedence over the default index. Both stay
