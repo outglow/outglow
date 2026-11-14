@@ -79,7 +79,7 @@ fn wait_event(z: &mut Z, kind: &str, max_ms: f64, since: Option<usize>) -> R<boo
     z.run_until(max_ms, 20.0, move |z| z.w.coord.events[n0..].iter().any(|e| e.kind == kind))
 }
 
-fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image, expect: Option<&crate::image::Image>,
+pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image, expect: Option<&crate::image::Image>,
         layout: Layout) -> R<()> {
     let ota = ota_img.bytes().map_err(crate::session::Stop::Error)?;
     let (mfg, itype, ver) = z.w.coord.add_ota_file(ota.clone()).map_err(crate::session::Stop::Error)?;
