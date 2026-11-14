@@ -180,6 +180,13 @@ Measured stock behaviour these scenarios hold (each one a check or a note):
 - A BLE update of 156 KB takes 170 s of simulation alone, 660 s while the bulb
   is on the Zigbee network.
 
+In `mixed_chain` (the tunable white pair more than the dimmable one) a frame
+of a burst is lost now and then: the Rust relay does not acknowledge a frame
+that ends while it prepares a transmission of its own, and the stock sender
+gives up after one MAC retry. The coordinator sends without APS
+acknowledgement, so the scenario sends an unanswered command once more, as
+an APS retry would.
+
 Seen in the Rust firmware and not yet explained: with the third bulb of
 `mixed_chain` powered at 24 s (`MIXED_S2_ON=24000`) it sends its Link Status and
 0.4 ms later its Device_annce; the Rust bulb's radio takes both, but the Rust

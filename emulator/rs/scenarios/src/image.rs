@@ -35,6 +35,9 @@ impl Image {
             let r = crate::runner::repo_root().join(&p);
             if r.exists() {
                 p = r;
+            } else if let Some(d) = crate::sims::stock_dir_path(path) {
+                // stock/... names an image of OUTGLOW_STOCK_DIR as the defaults do
+                p = d;
             }
         }
         Ok(Image { label: label.to_string(), path: p, link_shift: shift })
