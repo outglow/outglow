@@ -81,18 +81,33 @@ device.endpoints = model.endpoints.map((e) => ({
 const definition = await zhc.findByDevice(device, true);
 check("the bulb is matched to the external converter", !definition.generated && definition.model === model.modelID,
       `${definition.vendor} ${definition.model}`);
-let ex = definition.exposes;
-if (typeof ex === "function") ex = ex(device, {});
-const props = [];
-const walk = (x) => {
-    if (x.property) props.push(x.property);
-    for (const f of x.features ?? []) walk(f);
+const exposesWith = (options) => (typeof definition.exposes === "function" ? definition.exposes(device, options) : definition.exposes);
+const propsOf = (list) => {
+    const out = [];
+    const walk = (x) => {
+        if (x.property) out.push(x.property);
+        for (const f of x.features ?? []) walk(f);
+    };
+    for (const x of list) walk(x);
+    return out;
 };
-for (const x of ex) walk(x);
-console.log(`exposes (${props.length}): ${props.join(" ")}`);
+// the level of diagnostics: summary by default, nothing at "off", everything at "full"
+const summary = exposesWith({}).map((x) => x.property);
+const summaryDiag = ["link_health", "coordinator_route", "neighbors", "uptime"];
+check("by default the diagnostics are a summary of four", summaryDiag.every((n) => summary.includes(n)) &&
+      !summary.includes("radio") && !summary.includes("neighbor_table") && !summary.includes("analog_in_count_2"),
+      summary.join(" "));
+const offList = exposesWith({diagnostics: "off"});
+const off = [...offList.map((x) => x.property), ...propsOf(offList)];
+check("diagnostics off: none of them shown", !summaryDiag.some((n) => off.includes(n)) && off.includes("state"), off.join(" "));
+// the rest of the checks: at "full"
+const ex = exposesWith({diagnostics: "full"});
+const props = propsOf(ex);
+console.log(`exposes at full (${props.length}): ${props.join(" ")}`);
 const generatedNames = ["analog_in_count_2", "analog_input_3", "analog_in_percentage_4", "analog_in_count_5", "analog_in_count_6",
-                        "binary_output_7", "analog_output_8", "state", "brightness", "power_on_behavior", "effect", "identify"];
+                        "binary_output_7", "state", "brightness", "power_on_behavior", "effect", "identify"];
 const missing = generatedNames.filter((n) => !props.includes(n));
+// (endpoint 8, the Bluetooth window, is the device option bluetooth_window here)
 check("every entity of the generated definition, under the same name", missing.length === 0, missing.join(" "));
 check("the start-up brightness", props.includes("current_level_startup"));
 // health as plain entities, the rest in groups and tables
@@ -194,4 +209,11 @@ check("a black box page is published as hex", bx.black_box_page?.page === 3 && b
 check("black_box_read can be set", Boolean(definition.toZigbee.find((x) => x.key?.includes("black_box_read"))?.convertSet));
 const t = definition.toZigbee.find((x) => x.key?.includes("diagnostics_clear"));
 check("diagnostics_clear can be set", Boolean(t?.convertSet));
+// Bluetooth as device options, written when they change
+const optNames = (definition.options ?? []).map((o) => o.property ?? o.name);
+check("Bluetooth and the diagnostics level are device options", ["bluetooth", "bluetooth_window", "diagnostics"].every((n) => optNames.includes(n)),
+      optNames.join(" "));
+check("no Bluetooth entities any more", !propsOf(exposesWith({diagnostics: "full"})).some((n) => ["ble_mode", "ble_active", "analog_output_8"].includes(n)));
+
 process.exit(failed ? 1 : 0);
+

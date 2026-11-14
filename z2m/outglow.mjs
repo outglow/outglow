@@ -1,7 +1,7 @@
 // Zigbee2MQTT external converter for EGLO / AwoX bulbs running the open
 // Rust firmware (crates/bulb-tc32: Basic ModelIdentifier "outglow-dimm",
 // "outglow-tw", "outglow-rgbtw", "outglow-rgbw" or "outglow-ebf",
-// ManufacturerName "EGLO"). Optional: without it Zigbee2MQTT generates a
+// ManufacturerName "Outglow"). Optional: without it Zigbee2MQTT generates a
 // definition from what the bulb shows (light, identify, the diagnostic values
 // of endpoints 2-6, the settings of endpoints 7-8). This converter gives the
 // same entities under the same names, the start-up brightness, and the
@@ -22,8 +22,11 @@
 //   its pages, each published as `black_box_page` {page, hex};
 //   `outglow box` does that and decodes them.
 //
-// Everything is read every `diagnostics_poll_interval` seconds (default 600;
-// 0: only on demand): 13 + 10 Read Attributes frames, nothing reported.
+// The device option `diagnostics` sets how much is shown and polled: "off",
+// "summary" (default: link health, way to the coordinator, neighbours,
+// uptime; two Read Attributes frames a poll) or "full" (everything below;
+// 13 + 10 frames a poll). Polled every `diagnostics_poll_interval` seconds
+// (default 600; 0: only on demand); `diagnostics_refresh` reads everything.
 // The counters only grow and wrap (ZCL 3.15.2.2.2) and start from 0 at a
 // power-on; the rates are over the time since then.
 //
@@ -331,6 +334,26 @@ const diagnosticCluster = m.deviceAddCustomCluster("haDiagnostic", {
 
 const chunks = (list, n) => list.reduce((a, x, i) => (i % n ? a[a.length - 1].push(x) : a.push([x]), a), []);
 
+// How much diagnostics a bulb shows (device option `diagnostics`): "off" (none
+// exposed, none polled), "summary" (default: four entities, one or two read
+// frames a poll) or "full" (every counter, group and table). The data a
+// refresh reads always reaches MQTT, exposed or not (`outglow diag` reads it).
+const LEVELS = ["off", "summary", "full"];
+const level = (options) => (LEVELS.includes(options?.diagnostics) ? options.diagnostics : "summary");
+const SUMMARY_EXPOSED = ["link_health", "coordinator_route", "neighbors", "uptime", "diagnostics_refresh"];
+const SUMMARY_STANDARD = ["macTxUcast", "macTxUcastRetry", "macTxUcastFail"];
+const SUMMARY_MANUFACTURER = ["outglowUptime", "outglowNeighbors", "outglowCoordNextHop", "outglowCoordCost"];
+
+/// What a poll reads at the bulb's level of diagnostics.
+async function readForLevel(device, options) {
+    const l = level(options);
+    if (l === "off") return;
+    if (l === "full") return await readAll(device);
+    const ep = device.getEndpoint(1);
+    await ep.read("haDiagnostic", SUMMARY_STANDARD);
+    await ep.read("haDiagnostic", SUMMARY_MANUFACTURER, mfr);
+}
+
 /// Reads every counter (in one-frame portions: 8 attributes a read) and every table page (one a read).
 async function readAll(device) {
     const ep = device.getEndpoint(1);
@@ -440,7 +463,22 @@ const diagnostics = {
             },
         },
     ],
-    exposes: [
+    onEvent: [
+        (event) => {
+            if (event.type === "deviceOptionsChanged" && level(event.data.from) !== level(event.data.to)) event.data.deviceExposesChanged();
+        },
+    ],
+    exposes: [(device, options) => {
+        const l = level(options);
+        if (l === "off") return [];
+        const all = allDiagnosticExposes();
+        return l === "full" ? all : all.filter((x) => SUMMARY_EXPOSED.includes(x.name ?? x.property));
+    }],
+    isModernExtend: true,
+};
+
+function allDiagnosticExposes() {
+    return [
         // health
         e.numeric("uptime", ea.STATE_GET).withUnit("s").withDescription("Time since the last start").withCategory("diagnostic"),
         e.enum("reset_cause", ea.STATE_GET, RESET_CAUSES).withDescription("Why the bulb last started").withCategory("diagnostic"),
@@ -501,9 +539,8 @@ const diagnostics = {
             .withCategory("diagnostic"),
         e.enum("diagnostics_refresh", ea.SET, ["refresh"]).withDescription("Read every counter and table now").withCategory("config"),
         e.enum("diagnostics_clear", ea.SET, ["clear"]).withDescription("Set every counter back to 0").withCategory("config"),
-    ],
-    isModernExtend: true,
-};
+    ];
+}
 
 async function readPages(entity, pages) {
     for (const p of pages) await entity.read("haDiagnostic", [p], mfr);
@@ -512,11 +549,11 @@ async function readPages(entity, pages) {
 const poll = m.poll({
     key: "diagnostics",
     defaultIntervalSeconds: 600,
-    poll: readAll,
+    poll: readForLevel,
     option: e
         .numeric("diagnostics_poll_interval", ea.SET)
         .withValueMin(0)
-        .withDescription("How often the diagnostics are read, in seconds (default 600; 0: only on demand)"),
+        .withDescription("How often the diagnostics are read, in seconds (default 600; 0: only on demand); what is read follows `diagnostics`"),
 });
 
 // the settings cluster 0xFC5F (docs/rust-ble.md): when Bluetooth runs, with "off" that endpoint 8 cannot say
@@ -534,34 +571,46 @@ const settingsCluster = m.deviceAddCustomCluster("outglowSettings", {
     commandsResponse: {},
 });
 
-const bleMode = m.enumLookup({
-    name: "ble_mode",
-    cluster: "outglowSettings",
-    attribute: "bleMode",
-    lookup: {always: 0, window_after_power_on: 1, off: 2},
-    description:
-        "When Bluetooth runs: always, for the window after power-on (endpoint 8), or never. " +
-        "Leaving the network or a factory reset by power cycling turns it back to always.",
-    zigbeeCommandOptions: mfr,
-    access: "ALL",
-    reporting: false,
-    entityCategory: "config",
-});
-bleMode.configure = [];
-
-const bleActive = m.binary({
-    name: "ble_active",
-    cluster: "outglowSettings",
-    attribute: "bleActive",
-    valueOn: [true, 1],
-    valueOff: [false, 0],
-    description: "Bluetooth is running now",
-    zigbeeCommandOptions: mfr,
-    access: "STATE_GET",
-    reporting: false,
-    entityCategory: "diagnostic",
-});
-bleActive.configure = [];
+// Bluetooth is a setting, not something to look at: two device options (the
+// "Specific" settings of the device in Zigbee2MQTT), written to the bulb when
+// they change and again when the bulb announces itself (a factory reset or a
+// leave turns Bluetooth back to always on). Unset: the bulb's own setting stays.
+const BLE_MODES = {always: 0, window_after_power_on: 1, off: 2};
+async function applyBluetooth(device, options) {
+    const ep = device.getEndpoint(1);
+    const write = {};
+    if (options.bluetooth in BLE_MODES) write.bleMode = BLE_MODES[options.bluetooth];
+    if (options.bluetooth_window !== undefined && options.bluetooth_window !== null && options.bluetooth_window !== "") {
+        write.bleWindow = Math.max(0, Math.min(1440, Math.round(Number(options.bluetooth_window))));
+    }
+    if (Object.keys(write).length) await ep.write("outglowSettings", write, mfr);
+}
+const bluetooth = {
+    options: [
+        e.enum("bluetooth", ea.SET, Object.keys(BLE_MODES))
+            .withDescription("When Bluetooth runs: always (the vendor app and Bluetooth updates work), only for a window after power-on, or off (the steadiest Zigbee). A factory reset turns it back to always."),
+        e.numeric("bluetooth_window", ea.SET)
+            .withValueMin(0)
+            .withValueMax(1440)
+            .withUnit("min")
+            .withDescription("With bluetooth window_after_power_on: minutes it stays on after power-on"),
+    ],
+    onEvent: [
+        async (event) => {
+            const d = event.data;
+            const changed =
+                event.type === "deviceOptionsChanged" &&
+                (d.from.bluetooth !== d.to.bluetooth || d.from.bluetooth_window !== d.to.bluetooth_window);
+            if (!changed && event.type !== "deviceAnnounce") return;
+            try {
+                await applyBluetooth(d.device, event.type === "deviceOptionsChanged" ? d.to : d.options);
+            } catch {
+                // the bulb is away: applied when it next announces itself
+            }
+        },
+    ],
+    isModernExtend: true,
+};
 
 // the entities Zigbee2MQTT generates from the bulb (tools/z2m-generated-definition.mjs), under the same names
 const objects = [
@@ -600,23 +649,16 @@ const objects = [
         endpointName: ["7"],
         entityCategory: "config",
     }),
-    m.numeric({
-        name: ["analog_output"],
-        label: ["BLE window after power-on"],
-        valueMin: [0],
-        valueMax: [1440],
-        valueStep: [1],
-        cluster: "genAnalogOutput",
-        attribute: "presentValue",
-        reporting: {min: "MIN", max: "MAX", change: 1},
-        description: ["Minutes after power-on Bluetooth stays on (0: always; with ble_mode off it is off and this endpoint is out of service); a power cycle opens it again"],
-        access: "ALL",
-        endpointNames: ["8"],
-        unit: ["min"],
-        precision: [0],
-        entityCategory: "config",
-    }),
 ];
+
+// the analog inputs of endpoints 2-6 are diagnostics too: shown at "full" only
+{
+    const shown = objects[0].exposes;
+    objects[0].exposes = [
+        (device, options) =>
+            level(options) === "full" ? shown.flatMap((x) => (typeof x === "function" ? x(device, options) : [x])) : [],
+    ];
+}
 
 const endpoints = m.deviceEndpoints({
     endpoints: {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8},
@@ -630,7 +672,11 @@ function definition(model, description, light) {
         model,
         vendor: "Outglow",
         description,
-        extend: [endpoints, diagnosticCluster, settingsCluster, m.identify(), m.light(light), ...objects, bleMode, bleActive, diagnostics, poll],
+        extend: [endpoints, diagnosticCluster, settingsCluster, m.identify(), m.light(light), ...objects, bluetooth, diagnostics, poll],
+        options: [
+            e.enum("diagnostics", ea.SET, LEVELS)
+                .withDescription("Router diagnostics shown: off; summary (default: link health, way to the coordinator, neighbours, uptime); full (every counter and table)"),
+        ],
         ota: true,
     };
 }
