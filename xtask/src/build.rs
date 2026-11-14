@@ -246,8 +246,15 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     Ok(())
 }
 
-/// Every function's `"target-cpu"` becomes tc32, with jump tables off.
+/// Every function's `"target-cpu"` becomes tc32, with jump tables off; and
+/// so does the CPU of the module's assembly (the naked functions of
+/// compiler_builtins: `__aeabi_uwrite4` and the like), which rustc as
+/// distributed by rustup names in `module asm(..., target_cpu: "generic")`.
+/// Left as it is, that assembly comes out in Thumb encodings, which TC32
+/// does not run (the first unaligned write crashed the image).
 fn retarget(ll: &str) -> Result<String> {
+    let ll = retarget_module_asm(ll)?;
+    let ll = ll.as_str();
     const KEY: &str = "\"target-cpu\"=\"";
     let mut out = String::with_capacity(ll.len() + ll.len() / 50);
     let mut rest = ll;
@@ -266,6 +273,28 @@ fn retarget(ll: &str) -> Result<String> {
     Ok(out)
 }
 
+/// `module asm(... target_cpu: "<cpu>")` becomes `target_cpu: "tc32"`.
+fn retarget_module_asm(ll: &str) -> Result<String> {
+    const KEY: &str = "target_cpu: \"";
+    let mut out = String::with_capacity(ll.len());
+    let mut rest = ll;
+    while let Some(i) = rest.find(KEY) {
+        // only in the header of a module asm block
+        let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
+        let in_header = rest[line_start..i].starts_with("module asm(");
+        out.push_str(&rest[..i + KEY.len()]);
+        let after = &rest[i + KEY.len()..];
+        let end = after.find('"').ok_or_else(|| anyhow!("unterminated target_cpu of module asm"))?;
+        out.push_str(if in_header { "tc32" } else { &after[..end] });
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    if out.lines().any(|l| l.starts_with("module asm(") && l.contains(KEY) && !l.contains("target_cpu: \"tc32\"")) {
+        bail!("could not retarget the module's assembly to tc32");
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -274,5 +303,17 @@ mod tests {
         let r = super::retarget(ll).unwrap();
         assert_eq!(r.matches("\"no-jump-tables\"=\"true\" \"target-cpu\"=\"tc32\"").count(), 2);
         assert!(!r.contains("arm7tdmi"));
+    }
+
+    #[test]
+    fn retarget_replaces_the_cpu_of_the_module_asm() {
+        // rustup's rustc 1.99.0 (nixpkgs' writes a plain `module asm`)
+        let ll = "module asm(target_features: \"+soft-float,+strict-align\", target_cpu: \"generic\")\n    \".thumb\"\n\nattributes #0 = { \"target-cpu\"=\"generic\" }";
+        let r = super::retarget(ll).unwrap();
+        assert!(r.starts_with("module asm(target_features: \"+soft-float,+strict-align\", target_cpu: \"tc32\")\n"), "{r}");
+        assert!(!r.contains("generic"));
+        // a plain module asm stays as it is
+        let plain = "module asm\n    \".thumb\"\n\nattributes #0 = { \"target-cpu\"=\"generic\" }";
+        assert!(super::retarget(plain).unwrap().starts_with("module asm\n"));
     }
 }
