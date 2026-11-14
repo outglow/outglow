@@ -2,7 +2,9 @@ name: Website
 
 # https://outglow.github.io/outglow/ (the project site). The same site at the
 # root, https://outglow.github.io/, is deployed by outglow/outglow.github.io,
-# which calls site.yml with the base /.
+# which calls site.yml with the base /: the job `root` tells it which commit
+# to build by writing it to its file SOURCE (a deploy key of that repository,
+# secret ROOT_SITE_DEPLOY_KEY), and the push starts its build.
 
 on:
   push:
@@ -25,3 +27,21 @@ jobs:
     with:
       base: /outglow/
       ref: ${{ github.sha }}
+
+  root:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Have outglow.github.io build this commit
+        env:
+          KEY: ${{ secrets.ROOT_SITE_DEPLOY_KEY }}
+        run: |
+          install -m 600 /dev/null ~/key && printf '%s\n' "$KEY" > ~/key
+          export GIT_SSH_COMMAND="ssh -i ~/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone -q --depth 1 git@github.com:outglow/outglow.github.io.git root
+          cd root
+          echo "${{ github.sha }}" > SOURCE
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SOURCE
+          git commit -q -m "Build outglow/outglow@${GITHUB_SHA::7}" --allow-empty
+          git push -q origin HEAD:main
