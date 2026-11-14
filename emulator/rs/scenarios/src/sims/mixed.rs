@@ -69,13 +69,13 @@ pub fn image(cx: &SimCtx, fw: Fw) -> Image {
 /// the BLE MAC little endian with the Telink OUI a4:c1:38 in bytes 3..6 (the
 /// stock firmware keeps only such a record, else it writes its own, the same
 /// in every emulated bulb) and two more bytes.
-pub fn mac_record(v: [u8; 5]) -> [u8; 8] {
+pub const fn mac_record(v: [u8; 5]) -> [u8; 8] {
     [v[0], v[1], v[2], 0x38, 0xC1, 0xA4, v[3], v[4] & 0x7F]
 }
 
 /// The IEEE address a bulb makes of its MAC record: bytes 6..8 in front of
 /// the BLE MAC (measured on the stock firmware; the Rust firmware does the same).
-pub fn ieee_of(_fw: Fw, rec: &[u8; 8]) -> u64 {
+pub const fn ieee_of(_fw: Fw, rec: &[u8; 8]) -> u64 {
     u64::from_le_bytes([rec[6], rec[7], rec[0], rec[1], rec[2], rec[3], rec[4], rec[5]])
 }
 

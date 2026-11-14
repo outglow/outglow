@@ -22,13 +22,16 @@ pub mod parent_load;
 pub mod power_cut;
 pub mod runner;
 pub mod rust_ble;
+pub mod rust_gp;
 pub mod rust_radio;
 pub mod rust_ble_switch;
 pub mod rust_diag;
 pub mod rust_fw;
 pub mod rust_staging;
+pub mod rust_touchlink;
 pub mod stress;
 pub mod touchlink;
+pub mod transfer;
 pub mod util;
 pub mod wireshark;
 pub mod zbase;
@@ -66,7 +69,9 @@ pub fn sims() -> Vec<SimDef> {
         rust_ble_switch::def(),
         rust_diag::def(),
         rust_fw::def(),
+        rust_gp::def(),
         rust_radio::def(),
+        rust_touchlink::def(),
         rust_staging::def(),
         wireshark::def(),
         wireshark::def_ble(),
@@ -77,6 +82,7 @@ pub fn sims() -> Vec<SimDef> {
     v.extend(enddev_wallswitch::defs());
     v.extend(ota::defs());
     v.extend(mixed::defs());
+    v.extend(transfer::defs());
     v.extend(stress::defs());
     v
 }
