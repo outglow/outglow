@@ -104,7 +104,7 @@ struct Set {
 }
 
 fn image(label: &str, rel: &str) -> Image {
-    Image { label: label.into(), path: crate::runner::repo_root().join(rel), link_shift: None }
+    Image { label: label.into(), path: crate::sims::image_path(rel), link_shift: None }
 }
 
 fn sets(names: &str, paths: &[(String, String)]) -> Result<Vec<Set>, String> {

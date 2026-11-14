@@ -16,6 +16,7 @@ pub mod interop;
 pub mod app_colour;
 pub mod json;
 pub mod mesh;
+pub mod mixed;
 pub mod ota;
 pub mod parent_load;
 pub mod power_cut;
@@ -73,6 +74,7 @@ pub fn sims() -> Vec<SimDef> {
     v.extend(addr_conflict::defs());
     v.extend(enddev_wallswitch::defs());
     v.extend(ota::defs());
+    v.extend(mixed::defs());
     v.extend(stress::defs());
     v
 }
@@ -87,7 +89,35 @@ pub fn image_path(rel: &str) -> std::path::PathBuf {
     }
     std::env::var_os("SCENARIOS_IMAGE_DIRS")
         .and_then(|dirs| std::env::split_paths(&dirs).map(|d| d.join(rel)).find(|p| p.exists()))
+        .or_else(|| stock_dir_path(rel))
         .unwrap_or(here)
+}
+
+/// The directory of the original firmware images kept apart from this
+/// repository (a checkout of outglow/original-firmware: `firmware/<board>.bin`).
+pub const STOCK_DIR_VAR: &str = "OUTGLOW_STOCK_DIR";
+
+/// The board whose original image a default `stock/...` path names:
+/// stock/stock-dimm.bin and stock/stock-tw.bin (the filament bulbs),
+/// stock/apk/smartlightz/<model>__<rev>.bin (tools/extract-stock-images.sh).
+pub fn stock_board_of(rel: &str) -> Option<String> {
+    match rel {
+        "stock/stock-dimm.bin" => Some("ESMLFzm_w6_Dimm-4.63".into()),
+        "stock/stock-tw.bin" => Some("ESMLFzm_w6_TW-4.63".into()),
+        _ => {
+            let name = rel.strip_prefix("stock/apk/smartlightz/")?.strip_suffix(".bin")?;
+            let (model, rev) = name.rsplit_once("__")?;
+            Some(format!("{model}-{rev}"))
+        }
+    }
+}
+
+/// A default `stock/...` path found in `OUTGLOW_STOCK_DIR` (its `firmware/`
+/// subdirectory or the directory itself), when it is there.
+pub fn stock_dir_path(rel: &str) -> Option<std::path::PathBuf> {
+    let dir = std::path::PathBuf::from(std::env::var_os(STOCK_DIR_VAR)?);
+    let board = stock_board_of(rel)?;
+    [dir.join("firmware").join(format!("{board}.bin")), dir.join(format!("{board}.bin"))].into_iter().find(|p| p.exists())
 }
 
 /// What a scenario gets from the runner.
@@ -124,7 +154,7 @@ impl SimCtx {
     /// Where a missing default image comes from.
     pub fn how_to_get(path: &str) -> &'static str {
         if path.starts_with("stock/") {
-            "the original firmware: tools/extract-stock-images.sh"
+            "the original firmware: OUTGLOW_STOCK_DIR=<checkout of outglow/original-firmware>, or tools/extract-stock-images.sh"
         } else {
             "the Rust firmware: cargo xtask build (--board, --file-version)"
         }

@@ -79,7 +79,7 @@ pub fn default_images() -> Vec<Image> {
     let r = repo_root();
     [("stock", "stock/stock-dimm.bin"), ("rust", "target/tc32/bulb-tc32.bin")]
         .iter()
-        .map(|(l, p)| Image { label: l.to_string(), path: r.join(p), link_shift: None })
+        .map(|(l, p)| Image { label: l.to_string(), path: if p.starts_with("stock/") { crate::sims::image_path(p) } else { r.join(p) }, link_shift: None })
         .collect()
 }
 

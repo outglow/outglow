@@ -17,7 +17,7 @@ use crate::session::Stop;
 pub fn default_images() -> Vec<Image> {
     let r = repo_root();
     vec![
-        Image { label: "stock".into(), path: r.join("stock/stock-dimm.bin"), link_shift: None },
+        Image { label: "stock".into(), path: crate::sims::image_path("stock/stock-dimm.bin"), link_shift: None },
         Image { label: "rust".into(), path: r.join("target/tc32/bulb-tc32.bin"), link_shift: None },
     ]
 }
