@@ -22,6 +22,7 @@ pub mod parent_load;
 pub mod power_cut;
 pub mod runner;
 pub mod rust_ble;
+pub mod rust_radio;
 pub mod rust_ble_switch;
 pub mod rust_diag;
 pub mod rust_fw;
@@ -65,6 +66,7 @@ pub fn sims() -> Vec<SimDef> {
         rust_ble_switch::def(),
         rust_diag::def(),
         rust_fw::def(),
+        rust_radio::def(),
         rust_staging::def(),
         wireshark::def(),
         wireshark::def_ble(),
