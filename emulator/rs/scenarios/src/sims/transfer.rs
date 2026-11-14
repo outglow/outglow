@@ -28,8 +28,8 @@ use crate::session::{light_of, Stop, R};
 pub fn defs() -> Vec<SimDef> {
     vec![
         SimDef { name: "migrate", doc: "stock on the network, the Rust image over BLE OTA, installed, power cycle: it joins again", run: migrate },
-        SimDef { name: "ota_rust_stock", doc: "back to the stock firmware over Zigbee OTA (the stock image as a .ota of the Rust image type)", run: ota_rust_stock },
-        SimDef { name: "ble_ota_rust_stock", doc: "back to the stock firmware over the Rust firmware's BLE OTA", run: ble_ota_rust_stock },
+        SimDef { name: "back_to_stock_ota", doc: "back to the stock firmware over Zigbee OTA (the stock image as a .ota of the Rust image type)", run: back_to_stock_ota },
+        SimDef { name: "back_to_stock_ble", doc: "back to the stock firmware over the Rust firmware's BLE OTA", run: back_to_stock_ble },
     ]
 }
 
@@ -314,7 +314,7 @@ fn migrate(cx: &mut SimCtx) -> R<()> {
 /// client takes any version of its own type, README: ota/), checked against
 /// the staging area as the Rust update path is (`ota_rust`); then installed
 /// and started: the stock firmware, factory new, joins the network.
-fn ota_rust_stock(cx: &mut SimCtx) -> R<()> {
+fn back_to_stock_ota(cx: &mut SimCtx) -> R<()> {
     let from = super::mixed::image(cx, Fw::Rust);
     let stock = super::mixed::image(cx, Fw::Stock);
     let sbytes = stock.bytes().map_err(Stop::Error)?;
@@ -372,7 +372,7 @@ fn ota_rust_stock(cx: &mut SimCtx) -> R<()> {
             z.check("stock: 20 s of operation without a reset", z.w.resets == r0, &format!("resets {}", z.w.resets - r0));
         }
     }
-    z_finish(&mut z, cx, "ota-rust-stock.pcap");
+    z_finish(&mut z, cx, "back-to-stock-ota.pcap");
     Ok(())
 }
 
@@ -380,7 +380,7 @@ fn ota_rust_stock(cx: &mut SimCtx) -> R<()> {
 /// OTA service takes the stock image into the staging area, checks it in the
 /// flash, marks it and restarts; installed, the stock firmware starts,
 /// advertises over BLE again and joins the network factory new.
-fn ble_ota_rust_stock(cx: &mut SimCtx) -> R<()> {
+fn back_to_stock_ble(cx: &mut SimCtx) -> R<()> {
     let (n, rimg, ext) = node(cx, Fw::Rust)?;
     let stock = super::mixed::image(cx, Fw::Stock);
     let payload = stock.bytes().map_err(Stop::Error)?;

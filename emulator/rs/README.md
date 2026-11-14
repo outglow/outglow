@@ -38,7 +38,11 @@ The Rust image is `target/tc32/bulb-tc32.bin` (`cargo xtask build`).
 Scenarios that need another image (another board, a second OTA version, the
 original firmware) are skipped when it is missing, and say how to get it. The
 original firmware comes from the vendor's app on your machine:
-`tools/extract-stock-images.sh` (into `stock/`, ignored by git).
+`tools/extract-stock-images.sh` (into `stock/`, ignored by git), or from a
+checkout of the private repository outglow/original-firmware named by
+`OUTGLOW_STOCK_DIR` (its `firmware/<board>.bin`; `stock/stock-dimm.bin` is
+`ESMLFzm_w6_Dimm-4.63.bin`, `stock/stock-tw.bin` `ESMLFzm_w6_TW-4.63.bin`,
+`stock/apk/smartlightz/<model>__<rev>.bin` `<model>-<rev>.bin`).
 `SCENARIOS_IMAGE_DIRS` (separated as `PATH`) lists more directories where
 default images are looked for.
 
@@ -117,6 +121,90 @@ Images: `--image bulb=…` (and `--image tw=…` for the tunable white bulbs).
 Original bulbs need a valid factory MAC record at 0xFF000 in the image
 (BLE MAC little endian, OUI a4:c1:38 last); anything else is replaced by a
 "random" one that is the same in every emulated bulb.
+
+### The Rust and the stock firmware together
+
+The stock firmware is AwoX's build of Telink's Zigbee stack: an
+implementation of everything the Rust firmware does that owes nothing to
+`crates/zigbee`. These scenarios put the two in one network, in either role,
+and compare what each does with the same stimulus. Expectations come from the
+specification text (R22, ZCL 8, GP Basic 1.1.2, 802.15.4, ZLL); where the
+stock firmware does otherwise, the check states the measured stock behaviour
+next to the specified one and holds both.
+
+Images: `--image rust=...` (default `target/tc32/bulb-tc32.bin`) and `--image
+stock=...` (default `stock/stock-dimm.bin`); for the tunable white pair
+`--image rust=target/tc32-tw/bulb-tc32.bin --image stock=stock/stock-tw.bin`.
+`cargo sims-stock` runs the quick ones.
+
+| Scenario | What | Wall time |
+|---|---|---|
+| `mixed_parent_rust`, `mixed_parent_stock` | a bulb that hears only the other joins through it: beacon, association answered on the poll (frame pending), Update-Device, Tunnel, link key, its traffic through the parent; both ways | 15 s |
+| `mixed_mesh` | the two relay for each other: unicast both ways, Route Records after many-to-one, source routes, broadcasts relayed once | 50 s |
+| `mixed_chain` | coordinator - stock - Rust - stock, each hearing only its neighbours: joins hop by hop, traffic down and up, Route Record with two relays, a source route over both | 25 s |
+| `mixed_rejoin` | in that chain the first stock bulb and then the last one lose power: they and the bulbs behind them resume from NV, no association | 60 s |
+| `mixed_group` | Add Group, membership, Off/Level/Store/Recall Scene to the group, Remove Group | 10 s |
+| `mixed_conflict` | the coordinator gives the stock bulb the address of the Rust bulb while it is off: one address each afterwards, announced, both reachable | 25 s |
+| `mixed_ota_relay` | Zigbee OTA of the Rust bulb whose every frame goes through a stock router | 80 s |
+| `rust_radio` | the Rust radio driver against the stock firmware's: every RF/DMA/clock register and all analog registers in 802.15.4 receive (each difference with its reason), ACK turnaround, energy scan | 2 s |
+| `rust_touchlink` | a scripted initiator against both targets: scan, device information, identify, join router / start network, reset; key index 4 for the stock target (the master key: `TOUCHLINK_MASTER_KEY`, else read from the stock image), 15 or 4 for the Rust one | 40 s |
+| `rust_gp` | the two Green Power proxies under the same stimuli: attributes, commissioning notifications, proxy table entries byte for byte, notifications, Commissioning Reply timing | 6 s |
+| `migrate` | stock on the network, the Rust update image over the stock BLE OTA, installed, power cycle: the Rust firmware joins again; the stock firmware's NV stays | 3 min |
+| `back_to_stock_ota` | the stock image as a `.ota` of the Rust image type over Zigbee OTA from the Rust firmware; installed, the stock firmware joins again | 35 s |
+| `back_to_stock_ble` | the stock image over the Rust firmware's BLE OTA; installed, it joins and advertises again | 5 min |
+
+The AwoX bootloader that installs a staged image is not in the emulator
+(nobody has it): `transfer::install_staged` does what it is inferred to do
+(copy the image staged at 0x6000 and marked 0x4B to 0x6A000). That one step
+is not taken from a firmware.
+
+Measured stock behaviour these scenarios hold (each one a check or a note):
+
+- Green Power: an empty proxy table is answered SUCCESS, not NOT_FOUND; the
+  shared key defaults to type 0b010 with c0..cf, the cluster revision is 1; a
+  frame under an unknown key is dropped, not passed on with its MIC; frames of a
+  device paired with its own key (key type 0b100) are not forwarded at all
+  (with the shared key they are); the derived alias is stored with the group.
+- Touchlink: the stock target offers key index 4 only and puts the ZLL
+  profile (0xc05e) in its scan response; it identifies with a breathing light.
+- A scene is stored with a blink of the light (new level, old level, off).
+- A stock router keeps its parent, the coordinator, as next hop after the link
+  to it is gone (4 minutes measured), so it cannot be moved behind another
+  router; in `mixed_mesh` it never hears the coordinator.
+- After a link loss to its parent of about 20 s, soon after it joined, a stock
+  router sometimes gives the parent up for good (Beacon Requests on every
+  channel every 22 s, no rejoin through the returned parent, also after its own
+  power cycle); not a check, as it does not happen in every run.
+- Its BLE events leave BLE values in some radio registers in 802.15.4 mode;
+  it acknowledges after 141..144 us (the Rust driver after 161..163 us).
+- A BLE update of 156 KB takes 170 s of simulation alone, 660 s while the bulb
+  is on the Zigbee network.
+
+Seen in the Rust firmware and not yet explained: with the third bulb of
+`mixed_chain` powered at 24 s (`MIXED_S2_ON=24000`) it sends its Link Status and
+0.4 ms later its Device_annce; the Rust bulb's radio takes both, but the Rust
+bulb does not pass the announcement on (its receive queue lost nothing). The
+default (20 s) does not hit it. `MIXED_DEBUG=1` prints the frames, the radio's
+fate of every dropped frame and, for a `--trace` image, the firmware's record.
+
+These scenarios took over from ones that compared the Rust firmware with a C
+firmware on Telink's SDK, which is not public:
+
+| Earlier scenario | What it tested | Now |
+|---|---|---|
+| rust_radio | Rust radio registers against Telink's driver | `rust_radio`, against the stock driver |
+| rust_gp | GP proxy next to Telink's | `rust_gp`, next to the stock one |
+| rust_mesh | mixed mesh | `mixed_mesh`, `mixed_chain` |
+| rust_parent | a Telink-stack bulb joins through the Rust bulb | `mixed_parent_rust`, and the other way `mixed_parent_stock` |
+| rust_touchlink | Rust touchlink target next to Telink's | `rust_touchlink`, next to the stock target |
+| rust_touchlink_initiator | Telink's initiator (a test build of the C firmware) takes the Rust bulb | not moved: neither stock nor Rust has an initiator; the scripted initiator of `rust_touchlink` does that part |
+| migrate | stock -> C firmware by SWS, NV kept, power cycle | `migrate` (stock -> Rust over BLE OTA), `back_to_stock_ota`, `back_to_stock_ble` |
+| ota_awox | Zigbee OTA of the C firmware, layout awox | covered by `ota_rust`; Rust -> stock in `back_to_stock_ota` |
+| install, install_stock | the C firmware's own bootloader installs an image | not moved: the Rust firmware has no bootloader of its own (layout awox only) |
+| sys, sys_ble | supervision of the C firmware (crash counter, safe mode, watchdog, power-on sequence) | covered for Rust by `rust_fw` (watchdog, power cycles, factory reset sequence) and `rust_diag` (reset cause) |
+| ble_diag | GATT diagnostic service of the C firmware | being done separately for the Rust firmware |
+| sense, sense_core | RF motion sensing of the C firmware | not moved here: its Rust counterpart is not in this repository yet |
+| conformance, conformance_clang, stallprobe | the emulator against C code of known behaviour and Telink's own CPU-stall code | not moved: they need Telink's C libraries |
 
 ### Stress scenarios (`cargo stress`)
 

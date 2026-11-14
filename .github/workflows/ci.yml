@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # the long scenarios (Rust and stock firmware moved into each other, OTA
+  # through a stock router, the whole scenario set): job firmware-nightly
+  schedule:
+    - cron: "17 2 * * *"
 
 permissions:
   contents: read
@@ -54,6 +58,7 @@ jobs:
 
   firmware:
     name: Firmware in the emulator
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -67,10 +72,26 @@ jobs:
           git clone -q https://github.com/goyamamoto/tc32-devtools "$RUNNER_TEMP/tc32-devtools"
           git -C "$RUNNER_TEMP/tc32-devtools" checkout -q 2e1bcaed762e3124b024047db981172d2b0395ba
           echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
+      - name: Original firmware images (outglow/original-firmware, private; never uploaded)
+        env:
+          KEY: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "no deploy key (a fork's pull request): the scenarios with the original firmware are skipped"
+            exit 0
+          fi
+          install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
+          rm -f "$RUNNER_TEMP/original-firmware-key"
+          # outside the workspace: no artifact path can reach it
+          echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"
       - name: Build the firmware (dimmable filament bulb)
         run: cargo xtask build
       - name: Scenarios
         run: cargo sims-quick
+      - name: Scenarios with the original firmware (the Rust and the stock firmware in one network)
+        run: cargo sims-stock
       - name: Zigbee conformance
         run: cargo spec -- --cpi 24
       - uses: actions/upload-artifact@v4
@@ -82,3 +103,40 @@ jobs:
             target/tc32/bulb-tc32.ota
             target/tc32/bulb-tc32.elf
             target/tc32/bulb-tc32.map
+
+  firmware-nightly:
+    name: Firmware in the emulator (every scenario)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/tc32-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+      - name: Original firmware images (outglow/original-firmware, private; never uploaded)
+        env:
+          KEY: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "no deploy key (a fork's pull request): the scenarios with the original firmware are skipped"
+            exit 0
+          fi
+          install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
+          rm -f "$RUNNER_TEMP/original-firmware-key"
+          # outside the workspace: no artifact path can reach it
+          echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"
+      - name: Build the firmware (dimmable, tunable white, a second OTA version)
+        run: |
+          cargo xtask build
+          cargo xtask build --board ESMLFzm_w6_TW-4.63
+          cargo xtask build --file-version 01000001 --out-dir "$PWD/target/tc32-v2"
+      - name: Every scenario (the long ones with the original firmware among them)
+        run: cargo sims
+      - name: The stock-and-Rust scenarios on the tunable white pair
+        run: >
+          cargo sims -- mixed_parent mixed_mesh mixed_group rust_radio rust_gp rust_touchlink
+          --image rust=target/tc32-tw/bulb-tc32.bin --image stock=stock/stock-tw.bin

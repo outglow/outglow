@@ -791,7 +791,7 @@ fn group(cx: &mut SimCtx) -> R<()> {
 // =================================================================== OTA through a stock router
 
 /// The Rust bulb hears only the stock bulb; the coordinator serves it the
-/// stock image as a .ota of the Rust image type (as `ota_rust_stock`): every
+/// stock image as a .ota of the Rust image type (as `back_to_stock_ota`): every
 /// Query, Image Block and Upgrade End goes through the stock router.
 fn ota_relay(cx: &mut SimCtx) -> R<()> {
     let stock_img = image(cx, Fw::Stock);
