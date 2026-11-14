@@ -183,6 +183,13 @@ impl Coord {
     fn dev_mut(&mut self, ext: u64) -> Option<&mut Device> {
         self.devices.iter_mut().find(|d| d.ext == ext)
     }
+    /// The address the next device that associates directly gets (the
+    /// coordinator hands them out in a fixed sequence otherwise); a scenario
+    /// makes an address conflict with it.
+    pub fn set_next_short(&mut self, short: u16) {
+        self.next_short = short;
+    }
+
     pub fn dev_by_short(&self, short: u16) -> Option<&Device> {
         let ext = *self.by_short.get(&short)?;
         self.devices.iter().find(|d| d.ext == ext)
