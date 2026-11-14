@@ -2,3 +2,4 @@ node_modules/
 dist/
 public/firmware/
 public/original/
+public/firmware.json

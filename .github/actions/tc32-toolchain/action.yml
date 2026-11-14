@@ -50,10 +50,12 @@ runs:
           echo "no prebuilt package for $plat; cache or build"
         fi
 
-    - name: Cache llvm-tc32
+    # restore and save as separate steps: actions/cache saves only when the
+    # whole job succeeds, so one failed test meant building LLVM again
+    - name: Cached llvm-tc32
       if: steps.prebuilt.outputs.hit != 'true'
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache/restore@v4
       with:
         path: ${{ runner.temp }}/llvm-tc32
         key: llvm-tc32-${{ runner.os }}-${{ steps.ref.outputs.sha }}-tools2
@@ -75,6 +77,13 @@ runs:
           -DLLVM_INCLUDE_EXAMPLES=OFF -DCMAKE_INSTALL_PREFIX="$PREFIX"
         ninja -C build install-clang install-clang-resource-headers install-lld \
           install-llvm-link install-llvm-dis install-llvm-ar install-llvm-size install-llvm-objdump
+
+    - name: Save llvm-tc32 to the cache (right after building it)
+      if: steps.prebuilt.outputs.hit != 'true' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ runner.temp }}/llvm-tc32
+        key: llvm-tc32-${{ runner.os }}-${{ steps.ref.outputs.sha }}-tools2
 
     - name: Environment
       shell: bash
