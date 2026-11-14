@@ -1,0 +1,364 @@
+//! Persistence: the network record, the frame counters and the application
+//! tables, each one versioned blob behind `Hal::nv_*`.
+
+use super::parent::Child;
+use super::{Binding, BleMode, Nib, Stack, BINDINGS, BLE_WINDOW_MAX_MIN, CHILDREN, COUNTER_STEP, GROUPS};
+use crate::aes::Aes128;
+use crate::hal::{Hal, NvItem};
+use crate::util::Reader;
+
+const NETWORK_VERSION: u8 = 1;
+const TABLES_VERSION: u8 = 2;
+/// 3: with the colour of colour bulbs (version 2 is read as scenes of the colour temperature).
+const SCENES_VERSION: u8 = 3;
+const CHILDREN_VERSION: u8 = 1;
+const SETTINGS_VERSION: u8 = 1;
+/// Fixed-size scratch for a stored item.
+const ITEM_MAX: usize = 160;
+/// Children in one item: the version byte, then 12 bytes each.
+const CHILDREN_PER_ITEM: usize = (ITEM_MAX - 1) / 12;
+const _: () = assert!(CHILDREN <= 3 * CHILDREN_PER_ITEM, "three items (NvItem::children) hold the child table");
+pub(crate) const CHILDREN_PARTS: usize = CHILDREN.div_ceil(CHILDREN_PER_ITEM);
+/// The digest of a part of the child table with nobody in it, as it is
+/// taken to be stored when nothing is.
+pub(crate) const NO_CHILDREN: u32 = digest(&[CHILDREN_VERSION]);
+
+/// FNV-1a.
+const fn digest(b: &[u8]) -> u32 {
+    let mut h = 0x811C_9DC5u32;
+    let mut i = 0;
+    while i < b.len() {
+        h = (h ^ b[i] as u32).wrapping_mul(0x0100_0193);
+        i += 1;
+    }
+    h
+}
+
+struct Blob {
+    d: [u8; ITEM_MAX],
+    n: usize,
+}
+
+impl Blob {
+    fn new() -> Self {
+        Blob { d: [0; ITEM_MAX], n: 0 }
+    }
+    fn put(&mut self, s: &[u8]) {
+        if let Some(dst) = self.d.get_mut(self.n..self.n + s.len()) {
+            dst.copy_from_slice(s);
+            self.n += s.len();
+        }
+    }
+    fn u8(&mut self, v: u8) {
+        self.put(&[v]);
+    }
+    fn u16(&mut self, v: u16) {
+        self.put(&v.to_le_bytes());
+    }
+    fn u32(&mut self, v: u32) {
+        self.put(&v.to_le_bytes());
+    }
+    fn u64(&mut self, v: u64) {
+        self.put(&v.to_le_bytes());
+    }
+    fn slice(&self) -> &[u8] {
+        &self.d[..self.n]
+    }
+}
+
+impl<H: Hal> Stack<H> {
+    /// Stores an item, counting the write (PersistentMemoryWrites).
+    pub(crate) fn nv_put(&mut self, item: NvItem, data: &[u8]) {
+        self.hal.nv_store(item, data);
+        self.nv_written();
+    }
+
+    pub(crate) fn store_network(&mut self) {
+        let n = &self.nib;
+        let mut b = Blob::new();
+        b.u8(NETWORK_VERSION);
+        b.u8(n.channel);
+        b.u16(n.pan);
+        b.u16(n.short);
+        b.u64(n.ext_pan);
+        b.u8(n.update_id);
+        b.u8(n.depth);
+        b.u16(n.parent);
+        b.put(&n.key);
+        b.u8(n.key_seq);
+        // bit 0: there is an alternate key; bit 1: it is the previous key, not
+        // the next (records written before the previous key was kept have 0 or 1)
+        b.u8(n.alt_valid as u8 | (n.alt_old as u8) << 1);
+        b.u8(n.alt_seq);
+        b.put(&n.alt_key);
+        b.u64(n.tc_ext);
+        b.put(&n.tclk);
+        b.put(&n.tclk_new);
+        b.u8(n.tclk_state);
+        self.nv_put(NvItem::Network, b.slice());
+    }
+
+    /// Loads the network record; false when there is none (factory new).
+    pub(crate) fn load_network(&mut self) -> bool {
+        let mut raw = [0u8; ITEM_MAX];
+        let Some(len) = self.hal.nv_load(NvItem::Network, &mut raw) else {
+            return false;
+        };
+        let parsed = (|| {
+            let mut r = Reader::new(raw.get(..len)?);
+            if r.u8()? != NETWORK_VERSION {
+                return None;
+            }
+            let alt;
+            Some(Nib {
+                channel: r.u8()?,
+                pan: r.u16()?,
+                short: r.u16()?,
+                ext_pan: r.u64()?,
+                update_id: r.u8()?,
+                depth: r.u8()?,
+                parent: r.u16()?,
+                key: r.key()?,
+                key_seq: r.u8()?,
+                alt_valid: {
+                    alt = r.u8()?;
+                    alt & 1 != 0
+                },
+                alt_old: alt & 2 != 0,
+                alt_seq: r.u8()?,
+                alt_key: r.key()?,
+                tc_ext: r.u64()?,
+                tclk: r.key()?,
+                tclk_new: r.key()?,
+                tclk_state: r.u8()?,
+            })
+        })();
+        match parsed {
+            Some(nib) if (11..=26).contains(&nib.channel) && nib.short < 0xFFF8 => {
+                self.nib = nib;
+                self.key = Aes128::with_engine(&nib.key, H::AES);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn store_counters(&mut self) {
+        let mut b = Blob::new();
+        b.u32(self.fc_stored);
+        b.u32(self.aps_fc_stored);
+        self.nv_put(NvItem::Counters, b.slice());
+    }
+
+    /// The settings cluster: version, BLE mode, BLE window in minutes.
+    pub(crate) fn store_settings(&mut self) {
+        let mut b = Blob::new();
+        b.u8(SETTINGS_VERSION);
+        b.u8(self.ble_mode.to_u8());
+        b.u16(self.ble_window);
+        self.hal.nv_store(NvItem::Settings, b.slice());
+    }
+
+    /// The settings as stored; anything unreadable leaves the defaults
+    /// (BLE always on), so a damaged record cannot take BLE away.
+    pub(crate) fn load_settings(&mut self) {
+        let mut raw = [0u8; 4];
+        if let Some(4) = self.hal.nv_load(NvItem::Settings, &mut raw) {
+            let mut r = Reader::new(&raw);
+            let (Some(SETTINGS_VERSION), Some(mode), Some(window)) = (r.u8(), r.u8(), r.u16()) else {
+                return;
+            };
+            if let (Some(mode), true) = (BleMode::from_u8(mode), (1..=BLE_WINDOW_MAX_MIN).contains(&window)) {
+                self.ble_mode = mode;
+                self.ble_window = window;
+            }
+        }
+    }
+
+    /// Resumes the frame counters above anything used before the power cycle.
+    pub(crate) fn load_counters(&mut self) {
+        let mut raw = [0u8; 8];
+        if let Some(8) = self.hal.nv_load(NvItem::Counters, &mut raw) {
+            let mut r = Reader::new(&raw);
+            self.fc_out = r.u32().unwrap_or(0);
+            self.aps_fc_out = r.u32().unwrap_or(0);
+        }
+        self.fc_stored = self.fc_out.wrapping_add(COUNTER_STEP);
+        self.aps_fc_stored = self.aps_fc_out.wrapping_add(COUNTER_STEP);
+        // the start is counted (NumberOfResets) in the same write
+        let boot = self.diag_start();
+        let mut b = Blob::new();
+        b.u32(self.fc_stored);
+        b.u32(self.aps_fc_stored);
+        self.hal.nv_store_pair(NvItem::Counters, b.slice(), NvItem::Boot, &boot);
+        self.nv_written();
+    }
+
+    pub(crate) fn store_tables(&mut self) {
+        let mut b = Blob::new();
+        b.u8(TABLES_VERSION);
+        for g in self.groups {
+            b.u16(g);
+        }
+        for bind in self.bindings {
+            // bits 2..7: our endpoint less one (records from before there was more than one have 0)
+            b.u8(bind.used as u8 | (bind.group as u8) << 1 | (bind.src_ep.wrapping_sub(1) & 0x3F) << 2);
+            b.u16(bind.cluster);
+            b.u64(bind.dst);
+            b.u8(bind.dst_ep);
+        }
+        for r in self.reports {
+            b.u16(r.min_s);
+            b.u16(r.max_s);
+            b.u16(r.change);
+        }
+        b.u8(self.level_options);
+        b.u8(self.color_options);
+        b.u8(self.on_level);
+        b.u8(self.allow_children as u8);
+        self.nv_put(NvItem::Tables, b.slice());
+    }
+
+    pub(crate) fn load_tables(&mut self) {
+        let mut raw = [0u8; ITEM_MAX];
+        let Some(len) = self.hal.nv_load(NvItem::Tables, &mut raw) else {
+            return;
+        };
+        let mut groups = [0u16; GROUPS];
+        let mut bindings = self.bindings;
+        let mut reports = self.reports;
+        let ok = (|| {
+            let mut r = Reader::new(raw.get(..len)?);
+            if r.u8()? != TABLES_VERSION {
+                return None;
+            }
+            for g in groups.iter_mut() {
+                *g = r.u16()?;
+            }
+            for bind in bindings.iter_mut().take(BINDINGS) {
+                let flags = r.u8()?;
+                *bind = Binding {
+                    used: flags & 1 != 0,
+                    group: flags & 2 != 0,
+                    src_ep: (flags >> 2) + 1,
+                    cluster: r.u16()?,
+                    dst: r.u64()?,
+                    dst_ep: r.u8()?,
+                };
+            }
+            for rep in reports.iter_mut() {
+                rep.min_s = r.u16()?;
+                rep.max_s = r.u16()?;
+                rep.change = r.u16()?;
+            }
+            // absent in blobs written before these attributes were writable
+            self.level_options = r.u8().unwrap_or(0);
+            self.color_options = r.u8().unwrap_or(super::zcl::COLOR_OPTIONS_DEFAULT);
+            self.on_level = r.u8().unwrap_or(0xFF);
+            // absent in blobs written before these settings existed
+            self.allow_children = r.u8().is_none_or(|v| v != 0);
+            Some(())
+        })();
+        if ok.is_some() {
+            self.groups = groups;
+            self.bindings = bindings;
+            self.reports = reports;
+        }
+    }
+
+    pub(crate) fn store_scenes(&mut self) {
+        let mut b = Blob::new();
+        b.u8(SCENES_VERSION);
+        for s in self.scenes.iter().filter(|s| s.used) {
+            b.u16(s.group);
+            b.u8(s.id);
+            // bit 0: on; above it the field sets the scene has not (none in scenes stored before there were any)
+            b.u8(s.on as u8 | s.omitted << 1);
+            b.u8(s.level);
+            b.u16(s.color_temp);
+            b.u16(s.transition);
+            b.u8(s.tenths);
+            b.u8(s.colour.mode);
+            b.u8(s.colour.hue);
+            b.u8(s.colour.sat);
+            b.u16(s.colour.x);
+            b.u16(s.colour.y);
+        }
+        self.nv_put(NvItem::Scenes, b.slice());
+    }
+
+    pub(crate) fn load_scenes(&mut self) {
+        let mut raw = [0u8; ITEM_MAX];
+        let Some(len) = self.hal.nv_load(NvItem::Scenes, &mut raw) else {
+            return;
+        };
+        let mut r = Reader::new(&raw[..len.min(ITEM_MAX)]);
+        let version = r.u8();
+        if !matches!(version, Some(2) | Some(SCENES_VERSION)) {
+            return;
+        }
+        for slot in self.scenes.iter_mut() {
+            let (Some(group), Some(id), Some(on), Some(level), Some(color_temp), Some(transition), Some(tenths)) =
+                (r.u16(), r.u8(), r.u8(), r.u8(), r.u16(), r.u16(), r.u8())
+            else {
+                break;
+            };
+            let colour = if version == Some(SCENES_VERSION) {
+                let (Some(mode), Some(hue), Some(sat), Some(x), Some(y)) = (r.u8(), r.u8(), r.u8(), r.u16(), r.u16()) else {
+                    break;
+                };
+                super::SceneColour { mode, hue, sat, x, y }
+            } else {
+                super::SceneColour::TEMPERATURE
+            };
+            *slot = super::Scene { used: true, group, id, on: on & 1 != 0, omitted: on >> 1, level, color_temp, colour, transition, tenths };
+        }
+    }
+
+    /// The child table in parts of `CHILDREN_PER_ITEM` entries, one item
+    /// each (the first part is the item of earlier versions, which held at
+    /// most that many). A part is written only when it changed, which a
+    /// digest of what was stored last tells without reading the flash (on
+    /// the chip a load scans the whole log).
+    pub(crate) fn store_children(&mut self) {
+        for k in 0..CHILDREN_PARTS {
+            let mut b = Blob::new();
+            b.u8(CHILDREN_VERSION);
+            let part = &self.children[k * CHILDREN_PER_ITEM..((k + 1) * CHILDREN_PER_ITEM).min(CHILDREN)];
+            for c in part.iter().filter(|c| c.used && c.joined) {
+                b.u64(c.ext);
+                b.u16(c.short);
+                b.u8(c.capability);
+                b.u8(c.timeout);
+            }
+            let d = digest(b.slice());
+            if d != self.children_stored[k] {
+                self.nv_put(NvItem::children(k), b.slice());
+                self.children_stored[k] = d;
+            }
+        }
+    }
+
+    pub(crate) fn load_children(&mut self, now: u32) {
+        for k in 0..CHILDREN_PARTS {
+            let mut raw = [0u8; ITEM_MAX];
+            let Some(len) = self.hal.nv_load(NvItem::children(k), &mut raw) else {
+                continue;
+            };
+            let len = len.min(ITEM_MAX);
+            self.children_stored[k] = digest(&raw[..len]);
+            let mut r = Reader::new(&raw[..len]);
+            if r.u8() != Some(CHILDREN_VERSION) {
+                continue;
+            }
+            let part = &mut self.children[k * CHILDREN_PER_ITEM..((k + 1) * CHILDREN_PER_ITEM).min(CHILDREN)];
+            for slot in part.iter_mut() {
+                let (Some(ext), Some(short), Some(capability), Some(timeout)) = (r.u64(), r.u16(), r.u8(), r.u8()) else {
+                    break;
+                };
+                // frame counters are not stored: the first frame after the power cycle sets them again
+                *slot = Child { used: true, ext, short, capability, joined: true, timeout, fc_next: 0, fc_seq: 0, heard: now, ..Child::EMPTY };
+            }
+        }
+    }
+}

@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "images": [
+    {
+      "board": "ESMLFzm_w6_Dimm-4.63",
+      "version": "0.2.0",
+      "fileVersion": "0x00020000",
+      "url": "firmware/v0.2.0/outglow-ESMLFzm_w6_Dimm-4.63-0.2.0-ota.bin",
+      "size": 155700,
+      "sha256": "74d0f8cca132893018bb8a05b4f4b702d40c9fc1eb919a7961a18c6cd272cd16",
+      "date": "2026-11-14",
+      "notes": "Example entry: the first release has not been published yet."
+    }
+  ]
+}

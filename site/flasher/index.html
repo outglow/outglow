@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outglow Flasher</title>
+<meta name="description" content="Put Outglow on a bulb over Bluetooth from the browser.">
+<link rel="stylesheet" href="/src/style.css">
+<link rel="stylesheet" href="/src/flasher/flasher.css">
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="../">out<span>glow</span></a>
+  <nav>
+    <a href="../">Overview</a>
+    <a href="../install.html">Install</a>
+    <a href="./" aria-current="page">Flasher</a>
+    <a href="https://github.com/outglow/outglow">Source</a>
+  </nav>
+</header>
+<main>
+  <h1>Flasher</h1>
+  <p class="lead">Puts Outglow on a bulb over Bluetooth, the way the vendor app sends its updates. Read the
+    <a href="../install.html">install guide</a> first.</p>
+
+  <div id="support" class="note" hidden>
+    <strong>This browser has no Web Bluetooth.</strong>
+    Use Chrome or Edge on a desktop or on Android. Safari and all browsers on iPhone and iPad cannot do this.
+  </div>
+
+  <div class="flash-layout">
+    <section class="stage">
+      <div id="art" class="art"></div>
+      <ol id="phases" class="phases">
+        <li data-phase="connect">Connect</li>
+        <li data-phase="login">Log in</li>
+        <li data-phase="erasing">Erase</li>
+        <li data-phase="writing">Write</li>
+        <li data-phase="verifying">Verify</li>
+        <li data-phase="reboot">Restart</li>
+      </ol>
+      <div class="meter">
+        <progress id="bar" max="100" value="0"></progress>
+        <div class="stats"><span id="pct">0 %</span><span id="speed"></span><span id="eta"></span></div>
+      </div>
+    </section>
+
+    <section class="controls">
+      <div class="panel">
+        <h2>1. Bulb</h2>
+        <div id="bulb" class="facts"><p class="muted">Not connected. Switch the bulb off and on first: the original
+          firmware accepts Bluetooth for about 20 minutes after power-on.</p></div>
+        <div class="row">
+          <button id="connect" class="primary">Connect to a bulb</button>
+          <button id="disconnect">Disconnect</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>2. Firmware</h2>
+        <p id="proposal" class="muted">Connect, and the matching release is proposed here.</p>
+        <div class="row">
+          <label>Release <select id="release"><option value="">—</option></select></label>
+        </div>
+        <p id="image" class="muted">No image chosen.</p>
+      </div>
+
+      <div class="panel">
+        <h2>3. Update</h2>
+        <ul id="problems"></ul>
+        <label class="confirm"><input id="confirm" type="checkbox">
+          I understand that this replaces the bulb's firmware, that Outglow is experimental, and that a bulb can be
+          left unusable.</label>
+        <div class="row">
+          <button id="start" class="primary">Start the update</button>
+          <button id="stop">Stop</button>
+        </div>
+      </div>
+
+      <details class="panel advanced">
+        <summary>Advanced options</summary>
+        <div class="row"><label>Local image <input id="file" type="file" accept=".bin"></label></div>
+        <div class="row"><label><input id="stock" type="checkbox"> Allow the original firmware (going back; local file only)</label></div>
+        <div class="row">
+          <label><input id="login" type="checkbox"> Mesh login before the update (not needed: the update channel takes no login)</label>
+        </div>
+        <div class="row">
+          <label>Mesh name <input id="mesh-name" type="text" value="unpaired" size="12"></label>
+          <label>MAC <input id="mac" type="text" placeholder="a4:c1:38:xx:xx:xx" size="17"></label>
+        </div>
+        <div class="row"><label>Password (hex, 16 bytes; empty = derived from the MAC)
+          <input id="password" type="text" size="34" spellcheck="false"></label></div>
+        <p class="muted small">Only if an update is refused without it. A bulb paired to the vendor app has its own
+          mesh name and password; a new bulb is "unpaired", with a password derived from its MAC (the first six
+          bytes of its Zigbee IEEE address).</p>
+        <div class="row">
+          <label>Block size <select id="chunk">
+            <option value="">16 B (classic, verified)</option>
+            <option>32</option><option>57</option><option>120</option><option>240</option>
+          </select></label>
+          <label>Delay between writes <input id="delay" type="number" min="0" max="200" value="0" style="width:5em"> ms</label>
+          <label>Max resends <input id="resends" type="number" min="1" max="100" value="10" style="width:4em"></label>
+        </div>
+        <p class="muted small">Larger blocks need a larger ATT_MTU, which the browser negotiates on its own and does not
+          report; the original firmware takes up to 240 B, Outglow up to 57 B. If the transfer fails, go back to 16 B.</p>
+        <div class="row"><label><input id="any-revision" type="checkbox"> Flash although the hardware revision differs</label></div>
+        <div id="any-revision-confirm" class="danger" hidden>
+          <p>Another hardware revision may have its LEDs on other pins: the bulb can stay dark and only Zigbee OTA
+            (if it joins at all) could fix it. Type <code>I accept</code> to go on.</p>
+          <input id="any-revision-text" type="text" size="12" autocomplete="off">
+        </div>
+        <div class="row"><label><input id="all-devices" type="checkbox"> Show all Bluetooth devices when connecting</label></div>
+        <div class="row"><label><input id="verbose" type="checkbox"> Verbose log</label></div>
+      </details>
+    </section>
+  </div>
+
+  <div class="panel">
+    <div class="row log-head">
+      <h2>Log</h2>
+      <button id="copy">Copy</button>
+      <button id="download">Download</button>
+    </div>
+    <div id="log" aria-live="polite"></div>
+  </div>
+</main>
+<footer class="site">
+  Outglow is free software under the GNU GPL version 3 or later. Not affiliated with or endorsed by EGLO, AwoX or Telink.
+</footer>
+<script type="module" src="/src/flasher/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+[
+  {
+    "fileName": "outglow-ESMLFzm_w6_Dimm-4.63-0.2.0.ota",
+    "fileVersion": 131072,
+    "fileSize": 155762,
+    "url": "https://github.com/outglow/outglow/releases/download/v0.2.0/outglow-ESMLFzm_w6_Dimm-4.63-0.2.0.ota",
+    "imageType": 912,
+    "manufacturerCode": 4417,
+    "sha512": "c978e262261ec80361f3b9e45e5faee1997b34b8fcc8d933ab55017a19c2181d45524d629634b255775029d512a235faa5d11a4e60efecbf97b37339a1b28864",
+    "otaHeaderString": "eglo-rs ESMLFzm_w6_Dimm-4.63",
+    "modelId": "open-eglo-dimm",
+    "releaseNotes": "Example entry: the first release has not been published yet."
+  }
+]

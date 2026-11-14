@@ -1,0 +1,8 @@
+[package]
+name = "tc32emu"
+version = "0.1.0"
+edition = "2021"
+description = "TC32 (Telink TLSR825x/827x) emulator core: a faithful port of tc32-devtools go/tc32emu"
+license = "Apache-2.0"
+
+[dependencies]

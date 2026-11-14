@@ -1,0 +1,65 @@
+name: Release
+
+# A published GitHub release (tag vMAJOR.MINOR.PATCH) gets the firmware of every
+# board as assets: the Zigbee OTA file (outglow-<board>-<version>.ota, for
+# Zigbee2MQTT) and the Bluetooth image (outglow-<board>-<version>-ota.bin, for
+# the web flasher and flasher/ble_ota.py), plus the index entries of this
+# release (outglow-index.json, outglow-firmware.json). The site workflow then
+# puts them on the website.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/tc32-toolchain
+
+      - name: Version from the tag
+        id: v
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo "tag $TAG is not vMAJOR.MINOR.PATCH"; exit 1; }
+          major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+          (( major < 256 && minor < 256 && patch < 65536 )) || { echo "version out of range"; exit 1; }
+          # the OTA file version: MAJOR, MINOR (a byte each), PATCH (16 bits); 0.2.4 = 0x00020004
+          printf 'file=%02x%02x%04x\n' "$major" "$minor" "$patch" >> "$GITHUB_OUTPUT"
+          echo "version=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
+
+      - name: Build every board
+        env:
+          BULB_FILE_VERSION: ${{ steps.v.outputs.file }}
+          # key index 4 for commercial touchlink initiators (not in the repository)
+          TOUCHLINK_MASTER_KEY: ${{ secrets.TOUCHLINK_MASTER_KEY }}
+        run: |
+          for board in $(grep -v '^#' crates/bulb-tc32/boards.tsv | cut -f1); do
+            BOARD=$board crates/bulb-tc32/build.sh
+          done
+
+      - name: Index and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.v.outputs.version }}
+          NOTES: ${{ github.event.release.html_url }}
+        run: |
+          mkdir -p assets
+          echo '[]' > assets/outglow-index.json
+          echo '{"schema": 1, "images": []}' > assets/outglow-firmware.json
+          python3 ota/make-index.py --version "$VERSION" --tag "$TAG" --notes "$NOTES" \
+            --index assets/outglow-index.json --site assets/outglow-firmware.json --assets assets \
+            $(ls target/tc32*/bulb-tc32.ota | grep -vE -- '-(noble|trace)/')
+          gh release upload "$TAG" assets/* --clobber
+
+      - name: Update the website
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref "${{ github.event.repository.default_branch }}"

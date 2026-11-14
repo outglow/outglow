@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Outglow</title>
+<meta name="description" content="How to put Outglow on a bulb over Bluetooth, keep it updated over Zigbee and go back to the original firmware.">
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="./">out<span>glow</span></a>
+  <nav>
+    <a href="./">Overview</a>
+    <a href="install.html" aria-current="page">Install</a>
+    <a href="flasher/">Flasher</a>
+    <a href="https://github.com/outglow/outglow">Source</a>
+  </nav>
+</header>
+<main>
+  <h1>Install</h1>
+  <p class="lead">The first install goes over Bluetooth from the original firmware. After that, updates come over Zigbee.</p>
+
+  <div class="note">
+    <strong>Before you start</strong>
+    Outglow is experimental and has run on one real bulb so far. A failed or wrong update can leave a sealed bulb
+    without a way back. Try it on one bulb you can spare first.
+  </div>
+
+  <h2>You need</h2>
+  <ul>
+    <li>A bulb on its original firmware, from the <a href="./#boards">list of boards</a>.</li>
+    <li>Chrome or Edge with Web Bluetooth: on a desktop (Windows, macOS, Linux, ChromeOS) or on Android.
+      Safari and every browser on iPhone and iPad have no Web Bluetooth.</li>
+    <li>The image for exactly that board and hardware revision (the flasher checks this).</li>
+    <li>For the Zigbee part: <a href="https://www.zigbee2mqtt.io/">Zigbee2MQTT</a> (other coordinators work for joining;
+      the diagnostics converter and the OTA index are for Zigbee2MQTT).</li>
+  </ul>
+
+  <h2>1. Flash over Bluetooth</h2>
+  <ol class="steps">
+    <li>Switch the bulb off and on. The original firmware accepts Bluetooth connections for about 20 minutes after
+      power-on; a transfer already running is not cut off when that time is up.</li>
+    <li>Stay close to the bulb (a few metres) and open the <a href="flasher/">flasher</a>.</li>
+    <li>Choose the image: a release from the list, or an <code>…-ota.bin</code> file you built. A Zigbee <code>.ota</code>
+      file is not what goes over Bluetooth.</li>
+    <li>Connect and pick the bulb. The flasher reads its model and hardware revision and refuses an image for
+      another board.</li>
+    <li>Start. Erasing takes a few seconds, the transfer about four minutes. Keep the page open and the computer awake.</li>
+    <li>When it reports success the bulb restarts by itself and installs the image. If it stays dark for more than
+      a minute, switch it off and on.</li>
+  </ol>
+
+  <h2>2. Join the Zigbee network</h2>
+  <ol class="steps">
+    <li>Permit joining in Zigbee2MQTT. The bulb looks for a network after the restart.</li>
+    <li>If it does not join within a few minutes, factory-reset it with the same power-cycle sequence as the original firmware.</li>
+    <li>Outglow reports itself as <code>open-eglo-dimm</code>, <code>open-eglo-tw</code> and so on. A bulb that was already in
+      Zigbee2MQTT is interviewed again.</li>
+    <li>For the diagnostics and the Bluetooth settings, add the external converter
+      <a href="https://github.com/outglow/outglow/blob/main/z2m/open-eglo.mjs"><code>z2m/open-eglo.mjs</code></a> to Zigbee2MQTT.</li>
+  </ol>
+
+  <h2>3. Updates over Zigbee</h2>
+  <p>Point Zigbee2MQTT at the Outglow OTA index:</p>
+<pre><code>ota:
+  zigbee_ota_override_index_location: https://outglow.github.io/outglow/ota/index.json</code></pre>
+  <p>The bulb asks for a new image 30 seconds after it starts and then once a day. Zigbee2MQTT then shows the update as
+    available; it installs it when you press <em>Update</em> (or when you scheduled it, or an automation asks for it).
+    Details: <a href="https://github.com/outglow/outglow/tree/main/ota">ota/README.md</a>.</p>
+
+  <h2>Going back to the original firmware</h2>
+  <p>Outglow keeps the Bluetooth update channel of the original firmware, so the way back is the way in: put the
+    original image for the board on the bulb with the flasher. The original images are not distributed here; the
+    script <code>tools/extract-stock-images.sh</code> takes them out of the vendor's Android app on your own machine.
+    The original firmware can also be wrapped as a Zigbee OTA file under Outglow's image type and sent from Zigbee2MQTT.</p>
+  <div class="note">
+    <strong>Not yet tried on hardware</strong>
+    Both ways back work in the emulator against the real images but have not been done on a real bulb yet.
+    If you switched Bluetooth off in Outglow, only the Zigbee way is left until a power-cycle window or a factory reset brings Bluetooth back.
+  </div>
+</main>
+<footer class="site">
+  Outglow is free software under the GNU GPL version 3 or later.
+  EGLO, AwoX, Telink and Zigbee are trademarks of their owners; Outglow is not affiliated with or endorsed by them.
+</footer>
+</body>
+</html>

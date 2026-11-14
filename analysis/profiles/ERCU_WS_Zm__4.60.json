@@ -1,0 +1,54 @@
+{
+ "image": "ERCU_WS_Zm__4.60",
+ "model": "ERCU_WS_Zm",
+ "ble_product": [
+  "0x202d"
+ ],
+ "sw": "3.0.2_1610",
+ "hw": "4.60",
+ "size": 190100,
+ "boot": {
+  "pins": [],
+  "chans": [
+   {
+    "ch": 0,
+    "en": false,
+    "cmp": 0,
+    "max": 0
+   },
+   {
+    "ch": 1,
+    "en": false,
+    "cmp": 0,
+    "max": 0
+   },
+   {
+    "ch": 2,
+    "en": false,
+    "cmp": 0,
+    "max": 0
+   },
+   {
+    "ch": 3,
+    "en": false,
+    "cmp": 0,
+    "max": 0
+   },
+   {
+    "ch": 4,
+    "en": false,
+    "cmp": 0,
+    "max": 0
+   },
+   {
+    "ch": 5,
+    "en": false,
+    "cmp": 0,
+    "max": 0
+   }
+  ],
+  "raw_pwm": "0000000000000000"
+ },
+ "joined": false,
+ "wall_s": 0.1
+}

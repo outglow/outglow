@@ -1,0 +1,17 @@
+/target
+target/
+*.o
+*.elf
+*.bin
+*.ota
+*.pcap
+__pycache__/
+mutants.out/
+mutants.out.old/
+
+# Firmware images of the original manufacturer, extracted locally by
+# tools/extract-stock-images.sh: never committed.
+/stock
+
+# Build directories of the C firmware (firmware/build*/)
+firmware/build*/

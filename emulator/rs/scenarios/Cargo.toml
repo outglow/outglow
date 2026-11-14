@@ -1,0 +1,33 @@
+[package]
+name = "scenarios"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Spec scenarios run in-process on any bulb image: the zbnode emulator node, a shared 802.15.4 air and an independent coordinator"
+publish = false
+
+[dependencies]
+tc32emu = { path = "../tc32emu" }
+zbnode = { path = "../zbnode" }
+ble = { path = "../ble" }
+
+# The image x scenario matrix; its own runner (harness = false), no external crates.
+[[test]]
+name = "spec"
+path = "tests/spec.rs"
+harness = false
+
+[[test]]
+name = "ble"
+path = "tests/ble.rs"
+harness = false
+
+[[test]]
+name = "sims"
+path = "tests/sims.rs"
+harness = false
+
+[[test]]
+name = "stress"
+path = "tests/stress.rs"
+harness = false

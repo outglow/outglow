@@ -1,0 +1,343 @@
+//! Text of one stress result, and the comparison runner over images
+//! (`cargo test -p scenarios --test stress -- [--full] [--cpi N] [--jobs N]
+//! [--seed N] [--sets stock,rust,rust+stock] [--stock|--rust PATH]
+//! [--out docs/stress-results.md] [--dump file] [filters]`): every scenario on every image set in parallel,
+//! tables per scenario with the images next to each other.
+
+use std::fmt::Write as _;
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Instant;
+
+use super::net::Cfg;
+use super::{execute, Row, Scenario, StressResult};
+use crate::image::Image;
+
+fn f0(x: Option<f64>) -> String {
+    x.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into())
+}
+
+fn ok_text(r: &Row) -> String {
+    match r.ok_pct() {
+        Some(p) => format!("{p:.1}"),
+        None => "-".into(),
+    }
+}
+
+fn flows_text(r: &Row) -> String {
+    r.flows.iter().map(|(t, ok, n)| format!("{t} {ok}/{n}")).collect::<Vec<_>>().join(", ")
+}
+
+/// The console text of a result (also what `cargo sims -- stress_*` prints).
+pub fn text(r: &StressResult) -> String {
+    let mut o = String::new();
+    let _ = writeln!(o, "== {} ({}): images {}, seed {}, cpi {}", r.scenario, r.variant, r.images, r.seed, r.cpi);
+    for n in &r.notes {
+        let _ = writeln!(o, "   {n}");
+    }
+    let _ = writeln!(o, "   {:<40} {:>5} {:>6} {:>6} {:>6} {:>6} {:>4} {:>5} {:>9} {:>4} {:>9} {:>3}",
+                     "phase", "sent", "ok%", "p50", "p95", "max", "dup", "retx", "rreq n/f", "nst", "relay l/a", "rst");
+    let _ = writeln!(o, "   (relay l/a: relayed unicasts lost/acknowledged by bulbs; RREQ passed/heard shown per phase)");
+    for x in &r.rows {
+        let _ = writeln!(o, "   {:<40} {:>5} {:>6} {:>6} {:>6} {:>6} {:>4} {:>5} {:>9} {:>4} {:>9} {:>3}",
+                         x.phase, x.sent, ok_text(x), f0(x.p50), f0(x.p95), f0(x.max), x.dup, x.air.mac_retx,
+                         format!("{}/{}", x.air.rreq_new, x.air.rreq_frames), x.air.nwk_status,
+                         format!("{}/{}", x.air.relay_lost, x.air.relay_acked), x.resets);
+        if !x.flows.is_empty() {
+            let _ = writeln!(o, "      flows: {}; RREQ passed on {}/{}", flows_text(x), x.air.rreq_passed, x.air.rreq_heard);
+        }
+        for (k, v) in &x.extra {
+            let _ = writeln!(o, "      {k}: {v}");
+        }
+    }
+    for (n, ok, d) in &r.checks {
+        let _ = writeln!(o, "   {}: {n}  {d}", if *ok { "PASS" } else { "FAIL" });
+    }
+    if let Some(e) = &r.error {
+        let _ = writeln!(o, "   ERROR: {e}");
+    }
+    let _ = writeln!(o, "   simulated {:.1} s, wall {:.1} s", r.sim_ms / 1000.0, r.wall_s);
+    o
+}
+
+/// Everything but the wall time, for comparing two runs.
+pub fn dump(r: &StressResult) -> String {
+    let mut o = String::new();
+    let _ = writeln!(o, "{} {} {} seed={} cpi={} sim_ms={:.6}", r.scenario, r.variant, r.images, r.seed, r.cpi, r.sim_ms);
+    for n in &r.notes {
+        let _ = writeln!(o, "note {n}");
+    }
+    for x in &r.rows {
+        let _ = writeln!(o, "row {:?}", (&x.phase, x.sent, x.ok, x.p50, x.p95, x.max, &x.flows, x.dup, x.resets));
+        let _ = writeln!(o, "air {:?}", x.air);
+        for (k, v) in &x.extra {
+            let _ = writeln!(o, "extra {k}: {v}");
+        }
+    }
+    for c in &r.checks {
+        let _ = writeln!(o, "check {c:?}");
+    }
+    let _ = writeln!(o, "error {:?}", r.error);
+    o
+}
+
+/// FNV-1a 64 of a file (which image a table was made from).
+fn fnv(path: &std::path::Path) -> String {
+    match std::fs::read(path) {
+        Ok(b) => {
+            let mut h: u64 = 0xcbf29ce484222325;
+            for x in &b {
+                h ^= *x as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            format!("{} B, fnv64 {h:016x}", b.len())
+        }
+        Err(e) => format!("unreadable: {e}"),
+    }
+}
+
+/// An image set: the bulb under test and the others, or every second bulb from `mix`.
+#[derive(Clone)]
+struct Set {
+    name: String,
+    dut: Image,
+    mix: Option<Image>,
+}
+
+fn image(label: &str, rel: &str) -> Image {
+    Image { label: label.into(), path: crate::runner::repo_root().join(rel), link_shift: None }
+}
+
+fn sets(names: &str, paths: &[(String, String)]) -> Result<Vec<Set>, String> {
+    let one = |n: &str| -> Result<Image, String> {
+        if let Some((_, p)) = paths.iter().find(|(l, _)| l == n) {
+            return Image::parse(&format!("{n}={p}"));
+        }
+        Ok(match n {
+            "stock" => image("stock", "stock/stock-dimm.bin"),
+            "rust" => image("rust", "target/tc32/bulb-tc32.bin"),
+            x => return Err(format!("unknown image {x:?} (stock, rust; c with --c PATH)")),
+        })
+    };
+    names
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| match s.split_once('+') {
+            Some((a, b)) => Ok(Set { name: s.into(), dut: one(a)?, mix: Some(one(b)?) }),
+            None => Ok(Set { name: s.into(), dut: one(s)?, mix: None }),
+        })
+        .collect()
+}
+
+const SCENARIOS: &[(&str, Scenario)] = &[
+    ("stress_traffic", super::scen::traffic),
+    ("stress_noise", super::scen::noise),
+    ("stress_churn", super::scen::churn),
+    ("stress_broadcast", super::scen::broadcast),
+];
+
+pub const MARK: &str = "<!-- generated by `cargo test -p scenarios --test stress`; everything below is rewritten -->";
+
+/// The generated part of docs/stress-results.md.
+pub fn markdown(results: &[StressResult], sets_used: &[(String, String)], full: bool, cpi: i64, seed: u32) -> String {
+    let mut o = String::new();
+    let _ = writeln!(o, "{MARK}\n");
+    let _ = writeln!(o, "## Generated tables ({} variant, cpi {cpi}, seed {seed})\n", if full { "full" } else { "quick" });
+    for (n, d) in sets_used {
+        let _ = writeln!(o, "- `{n}`: {d}");
+    }
+    let _ = writeln!(o);
+    let _ = writeln!(o, "Columns: `sent` messages started in the phase; `ok %` answered (one-way flows: delivered); `p50/p95/max` \
+                         ms from sending to the answer (one-way: to delivery; group: to the light, mean over bulbs); \
+                         `dup` requests answered twice with different APS counters; `retx` MAC retransmissions by the bulbs; \
+                         `RREQ` route discoveries started by bulbs / Route Request frames sent by bulbs; `NwkSt` Network Status \
+                         frames by bulbs; `relay` unicast frames the bulbs acknowledged for relaying and then neither passed on nor \
+                         answered with a Network Status within 3 s / all they acknowledged for relaying (a frame handed to the \
+                         same bulb again by the same neighbour within 5 s counted once); `RREQ fwd` Route Requests of others \
+                         that reached a bulb intact and that it passed on / all such; `LS` Link Status frames by bulbs; `rst` \
+                         watchdog/software resets.\n");
+    let mut scen: Vec<String> = Vec::new();
+    for r in results {
+        if !scen.contains(&r.scenario) {
+            scen.push(r.scenario.clone());
+        }
+    }
+    for s in &scen {
+        let rs: Vec<&StressResult> = results.iter().filter(|r| &r.scenario == s).collect();
+        let _ = writeln!(o, "### {s}\n");
+        let _ = writeln!(o, "| phase | images | sent | ok % | p50 | p95 | max | dup | retx | RREQ | NwkSt | relay | RREQ fwd | LS | rst | per flow (ok/sent) |");
+        let _ = writeln!(o, "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|");
+        let mut phases: Vec<String> = Vec::new();
+        for r in &rs {
+            for x in &r.rows {
+                if !phases.contains(&x.phase) {
+                    phases.push(x.phase.clone());
+                }
+            }
+        }
+        for ph in &phases {
+            for r in &rs {
+                let Some(x) = r.rows.iter().find(|x| &x.phase == ph) else { continue };
+                let _ = writeln!(o, "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {}/{} | {} | {}/{} | {}/{} | {} | {} | {} |",
+                                 ph, r.images, x.sent, ok_text(x), f0(x.p50), f0(x.p95), f0(x.max), x.dup, x.air.mac_retx,
+                                 x.air.rreq_new, x.air.rreq_frames, x.air.nwk_status, x.air.relay_lost, x.air.relay_acked,
+                                 x.air.rreq_passed, x.air.rreq_heard, x.air.link_status, x.resets, flows_text(x));
+            }
+        }
+        let extras = rs.iter().any(|r| r.rows.iter().any(|x| !x.extra.is_empty()));
+        if extras {
+            let _ = writeln!(o, "\n| phase | images | measured |");
+            let _ = writeln!(o, "|---|---|---|");
+            for ph in &phases {
+                for r in &rs {
+                    let Some(x) = r.rows.iter().find(|x| &x.phase == ph) else { continue };
+                    if x.extra.is_empty() {
+                        continue;
+                    }
+                    let t = x.extra.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("; ");
+                    let _ = writeln!(o, "| {ph} | {} | {} |", r.images, t.replace('|', "/"));
+                }
+            }
+        }
+        let _ = writeln!(o, "\n| images | checks | failed | notes |");
+        let _ = writeln!(o, "|---|---|---|---|");
+        for r in &rs {
+            let ok = r.checks.iter().filter(|c| c.1).count();
+            let failed: Vec<String> = r.checks.iter().filter(|c| !c.1).map(|c| format!("{} ({})", c.0, c.2)).collect();
+            let mut notes = r.notes.join("; ");
+            if let Some(e) = &r.error {
+                notes = format!("ERROR: {e}; {notes}");
+            }
+            let _ = writeln!(o, "| {} | {ok}/{} | {} | {} |", r.images, r.checks.len(),
+                             if failed.is_empty() { "-".into() } else { failed.join("; ").replace('|', "/") }, notes.replace('|', "/"));
+        }
+        let _ = writeln!(o);
+    }
+    o
+}
+
+pub fn main_with(argv: &[String]) -> i32 {
+    let mut full = false;
+    let mut cpi = 24i64;
+    let mut jobs = 4usize;
+    let mut seed = 1u32;
+    let mut set_names = "stock,rust,rust+stock".to_string();
+    let mut out: Option<String> = None;
+    let mut dump_to: Option<String> = None;
+    let mut filters: Vec<String> = Vec::new();
+    let mut paths: Vec<(String, String)> = Vec::new();
+    let mut it = argv.iter();
+    while let Some(a) = it.next() {
+        let mut val = |n: &str| it.next().cloned().ok_or_else(|| format!("{n} needs a value"));
+        let r: Result<(), String> = (|| {
+            match a.as_str() {
+                "--full" => full = true,
+                "--quick" => full = false,
+                "--cpi" => cpi = val("--cpi")?.parse().map_err(|e| format!("--cpi: {e}"))?,
+                "--jobs" | "--test-threads" => jobs = val("--jobs")?.parse().map_err(|e| format!("--jobs: {e}"))?,
+                "--seed" => seed = val("--seed")?.parse().map_err(|e| format!("--seed: {e}"))?,
+                "--sets" => set_names = val("--sets")?,
+                "--out" => out = Some(val("--out")?),
+                "--dump" => dump_to = Some(val("--dump")?),
+                "--stock" | "--c" | "--rust" => paths.push((a[2..].to_string(), val(a)?)),
+                "--nocapture" | "--color" | "-q" | "--quiet" => {}
+                x if x.starts_with('-') => return Err(format!("unknown option {x}")),
+                x => filters.push(x.to_string()),
+            }
+            Ok(())
+        })();
+        if let Err(e) = r {
+            eprintln!("stress: {e}");
+            return 2;
+        }
+    }
+    if let Ok(v) = std::env::var("STRESS") {
+        full = full || v == "full";
+    }
+    let sets = match sets(&set_names, &paths) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("stress: {e}");
+            return 2;
+        }
+    };
+    let mut todo: Vec<(usize, usize)> = Vec::new();
+    for (si, (name, _)) in SCENARIOS.iter().enumerate() {
+        for (ki, s) in sets.iter().enumerate() {
+            let id = format!("{name}::{}", s.name);
+            if filters.is_empty() || filters.iter().any(|f| id.contains(f.as_str())) {
+                todo.push((si, ki));
+            }
+        }
+    }
+    println!("== stress: {} run(s), {} variant, cpi {cpi}, seed {seed}, {jobs} parallel", todo.len(), if full { "full" } else { "quick" });
+    let t0 = Instant::now();
+    let q = Arc::new(Mutex::new(todo.clone().into_iter().enumerate().collect::<std::collections::VecDeque<_>>()));
+    let (tx, rx) = mpsc::channel();
+    let mut results: Vec<Option<StressResult>> = vec![None; todo.len()];
+    std::thread::scope(|sc| {
+        for _ in 0..jobs.max(1) {
+            let (q, tx, sets) = (q.clone(), tx.clone(), &sets);
+            sc.spawn(move || loop {
+                let Some((i, (si, ki))) = q.lock().unwrap().pop_front() else { break };
+                let (name, f) = SCENARIOS[si];
+                let s = &sets[ki];
+                let cfg = Cfg { full, seed, dut: s.dut.clone(), mix: s.mix.clone(), cpi };
+                let res = execute(cfg, name, f, None);
+                let _ = tx.send((i, res));
+            });
+        }
+        drop(tx);
+        for (i, res) in rx.iter() {
+            print!("{}", text(&res));
+            println!("test stress::{}::{} ... {}\n", res.scenario, sets[todo[i].1].name, if res.passed() { "ok" } else { "FAILED" });
+            results[i] = Some(res);
+        }
+    });
+    let results: Vec<StressResult> = results.into_iter().flatten().collect();
+    let failed = results.iter().filter(|r| !r.passed()).count();
+    let wall = t0.elapsed().as_secs_f64();
+    println!("== stress: {} run(s), {failed} with failed checks or errors; wall {wall:.0} s", results.len());
+    let mut times: Vec<String> = results.iter().map(|r| format!("{}::{} {:.0} s", r.scenario, r.images, r.wall_s)).collect();
+    times.sort();
+    println!("   wall per run: {}", times.join(", "));
+    if let Some(p) = dump_to {
+        let txt: String = results.iter().map(dump).collect();
+        if let Err(e) = std::fs::write(&p, txt) {
+            eprintln!("stress: {p}: {e}");
+            return 2;
+        }
+    }
+    if let Some(p) = out {
+        let used: Vec<(String, String)> = {
+            let mut v: Vec<(String, String)> = Vec::new();
+            for s in &sets {
+                for img in std::iter::once(&s.dut).chain(s.mix.iter()) {
+                    if !v.iter().any(|x| x.0 == img.label) {
+                        let rel = img.path.strip_prefix(crate::runner::repo_root()).map(|p| p.display().to_string())
+                            .unwrap_or(img.path.display().to_string());
+                        v.push((img.label.clone(), format!("{rel} ({})", fnv(&img.path))));
+                    }
+                }
+            }
+            v
+        };
+        let gen = markdown(&results, &used, full, cpi, seed);
+        let path = crate::runner::repo_root().join(&p);
+        let old = std::fs::read_to_string(&path).unwrap_or_default();
+        let head = match old.find(MARK) {
+            Some(i) => old[..i].to_string(),
+            None => old,
+        };
+        if let Err(e) = std::fs::write(&path, head + &gen) {
+            eprintln!("stress: {}: {e}", path.display());
+            return 2;
+        }
+        println!("   wrote {}", path.display());
+    }
+    // a gate only on emulation errors; failed checks are findings
+    if results.iter().any(|r| r.error.is_some()) {
+        1
+    } else {
+        0
+    }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "outglow-site",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && mkdir -p dist/ota && cp ../ota/index.json dist/ota/index.json",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "boards": "python3 gen-boards.py"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/web-bluetooth": "0.0.21",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

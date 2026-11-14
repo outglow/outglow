@@ -1,0 +1,16 @@
+[package]
+name = "ble"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Portable Bluetooth LE peripheral for the bulb (no_std, no allocation): link layer above a radio that runs single events, L2CAP, ATT/GATT and the AwoX mesh profile with its firmware update"
+
+[dependencies]
+bulb-core = { path = "../bulb-core" }
+zigbee = { path = "../zigbee" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dev-dependencies]
+bulb-sim = { path = "../bulb-sim" }

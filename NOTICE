@@ -1,0 +1,29 @@
+Outglow
+Copyright (C) 2026 The Outglow authors
+
+Outglow is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE.
+
+Third-party code
+----------------
+
+emulator/rs/tc32emu and emulator/rs/ble are ports to Rust of the Go packages
+go/tc32emu and go/ble of tc32-devtools (https://github.com/goyamamoto/tc32-devtools),
+Copyright the tc32-devtools authors, licensed under the Apache License,
+Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). These directories
+remain under the Apache License 2.0; the combined work is distributed under
+the GNU GPL version 3 or later, with which the Apache License 2.0 is
+compatible.
+
+Trademarks
+----------
+
+EGLO, AwoX, Telink and Zigbee are trademarks of their respective owners.
+Outglow is not affiliated with or endorsed by any of them; the names are used
+only to say which devices and protocols the software works with.
+
+No firmware of any manufacturer is included in this repository. The tools
+that compare Outglow with the original firmware extract it from the vendor's
+public Android app on the user's machine (tools/extract-stock-images.sh).

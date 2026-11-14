@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble"]
+
+# Alternative firmware for the EGLO/AwoX Connect.Z bulb (Telink TLSR825x chip,
+# TC32 core). Written as a portable `no_std` logic core + a hardware emulator
+# on the host. Behaviour reproduced from analysis of the original firmware
+# (dimmable, brightness/state after power-on, on/off/level commands, persistent
+# configuration).
+#
+# NOTE on the target chip: the Telink TC32 core has no backend in stock
+# Rust/LLVM. The core is fully portable (zero dependencies on std or on specific
+# hardware) and all the logic is tested on the host through a mocked HAL (the
+# `bulb-sim` crate). For the chip itself, `crates/bulb-tc32` (its own package,
+# not a member of this workspace) is built by `crates/bulb-tc32/build.sh`:
+# rustc emits LLVM bitcode and the llvm-tc32 fork generates the TC32 code
+# (docs/rust-tc32.md).
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"

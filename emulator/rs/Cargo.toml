@@ -1,0 +1,22 @@
+# Rust port of the tc32-devtools Go emulator (tc32emu) and, later, zbnode.
+# Its own workspace: not a member of the repository-root workspace.
+[workspace]
+resolver = "2"
+members = ["tc32emu", "steptrace", "ble", "zbnode", "scenarios"]
+
+# The emulator core is far too slow unoptimised; `cargo test -p scenarios`
+# (dev/test profile) still builds it with optimisations, the scenario code
+# itself stays debuggable.
+[profile.dev.package.tc32emu]
+opt-level = 3
+[profile.dev.package.ble]
+opt-level = 3
+[profile.dev.package.zbnode]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1
+panic = "unwind"

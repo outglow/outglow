@@ -1,0 +1,10 @@
+[package]
+name = "ble"
+version = "0.1.0"
+edition = "2021"
+description = "BLE radio model and scripted central: a faithful port of tc32-devtools go/ble"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+tc32emu = { path = "../tc32emu" }

@@ -1,0 +1,370 @@
+//! Power cuts at every point of the light's configuration store
+//! (`bulb_core::store::LightLog`, the one the firmware keeps in 0xF0000 and
+//! 0xF4000) on a NOR flash model.
+//!
+//! Every store is run once and its flash operations recorded; then, for each
+//! operation, the flash is rebuilt as it was just before it and the power is
+//! cut there: before the operation, after it, and part way through it (a page
+//! program with only a prefix of its bytes or bits, or random bits, done; an
+//! erase with half of the sector or random bits erased). After each cut the
+//! bulb "boots" on that flash: the record it finds must be the one being
+//! stored or the one before it, never none once a record had been stored.
+//! From many of the cut states the store then carries on through more sector
+//! switches and must still come back with the last record.
+//!
+//! The same harness on the single-sector store of the earlier firmware finds
+//! the two ways it lost the state: an erase cut short (or a cut between the
+//! erase and the write), and a torn last record.
+
+use bulb_core::config::{Config, BLOCK_LEN};
+use bulb_core::store::LightLog;
+use bulb_core::{Bulb, Command, PowerOnBehavior};
+use bulb_sim::{FlashOp, MockClock, MockPwm, MockRadio, NorFlash};
+
+const A: usize = 0xF_0000;
+const B: usize = 0xF_4000;
+type Rec = [u8; BLOCK_LEN];
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn byte(&mut self) -> u8 {
+        self.next() as u8
+    }
+}
+
+fn medium(size: usize) -> NorFlash {
+    NorFlash::new(A, B + size - A, size)
+}
+
+/// Distinct records, each different from the one before.
+fn states(n: usize, seed: usize) -> Vec<Rec> {
+    (0..n)
+        .map(|i| {
+            let k = i + seed;
+            Config {
+                last_level: 1 + (k * 37 % 254) as u8,
+                last_on: k % 3 != 0,
+                power_on_behavior: if k % 5 == 0 { PowerOnBehavior::Previous } else { PowerOnBehavior::On },
+                ..Config::default()
+            }
+            .encode()
+        })
+        .collect()
+}
+
+/// A store under test, as the bulb sees it after a boot on a flash.
+trait Store {
+    fn boot(f: &NorFlash) -> Self;
+    fn store(&mut self, r: &Rec);
+    /// What `Bulb::boot` would take: the record if it decodes.
+    fn load(&self) -> Option<Rec>;
+}
+
+impl Store for LightLog<NorFlash> {
+    fn boot(f: &NorFlash) -> Self {
+        LightLog::new(f.clone(), [A, B], f.sector_size())
+    }
+    fn store(&mut self, r: &Rec) {
+        LightLog::store(self, r)
+    }
+    fn load(&self) -> Option<Rec> {
+        self.current().filter(|r| Config::decode(r).is_some())
+    }
+}
+
+/// The earlier firmware's store (crates/bulb-tc32/src/board.rs before the
+/// two sectors): 8-byte records in one sector, the last slot that is not
+/// erased is loaded, the sector is erased when full and then written.
+struct OldStore {
+    f: NorFlash,
+    next: usize,
+}
+
+impl OldStore {
+    fn slot(&self, off: usize) -> Rec {
+        let mut b = [0u8; BLOCK_LEN];
+        bulb_core::store::Flash::read(&self.f, A + off, &mut b);
+        b
+    }
+}
+
+impl Store for OldStore {
+    fn boot(f: &NorFlash) -> Self {
+        let mut s = OldStore { f: f.clone(), next: 0 };
+        let mut off = 0;
+        while off < f.sector_size() {
+            if s.slot(off).iter().any(|&b| b != 0xFF) {
+                s.next = off + BLOCK_LEN;
+            }
+            off += BLOCK_LEN;
+        }
+        s
+    }
+    fn store(&mut self, r: &Rec) {
+        use bulb_core::store::Flash;
+        if self.next != 0 && self.slot(self.next - BLOCK_LEN) == *r {
+            return;
+        }
+        if self.next + BLOCK_LEN > self.f.sector_size() {
+            self.f.erase(A);
+            self.next = 0;
+        }
+        self.f.program(A + self.next, r);
+        self.next += BLOCK_LEN;
+    }
+    fn load(&self) -> Option<Rec> {
+        if self.next == 0 {
+            return None;
+        }
+        Some(self.slot(self.next - BLOCK_LEN)).filter(|r| Config::decode(r).is_some())
+    }
+}
+
+/// The flash after a cut during `op`, for every way of cutting it this test knows.
+fn cuts(at: &NorFlash, op: &FlashOp, rng: &mut Rng) -> Vec<(String, NorFlash)> {
+    let mut out = Vec::new();
+    let mut part = |label: String, undone: &mut dyn FnMut(usize, u8) -> u8| {
+        let f = at.snapshot();
+        f.apply_part(op, undone);
+        out.push((label, f));
+    };
+    part("before".into(), &mut |_, _| 0xFF);
+    part("after".into(), &mut |_, _| 0);
+    match op {
+        FlashOp::Program { data, .. } => {
+            let n = data.len();
+            for k in 1..n {
+                part(format!("{k} of {n} bytes programmed"), &mut |i, _| if i < k { 0 } else { 0xFF });
+            }
+            for bit in (1..n * 8).step_by(3) {
+                part(format!("{bit} of {} bits programmed", n * 8), &mut |i, _| {
+                    let done = bit.saturating_sub(i * 8).min(8);
+                    (0xFFu16 << done) as u8
+                });
+            }
+            for k in 0..8 {
+                let masks: Vec<u8> = (0..n).map(|_| rng.byte()).collect();
+                part(format!("random bits programmed #{k}"), &mut |i, _| masks[i]);
+            }
+        }
+        FlashOp::Erase { .. } => {
+            let size = at.sector_size();
+            part("first half erased".into(), &mut |i, _| if i < size / 2 { 0 } else { 0xFF });
+            part("second half erased".into(), &mut |i, _| if i < size / 2 { 0xFF } else { 0 });
+            for k in 0..6 {
+                let mut r = Rng(rng.next() | 1);
+                // sparse, even and dense leftovers
+                let density = k % 3;
+                part(format!("random bits erased #{k}"), &mut |_, _| match density {
+                    0 => r.byte() & r.byte(),
+                    1 => r.byte(),
+                    _ => r.byte() | r.byte(),
+                });
+            }
+        }
+    }
+    out
+}
+
+#[derive(Default, Debug)]
+struct Report {
+    cuts: usize,
+    recoveries: usize,
+    /// (what was being stored, operation, cut, what came back)
+    lost: Vec<String>,
+}
+
+/// Stores `recs` one by one on `f` (which may already hold something whose
+/// record is `prev`), cutting the power at every operation of every store.
+/// From the cuts of every `recover_every`-th store (and of every store that
+/// erases) the store carries on with `recover` more records.
+fn run<S: Store>(f: &NorFlash, mut prev: Option<Rec>, recs: &[Rec], recover_every: usize, recover: usize) -> Report {
+    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    let mut rep = Report::default();
+    let mut s = S::boot(f);
+    assert_eq!(s.load(), prev, "the boot before the first store");
+    let more = states(recover, 1000);
+    for (i, r) in recs.iter().enumerate() {
+        let pre = f.snapshot();
+        f.clear_ops();
+        s.store(r);
+        let ops = f.ops();
+        let erases = ops.iter().any(|o| matches!(o, FlashOp::Erase { .. }));
+        let replay = pre.snapshot();
+        for (j, op) in ops.iter().enumerate() {
+            for (label, cut) in cuts(&replay, op, &mut rng) {
+                rep.cuts += 1;
+                let got = S::boot(&cut).load();
+                if got != Some(*r) && got != prev {
+                    rep.lost.push(format!("store #{i}, operation {j} ({op:?}), cut {label}: got {got:?}"));
+                    continue;
+                }
+                if recover > 0 && (erases || i % recover_every == 0) {
+                    rep.recoveries += 1;
+                    let mut t = S::boot(&cut);
+                    for m in &more {
+                        t.store(m);
+                    }
+                    let back = S::boot(&cut).load();
+                    if back != more.last().copied() {
+                        rep.lost.push(format!("after store #{i} cut at operation {j} ({label}), {recover} more stores: got {back:?}"));
+                    }
+                }
+            }
+            replay.apply(op);
+        }
+        prev = Some(*r);
+        let clean = S::boot(f).load();
+        if clean != prev {
+            rep.lost.push(format!("store #{i} without a cut: got {clean:?}"));
+        }
+    }
+    rep
+}
+
+fn assert_safe(rep: &Report, min_cuts: usize) {
+    eprintln!("{} cuts, {} recoveries, {} lost", rep.cuts, rep.recoveries, rep.lost.len());
+    assert!(rep.lost.is_empty(), "{} of {} cuts lost the state, e.g.:\n{}", rep.lost.len(), rep.cuts, rep.lost[..rep.lost.len().min(10)].join("\n"));
+    assert!(rep.cuts >= min_cuts, "only {} cuts", rep.cuts);
+}
+
+#[test]
+fn small_sectors_every_cut_and_recovery() {
+    // 128-byte sectors: seven records each, a switch every seventh store
+    let f = medium(0x80);
+    let rep = run::<LightLog<NorFlash>>(&f, None, &states(80, 0), 1, 24);
+    assert_safe(&rep, 5000);
+    assert!(rep.recoveries > 4000);
+}
+
+#[test]
+fn real_sectors_every_cut() {
+    // 4 KB sectors as on the bulb: 255 records each; 600 stores switch three times
+    let f = medium(0x1000);
+    let rep = run::<LightLog<NorFlash>>(&f, None, &states(600, 0), 50, 300);
+    assert_safe(&rep, 20_000);
+    assert!(rep.recoveries > 500);
+}
+
+/// Old-format records in the first sector, as the earlier firmware left them.
+fn legacy(f: &NorFlash, n: usize) -> Vec<Rec> {
+    let recs = states(n, 500);
+    for (k, r) in recs.iter().enumerate() {
+        f.poke(A + k * BLOCK_LEN, r);
+    }
+    recs
+}
+
+#[test]
+fn after_the_earlier_firmware_its_last_record_counts_until_the_first_store() {
+    for n in [1, 37, 512] {
+        let f = medium(0x1000);
+        let old = legacy(&f, n);
+        let rep = run::<LightLog<NorFlash>>(&f, old.last().copied(), &states(300, 0), 25, 300);
+        assert_safe(&rep, 5000);
+        // the first store went to the other sector; the old log was erased at the next switch
+        assert_ne!(f.byte(B), 0xFF);
+    }
+}
+
+#[test]
+fn a_torn_last_record_of_the_earlier_firmware_is_skipped() {
+    let f = medium(0x1000);
+    let old = legacy(&f, 40);
+    // the 41st record cut short: half of its bytes
+    let torn = states(1, 9)[0];
+    f.poke(A + 40 * BLOCK_LEN, &[torn[0], torn[1], torn[2], torn[3], 0xFF, 0xFF, 0xFF, 0xFF]);
+    let s = <LightLog<NorFlash> as Store>::boot(&f);
+    assert_eq!(s.load(), old.last().copied());
+}
+
+#[test]
+fn the_earlier_single_sector_store_loses_the_state() {
+    // the same harness finds both faults of the store this one replaces
+    let f = medium(0x80);
+    let rep = run::<OldStore>(&f, None, &states(60, 0), 1, 0);
+    let erase = rep.lost.iter().filter(|l| l.contains("Erase")).count();
+    let torn = rep.lost.iter().filter(|l| l.contains("Program") && l.contains("programmed")).count();
+    eprintln!("earlier store: {} cuts, {} lost ({erase} in an erase or right after it, {torn} by a torn record), e.g.\n{}",
+              rep.cuts, rep.lost.len(), rep.lost.iter().filter(|l| l.ends_with("got None")).take(3).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(erase > 0 && torn > 0, "{rep:?}");
+    assert!(rep.lost.iter().any(|l| l.ends_with("got None")));
+}
+
+#[test]
+fn one_program_per_change_and_an_erase_only_every_255_changes() {
+    let f = medium(0x1000);
+    let mut s = LightLog::new(f.clone(), [A, B], 0x1000);
+    let recs = states(1000, 0);
+    f.clear_ops();
+    for r in &recs {
+        s.store(r);
+        // an unchanged record is not written again
+        s.store(r);
+    }
+    // a switch writes the record and the header; it erases the sector unless it is blank
+    let headers = f.ops().iter().filter(|o| matches!(o, FlashOp::Program { addr, .. } if *addr == A || *addr == B)).count();
+    assert_eq!(headers, 1 + (recs.len() - 1) / 255);
+    assert_eq!(f.programs(), recs.len() + headers);
+    assert_eq!(f.erases(), headers - 2);
+}
+
+#[test]
+fn the_bulb_comes_back_after_cuts_during_commands() {
+    // the whole firmware core on the model: cut at a random point of a
+    // random command's writes, power on again from there
+    let f = medium(0x1000);
+    let mut rng = Rng(12345);
+    let boot = |f: &NorFlash| Bulb::boot(MockPwm::new(1000), MockClock::new(), LightLog::new(f.clone(), [A, B], 0x1000), MockRadio::new());
+    let mut bulb = boot(&f);
+    bulb.handle(Command::SetPowerOnBehavior(PowerOnBehavior::Previous));
+    let mut lost = Vec::new();
+    let mut n_cuts = 0;
+    for k in 0..1500u32 {
+        let before = bulb.state();
+        let cmd = match rng.next() % 4 {
+            0 => Command::Toggle,
+            1 => Command::Off,
+            _ => Command::MoveToLevel { level: 1 + (rng.next() % 254) as u8, transition_ms: 0 },
+        };
+        let pre = f.snapshot();
+        f.clear_ops();
+        bulb.handle(cmd);
+        let after = bulb.state();
+        let ops = f.ops();
+        if ops.is_empty() || k % 3 != 0 {
+            continue;
+        }
+        let j = (rng.next() as usize) % ops.len();
+        let replay = pre.snapshot();
+        for op in &ops[..j] {
+            replay.apply(op);
+        }
+        let variants = cuts(&replay, &ops[j], &mut rng);
+        let (label, cut) = &variants[(rng.next() as usize) % variants.len()];
+        n_cuts += 1;
+        let back = boot(cut).state();
+        let same = |s: &bulb_core::StateReport| (s.on, s.level) == (back.on, back.level) && back.power_on_behavior == PowerOnBehavior::Previous;
+        if !same(&before) && !same(&after) {
+            lost.push(format!("command #{k} {cmd:?}, cut {label}: {back:?}, before {before:?}, after {after:?}"));
+        }
+        // carry on from the cut, as the bulb would
+        f.poke(A, &read_all(cut, A, B + 0x1000 - A));
+        bulb = boot(&f);
+    }
+    assert!(lost.is_empty(), "{}", lost.join("\n"));
+    assert!(n_cuts > 400);
+}
+
+fn read_all(f: &NorFlash, from: usize, n: usize) -> Vec<u8> {
+    let mut b = vec![0u8; n];
+    bulb_core::store::Flash::read(f, from, &mut b);
+    b
+}

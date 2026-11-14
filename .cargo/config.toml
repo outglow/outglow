@@ -1,0 +1,13 @@
+# Shortcuts for the in-process conformance tests (emulator/rs/scenarios), run from the repository root:
+#   cargo spec [-- filters] [--cpi N] [--jobs N] [-v] [--image label=path] [--json out.json]
+#   cargo ble-spec [-- ...]
+#   cargo sims [-- scenario names] [--cpi N] [--image ROLE=path] [-v]
+#   cargo sims-quick [-- more names or options]  (a few scenarios for every change; the full set in CI)
+#   cargo stress [-- --full] [--sets stock,c,rust,rust+stock] [--out docs/stress-results.md] [filters]
+# The scenarios crate lives in the emulator's own workspace, hence the manifest path.
+[alias]
+spec = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test spec"
+ble-spec = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test ble"
+sims = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims"
+sims-quick = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims -- rust_fw rust_ble rust_diag zigbee ble_ota"
+stress = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test stress"

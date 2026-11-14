@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            emulator/rs
+      - run: cargo test --workspace
+      - name: Emulator unit tests
+        run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble
+
+  site:
+    name: Website and flasher
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pycryptodome
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  firmware:
+    name: Firmware in the emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/tc32-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+      - name: Build the firmware (dimmable filament bulb)
+        run: crates/bulb-tc32/build.sh
+      - name: Scenarios
+        run: cargo sims-quick
+      - name: Zigbee conformance
+        run: cargo spec -- --cpi 24
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-dimm
+          path: |
+            target/tc32/bulb-tc32-ota.bin
+            target/tc32/bulb-tc32.ota

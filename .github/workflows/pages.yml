@@ -1,0 +1,79 @@
+name: Website
+
+# The website with the web flasher on GitHub Pages. The firmware it offers
+# comes from the published releases: their Bluetooth images are served by the
+# site itself (firmware/<tag>/...; release assets carry no CORS headers, a
+# browser cannot download them), and the Zigbee2MQTT OTA index (ota/index.json)
+# lists their OTA files, which Zigbee2MQTT downloads from the release.
+
+on:
+  push:
+    branches: [main]
+    paths: [site/**, ota/**, crates/bulb-tc32/boards.tsv, .github/workflows/pages.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build the site
+        working-directory: site
+        run: npm ci && npm run build
+
+      - name: Firmware of the releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p rel
+          echo '[]' > site/dist/ota/index.json
+          echo '{"schema": 1, "images": []}' > site/dist/firmware.json
+          # the newest releases first; older ones stay downloadable from GitHub
+          for tag in $(gh release list --exclude-drafts --limit 10 --json tagName --jq '.[].tagName'); do
+            mkdir -p "rel/$tag" "site/dist/firmware/$tag"
+            gh release download "$tag" -D "rel/$tag" -p 'outglow-*.json' -p '*-ota.bin' || continue
+            mv rel/$tag/*-ota.bin "site/dist/firmware/$tag/" 2>/dev/null || true
+          done
+          python3 - <<'PY'
+          import glob, json
+          index, images = [], []
+          for d in sorted(glob.glob("rel/*")):
+              try:
+                  index += json.load(open(f"{d}/outglow-index.json"))
+                  images += json.load(open(f"{d}/outglow-firmware.json"))["images"]
+              except FileNotFoundError:
+                  pass
+          index.sort(key=lambda e: (e["imageType"], e["fileVersion"]))
+          images.sort(key=lambda r: (r["board"], int(r["fileVersion"], 16)))
+          json.dump(index, open("site/dist/ota/index.json", "w"), indent=2)
+          json.dump({"schema": 1, "images": images}, open("site/dist/firmware.json", "w"), indent=2)
+          print(f"{len(index)} OTA images, {len(images)} flasher images")
+          PY
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

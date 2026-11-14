@@ -1,0 +1,15 @@
+[package]
+name = "zbnode"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "The emulator node of the scenario scripts: a port of emulator/go/cmd/zbnode"
+publish = false
+
+[[bin]]
+name = "zbnode"
+path = "src/main.rs"
+
+[dependencies]
+tc32emu = { path = "../tc32emu" }
+ble = { path = "../ble" }

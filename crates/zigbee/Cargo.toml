@@ -1,0 +1,12 @@
+[package]
+name = "zigbee"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Portable Zigbee PRO router stack (no_std, no allocation): 802.15.4 MAC framing, NWK with security and mesh routing, APS, ZDO and the ZCL light clusters"
+
+[dependencies]
+bulb-core = { path = "../bulb-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
