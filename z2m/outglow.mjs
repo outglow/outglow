@@ -17,6 +17,10 @@
 //   routing, aps_security, queues, bluetooth, system;
 // - tables (lists): `neighbor_table` and `event_log`;
 // - `diagnostics_refresh` (read everything now) and `diagnostics_clear`;
+// - motion sensing (images built with the `sense` feature, shown only on a
+//   bulb with Occupancy Sensing): occupancy, its timeout, the sensitivity,
+//   the probe rate, automatic calibration, self-tuning, and a calibration
+//   to start with the room empty;
 // - the black box (crates/zigbee/src/stack/blackbox.rs), not exposed and
 //   never polled: setting `black_box_read` to "all" (or a page number) reads
 //   its pages, each published as `black_box_page` {page, hex};
@@ -612,6 +616,146 @@ const bluetooth = {
     isModernExtend: true,
 };
 
+// Motion sensing from the RSSI between bulbs (images built with `cargo xtask build --sense`):
+// Occupancy Sensing 0x0406 and the manufacturer cluster 0xFC5E. Shown only for a bulb whose
+// endpoint 1 has Occupancy Sensing.
+const senseCluster = m.deviceAddCustomCluster("outglowSense", {
+    name: "outglowSense",
+    ID: 0xfc5e,
+    manufacturerCode: MFR,
+    attributes: {
+        sensitivity: {name: "sensitivity", ID: 0x0000, type: UINT8, write: true, max: 100},
+        probeRate: {name: "probeRate", ID: 0x0001, type: UINT8, write: true, max: 10},
+        calibrate: {name: "calibrate", ID: 0x0003, type: UINT8, write: true, max: 0xff},
+        selfTuning: {name: "selfTuning", ID: 0x0004, type: UINT8, write: true, max: 1},
+        autoCalibration: {name: "autoCalibration", ID: 0x0006, type: UINT8, write: true, max: 1},
+    },
+    commands: {},
+    commandsResponse: {},
+});
+
+const hasSense = (device) =>
+    !device || device.isDummyDevice || Boolean(device.getEndpoint?.(1)?.supportsInputCluster?.("msOccupancySensing"));
+
+/// The extend's entities only on a bulb with motion sensing; nothing is configured on any.
+function withSense(ext) {
+    const exposes = ext.exposes ?? [];
+    ext.exposes = [(device, options) => (hasSense(device) ? exposes.flatMap((x) => (typeof x === "function" ? x(device, options) : [x])) : [])];
+    ext.configure = [];
+    return ext;
+}
+
+const SENSE_CALIBRATION_S = 60;
+
+const sense = [
+    senseCluster,
+    withSense(m.occupancy({reporting: false})),
+    withSense(
+        m.numeric({
+            name: "occupancy_timeout",
+            cluster: "msOccupancySensing",
+            attribute: "pirOToUDelay",
+            valueMin: 1,
+            valueMax: 3600,
+            unit: "s",
+            description: "Seconds without motion until occupancy goes back to false",
+            access: "ALL",
+            reporting: false,
+            entityCategory: "config",
+        }),
+    ),
+    withSense(
+        m.numeric({
+            name: "motion_sensitivity",
+            cluster: "outglowSense",
+            attribute: "sensitivity",
+            valueMin: 0,
+            valueMax: 100,
+            description:
+                "Sensitivity of every link (0: no detection). Given by hand it stays: the automatic calibration turns off with it",
+            zigbeeCommandOptions: mfr,
+            access: "ALL",
+            reporting: false,
+            entityCategory: "config",
+        }),
+    ),
+    withSense(
+        m.numeric({
+            name: "motion_probes",
+            cluster: "outglowSense",
+            attribute: "probeRate",
+            valueMin: 0,
+            valueMax: 10,
+            unit: "/s",
+            description: "Probes this bulb sends a second for its neighbours (0: none; it still listens)",
+            zigbeeCommandOptions: mfr,
+            access: "ALL",
+            reporting: false,
+            entityCategory: "config",
+        }),
+    ),
+    withSense(
+        m.binary({
+            name: "motion_auto_calibration",
+            cluster: "outglowSense",
+            attribute: "autoCalibration",
+            valueOn: [true, 1],
+            valueOff: [false, 0],
+            description: "After its first full day every link not calibrated by hand takes the sensitivity of its quietest hour",
+            zigbeeCommandOptions: mfr,
+            access: "ALL",
+            reporting: false,
+            entityCategory: "config",
+        }),
+    ),
+    withSense(
+        m.binary({
+            name: "motion_self_tuning",
+            cluster: "outglowSense",
+            attribute: "selfTuning",
+            valueOn: [true, 1],
+            valueOff: [false, 0],
+            description: "Once a day each link's sensitivity follows its noise, by one step, at most two from its calibration",
+            zigbeeCommandOptions: mfr,
+            access: "ALL",
+            reporting: false,
+            entityCategory: "config",
+        }),
+    ),
+    withSense(
+        m.numeric({
+            name: "motion_calibration_left",
+            cluster: "outglowSense",
+            attribute: "calibrate",
+            unit: "s",
+            description: "Seconds left of a calibration (0: none running)",
+            zigbeeCommandOptions: mfr,
+            access: "STATE_GET",
+            reporting: false,
+            entityCategory: "diagnostic",
+        }),
+    ),
+    withSense({
+        isModernExtend: true,
+        toZigbee: [
+            {
+                key: ["motion_calibrate"],
+                convertSet: async (entity, key, value) => {
+                    const seconds = value === "start" ? SENSE_CALIBRATION_S : 0;
+                    await entity.write("outglowSense", {calibrate: seconds}, mfr);
+                    return {state: {motion_calibrate: value, motion_calibration_left: seconds}};
+                },
+            },
+        ],
+        exposes: [
+            e
+                .enum("motion_calibrate", ea.SET, ["start", "stop"])
+                .withDescription(`Calibrate with the room empty: ${SENSE_CALIBRATION_S} s of recording (stop: abort)`)
+                .withCategory("config"),
+        ],
+    }),
+];
+
 // the entities Zigbee2MQTT generates from the bulb (tools/z2m-generated-definition.mjs), under the same names
 const objects = [
     m.numeric({
@@ -662,7 +806,7 @@ const objects = [
 
 const endpoints = m.deviceEndpoints({
     endpoints: {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8},
-    multiEndpointSkip: ["state", "on", "off", "brightness", "level_config", "power_on_behavior", "color_temp", "color_temp_startup", "color_mode", "color_options", "color"],
+    multiEndpointSkip: ["state", "on", "off", "brightness", "level_config", "power_on_behavior", "color_temp", "color_temp_startup", "color_mode", "color_options", "color", "occupancy", "occupancy_timeout"],
 });
 
 function definition(model, description, light) {
@@ -672,7 +816,7 @@ function definition(model, description, light) {
         model,
         vendor: "Outglow",
         description,
-        extend: [endpoints, diagnosticCluster, settingsCluster, m.identify(), m.light(light), ...objects, bluetooth, diagnostics, poll],
+        extend: [endpoints, diagnosticCluster, settingsCluster, m.identify(), m.light(light), ...objects, bluetooth, ...sense, diagnostics, poll],
         options: [
             e.enum("diagnostics", ea.SET, LEVELS)
                 .withDescription("Router diagnostics shown: off; summary (default: link health, way to the coordinator, neighbours, uptime); full (every counter and table)"),
