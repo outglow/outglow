@@ -845,6 +845,22 @@ impl<H: Hal> Stack<H> {
     /// Tells the radio who the end-device children are when that changed,
     /// for its acknowledgement of polls from anyone else.
     pub(crate) fn publish_children(&mut self) {
+        // Every round of the main loop comes here, and almost always nothing
+        // has changed: the list as published is compared with the table in
+        // place first. (Building the list and comparing it whole each round
+        // was some 30 % of the firmware's instructions, a busy bulb's too.)
+        let mut n = 0;
+        let mut same = true;
+        for c in self.children.iter().filter(|c| c.used && c.capability & CAP_FFD == 0) {
+            if self.polled.get(n) != Some(&c.short) {
+                same = false;
+                break;
+            }
+            n += 1;
+        }
+        if same && self.polled.get(n).is_none_or(|s| *s == 0xFFFF) {
+            return;
+        }
         let mut list = [0xFFFFu16; CHILDREN];
         let mut n = 0;
         for c in self.children.iter().filter(|c| c.used && c.capability & CAP_FFD == 0) {
