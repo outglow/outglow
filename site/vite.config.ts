@@ -13,6 +13,7 @@ export default defineConfig({
         index: resolve(import.meta.dirname, "index.html"),
         install: resolve(import.meta.dirname, "install.html"),
         bulbs: resolve(import.meta.dirname, "bulbs.html"),
+        why: resolve(import.meta.dirname, "why.html"),
         flasher: resolve(import.meta.dirname, "flasher/index.html"),
       },
     },

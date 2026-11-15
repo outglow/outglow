@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outglow vs the original firmware</title>
+<meta name="description" content="What changes when an EGLO connect.z or AwoX bulb switches from its original firmware to Outglow, and what stays the same.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
+  <nav>
+    <a href="./">Overview</a>
+    <a href="why.html" aria-current="page">Compare</a>
+    <a href="bulbs.html">Supported bulbs</a>
+    <a href="install.html">Install</a>
+    <a href="flasher/">Flasher</a>
+    <a href="https://github.com/outglow/outglow">Source</a>
+  </nav>
+</header>
+<main>
+  <h1>Outglow and the original firmware</h1>
+  <p class="lead">What changes when you switch, and what stays the same. Tap <span class="info static" aria-hidden="true">i</span>
+    on a row to see what it means.</p>
+
+  <div class="table-wrap compare">
+    <table>
+      <thead><tr><th></th><th>Original firmware</th><th>Outglow</th></tr></thead>
+      <tbody>
+        <tr><td><span class="feature">Same brightness and colour<button type="button" class="info" aria-expanded="false" aria-controls="more-0" aria-label="About: Same brightness and colour">i</button></span></td><td class="y">Yes</td><td class="y">Yes, identical</td></tr>
+        <tr class="more" id="more-0" hidden><td colspan="3"><p>Outglow drives the LEDs with the original firmware's own brightness and colour curves. We sent every brightness level and colour temperature to both firmwares and recorded the duty cycle on each LED channel. Level 1 is the one difference: Zigbee says dimming to the lowest level with on/off switches the light off, and Outglow does that.</p>
+          <figure class="chart-card">
+            <div class="filters" role="group" aria-label="Sweep">
+              <button type="button" id="sweep-level" aria-pressed="true">Brightness</button>
+              <button type="button" id="sweep-ct" aria-pressed="false">Colour temperature</button>
+            </div>
+            <svg id="curve" viewBox="0 0 720 300" role="img" aria-label="LED duty cycle, original firmware and Outglow"></svg>
+            <figcaption>
+              <span class="key"><i class="key-original"></i>Original firmware</span>
+              <span class="key"><i class="key-outglow"></i>Outglow</span>
+              <span id="curve-diff"></span>
+            </figcaption>
+            <p class="readout" id="curve-readout">ESMLFzm_w6_TW, original version 3.0.2. Point at the chart to read values.</p>
+          </figure></td></tr>
+        <tr><td><span class="feature">Works with the vendor app<button type="button" class="info" aria-expanded="false" aria-controls="more-1" aria-label="About: Works with the vendor app">i</button></span></td><td class="y">Yes</td><td class="y">Yes</td></tr>
+        <tr class="more" id="more-1" hidden><td colspan="3"><p>Over Bluetooth, Outglow still looks like the original bulb, so the AwoX app keeps working: login, brightness, colour, colour animation, candle mode, and the status the app reads back.</p></td></tr>
+        <tr><td><span class="feature">Works with any Zigbee 3.0 hub<button type="button" class="info" aria-expanded="false" aria-controls="more-2" aria-label="About: Works with any Zigbee 3.0 hub">i</button></span></td><td class="y">Yes</td><td class="y">Yes</td></tr>
+        <tr class="more" id="more-2" hidden><td colspan="3"><p>Both are standard Zigbee lights. In Zigbee2MQTT, Outglow works without a converter: it reports its own model, and Zigbee2MQTT builds the device from what the bulb shows. Interview the bulb again after switching.</p></td></tr>
+        <tr><td><span class="feature">Updates from your Zigbee hub<button type="button" class="info" aria-expanded="false" aria-controls="more-3" aria-label="About: Updates from your Zigbee hub">i</button></span></td><td class="n">No</td><td class="y">Yes</td></tr>
+        <tr class="more" id="more-3" hidden><td colspan="3"><p>The original firmware has no Zigbee update support; the only way to update it is the vendor app, over Bluetooth, next to the bulb. With Outglow, new versions show up in Zigbee2MQTT like for any other device.</p></td></tr>
+        <tr><td><span class="feature">Switches off at the end of a fade<button type="button" class="info" aria-expanded="false" aria-controls="more-4" aria-label="About: Switches off at the end of a fade">i</button></span></td><td class="n">No</td><td class="y">Yes</td></tr>
+        <tr class="more" id="more-4" hidden><td colspan="3"><p>A hub's “fade to off” dims to the lowest level and expects the light to switch off there, as the Zigbee Cluster Library says. The original firmware stays at its dimmest glow instead. Outglow follows revision 8 of the library and was checked against its text.</p></td></tr>
+        <tr><td><span class="feature">Recovers when a router disappears<button type="button" class="info" aria-expanded="false" aria-controls="more-5" aria-label="About: Recovers when a router disappears">i</button></span></td><td class="n">Poorly</td><td class="y">Yes</td></tr>
+        <tr class="more" id="more-5" hidden><td colspan="3"><p>Bulbs are the routers of your Zigbee network, so this matters for every device behind them. With both firmwares in one emulated network, an original bulb kept sending to a router that was gone for as long as we watched (four minutes), and after a short power cut it sometimes searched every channel and never came back. Outglow drops a router it no longer hears, finds a new route and rejoins after power cuts.</p></td></tr>
+        <tr><td><span class="feature">Network diagnostics in your hub<button type="button" class="info" aria-expanded="false" aria-controls="more-6" aria-label="About: Network diagnostics in your hub">i</button></span></td><td class="n">No</td><td class="y">Yes</td></tr>
+        <tr class="more" id="more-6" hidden><td colspan="3"><p>Outglow shows how many frames it relayed, retried and lost, its neighbours and children, why it last restarted, and how much radio time Bluetooth took: all 32 counters of the Zigbee Diagnostics cluster, plus a few of its own.</p></td></tr>
+        <tr><td><span class="feature">Bluetooth can be switched off<button type="button" class="info" aria-expanded="false" aria-controls="more-7" aria-label="About: Bluetooth can be switched off">i</button></span></td><td class="n">No</td><td class="y">Yes, or only for minutes after power-on</td></tr>
+        <tr class="more" id="more-7" hidden><td colspan="3"><p>The bulb has one radio. Time spent on Bluetooth is time it can't hear Zigbee. Outglow lets you keep Bluetooth on, switch it off, or keep it only for a few minutes after the bulb is powered on, from your hub. A reset turns it back on.</p></td></tr>
+        <tr><td><span class="feature">Joins a new network<button type="button" class="info" aria-expanded="false" aria-controls="more-8" aria-label="About: Joins a new network">i</button></span></td><td>in about 5 s</td><td>in about 1.5 s</td></tr>
+        <tr class="more" id="more-8" hidden><td colspan="3"><p>Time from the start of pairing until the bulb is in the network and answering, measured in the emulator with the same coordinator for both.</p></td></tr>
+        <tr><td><span class="feature">Source code<button type="button" class="info" aria-expanded="false" aria-controls="more-9" aria-label="About: Source code">i</button></span></td><td class="n">Closed</td><td class="y">Open, GPL</td></tr>
+        <tr class="more" id="more-9" hidden><td colspan="3"><p>If the original firmware has a bug, only the vendor can fix it. Outglow is free software: anyone can read it, run it in the emulator and fix it.</p></td></tr>
+        <tr><td><span class="feature">Going back<button type="button" class="info" aria-expanded="false" aria-controls="more-10" aria-label="About: Going back">i</button></span></td><td>–</td><td class="y">Any time</td></tr>
+        <tr class="more" id="more-10" hidden><td colspan="3"><p>The flasher puts the original firmware back over Bluetooth, and your hub can do it over Zigbee. Outglow never touches the vendor's bootloader, so after going back the bulb is what it was before.</p></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">Light output, network behaviour and join times were measured in the Outglow emulator, which runs
+    the real firmware images, the original ones included, through the same scenarios. Outglow itself runs on a few of its
+    developers' bulbs so far. <a href="install.html">How to install and how to go back →</a></p>
+</main>
+<footer class="site">
+  Outglow is free software under the GNU GPL version 3 or later.
+  EGLO, AwoX, Telink and Zigbee are trademarks of their owners; Outglow is not affiliated with or endorsed by them.
+</footer>
+<script type="module" src="/src/why.ts"></script>
+</body>
+</html>
