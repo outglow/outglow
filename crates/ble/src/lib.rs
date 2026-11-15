@@ -8,12 +8,15 @@
 //! - the Telink mesh profile in AwoX's variant: login, pairing, light
 //!   commands, status notifications (`mesh`)
 //! - firmware update into the staging area (`ota`)
+//! - the diagnostic service of the device page (`diag`), after the stock's
+//!   handles; the firmware fills its values and carries out its commands
 //!
 //! The light itself is `bulb-core`: commands for it come out of `poll`,
 //! its state comes in through `set_light`.
 #![no_std]
 
 pub mod crypto;
+pub mod diag;
 pub mod hal;
 pub mod pdu;
 pub mod sha256;
@@ -27,6 +30,7 @@ mod ota;
 use bulb_core::command::{Command, StateReport};
 
 pub use air::AirStats;
+pub use diag::DiagCommand;
 pub use hal::Hal;
 pub use ll::LinkState;
 
@@ -94,6 +98,7 @@ pub struct Ble<H: Hal> {
     pub(crate) air: air::Air,
     pub(crate) light: Light,
     pub(crate) cmds: [Option<Command>; CMDS],
+    pub(crate) diag: diag::Diag,
     pub stats: Stats,
 }
 
@@ -121,6 +126,7 @@ impl<H: Hal> Ble<H> {
                 moving: false,
             },
             cmds: [None; CMDS],
+            diag: diag::Diag::new(),
             stats: Stats::default(),
         };
         ble.mesh_load();

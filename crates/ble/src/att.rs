@@ -3,7 +3,9 @@
 //! The attribute table is the stock bulb's, handle for handle (GATT audit of
 //! the stock firmware in the emulator): GAP, Device Information and the
 //! Telink mesh service with its status, command, update and pairing
-//! characteristics. Apps address these by handle.
+//! characteristics. Apps address these by handle. After it, at 0x20..=0x2c
+//! as in the C firmware, the diagnostic service of the device page (`diag`),
+//! and its counters characteristic at 0x2d..=0x2e, which the C firmware lacks.
 
 use crate::hal::{Hal, LL_PAYLOAD_MAX};
 use crate::ll::{LinkState, TX_RESERVE};
@@ -40,6 +42,7 @@ const CONFIRMATION: u8 = 0x1e;
 const WRITE_CMD: u8 = 0x52;
 
 const ERR_INVALID_HANDLE: u8 = 0x01;
+const ERR_READ_NOT_PERMITTED: u8 = 0x02;
 const ERR_WRITE_NOT_PERMITTED: u8 = 0x03;
 const ERR_INVALID_PDU: u8 = 0x04;
 const ERR_REQUEST_NOT_SUPPORTED: u8 = 0x06;
@@ -79,6 +82,34 @@ const UUID_OTA_CLASSIC: [u8; 16] = telink(0x13);
 const UUID_PAIR: [u8; 16] = telink(0x14);
 const UUID_OTA: [u8; 16] = telink(0x15);
 
+/// e61000xx-5a4b-4c3d-8e2f-1a2b3c4d5e6f, least significant byte first.
+const fn diag_uuid(short: u8) -> [u8; 16] {
+    [0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, short, 0x00, 0x10, 0xe6]
+}
+
+/// Characteristic declaration of the diagnostic service.
+const fn diag_declaration(properties: u8, value_handle: u8, short: u8) -> [u8; 19] {
+    let u = diag_uuid(short);
+    let mut d = [0u8; 19];
+    d[0] = properties;
+    d[1] = value_handle;
+    let mut i = 0;
+    while i < 16 {
+        d[3 + i] = u[i];
+        i += 1;
+    }
+    d
+}
+
+const UUID_DIAG: [u8; 16] = diag_uuid(0x00);
+const UUID_DIAG_INFO: [u8; 16] = diag_uuid(0x01);
+const UUID_DIAG_STATE: [u8; 16] = diag_uuid(0x02);
+const UUID_DIAG_LOG: [u8; 16] = diag_uuid(0x03);
+const UUID_DIAG_CMD: [u8; 16] = diag_uuid(0x04);
+const UUID_DIAG_FRAMES: [u8; 16] = diag_uuid(0x05);
+const UUID_DIAG_CONFIG: [u8; 16] = diag_uuid(0x06);
+const UUID_DIAG_COUNTERS: [u8; 16] = diag_uuid(0x07);
+
 const READ: u8 = 0x02;
 const WRITE_NO_RSP: u8 = 0x04;
 const WRITE: u8 = 0x08;
@@ -89,6 +120,13 @@ const DECL_COMMAND: [u8; 19] = declaration(READ | WRITE | WRITE_NO_RSP, HANDLE_C
 const DECL_OTA_CLASSIC: [u8; 19] = declaration(READ | WRITE, HANDLE_OTA_CLASSIC as u8, 0x13);
 const DECL_OTA: [u8; 19] = declaration(READ | WRITE_NO_RSP, HANDLE_OTA as u8, 0x15);
 const DECL_PAIR: [u8; 19] = declaration(READ | WRITE, HANDLE_PAIR as u8, 0x14);
+const DECL_DIAG_INFO: [u8; 19] = diag_declaration(READ, 0x22, 0x01);
+const DECL_DIAG_STATE: [u8; 19] = diag_declaration(READ, 0x24, 0x02);
+const DECL_DIAG_LOG: [u8; 19] = diag_declaration(READ, 0x26, 0x03);
+const DECL_DIAG_CMD: [u8; 19] = diag_declaration(WRITE, 0x28, 0x04);
+const DECL_DIAG_FRAMES: [u8; 19] = diag_declaration(READ, 0x2a, 0x05);
+const DECL_DIAG_CONFIG: [u8; 19] = diag_declaration(READ, 0x2c, 0x06);
+const DECL_DIAG_COUNTERS: [u8; 19] = diag_declaration(READ, 0x2e, 0x07);
 
 pub(crate) const HANDLE_STATUS: u16 = 0x12;
 pub(crate) const HANDLE_COMMAND: u16 = 0x15;
@@ -149,7 +187,19 @@ enum Value {
     Command,
     Ota,
     Pair,
+    DiagInfo,
+    DiagState,
+    DiagLog,
+    /// Written, never read (its declaration has only Write).
+    DiagCommand,
+    DiagFrames,
+    DiagConfig,
+    DiagCounters,
 }
+
+/// Room for a value made up when it is read (the update status, the
+/// diagnostic state); the others are read where they are kept.
+const SCRATCH: usize = crate::diag::STATE_LEN;
 
 struct Attribute {
     uuid: Uuid,
@@ -169,8 +219,16 @@ const fn mesh_value(uuid: &'static [u8; 16], value: Value) -> Attribute {
     Attribute { uuid: Uuid::Long(uuid), value, writable: true }
 }
 
+const fn diag_value(uuid: &'static [u8; 16], value: Value) -> Attribute {
+    Attribute { uuid: Uuid::Long(uuid), value, writable: matches!(value, Value::DiagCommand) }
+}
+
+const fn fixed_long(value: &'static [u8; 16]) -> Attribute {
+    Attribute { uuid: Uuid::Short(PRIMARY_SERVICE), value: Value::Fixed(value), writable: false }
+}
+
 /// Attribute `n` of the table has handle `n + 1`.
-static TABLE: [Attribute; 31] = [
+static TABLE: [Attribute; 46] = [
     // Generic Access, 0x01..=0x06
     fixed(PRIMARY_SERVICE, &[0x00, 0x18]),
     fixed(CHARACTERISTIC, &[READ, 0x03, 0x00, 0x00, 0x2a]),
@@ -205,12 +263,35 @@ static TABLE: [Attribute; 31] = [
     fixed(CHARACTERISTIC, &DECL_PAIR),
     mesh_value(&UUID_PAIR, Value::Pair),
     fixed(USER_DESCRIPTION, b"pair"),
+    // the diagnostic service of the device page, 0x20..=0x2c
+    fixed_long(&UUID_DIAG),
+    fixed(CHARACTERISTIC, &DECL_DIAG_INFO),
+    diag_value(&UUID_DIAG_INFO, Value::DiagInfo),
+    fixed(CHARACTERISTIC, &DECL_DIAG_STATE),
+    diag_value(&UUID_DIAG_STATE, Value::DiagState),
+    fixed(CHARACTERISTIC, &DECL_DIAG_LOG),
+    diag_value(&UUID_DIAG_LOG, Value::DiagLog),
+    fixed(CHARACTERISTIC, &DECL_DIAG_CMD),
+    diag_value(&UUID_DIAG_CMD, Value::DiagCommand),
+    fixed(CHARACTERISTIC, &DECL_DIAG_FRAMES),
+    diag_value(&UUID_DIAG_FRAMES, Value::DiagFrames),
+    fixed(CHARACTERISTIC, &DECL_DIAG_CONFIG),
+    diag_value(&UUID_DIAG_CONFIG, Value::DiagConfig),
+    // not in the C firmware's service: the Diagnostics cluster's counters
+    fixed(CHARACTERISTIC, &DECL_DIAG_COUNTERS),
+    diag_value(&UUID_DIAG_COUNTERS, Value::DiagCounters),
 ];
 
 const LAST_HANDLE: u16 = TABLE.len() as u16;
 
 fn attribute(handle: u16) -> Option<&'static Attribute> {
     TABLE.get((handle as usize).checked_sub(1)?)
+}
+
+impl Attribute {
+    fn readable(&self) -> bool {
+        !matches!(self.value, Value::DiagCommand)
+    }
 }
 
 fn is_service(handle: u16) -> bool {
@@ -386,9 +467,9 @@ impl<H: Hal> Ble<H> {
         }
     }
 
-    fn att_value(&self, handle: u16, out: &mut [u8; 20]) -> usize {
-        let Some(a) = attribute(handle) else { return 0 };
-        let bytes: &[u8] = match a.value {
+    fn att_value<'a>(&'a self, handle: u16, scratch: &'a mut [u8; SCRATCH]) -> &'a [u8] {
+        let Some(a) = attribute(handle) else { return &[] };
+        match a.value {
             Value::Fixed(v) => v,
             Value::Name => {
                 // an empty name still reads as one byte, as in the C firmware
@@ -407,14 +488,20 @@ impl<H: Hal> Ble<H> {
             Value::Command => &self.mesh.att_command,
             Value::Pair => &self.mesh.att_pair,
             Value::Ota => {
-                let status = self.ota_status();
-                out.copy_from_slice(&status);
-                return 20;
+                scratch[..20].copy_from_slice(&self.ota_status());
+                &scratch[..20]
             }
-        };
-        let n = bytes.len().min(20);
-        out[..n].copy_from_slice(&bytes[..n]);
-        n
+            Value::DiagInfo => self.diag_info(),
+            Value::DiagState => {
+                let n = self.diag_state(scratch);
+                &scratch[..n]
+            }
+            Value::DiagLog => self.diag_log(),
+            Value::DiagFrames => self.diag_frames(),
+            Value::DiagConfig => self.diag_config(),
+            Value::DiagCounters => self.diag_counters(),
+            Value::DiagCommand => &[],
+        }
     }
 
     fn att_write(&mut self, handle: u16, value: &[u8]) -> Result<(), u8> {
@@ -436,6 +523,7 @@ impl<H: Hal> Ble<H> {
             Value::Command => self.mesh_command_write(value),
             Value::Ota => self.ota_write(value),
             Value::Pair => self.mesh_pair_write(value),
+            Value::DiagCommand => self.diag_write(value),
             _ => {}
         }
         Ok(())
@@ -475,7 +563,7 @@ impl<H: Hal> Ble<H> {
             }
             Ok((start, end.min(LAST_HANDLE)))
         };
-        let mut value = [0u8; 20];
+        let mut scratch = [0u8; SCRATCH];
         match opcode {
             MTU_REQ => {
                 exact(3)?;
@@ -518,8 +606,7 @@ impl<H: Hal> Ble<H> {
                 out.put(&[FIND_BY_TYPE_VALUE_RSP]);
                 for handle in start..=end {
                     let Some(a) = attribute(handle) else { break };
-                    let n = self.att_value(handle, &mut value);
-                    if !a.uuid.matches(&kind) || value[..n] != *wanted {
+                    if !a.uuid.matches(&kind) || self.att_value(handle, &mut scratch) != wanted {
                         continue;
                     }
                     if out.room() < 4 {
@@ -549,7 +636,15 @@ impl<H: Hal> Ble<H> {
                     if !a.uuid.matches(&kind) {
                         continue;
                     }
-                    let n = self.att_value(handle, &mut value);
+                    if !a.readable() {
+                        // the first one found stops the search with its error, a later one ends the response
+                        if each == 0 {
+                            return Err((handle, ERR_READ_NOT_PERMITTED));
+                        }
+                        break;
+                    }
+                    let value = self.att_value(handle, &mut scratch);
+                    let n = value.len();
                     if each == 0 {
                         // all entries of a response have the first one's length
                         each = n.min(out.limit - 2 - head);
@@ -571,8 +666,12 @@ impl<H: Hal> Ble<H> {
                 let blob = opcode == READ_BLOB_REQ;
                 exact(if blob { 5 } else { 3 })?;
                 let handle = u16_at(p, 1);
-                attribute(handle).ok_or((handle, ERR_INVALID_HANDLE))?;
-                let n = self.att_value(handle, &mut value);
+                let a = attribute(handle).ok_or((handle, ERR_INVALID_HANDLE))?;
+                if !a.readable() {
+                    return Err((handle, ERR_READ_NOT_PERMITTED));
+                }
+                let value = self.att_value(handle, &mut scratch);
+                let n = value.len();
                 let offset = if blob { u16_at(p, 3) as usize } else { 0 };
                 if offset > n {
                     return Err((handle, ERR_INVALID_OFFSET));

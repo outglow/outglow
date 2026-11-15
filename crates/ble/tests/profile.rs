@@ -87,7 +87,10 @@ fn services_and_characteristics_sit_at_the_stock_handles() {
     assert_eq!(rsp[..6], [0x11, 20, 0x10, 0x00, 0x1f, 0x00]);
     assert_eq!(rsp[6..], hex("10190d0c0b0a09080706050403020100"));
     let rsp = rig.att(&[0x10, 0x20, 0x00, 0xff, 0xff, 0x00, 0x28]);
-    assert_eq!(rsp, [0x01, 0x10, 0x20, 0x00, 0x0a], "no service after the mesh service");
+    assert_eq!(rsp[..6], [0x11, 20, 0x20, 0x00, 0x2e, 0x00], "the diagnostic service after the mesh service");
+    assert_eq!(rsp[6..], hex("6f5e4d3c2b1a2f8e3d4c4b5a000010e6"));
+    let rsp = rig.att(&[0x10, 0x2f, 0x00, 0xff, 0xff, 0x00, 0x28]);
+    assert_eq!(rsp, [0x01, 0x10, 0x2f, 0x00, 0x0a], "nothing after it");
 
     // characteristics of the mesh service: (declaration handle, properties, value handle, short id)
     let mut found = vec![];
@@ -95,7 +98,7 @@ fn services_and_characteristics_sit_at_the_stock_handles() {
     loop {
         let mut req = vec![0x08];
         req.extend_from_slice(&start.to_le_bytes());
-        req.extend_from_slice(&[0xff, 0xff, 0x03, 0x28]);
+        req.extend_from_slice(&[0x1f, 0x00, 0x03, 0x28]);
         let rsp = rig.att(&req);
         if rsp[0] != 0x09 {
             assert_eq!(rsp[..2], [0x01, 0x08]);
@@ -125,7 +128,7 @@ fn services_and_characteristics_sit_at_the_stock_handles() {
     let rsp = rig.att(&[0x04, 0x12, 0x00, 0xff, 0xff]);
     assert_eq!(rsp[..4], [0x05, 0x02, 0x12, 0x00], "a 128-bit entry goes alone");
     assert_eq!(rsp.len(), 2 + 18);
-    assert_eq!(rig.att(&[0x04, 0x20, 0x00, 0xff, 0xff]), [0x01, 0x04, 0x20, 0x00, 0x0a]);
+    assert_eq!(rig.att(&[0x04, 0x2f, 0x00, 0xff, 0xff]), [0x01, 0x04, 0x2f, 0x00, 0x0a]);
     // 16-bit entries stop where the first 128-bit one would follow
     let rsp = rig.att(&[0x04, 0x0f, 0x00, 0xff, 0xff]);
     assert_eq!(rsp, [0x05, 0x01, 0x0f, 0x00, 0x27, 0x2a, 0x10, 0x00, 0x00, 0x28, 0x11, 0x00, 0x03, 0x28]);
