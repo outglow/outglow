@@ -25,6 +25,8 @@ mod nv;
 mod objects;
 mod ota;
 mod parent;
+#[cfg(feature = "sense")]
+mod sense;
 mod touchlink;
 mod zcl;
 mod zdo;
@@ -34,6 +36,8 @@ use bulb_core::command::{Command, StateReport};
 pub use diag::{ev, LoggedEvent, MacCounters, NeighborCounts, DIAG_COUNTERS_MAX};
 pub use ota::OtaState;
 pub use zcl::LightSettings;
+#[cfg(feature = "sense")]
+pub use sense::{DEFAULT_OFF_S as SENSE_DEFAULT_OFF_S, DEFAULT_RATE as SENSE_DEFAULT_RATE, DEFAULT_S as SENSE_DEFAULT_S};
 
 use crate::aes::Aes128;
 use crate::hal::Hal;
@@ -119,6 +123,10 @@ pub struct Identity {
     /// The firmware has Bluetooth LE next to Zigbee: the endpoint carries
     /// the settings cluster (`0xFC5F`) that says when BLE runs (`BleMode`).
     pub ble: bool,
+    /// Motion sensing from RSSI (feature `sense`, docs/rf-sensing.md):
+    /// probes, Occupancy Sensing and the manufacturer cluster `0xFC5E`.
+    #[cfg(feature = "sense")]
+    pub sense: bool,
 }
 
 /// When the firmware runs BLE (attribute `0x0000` of the settings cluster
@@ -770,6 +778,9 @@ pub struct Stack<H: Hal> {
     /// router. Endpoint 8 shows the BLE setting above as a window in
     /// minutes (0: no limit).
     pub(crate) allow_children: bool,
+    /// Motion sensing (`sense.rs`).
+    #[cfg(feature = "sense")]
+    pub(crate) sense: sense::Sense,
 }
 
 impl<H: Hal> Stack<H> {
@@ -908,6 +919,8 @@ impl<H: Hal> Stack<H> {
             xreports_dirty: false,
             xreport_at: now,
             allow_children: true,
+            #[cfg(feature = "sense")]
+            sense: sense::Sense::new(now),
         }
     }
 
@@ -925,6 +938,8 @@ impl<H: Hal> Stack<H> {
     fn restore(&mut self, now: u32) {
         self.load_counters();
         self.load_settings();
+        #[cfg(feature = "sense")]
+        self.sense_load(now);
         if self.load_network() {
             self.load_tables();
             self.load_xreports(now);
@@ -1008,6 +1023,8 @@ impl<H: Hal> Stack<H> {
             y: s.y,
         };
         self.light = l;
+        #[cfg(feature = "sense")]
+        self.sense_light(s.on, s.level, s.color_temp);
     }
 
     /// Runs the stack: handles received frames and expired timers. Returns a
@@ -1017,10 +1034,19 @@ impl<H: Hal> Stack<H> {
         if self.cmds[0].is_none() {
             self.send_deferred();
         }
+        #[cfg(feature = "sense")]
+        {
+            self.sense.drained = false;
+        }
         for _ in 0..4 {
             let mut buf = [0u8; 127];
             match self.hal.receive(&mut buf) {
                 Some(meta) => {
+                    // a probe of the motion sensing is a sample, not a frame for the stack
+                    #[cfg(feature = "sense")]
+                    if self.sense_heard(buf.get(..meta.len).unwrap_or(&[]), meta.rssi) {
+                        continue;
+                    }
                     self.stats.rx = self.stats.rx.wrapping_add(1);
                     if let Some(mpdu) = buf.get(..meta.len) {
                         self.rx_signal = (meta.lqi, meta.rssi);
@@ -1028,7 +1054,13 @@ impl<H: Hal> Stack<H> {
                         self.on_mpdu(mpdu, meta.lqi, meta.end_us);
                     }
                 }
-                None => break,
+                None => {
+                    #[cfg(feature = "sense")]
+                    {
+                        self.sense.drained = true;
+                    }
+                    break;
+                }
             }
         }
         let now = self.hal.now_ms();
@@ -1191,6 +1223,8 @@ impl<H: Hal> Stack<H> {
             self.scenes_dirty = false;
             self.store_scenes();
         }
+        #[cfg(feature = "sense")]
+        self.sense_timers(now);
     }
 
     /// Next outgoing NWK frame counter. The stored value always runs ahead,

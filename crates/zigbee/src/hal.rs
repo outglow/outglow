@@ -179,12 +179,19 @@ pub enum NvItem {
     Reports = 17,
     /// The bulb's own settings (manufacturer cluster `0xFC5F`): when BLE runs.
     Settings = 18,
+    /// Motion sensing (feature `sense`): its configuration and the
+    /// sensitivity of every line.
+    #[cfg(feature = "sense")]
+    Sense = 19,
 }
 
 impl NvItem {
     /// The highest item id: a store that keeps the items by id needs room
     /// for 1..=MAX_ID. A new item goes last and moves this along.
+    #[cfg(not(feature = "sense"))]
     pub const MAX_ID: u8 = NvItem::Settings as u8;
+    #[cfg(feature = "sense")]
+    pub const MAX_ID: u8 = NvItem::Sense as u8;
 
     /// The item of entry `i` of the Green Power proxy table.
     pub fn proxy(i: usize) -> NvItem {
@@ -313,4 +320,10 @@ pub trait Hal {
     /// signal strength (dBm) it came with. For a record of the latest frames
     /// kept outside `Stack` (the BLE diagnostic service, `ble::diag`).
     fn zcl_received(&mut self, _src: u16, _cluster: u16, _cmd: u8, _frame_control: u8, _lqi: u8, _rssi: i8) {}
+
+    /// Motion sensing (feature `sense`): the receiver also takes broadcasts
+    /// to this PAN (the probes, `sense::probe::PAN`), without acknowledging
+    /// them, and hands them up like any frame. 0xFFFF: none.
+    #[cfg(feature = "sense")]
+    fn sense_listen(&mut self, _pan: u16) {}
 }

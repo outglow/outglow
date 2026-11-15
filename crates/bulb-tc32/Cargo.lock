@@ -24,8 +24,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sense"
+version = "0.1.0"
+
+[[package]]
 name = "zigbee"
 version = "0.1.0"
 dependencies = [
  "bulb-core",
+ "sense",
 ]

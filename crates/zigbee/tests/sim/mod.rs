@@ -101,6 +101,7 @@ pub const IDENTITY: Identity = Identity {
     touchlink_master_key: None,
     install_code: None,
     ble: false,
+    sense: false,
 };
 
 /// The tunable-white bulb.
@@ -112,6 +113,13 @@ pub const IDENTITY_COLOR: Identity =
 
 /// A bulb whose firmware has BLE: with the settings cluster 0xFC5F.
 pub const IDENTITY_BLE: Identity = Identity { ble: true, ..IDENTITY };
+
+/// A bulb with motion sensing from RSSI (Occupancy Sensing, 0xFC5E, probes).
+pub const IDENTITY_SENSE: Identity = Identity { sense: true, ..IDENTITY };
+
+/// The signal strength of a frame at a port (`Air::rssi_model`): receiving
+/// port, MPDU, time; `None` drops the frame there.
+pub type RssiModel = Box<dyn FnMut(usize, &[u8], u32) -> Option<i8>>;
 
 /// One radio on the medium.
 pub struct Port {
@@ -143,6 +151,8 @@ pub struct Port {
     /// The ZCL frames for the light's endpoint the stack took (`Hal::zcl_received`):
     /// sender, cluster, command, frame control, LQI, RSSI.
     pub zcl_received: Vec<(u16, u16, u8, u8, u8, i8)>,
+    /// The receiver also takes broadcasts to this PAN (`Hal::sense_listen`); 0xFFFF none.
+    pub probe_pan: u16,
 }
 
 pub struct Air {
@@ -159,6 +169,9 @@ pub struct Air {
     pub timed: Vec<(usize, u32, u8, Vec<u8>)>,
     /// Energy an energy detection finds on channel 11 + index.
     pub energy: [u8; 16],
+    /// Signal strength of every frame a stack receives, instead of the one
+    /// that follows from the link quality; may drop frames.
+    pub rssi_model: Option<RssiModel>,
     rng: u32,
 }
 
@@ -209,7 +222,17 @@ impl Drop for Air {
 
 impl Air {
     pub fn new() -> Shared {
-        Rc::new(RefCell::new(Air { now: 1000, ports: vec![], lqi: vec![], loss: vec![], log: vec![], timed: vec![], energy: [0; 16], rng: 0x1234_5678 }))
+        Rc::new(RefCell::new(Air {
+            now: 1000,
+            ports: vec![],
+            lqi: vec![],
+            loss: vec![],
+            log: vec![],
+            timed: vec![],
+            energy: [0; 16],
+            rssi_model: None,
+            rng: 0x1234_5678,
+        }))
     }
 
     pub fn add_port(&mut self, ext: u64) -> usize {
@@ -232,6 +255,7 @@ impl Air {
             reset_cause: ResetCause::PowerOn,
             retained: None,
             zcl_received: Vec::new(),
+            probe_pan: 0xFFFF,
         });
         let n = self.ports.len();
         for row in self.lqi.iter_mut() {
@@ -282,9 +306,9 @@ impl Air {
         let mut lossy_attempts = 0u8;
         for j in 0..self.ports.len() {
             let lqi = self.lqi[from][j];
-            let (powered, port_channel, pan, short, ext) = {
+            let (powered, port_channel, pan, short, ext, probe_pan) = {
                 let p = &self.ports[j];
-                (p.powered, p.channel, p.pan, p.short, p.ext)
+                (p.powered, p.channel, p.pan, p.short, p.ext, p.probe_pan)
             };
             if j == from || lqi == 0 || !powered || port_channel != channel {
                 continue;
@@ -292,7 +316,7 @@ impl Air {
             let pan_ok = h.dst_pan == 0xFFFF || h.dst_pan == pan;
             let (accept, ack) = match h.dst {
                 Addr::None => (true, false),
-                Addr::Short(0xFFFF) => (pan_ok, false),
+                Addr::Short(0xFFFF) => (pan_ok || (probe_pan != 0xFFFF && h.dst_pan == probe_pan), false),
                 Addr::Short(s) => (pan_ok && s == short, true),
                 Addr::Ext(e) => (pan_ok && e == ext, true),
             };
@@ -418,12 +442,24 @@ impl Hal for SimHal {
         air.transmit(self.id, mpdu);
     }
     fn receive(&mut self, buf: &mut [u8; 127]) -> Option<RxMeta> {
-        let (frame, lqi) = self.air.borrow_mut().ports[self.id].queue.pop_front()?;
-        buf[..frame.len()].copy_from_slice(&frame);
-        let now = self.air.borrow().now;
-        // (the scale of the firmware's radio: -99 dBm..-15 dBm over the whole range)
-        let rssi = (lqi as i32 * 84 / 255 - 99) as i8;
-        Some(RxMeta { len: frame.len(), lqi, rssi, end_us: now.wrapping_mul(1000) })
+        let mut air = self.air.borrow_mut();
+        let now = air.now;
+        loop {
+            let (frame, lqi) = air.ports[self.id].queue.pop_front()?;
+            // (the scale of the firmware's radio: -99 dBm..-15 dBm over the whole range)
+            let rssi = match air.rssi_model.as_mut() {
+                None => (lqi as i32 * 84 / 255 - 99) as i8,
+                Some(model) => match model(self.id, &frame, now) {
+                    Some(r) => r,
+                    None => continue,
+                },
+            };
+            buf[..frame.len()].copy_from_slice(&frame);
+            return Some(RxMeta { len: frame.len(), lqi, rssi, end_us: now.wrapping_mul(1000) });
+        }
+    }
+    fn sense_listen(&mut self, pan: u16) {
+        self.air.borrow_mut().ports[self.id].probe_pan = pan;
     }
     fn nv_load(&mut self, item: NvItem, buf: &mut [u8]) -> Option<usize> {
         let air = self.air.borrow();

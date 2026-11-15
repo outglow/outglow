@@ -52,6 +52,8 @@ const IDENTITY: Identity = Identity {
     // these bulbs carry no install code
     install_code: None,
     ble: cfg!(feature = "ble"),
+    #[cfg(feature = "sense")]
+    sense: true,
 };
 
 /// The touchlink master key, if the build was given it: 32 hexadecimal
@@ -426,6 +428,11 @@ impl Hal for Tc32Hal {
         let t = self.now_ms() / 1000;
         crate::diag::frame(t, src, cluster, cmd, frame_control, lqi, rssi);
     }
+
+    #[cfg(feature = "sense")]
+    fn sense_listen(&mut self, pan: u16) {
+        radio::set_probe_pan(pan);
+    }
 }
 
 /// The bulb's link to the outside: the Zigbee network, and the debug link
@@ -622,6 +629,9 @@ impl Radio for Link {
         if matches!(stack.ota_state(), OtaState::Idle | OtaState::Querying) {
             staging::release(Owner::Zigbee);
         }
+        // no probes of the motion sensing while an image comes in over BLE
+        #[cfg(all(feature = "sense", feature = "ble"))]
+        stack.sense_pause(self.ble.as_ref().is_some_and(|b| b.ota_busy()));
         let c = stack.poll();
         crate::link::publish_network(stack.state() as u8, stack.short_address(), stack.channel());
         c

@@ -637,6 +637,9 @@ impl<H: Hal> Stack<H> {
         // out of the network BLE is the way to the bulb: back to running it always
         self.ble_mode = super::BleMode::On;
         self.ble_window = super::BLE_WINDOW_DEFAULT_MIN;
+        // the sensing's configuration went with the store
+        #[cfg(feature = "sense")]
+        self.sense_forget();
         self.children_stored = [super::nv::NO_CHILDREN; super::nv::CHILDREN_PARTS];
         // the frame counters must outlive the network: neighbors remember them
         self.store_counters();

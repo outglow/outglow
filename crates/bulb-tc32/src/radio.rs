@@ -165,6 +165,9 @@ static mut TAIL: u8 = 0;
 /// Frequency as an offset from 2400 MHz.
 static mut FREQ_OFFSET: u8 = 5;
 static mut PAN: u16 = 0xffff;
+/// Motion sensing: broadcasts to this PAN (the probes) pass the filter too.
+#[cfg(feature = "sense")]
+static mut PROBE_PAN: u16 = 0xffff;
 static mut SHORT: u16 = 0xffff;
 static mut EXT: [u8; 8] = [0; 8];
 
@@ -492,6 +495,13 @@ pub fn set_filter(pan: u16, short: u16, ext: u64) {
     reg::irq_restore(s);
 }
 
+/// Motion sensing: the filter also takes broadcasts to `pan` (0xFFFF: none),
+/// and acknowledges none of them.
+#[cfg(feature = "sense")]
+pub fn set_probe_pan(pan: u16) {
+    put!(PROBE_PAN, pan);
+}
+
 /// Sets the addresses whose Data Requests are acknowledged with the
 /// frame-pending bit.
 pub fn set_pending(shorts: &[u16], exts: &[u64]) {
@@ -594,7 +604,16 @@ unsafe fn on_frame(p: *mut u8) {
             return;
         }
         let pan = at(mac + 3) as u16 | (at(mac + 4) as u16) << 8;
+        #[cfg(not(feature = "sense"))]
         if pan != 0xffff && pan != get!(PAN) {
+            return;
+        }
+        // a probe of the motion sensing: a broadcast to the probes' PAN
+        #[cfg(feature = "sense")]
+        if pan != 0xffff
+            && pan != get!(PAN)
+            && !(pan == get!(PROBE_PAN) && dst_mode == 0x08 && at(mac + 5) == 0xff && at(mac + 6) == 0xff)
+        {
             return;
         }
         if dst_mode == 0x08 {
