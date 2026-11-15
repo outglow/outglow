@@ -420,6 +420,12 @@ impl Hal for Tc32Hal {
         staging::activate();
         staging::release(Owner::Zigbee);
     }
+
+    #[cfg(feature = "ble")]
+    fn zcl_received(&mut self, src: u16, cluster: u16, cmd: u8, frame_control: u8, lqi: u8, rssi: i8) {
+        let t = self.now_ms() / 1000;
+        crate::diag::frame(t, src, cluster, cmd, frame_control, lqi, rssi);
+    }
 }
 
 /// The bulb's link to the outside: the Zigbee network, and the debug link
@@ -442,6 +448,9 @@ pub struct Link {
     /// not open again until the next power-on.
     #[cfg(feature = "ble")]
     window_over: bool,
+    /// The diagnostic service's values and commands (`diag.rs`).
+    #[cfg(feature = "ble")]
+    diag: crate::diag::Glue,
     light: Option<StateReport>,
     debug: DebugLink,
 }
@@ -475,6 +484,8 @@ impl Link {
             last_light: None,
             #[cfg(feature = "ble")]
             window_over: false,
+            #[cfg(feature = "ble")]
+            diag: crate::diag::Glue::new(),
             light: None,
             debug: DebugLink,
         }
@@ -501,6 +512,9 @@ impl Link {
         let ble = self.ble.insert(ble::Ble::new(crate::ble::BleHal::new(), crate::ble::IDENTITY));
         if let Some(light) = &self.last_light {
             ble.set_light(light);
+        }
+        if let Some(stack) = self.stack.as_mut() {
+            self.diag.start(ble, stack);
         }
     }
 
@@ -593,10 +607,18 @@ impl Radio for Link {
             if !ble.ota_active() {
                 staging::release(Owner::Ble);
             }
+            self.diag.refresh(ble, stack);
+            if let Some(d) = ble.take_diag_command() {
+                if let Some(c) = self.diag.execute(d, stack) {
+                    return Some(c);
+                }
+            }
             if let Some(c) = ble.poll() {
                 return Some(c);
             }
         }
+        #[cfg(feature = "ble")]
+        self.diag.restart_due(stack);
         if matches!(stack.ota_state(), OtaState::Idle | OtaState::Querying) {
             staging::release(Owner::Zigbee);
         }

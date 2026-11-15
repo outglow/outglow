@@ -89,7 +89,8 @@ Among them: joining, light and OTA of the Rust firmware (`rust_fw`,
 `rust_ble_switch`), the first update over BLE from the original firmware
 (`ble_ota`), the vendor app's mesh and colour commands (`ble_mesh`, `mesh`,
 `interop`, `app_colour`), the parent role under load (`parent_load`),
-diagnostics (`rust_diag`, `stress_diag`), every board against its original
+diagnostics (`rust_diag`, `stress_diag`; the device page's BLE service,
+`ble_diag`, with `BLE_DIAG_DUMP=<file>` for the values it read), every board against its original
 firmware (`board_check`), frames read by Wireshark (`wireshark`,
 `ble_wireshark`, need `tshark`), address conflicts and sleepy end devices
 behind a wall switch (`addr_conflict*`, `enddev_wallswitch*`).
@@ -209,7 +210,7 @@ firmware on Telink's SDK, which is not public:
 | ota_awox | Zigbee OTA of the C firmware, layout awox | covered by `ota_rust`; Rust -> stock in `back_to_stock_ota` |
 | install, install_stock | the C firmware's own bootloader installs an image | not moved: the Rust firmware has no bootloader of its own (layout awox only) |
 | sys, sys_ble | supervision of the C firmware (crash counter, safe mode, watchdog, power-on sequence) | covered for Rust by `rust_fw` (watchdog, power cycles, factory reset sequence) and `rust_diag` (reset cause) |
-| ble_diag | GATT diagnostic service of the C firmware | being done separately for the Rust firmware |
+| ble_diag | GATT diagnostic service of the C firmware | `ble_diag`, on the Rust firmware (the same layout, plus the counters characteristic) |
 | sense, sense_core | RF motion sensing of the C firmware | not moved here: its Rust counterpart is not in this repository yet |
 | conformance, conformance_clang, stallprobe | the emulator against C code of known behaviour and Telink's own CPU-stall code | not moved: they need Telink's C libraries |
 

@@ -140,3 +140,5 @@ jobs:
         run: >
           cargo sims -- mixed_parent mixed_mesh mixed_group rust_radio rust_gp rust_touchlink
           --image rust=target/tc32-tw/bulb-tc32.bin --image stock=stock/stock-tw.bin
+      - name: The device page's BLE service on the tunable white bulb
+        run: cargo sims -- ble_diag --image bin=target/tc32-tw/bulb-tc32.bin --image tw=target/tc32-tw/bulb-tc32.bin

@@ -16,6 +16,8 @@ mod boards;
 mod ble;
 #[cfg(feature = "ble")]
 mod ble_radio;
+#[cfg(feature = "ble")]
+mod diag;
 mod flash;
 mod link;
 mod nv;
@@ -44,11 +46,7 @@ pub extern "C" fn main() -> ! {
         PowerCycles::power_on(board::FlashWords)
     };
     if factory_reset {
-        // network, tables and light settings go; the frame counters stay
-        nv::Nv::factory_reset(zigbee::hal::NvItem::Counters as u8);
-        board::FlashStore::erase();
-        #[cfg(feature = "ble")]
-        ble::erase_settings();
+        self::factory_reset();
     }
     link::publish_start(cycles.step(), factory_reset, warm);
     let mut bulb = Bulb::boot(board::LedPwm::new(), board::SystemClock::new(), board::FlashStore::new(), zb::Link::take());
@@ -74,6 +72,16 @@ pub extern "C" fn main() -> ! {
         cycles.tick(uptime.now_ms());
         link::publish_reset_step(cycles.step());
     }
+}
+
+/// Factory reset: the network, the tables and the light's settings go, and
+/// the BLE mesh network; the frame counters stay. (The power cycle sequence
+/// at the start, and the device page's command before its restart.)
+pub(crate) fn factory_reset() {
+    nv::Nv::factory_reset(zigbee::hal::NvItem::Counters as u8);
+    board::FlashStore::erase();
+    #[cfg(feature = "ble")]
+    ble::erase_settings();
 }
 
 #[panic_handler]

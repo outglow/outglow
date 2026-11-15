@@ -74,6 +74,13 @@ pub fn publish_reset_step(step: u8) {
     unsafe { (&raw mut (*(&raw mut BULB_NET)).reset_step).write_volatile(step) };
 }
 
+/// The position in the factory reset sequence, as last published.
+#[cfg(feature = "ble")]
+pub fn reset_step() -> u8 {
+    // SAFETY: single-threaded.
+    unsafe { (&raw const (*(&raw const BULB_NET)).reset_step).read_volatile() }
+}
+
 pub fn publish_start(reset_step: u8, factory_reset: bool, warm: bool) {
     // SAFETY: single-threaded; read from outside only.
     unsafe {

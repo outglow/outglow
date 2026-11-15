@@ -8,6 +8,7 @@
 
 pub mod addr_conflict;
 pub mod ble_central;
+pub mod ble_diag;
 pub mod board_check;
 pub mod ble_mesh;
 pub mod ble_ota;
@@ -58,6 +59,7 @@ pub struct SimDef {
 pub fn sims() -> Vec<SimDef> {
     let mut v = vec![
         board_check::def(),
+        ble_diag::def(),
         ble_mesh::def(),
         ble_ota::def(),
         interop::def(),
