@@ -31,7 +31,9 @@ mod zdo;
 
 use bulb_core::command::{Command, StateReport};
 
+pub use diag::{ev, LoggedEvent, MacCounters, NeighborCounts, DIAG_COUNTERS_MAX};
 pub use ota::OtaState;
+pub use zcl::LightSettings;
 
 use crate::aes::Aes128;
 use crate::hal::Hal;

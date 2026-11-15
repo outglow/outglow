@@ -270,6 +270,32 @@ fn report_index(cluster: u16, id: u16) -> Option<usize> {
     }
 }
 
+/// The light's settings as the On/Off, Level Control and Color Control
+/// clusters show them (`Stack::light_settings`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightSettings {
+    /// StartUpOnOff (0 off, 1 on, 2 toggle, 0xFF previous).
+    pub start_up_on_off: u8,
+    /// StartUpCurrentLevel (0xFF previous).
+    pub start_up_level: u8,
+    /// Options of Level Control (bit 0 execute if off, bit 1 the colour
+    /// temperature follows the level) and of Color Control (None: no Color
+    /// Control).
+    pub level_options: u8,
+    pub color_options: Option<u8>,
+    /// StartUpColorTemperatureMireds (0xFFFF previous) and the physical range.
+    pub start_up_color_temperature: u16,
+    pub ct_min: u16,
+    pub ct_max: u16,
+    pub global_scene_control: bool,
+    pub on_time: u16,
+    pub off_wait_time: u16,
+    /// RemainingTime of Level Control, tenths of a second.
+    pub remaining_tenths: u16,
+    pub min_level: u8,
+    pub max_level: u8,
+}
+
 impl<H: Hal> Stack<H> {
     /// Server clusters of the light endpoint.
     pub(crate) fn in_clusters(&self) -> &'static [u16] {
@@ -289,6 +315,46 @@ impl<H: Hal> Stack<H> {
         } else {
             DEVICE_DIMMABLE_LIGHT
         }
+    }
+
+    /// The light's settings (`LightSettings`).
+    pub fn light_settings(&mut self) -> LightSettings {
+        let tw = self.identity.color_temperature;
+        LightSettings {
+            start_up_on_off: self.light.power_on,
+            start_up_level: self.light.startup_level,
+            level_options: self.level_options,
+            color_options: tw.then_some(self.color_options),
+            start_up_color_temperature: if tw { self.light.startup_color_temp } else { 0xFFFF },
+            ct_min: if tw { self.identity.ct_min } else { 0 },
+            ct_max: if tw { self.identity.ct_max } else { 0 },
+            global_scene_control: self.global_scene_control,
+            on_time: self.on_time,
+            off_wait_time: self.off_wait,
+            remaining_tenths: self.remaining_tenths(self.level_until),
+            min_level: MIN_LEVEL,
+            max_level: 254,
+        }
+    }
+
+    /// Writes the Options attribute of Level Control, as a write from the
+    /// network would; false (and nothing changed) for bits this light has no use for.
+    pub fn set_level_options(&mut self, options: u8) -> bool {
+        self.write_options(LEVEL, options)
+    }
+
+    /// The same for Color Control; false also on a light without it.
+    pub fn set_color_options(&mut self, options: u8) -> bool {
+        self.write_options(COLOR, options)
+    }
+
+    fn write_options(&mut self, cluster: u16, options: u8) -> bool {
+        let Some(ty) = attribute_type(cluster, 0x000F).filter(|_| self.in_clusters().contains(&cluster)) else { return false };
+        if self.write_status(cluster, 0x000F, ty, &[options]) != SUCCESS {
+            return false;
+        }
+        self.attribute_write(cluster, 0x000F, &[options]);
+        true
     }
 
     /// Server clusters of one of our endpoints.
@@ -316,6 +382,10 @@ impl<H: Hal> Stack<H> {
         let (Some(seq), Some(cmd)) = (r.u8(), r.u8()) else {
             return;
         };
+        if ep == ENDPOINT {
+            let (lqi, rssi) = self.rx_signal;
+            self.hal.zcl_received(src, cluster, cmd, fc, lqi, rssi);
+        }
         // server-to-client frames: the OTA server talking to our OTA client;
         // anything else answers a client this node does not have
         if fc & 0x08 != 0 {

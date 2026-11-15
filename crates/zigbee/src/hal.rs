@@ -308,4 +308,9 @@ pub trait Hal {
     fn retained(&mut self, _buf: &mut [u8]) -> Option<usize> {
         None
     }
+    /// A ZCL frame for the light's endpoint has arrived: who sent it (short
+    /// address), cluster, command, frame control, and the link quality and
+    /// signal strength (dBm) it came with. For a record of the latest frames
+    /// kept outside `Stack` (the BLE diagnostic service, `ble::diag`).
+    fn zcl_received(&mut self, _src: u16, _cluster: u16, _cmd: u8, _frame_control: u8, _lqi: u8, _rssi: i8) {}
 }

@@ -140,6 +140,9 @@ pub struct Port {
     /// Why the next stack built on this port starts, and what the RAM kept over a warm restart.
     pub reset_cause: ResetCause,
     pub retained: Option<Vec<u8>>,
+    /// The ZCL frames for the light's endpoint the stack took (`Hal::zcl_received`):
+    /// sender, cluster, command, frame control, LQI, RSSI.
+    pub zcl_received: Vec<(u16, u16, u8, u8, u8, i8)>,
 }
 
 pub struct Air {
@@ -228,6 +231,7 @@ impl Air {
             hal_counters: HalCounters::default(),
             reset_cause: ResetCause::PowerOn,
             retained: None,
+            zcl_received: Vec::new(),
         });
         let n = self.ports.len();
         for row in self.lqi.iter_mut() {
@@ -463,6 +467,9 @@ impl Hal for SimHal {
     }
     fn retain(&mut self, data: &[u8]) {
         self.air.borrow_mut().ports[self.id].retained = Some(data.to_vec());
+    }
+    fn zcl_received(&mut self, src: u16, cluster: u16, cmd: u8, frame_control: u8, lqi: u8, rssi: i8) {
+        self.air.borrow_mut().ports[self.id].zcl_received.push((src, cluster, cmd, frame_control, lqi, rssi));
     }
     fn retained(&mut self, buf: &mut [u8]) -> Option<usize> {
         let air = self.air.borrow();

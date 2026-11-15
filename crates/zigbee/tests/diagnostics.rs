@@ -894,3 +894,107 @@ fn the_black_box_keeps_the_unicasts_per_neighbor_the_frames_sent_and_rows() {
     let r = mfr(&mut net, short, &[0x6000 + pages]);
     assert!(!r.contains_key(&(0x6000 + pages)) || r[&(0x6000 + pages)].1 == vec![0]);
 }
+
+/// (id, type, value) of `Stack::diag_counters`.
+fn counters_snapshot(net: &mut Net, n: usize) -> Vec<(u16, u8, i64)> {
+    let mut b = [0u8; zigbee::stack::DIAG_COUNTERS_MAX];
+    let len = net.nodes[n].stack.diag_counters(&mut b);
+    assert_eq!(len, b.len(), "every attribute written");
+    assert_eq!(b[0], 1, "format 1");
+    let mut out = Vec::new();
+    let mut i = 1;
+    while i < len {
+        let (id, ty) = (u16::from_le_bytes([b[i], b[i + 1]]), b[i + 2]);
+        let w = value_len(ty, &[]);
+        let mut v = number(&b[i + 3..i + 3 + w]) as i64;
+        if ty == 0x28 {
+            v = v as u8 as i8 as i64;
+        }
+        out.push((id, ty, v));
+        i += 3 + w;
+    }
+    out
+}
+
+fn read_all(net: &mut Net, short: u16, ids: &[u16]) -> HashMap<u16, (u8, Vec<u8>)> {
+    let mut out = HashMap::new();
+    for chunk in ids.chunks(8) {
+        out.extend(if chunk[0] >= 0x5000 { mfr(net, short, chunk) } else { diag(net, short, chunk) });
+    }
+    out
+}
+
+#[test]
+fn the_counters_snapshot_holds_what_the_cluster_answers() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.run(5_000);
+    let first = counters_snapshot(&mut net, n);
+    let ids: Vec<u16> = first.iter().map(|c| c.0).collect();
+    // the standard attributes of the table and the manufacturer's numbers up to FlashErases, in order
+    let mut expected = vec![0x0000, 0x0001];
+    expected.extend(0x0100..=0x011D);
+    expected.extend(0x5000..=0x5014);
+    assert_eq!(ids, expected);
+    let before = read_all(&mut net, short, &ids);
+    let snap = counters_snapshot(&mut net, n);
+    let after = read_all(&mut net, short, &ids);
+    for (id, ty, v) in snap {
+        let (a, b) = (&before[&id], &after[&id]);
+        assert_eq!((a.0, b.0), (ty, ty), "{id:#06x}: the cluster's type");
+        let num = |x: &[u8]| if ty == 0x28 { x[0] as i8 as i64 } else { number(x) as i64 };
+        let (lo, hi) = (num(&a.1).min(num(&b.1)), num(&a.1).max(num(&b.1)));
+        assert!((lo..=hi).contains(&v), "{id:#06x}: {v} between the reads {lo}..={hi}");
+    }
+}
+
+#[test]
+fn the_light_settings_and_the_options_as_the_device_page_sets_them() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let s = net.nodes[n].stack.light_settings();
+    assert_eq!((s.start_up_on_off, s.start_up_level, s.level_options), (0xFF, 0xFF, 0));
+    assert_eq!((s.color_options, s.ct_min, s.ct_max, s.start_up_color_temperature), (None, 0, 0, 0xFFFF), "a dimmable bulb");
+    assert_eq!((s.min_level, s.max_level, s.global_scene_control), (1, 254, true));
+    // a dimmable bulb has no colour temperature to couple, and no Color Control
+    assert!(!net.nodes[n].stack.set_level_options(0x02));
+    assert!(!net.nodes[n].stack.set_color_options(0x01));
+    assert!(net.nodes[n].stack.set_level_options(0x01));
+    assert_eq!(net.nodes[n].stack.light_settings().level_options, 1);
+    let seq = net.coord.zcl(short, 0x0008, 0x00, 0x00, &ids(&[0x000F]));
+    net.run(60);
+    let rsp = net.coord.last_zcl(short, 0x0008, 0x01).unwrap();
+    assert_eq!(rsp, vec![0x18, seq, 0x01, 0x0F, 0x00, 0x00, 0x18, 0x01], "the same through Zigbee");
+}
+
+#[test]
+fn identify_on_request_is_logged_and_frames_to_the_light_are_handed_out() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let seq = net.nodes[n].stack.event_seq();
+    net.nodes[n].stack.log_identify();
+    assert_eq!(net.nodes[n].stack.event_seq(), seq.wrapping_add(1));
+    let e = net.nodes[n].stack.event(0).unwrap();
+    assert_eq!((e.kind, e.seq, e.this_start), (zigbee::stack::ev::IDENTIFY, seq, true));
+    let count = (0..30).take_while(|i| net.nodes[n].stack.event(*i).is_some()).count();
+    assert!(count < 30 && net.nodes[n].stack.event(count).is_none());
+    assert_eq!(net.nodes[n].stack.event(count - 1).unwrap().kind, zigbee::stack::ev::START, "the oldest");
+
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].zcl_received.clear();
+    net.link(0, id, 180);
+    net.coord.zcl(short, ON_OFF, 0x01, 0x01, &[]);
+    net.run(60);
+    let got = net.air.borrow().ports[id].zcl_received.clone();
+    assert_eq!(got.len(), 1, "{got:?}");
+    let (src, cluster, cmd, fc, lqi, rssi) = got[0];
+    assert_eq!((src, cluster, cmd, fc & 0x07, lqi), (0x0000, ON_OFF, 0x01, 0x01, 180));
+    assert!(rssi < 0);
+    // the Diagnostics cluster on the same endpoint counts too
+    net.air.borrow_mut().ports[id].zcl_received.clear();
+    diag(&mut net, short, &[RESETS]);
+    assert_eq!(net.air.borrow().ports[id].zcl_received.iter().map(|f| (f.1, f.2)).collect::<Vec<_>>(), [(DIAG, 0x00)]);
+}
