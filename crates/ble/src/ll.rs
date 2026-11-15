@@ -17,6 +17,12 @@ use crate::{reached, Ble};
 /// B 4.4.2.2.1).
 const ADV_INTERVAL: u32 = 300 * TICKS_PER_MS;
 const ADV_DELAY_MAX_MS: u32 = 9;
+/// Advertising events in a row that may be left out because the radio's
+/// other user's neighbours were still talking when their advDelay ran out
+/// (`Hal::neighbours_talking`, see `link_poll`); the next one goes in any
+/// case, so that a bulb in a network that never falls quiet can still be
+/// found.
+const ADV_SKIP_MAX: u8 = 3;
 /// T_GAP(lim_adv_timeout) (Vol 3 Part C Appendix A): from power-up the bulb
 /// advertises in the limited discoverable mode, as the stock does (Flags
 /// 0x05), for no longer than this; then in the general discoverable mode
@@ -94,6 +100,8 @@ pub(crate) struct Link {
     /// The latest moment for that event: until then it waits while the
     /// other radio user has traffic.
     adv_latest: u32,
+    /// Advertising events left out in a row (`ADV_SKIP_MAX`).
+    adv_skipped: u8,
     /// Still in the limited discoverable mode, entered at `start`.
     limited: bool,
     start: u32,
@@ -136,6 +144,7 @@ impl Link {
             // the first event a little after start: the light comes first
             next_adv: now.wrapping_add(20 * TICKS_PER_MS),
             adv_latest: now.wrapping_add(20 * TICKS_PER_MS),
+            adv_skipped: 0,
             limited: true,
             start: now,
             p: ConnectInd {
@@ -236,12 +245,32 @@ impl<H: Hal> Ble<H> {
             if !reached(now, self.link.next_adv) {
                 return;
             }
-            // a frame that has just come or gone is often followed by
-            // another (an answer, a broadcast after a unicast): what comes
-            // while BLE has the radio is lost
-            if !reached(now, self.link.adv_latest) && self.hal.radio_busy() {
-                return;
+            // A frame that has just come or gone is often followed by
+            // another (an answer, a broadcast after a unicast, a stock
+            // router's Device_annce 0.4 ms after its first Link Status):
+            // what comes while BLE has the radio is lost, and a broadcast
+            // its sender does not repeat is lost for good. The event waits
+            // for a quiet moment within its advDelay. When there was none
+            // and the neighbours of the other radio user are talking just
+            // then, it is left out, and the next one is due an advertising
+            // interval later; to a scanner that is one advertisement it did
+            // not catch. (The bulb's own traffic only delays the event: what
+            // follows it, `radio::transmit` waits for.) In the emulator's
+            // `mixed_chain` an event that went at the end of its advDelay
+            // whatever the traffic took the radio 40 us after a stock
+            // router's Link Status, and the router's announcement, sent
+            // once, never reached the coordinator.
+            if self.hal.radio_busy() {
+                if !reached(now, self.link.adv_latest) {
+                    return;
+                }
+                if self.hal.neighbours_talking() && self.link.adv_skipped < ADV_SKIP_MAX {
+                    self.link.adv_skipped += 1;
+                    self.schedule_advertising(now);
+                    return;
+                }
             }
+            self.link.adv_skipped = 0;
             self.advertise(now);
         }
         if self.link.state == LinkState::Connected {
@@ -305,17 +334,23 @@ impl<H: Hal> Ble<H> {
 
         // An event due while the other radio user has traffic
         // (`Hal::radio_busy`) waits for a quiet moment, but no longer than
-        // the rest of the advDelay range: it still starts within
-        // advInterval + advDelay of this one.
-        let delay = self.hal.random() % (ADV_DELAY_MAX_MS * TICKS_PER_MS);
-        self.link.next_adv = now.wrapping_add(ADV_INTERVAL + delay);
-        self.link.adv_latest = now.wrapping_add(ADV_INTERVAL + ADV_DELAY_MAX_MS * TICKS_PER_MS);
+        // the rest of the advDelay range (`link_poll`): when it goes, it
+        // starts within advInterval + advDelay of this one.
+        self.schedule_advertising(now);
         self.stats.adv_events += 1;
         self.air.listen_due = true;
         let mut connect = [0u8; CONNECT_LEN];
         let Some(end) = self.hal.advertise(&adv[..adv_len], &rsp[..rsp_len], &mut connect) else { return };
         let Some(p) = pdu::parse_connect(&connect) else { return };
         self.connected(p, end);
+    }
+
+    /// The next advertising event: an advertising interval and a random
+    /// advDelay after `now`, and the latest moment it may wait for.
+    fn schedule_advertising(&mut self, now: u32) {
+        let delay = self.hal.random() % (ADV_DELAY_MAX_MS * TICKS_PER_MS);
+        self.link.next_adv = now.wrapping_add(ADV_INTERVAL + delay);
+        self.link.adv_latest = now.wrapping_add(ADV_INTERVAL + ADV_DELAY_MAX_MS * TICKS_PER_MS);
     }
 
     fn connected(&mut self, p: ConnectInd, end: u32) {

@@ -311,6 +311,11 @@ pub struct World {
     pub mesh_listens: u32,
     /// The flash does not hold what was written: activation finds the image bad.
     pub flash_fault: bool,
+    /// Stretches of time (from, to, neighbours) in which the radio's other
+    /// user has traffic (`Hal::radio_busy`), its neighbours' when the flag is
+    /// set (`Hal::neighbours_talking`); and the start of every advertising event.
+    pub zigbee_busy: Vec<(u64, u64, bool)>,
+    pub advertised_at: Vec<u64>,
     /// Every packet on air, for the capture: time, channel, access address,
     /// who sent it (0 advertising channel, 2 central, 3 bulb), header and payload.
     capture: Vec<(u64, u8, u32, u8, Vec<u8>)>,
@@ -406,11 +411,22 @@ impl Hal for SimHal {
         self.0.borrow().address
     }
 
+    fn radio_busy(&mut self) -> bool {
+        let w = self.0.borrow();
+        w.zigbee_busy.iter().any(|&(from, to, _)| (from..to).contains(&w.now))
+    }
+
+    fn neighbours_talking(&mut self) -> bool {
+        let w = self.0.borrow();
+        w.zigbee_busy.iter().any(|&(from, to, n)| n && (from..to).contains(&w.now))
+    }
+
     fn advertise(&mut self, adv: &[u8], scan_rsp: &[u8], connect: &mut [u8; CONNECT_LEN]) -> Option<u32> {
         let mut w = self.0.borrow_mut();
         assert!(adv.len() <= ADV_PDU_MAX && adv[1] as usize == adv.len() - 2, "advertising PDU length field");
         w.central.advertisements.push(adv.to_vec());
         let now = w.now;
+        w.advertised_at.push(now);
         w.capture.push((now, 37, 0x8e89_bed6, 0, adv.to_vec()));
         if w.central.scan {
             assert!(scan_rsp[1] as usize == scan_rsp.len() - 2, "scan response length field");
@@ -759,6 +775,8 @@ impl Rig {
             erased_sectors: vec![],
             activated: false,
             flash_fault: false,
+            zigbee_busy: vec![],
+            advertised_at: vec![],
             mesh_listens: 0,
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
