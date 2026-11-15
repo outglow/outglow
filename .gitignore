@@ -15,3 +15,4 @@ mutants.out.old/
 
 # Build directories of the C firmware (firmware/build*/)
 firmware/build*/
+.DS_Store
