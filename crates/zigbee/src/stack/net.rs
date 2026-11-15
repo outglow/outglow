@@ -462,6 +462,12 @@ impl<H: Hal> Stack<H> {
                 clash |= self.address_seen(h.src, ext);
             }
             if echo {
+                // A neighbour passing on a broadcast of ours: its passive
+                // acknowledgement (R22 3.6.5), and the sign that it relays
+                // broadcasts, which `passively_acknowledged` waits for.
+                if nwk::is_broadcast(h.dst) {
+                    self.relay_heard(h.src, h.seq, mac_src);
+                }
                 self.trace_rx(trace::RX_ECHO, &h, mac_src, 0);
                 return;
             }
@@ -545,6 +551,18 @@ impl<H: Hal> Stack<H> {
         };
         let payload = &frame[at..at + len];
 
+        // A neighbour seen passing a broadcast on, a route request among
+        // them, is one whose relays the passive acknowledgement of our own
+        // broadcasts waits for (`passively_acknowledged`). Route requests
+        // count: in a network that has just formed they may be the only
+        // broadcasts a router at the edge has relayed, and a stock router
+        // that was deaf to our relay of the first broadcast after that
+        // (its own BLE advertising) got no second copy.
+        if nwk::is_broadcast(h.dst) && mac_src != h.src {
+            if let Some(i) = self.neighbor_index(mac_src) {
+                self.neighbors[i].relays = true;
+            }
+        }
         if is_route_request(&h, payload) {
             self.on_route_request(&h, mac_src, lqi, payload, now);
         } else if nwk::is_broadcast(h.dst) {
@@ -560,11 +578,6 @@ impl<H: Hal> Stack<H> {
                     self.on_link_status(h.src, payload);
                 }
                 return;
-            }
-            if mac_src != h.src {
-                if let Some(i) = self.neighbor_index(mac_src) {
-                    self.neighbors[i].relays = true;
-                }
             }
             // already seen, or no room to remember it: dropped (R22 3.6.5);
             // a copy is the passive acknowledgement of its sender
@@ -615,6 +628,14 @@ impl<H: Hal> Stack<H> {
     /// NWK commands, which the checks of `address_seen` catch.
     fn own_late_copy(&self, h: &Header) -> bool {
         h.src_ext == Some(self.ext) || self.nwk_seq.wrapping_sub(h.seq) < OWN_SEQ_WINDOW
+    }
+
+    /// `mac_src` passed on our own broadcast (`src`, `seq`).
+    fn relay_heard(&mut self, src: u16, seq: u8, mac_src: u16) {
+        if let Some(i) = self.neighbor_index(mac_src) {
+            self.neighbors[i].relays = true;
+        }
+        self.broadcast_heard(src, seq, mac_src);
     }
 
     /// `mac_src` was heard sending the broadcast (`src`, `seq`): a passive
