@@ -202,6 +202,25 @@ impl Ctx {
         self.s.w.air.at(t0, Ev::Node(self.ini.id, StationEv::Transmit { psdu, t0, t1 }));
     }
 
+    /// A unicast to one bulb ("R" or "T"), sent again while it is not
+    /// acknowledged, three times at most, as an initiator's MAC retries: the
+    /// stock bulb's receiver is off now and then while its radio is on BLE.
+    /// Runs `wait_ms` after each. Whether it was acknowledged.
+    fn send_acked(&mut self, name: &str, cmd: u8, payload: &[u8], wait_ms: f64) -> R<bool> {
+        let who = if name == "R" { self.r } else { self.t };
+        for _ in 0..3 {
+            let sent = self.now();
+            self.send(Some(ext_of(name)), cmd, payload, 1.0);
+            self.run(wait_ms)?;
+            let seq = self.ini.mac_seq;
+            let ack = |f: &crate::air::AirFrame| f.t0 >= sent && f.who == who && f.psdu.len() == 5 && f.psdu[0] & 7 == 2 && f.psdu[2] == seq;
+            if self.s.w.air.frames.iter().any(ack) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Scans on a channel until the wanted bulbs have answered one and the same scan; their responses.
     fn scan(&mut self, channel: i64, want: &[&str], tries: usize) -> R<Vec<(&'static str, ScanRsp)>> {
         self.set_channel(channel);
@@ -491,8 +510,7 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     for name in ["R", "T"] {
         let mut pl = c.transaction.to_le_bytes().to_vec();
         pl.extend_from_slice(&3u16.to_le_bytes());
-        c.send(Some(ext_of(name)), 0x06, &pl, 1.0);
-        c.run(30.0)?;
+        c.send_acked(name, 0x06, &pl, 30.0)?;
     }
     let (mut seen_r, mut seen_t): (Vec<i64>, Vec<i64>) = (Vec::new(), Vec::new());
     for _ in 0..40 {
@@ -534,8 +552,7 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     c.scan(11, &["R", "T"], 12)?;
     for name in ["R", "T"] {
         let pl = c.transaction.to_le_bytes();
-        c.send(Some(ext_of(name)), 0x07, &pl, 1.0);
-        c.run(200.0)?;
+        c.send_acked(name, 0x07, &pl, 200.0)?;
     }
     c.run(3000.0)?;
     let mut rsp: Vec<(&str, bool)> = Vec::new();
@@ -660,8 +677,7 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
                  &format!("Rust: {}; stock: {}", rr.describe(), tt.describe()));
         for name in ["R", "T"] {
             let pl = c.transaction.to_le_bytes();
-            c.send(Some(ext_of(name)), 0x07, &pl, 1.0);
-            c.run(200.0)?;
+            c.send_acked(name, 0x07, &pl, 200.0)?;
         }
         c.run(5000.0)?;
         let fr = c.find("R", 40)?;
