@@ -53,10 +53,15 @@ impl Image {
 
     /// A symbol of the ELF next to the .bin (`x.elf` for `x.bin` or `x-ota.bin`).
     pub fn symbol(&self, name: &str) -> Option<u32> {
+        self.symbol_sized(name).map(|(v, _)| v)
+    }
+
+    /// A symbol of the ELF next to the .bin with its size: the addresses of a function.
+    pub fn symbol_sized(&self, name: &str) -> Option<(u32, u32)> {
         let s = self.path.to_string_lossy();
         let stem = s.strip_suffix(".bin").unwrap_or(&s).to_string();
         let cands = [format!("{stem}.elf"), format!("{}.elf", stem.strip_suffix("-ota").unwrap_or(&stem))];
-        cands.iter().find_map(|elf| std::fs::read(elf).ok().and_then(|d| elf_symbol(&d, name)))
+        cands.iter().find_map(|elf| std::fs::read(elf).ok().and_then(|d| elf_symbol_sized(&d, name)))
     }
 }
 
@@ -140,6 +145,11 @@ fn guess_shift(img: &[u8]) -> i64 {
 
 /// The value of a symbol in an ELF32 little-endian file.
 pub fn elf_symbol(d: &[u8], name: &str) -> Option<u32> {
+    elf_symbol_sized(d, name).map(|(v, _)| v)
+}
+
+/// A symbol's value and size (`st_size`: the length of a function).
+pub fn elf_symbol_sized(d: &[u8], name: &str) -> Option<(u32, u32)> {
     if d.get(..4)? != b"\x7fELF" || *d.get(4)? != 1 || *d.get(5)? != 1 {
         return None;
     }
@@ -163,7 +173,7 @@ pub fn elf_symbol(d: &[u8], name: &str) -> Option<u32> {
             let start = str_off + nm;
             let end = start + d.get(start..)?.iter().position(|&c| c == 0)?;
             if &d[start..end] == name.as_bytes() {
-                return u32_at(s + 4);
+                return Some((u32_at(s + 4)?, u32_at(s + 8)?));
             }
             s += 16;
         }
