@@ -134,6 +134,8 @@ where
             x: self.light.colour().2,
             y: self.light.colour().3,
             hue_moving: self.light.hue_moving(),
+            candle: self.light.candle(),
+            shown: self.light.shown(),
         }
     }
 
@@ -195,6 +197,7 @@ where
                     self.persist_colour();
                 }
             }
+            Command::Candle(on) => self.light.set_candle(&mut self.pwm, now, on),
             Command::MoveHue { up, rate } => {
                 if self.pwm.has_rgb() {
                     self.light.move_hue(&mut self.pwm, now, up, rate);
@@ -236,7 +239,12 @@ where
             self.handle(cmd);
         }
         let now = self.now();
+        let moving = self.light.in_transition();
         self.light.tick(&mut self.pwm, now);
+        if moving && !self.light.in_transition() {
+            // where it was headed is where it is: said once more (the AwoX app's status)
+            self.report();
+        }
         if let Some(until) = self.identify_until {
             if now >= until {
                 self.identify_until = None;

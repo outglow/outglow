@@ -546,6 +546,8 @@ impl Node {
             x: self.x,
             y: self.y,
             hue_moving: false,
+            candle: false,
+            shown: Default::default(),
         });
     }
 

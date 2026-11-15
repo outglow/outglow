@@ -75,6 +75,18 @@ pub enum Command {
     /// or StopColorTransition (Color Control Enhanced Move Hue: the colour
     /// animation of the AwoX app).
     MoveHue { up: bool, rate: u16 },
+    /// The candle mode of the AwoX app on or off (`candle`): the level flickers around its own.
+    Candle(bool),
+}
+
+/// What the light shows at the moment of a report: in a transition, where
+/// it has got to (the rest of `StateReport` says where it is headed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Shown {
+    pub level: u8,
+    pub mireds: u16,
+    pub hue: u8,
+    pub sat: u8,
 }
 
 /// State snapshot reported to the network.
@@ -97,6 +109,9 @@ pub struct StateReport {
     pub y: u16,
     /// The hue is turning (`Command::MoveHue`); `hue` is where it is now.
     pub hue_moving: bool,
+    /// The candle mode is on.
+    pub candle: bool,
+    pub shown: Shown,
 }
 
 impl Command {
@@ -121,6 +136,7 @@ impl Command {
     /// | 14 | MoveToHueSaturation | hue, saturation, direction (0..=3), transition in ms (u32) |
     /// | 15 | MoveToXy | x (u16), y (u16), transition in ms (u32), little-endian |
     /// | 16 | MoveHue | 0 down / 1 up, rate (u16, little-endian) |
+    /// | 17 | Candle | 0 off / 1 on |
     pub fn decode(b: &[u8]) -> Option<Command> {
         let (&op, p) = b.split_first()?;
         Some(match op {
@@ -170,6 +186,7 @@ impl Command {
                 let p = p.get(..3)?;
                 Command::MoveHue { up: p[0] != 0, rate: u16::from_le_bytes([p[1], p[2]]) }
             }
+            17 => Command::Candle(*p.first()? != 0),
             _ => return None,
         })
     }

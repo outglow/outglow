@@ -47,6 +47,8 @@ const OP_BRIGHTNESS: u8 = 0xf1;
 const NV_MAGIC: u8 = 0xa7;
 const NV_LEN: usize = 52;
 const POLL: u32 = 250 * TICKS_PER_MS;
+/// The app's status after a command, as late as the stock firmware sends it.
+const APP_STATUS_DELAY: u32 = 90 * TICKS_PER_MS;
 const RESET_DISCONNECT: u32 = 300 * TICKS_PER_MS;
 const PENDING: usize = 4;
 
@@ -73,14 +75,19 @@ pub(crate) struct Mesh {
     pending_mask: u8,
     notify_sn: u32,
     last_sn: [u8; 3],
-    status_due: bool,
+    pub(crate) status_due: bool,
     /// The central speaks the AwoX HomeControl app's format: it is told the
     /// state in the app's status (`app_status`), not in the mesh's own.
     app_format: bool,
+    /// When the app's status after a command is due (the stock firmware
+    /// sends it some 90 ms after the command, with the state as it is then),
+    /// and whether it waits for the light's report.
+    app_status_at: Option<u32>,
+    pub(crate) app_read: bool,
     reported: Option<Light>,
     /// Notifications the transmit queue had no room for.
     unsent: [Option<[u8; 20]>; PENDING],
-    next_poll: u32,
+    pub(crate) next_poll: u32,
     disconnect_at: Option<u32>,
     pub att_status: [u8; 20],
     pub att_command: [u8; 20],
@@ -113,6 +120,8 @@ impl Mesh {
             last_sn: [0; 3],
             status_due: false,
             app_format: false,
+            app_status_at: None,
+            app_read: false,
             reported: None,
             unsent: [None; PENDING],
             next_poll: now.wrapping_add(POLL),
@@ -229,6 +238,8 @@ impl<H: Hal> Ble<H> {
         m.status_on = false;
         m.status_due = false;
         m.app_format = false;
+        m.app_status_at = None;
+        m.app_read = false;
         m.pending_mask = 0;
         m.unsent = [None; PENDING];
         m.disconnect_at = None;
@@ -346,10 +357,12 @@ impl<H: Hal> Ble<H> {
         d[5..7].copy_from_slice(&self.identity.product.to_le_bytes());
         d[7..11].copy_from_slice(&self.addr[..4]);
         d[11] = 0x01;
-        d[12] = l.on as u8 | (hs as u8) << 1 | ((hs && l.moving) as u8) << 2;
-        d[13] = l.level;
-        d[14..16].copy_from_slice(&if ct { l.mireds } else { 0xFFFF }.to_le_bytes());
-        (d[16], d[17]) = if hs { (l.hue, l.sat) } else { (0xFF, 0xFF) };
+        d[12] = l.on as u8 | (hs as u8) << 1 | ((hs && l.moving) as u8) << 2 | (l.candle as u8) << 4;
+        // what it shows now: in a transition where it has got to (as the stock firmware)
+        let s = &l.shown;
+        d[13] = s.level;
+        d[14..16].copy_from_slice(&if ct { s.mireds } else { 0xFFFF }.to_le_bytes());
+        (d[16], d[17]) = if hs { (s.hue, s.sat) } else { (0xFF, 0xFF) };
         // the provision state: 0x20 as every stock image sends it, 0x60 once the
         // app has installed the bulb as a Zigbee bulb (the app reads it back
         // and takes a bulb without it for one it cannot use)
@@ -407,6 +420,14 @@ impl<H: Hal> Ble<H> {
                 self.terminate();
             }
         }
+        if let Some(at) = self.mesh.app_status_at {
+            if reached(now, at) {
+                // the app's status after a command: the light reports how it is now, then it goes out
+                self.mesh.app_status_at = None;
+                self.mesh.app_read = true;
+                self.push_command(Command::ReadState);
+            }
+        }
         if !reached(now, self.mesh.next_poll) {
             return;
         }
@@ -427,10 +448,23 @@ impl<H: Hal> Ble<H> {
                 }
             }
         }
+        // the app's status after a command waits for its moment (and for the light's report)
+        if self.mesh.app_format && (self.mesh.app_status_at.is_some() || self.mesh.app_read) {
+            return;
+        }
         // a turning hue is not news: told when it starts and when it stops (as the stock firmware)
-        let news = match self.mesh.reported {
-            Some(r) if r.moving && self.light.moving => Light { hue: r.hue, ..self.light } != r,
-            r => r != Some(self.light),
+        // the mesh's own notifications follow where the light is headed, the app's status also where it is
+        let (now_l, was) = if self.mesh.app_format {
+            (self.light, self.mesh.reported)
+        } else {
+            (self.light.targets(), self.mesh.reported.map(|r| r.targets()))
+        };
+        let news = match was {
+            Some(r) if r.moving && now_l.moving => {
+                let turning = |l: Light| Light { hue: 0, shown: bulb_core::command::Shown { hue: 0, ..l.shown }, ..l };
+                turning(now_l) != turning(r)
+            }
+            r => r != Some(now_l),
         };
         if news || self.mesh.status_due {
             self.mesh.reported = Some(self.light);
@@ -525,8 +559,10 @@ impl<H: Hal> Ble<H> {
                 0x02 => self.push_command(Command::Toggle),
                 _ => {}
             },
-            // Move to Level (with On/Off); the app's candle mode (0x10) is not here
+            // Move to Level (with On/Off)
             0x0008 if a.len() >= 2 && (a[0] == 0x00 || a[0] == 0x04) => self.set_level(a[1], tenths(2)),
+            // the app's candle mode: 0x10, on or off, 1
+            0x0008 if a.len() >= 2 && a[0] == 0x10 => self.push_command(Command::Candle(a[1] != 0)),
             0x0300 if a.len() >= 3 && a[0] == 0x0a && self.identity.tunable => {
                 let mireds = u16::from_le_bytes([a[1], a[2]]);
                 self.push_command(Command::MoveToColorTemperature { mireds, transition_ms: tenths(3) });
@@ -599,9 +635,9 @@ impl<H: Hal> Ble<H> {
         let payload = &whole[1..1 + len];
         match value[0] {
             0 | 1 => {
-                // the stock firmware answers every command with its status
+                // the stock firmware answers every command with its status, some 90 ms later
                 self.mesh.app_format = true;
-                self.mesh.status_due = true;
+                self.mesh.app_status_at = Some(self.hal.now().wrapping_add(APP_STATUS_DELAY));
                 self.zcl_tunnel(value[0], payload)
             }
             2 if len >= 3 && payload[1..3] == VENDOR => self.mesh_command(payload[0], &payload[3..], false),
@@ -609,7 +645,7 @@ impl<H: Hal> Ble<H> {
             // now (a turning hue where it has got to) once the light reports it
             2 if payload[0] == 0x0a => {
                 self.mesh.app_format = true;
-                self.mesh.status_due = true;
+                self.mesh.app_read = true;
                 self.push_command(Command::ReadState);
             }
             // and its "kick" (leave the network)

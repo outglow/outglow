@@ -81,6 +81,17 @@ pub(crate) struct Light {
     pub mode: bulb_core::command::ColorMode,
     /// The hue is turning (the app's colour animation).
     pub moving: bool,
+    pub candle: bool,
+    /// What the light shows now (in a transition, where it has got to).
+    pub shown: bulb_core::command::Shown,
+}
+
+impl Light {
+    /// The state without what only the app's status tells (where a
+    /// transition has got to): what the mesh's own notifications follow.
+    pub fn targets(&self) -> Light {
+        Light { shown: Default::default(), ..*self }
+    }
 }
 
 pub(crate) const CMDS: usize = 4;
@@ -124,6 +135,8 @@ impl<H: Hal> Ble<H> {
                 sat: 254,
                 mode: bulb_core::command::ColorMode::Temperature,
                 moving: false,
+                candle: false,
+                shown: bulb_core::command::Shown { level: 254, mireds: 0, hue: 170, sat: 254 },
             },
             cmds: [None; CMDS],
             diag: diag::Diag::new(),
@@ -147,7 +160,14 @@ impl<H: Hal> Ble<H> {
             sat: s.sat,
             mode: s.color_mode,
             moving: s.hue_moving,
+            candle: s.candle,
+            shown: s.shown,
         };
+        if core::mem::take(&mut self.mesh.app_read) {
+            // the state the app's status was waiting for: sent at once
+            self.mesh.status_due = true;
+            self.mesh.next_poll = self.hal.now();
+        }
     }
 
     pub fn link_state(&self) -> LinkState {
