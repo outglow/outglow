@@ -53,8 +53,7 @@ impl Glue {
         ble.set_diag_info(&Info {
             tunable: IDENTITY.tunable,
             watchdog: true,
-            // no motion sensing in this firmware
-            sense: false,
+            sense: cfg!(feature = "sense"),
             // the release is the low byte of the OTA file version (0x00020004: 4)
             release: crate::zb::FILE_VERSION as u8,
             ieee: stack.hal.ieee(),
