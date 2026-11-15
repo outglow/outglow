@@ -233,6 +233,52 @@ pub fn bcast(s: &mut Sim, cmd: u8) {
     s.w.coord.zcl_send_with(&mut s.w.air, 0xFFFD, 1, 0x0006, cmd, &[], HA, true, true, None, false);
 }
 
+/// An On/Off command to all routers, sent as R22 3.6.5 has the originator
+/// of a broadcast send it: again after nwkPassiveAckTimeout (500 ms in the
+/// Zigbee PRO stack profile), up to nwkMaxBroadcastRetries (2) times, while
+/// its neighbour `relay` has not been heard passing it on. The plain `bcast`
+/// sends once, and in the chain the first stock bulb misses it now and then
+/// (its own BLE advertising, or a frame of the Rust bulb, which the
+/// coordinator cannot hear, over it): the whole chain then misses the
+/// command, whatever the bulbs behind it do. A copy is the same NWK frame
+/// (source, sequence number, APS counter), secured again: the stock bulb
+/// takes no frame whose security frame counter it has seen exceeded, and the
+/// coordinator has sent others since.
+pub fn bcast_acked(s: &mut Sim, cmd: u8, relay: NodeId) -> R<()> {
+    let st = &s.w.coord.st;
+    let counters = (st.nwk_seq, st.aps_ctr, st.zcl_seq);
+    let n0 = s.w.air.frames.len();
+    bcast(s, cmd);
+    let st = &s.w.coord.st;
+    let (nwk_seq, zcl_seq) = (st.nwk_seq, st.zcl_seq);
+    s.run(10.0)?;
+    let id = s.w.air.frames[n0..].iter().filter(|f| f.who == NodeId::Coord).find_map(|f| {
+        let m = mac_parse(&f.psdu)?;
+        (m.dst == Some(0xFFFF) && m.ty == 1 && m.payload.len() >= 8).then(|| (u16::from_le_bytes([m.payload[4], m.payload[5]]), m.payload[7]))
+    });
+    let Some(id) = id else { return Ok(()) };
+    for _ in 0..2 {
+        let since = s.w.air.frames.len();
+        s.run(500.0)?;
+        let relayed = s.w.air.frames[since..].iter().any(|f| {
+            f.who == relay
+                && mac_parse(&f.psdu).is_some_and(|m| m.ty == 1 && m.payload.len() >= 8
+                    && (u16::from_le_bytes([m.payload[4], m.payload[5]]), m.payload[7]) == id)
+        });
+        if relayed {
+            break;
+        }
+        let st = &mut s.w.coord.st;
+        let now = (st.nwk_seq, st.aps_ctr, st.zcl_seq);
+        (st.nwk_seq, st.aps_ctr, st.zcl_seq) = counters;
+        s.w.coord.zcl_send_with(&mut s.w.air, 0xFFFD, 1, 0x0006, cmd, &[], HA, true, true, None, false);
+        let st = &mut s.w.coord.st;
+        debug_assert_eq!((st.nwk_seq, st.zcl_seq), (nwk_seq, zcl_seq));
+        (st.nwk_seq, st.aps_ctr, st.zcl_seq) = now;
+    }
+    Ok(())
+}
+
 /// Waits until every bulb has announced itself; their short addresses.
 pub fn join_all(s: &mut Sim, b: &[Bulb], max_ms: f64) -> R<Option<Vec<u16>>> {
     let exts: Vec<u64> = b.iter().map(|x| x.ext).collect();
@@ -493,6 +539,157 @@ pub fn debug_frames(cx: &mut SimCtx, s: &Sim, b: &[Bulb], since: f64) {
 
 // =================================================================== chain
 
+/// Frames the radio of `x` (the Rust firmware) received and its driver never
+/// took: their "frame received" status was cleared by other code than the
+/// interrupt handler (before a transmission, when the radio was lent to
+/// BLE), or the next frame's DMA overwrote them while interrupts were off.
+/// None when the image has no ELF to tell the handler by.
+fn dropped_by_driver(s: &Sim, x: &Bulb) -> Option<Vec<String>> {
+    let (irq, size) = x.img.symbol_sized("irq_handler")?;
+    let irq = irq & !1;
+    let off = match x.id {
+        NodeId::Bulb(i) => s.w.air.bulbs[i as usize].t_off,
+        _ => s.w.air.t_off,
+    };
+    let log = s.w.node(x.id).radio.b().rx_log.clone().unwrap_or_default();
+    Some(log.iter().filter_map(|e| {
+        let at = (e.t1 + off) / 1000.0;
+        match (e.fate, e.cleared) {
+            ("overwritten", _) => Some(format!("{at:.4} s: {} bytes overwritten", e.len)),
+            ("received", Some((_, pc))) if !(irq..irq + size.max(2)).contains(&pc.wrapping_sub(2)) => {
+                Some(format!("{at:.4} s: {} bytes cleared at {pc:#x}", e.len))
+            }
+            _ => None,
+        }
+    }).collect())
+}
+
+type PcLog = std::rc::Rc<std::cell::RefCell<Vec<(f64, String)>>>;
+thread_local! {
+    static WATCH: std::cell::RefCell<Option<PcLog>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `MIXED_FATES=1`: the radio's fate log on every bulb, and with
+/// `MIXED_HOOKS=name=0xaddr,...` a log of the moments the program of `who`
+/// reaches those addresses (functions of its ELF, from llvm-nm: what it was
+/// doing when a frame was lost); printed by `fates_dump`. Neither changes the
+/// emulated timing.
+fn fates_watch(s: &mut Sim, who: NodeId) {
+    let log = fates_watch_on(s, who);
+    WATCH.with(|w| *w.borrow_mut() = log);
+}
+fn fates_watch_on(s: &mut Sim, who: NodeId) -> Option<PcLog> {
+    std::env::var_os("MIXED_FATES")?;
+    for id in s.w.air.nodes.clone() {
+        if matches!(id, NodeId::Dut | NodeId::Bulb(_)) {
+            s.w.node(id).radio.b().rx_log = Some(Vec::new());
+        }
+    }
+    let log: PcLog = Default::default();
+    for item in std::env::var("MIXED_HOOKS").unwrap_or_default().split(',').filter(|x| !x.is_empty()) {
+        // name=0xaddr, or name=0xaddr:0xram to log the word at a RAM address (and the system timer) too
+        let Some((name, addr)) = item.split_once('=') else { continue };
+        let (addr, ram) = match addr.split_once(':') {
+            Some((a, r)) => (a, u32::from_str_radix(r.trim_start_matches("0x"), 16).ok()),
+            None => (addr, None),
+        };
+        let Ok(a) = u32::from_str_radix(addr.trim_start_matches("0x"), 16) else { continue };
+        let (l, name) = (log.clone(), name.to_string());
+        s.w.node_mut(who).m.hooks.insert(a & !1, std::rc::Rc::new(move |m: &mut tc32emu::Machine| {
+            let what = match ram {
+                Some(r) => {
+                    let o = (r - 0x840000) as usize;
+                    let v = u32::from_le_bytes(m.sram[o..o + 4].try_into().unwrap());
+                    format!("{name}[{v:#x} t={:#x}]", m.stimer_now())
+                }
+                None => name.clone(),
+            };
+            l.borrow_mut().push((m.ms(), what));
+            Ok(())
+        }));
+    }
+    Some(log)
+}
+
+/// (`MIXED_FATES`) Every frame from a neighbour that reached `who`'s radio
+/// and was not taken by its interrupt handler, or was taken at `IRQ_PC`
+/// (`MIXED_IRQ_PC=0xaddr`, to leave those out), with what the program did
+/// around it.
+fn fates_dump(cx: &mut SimCtx, s: &Sim, b: &[Bulb], who: NodeId) {
+    let Some(pcs) = WATCH.with(|w| w.borrow().clone()) else { return };
+    // MIXED_AIR=from,to (seconds): every frame on the air then
+    let window = std::env::var("MIXED_AIR").ok().and_then(|v| v.split_once(',').and_then(|(a, z)| Some((a.parse::<f64>().ok()?, z.parse::<f64>().ok()?))));
+    if let Some((a, z)) = window {
+        for f in s.w.air.frames.iter().filter(|f| f.t0 >= a * 1000.0 && f.t0 <= z * 1000.0) {
+            let who = b.iter().find(|x| x.id == f.who).map(|x| x.name.clone()).unwrap_or_else(|| s.w.air.name_of(f.who));
+            let Some(m) = mac_parse(&f.psdu) else { continue };
+            let nwk = if m.ty == 1 && m.payload.len() >= 8 {
+                let p = &m.payload;
+                format!(" nwk fc={:#06x} {:#06x}->{:#06x} r={} seq={}", u16::from_le_bytes([p[0], p[1]]), u16::from_le_bytes([p[4], p[5]]),
+                        u16::from_le_bytes([p[2], p[3]]), p[6], p[7])
+            } else {
+                String::new()
+            };
+            cx.say(&format!("   AIR [{:9.4}-{:9.4}] {who:>6} ty={} seq={} {:?}->{:?}{nwk}", f.t0 / 1000.0, f.t1 / 1000.0, m.ty, m.seq, m.src, m.dst));
+        }
+        for e in s.w.coord.events.iter().filter(|e| e.ms >= a * 1000.0 && e.ms <= z * 1000.0) {
+            cx.say(&format!("   COORD [{:9.4}] {} {}", e.ms / 1000.0, e.kind, e.details));
+        }
+    }
+    let off = match who {
+        NodeId::Bulb(i) => s.w.air.bulbs[i as usize].t_off,
+        _ => s.w.air.t_off,
+    };
+    // the others: what their radios could not take
+    for x in b.iter().filter(|x| x.id != who) {
+        let off = match x.id {
+            NodeId::Bulb(i) => s.w.air.bulbs[i as usize].t_off,
+            _ => s.w.air.t_off,
+        };
+        for e in s.w.node(x.id).radio.b().rx_log.clone().unwrap_or_default() {
+            let t0 = (e.t0 + off) / 1000.0;
+            let shown = window.is_some_and(|(a, z)| t0 >= a && t0 <= z) && e.fate != "other channel";
+            if (e.fate != "received" && e.fate != "other channel") || shown {
+                let cleared = e.cleared.map(|(t, pc)| format!(" cleared {:.4} at {pc:#x}", (t + off) / 1000.0)).unwrap_or_default();
+                cx.say(&format!("   FATE {} [{:9.4}-{:9.4}] len {:3} {}{cleared}", x.name, t0, (e.t1 + off) / 1000.0, e.len, e.fate));
+            }
+        }
+    }
+    let irq_pc = std::env::var("MIXED_IRQ_PC").ok().and_then(|x| u32::from_str_radix(x.trim_start_matches("0x"), 16).ok());
+    let log = s.w.node(who).radio.b().rx_log.clone().unwrap_or_default();
+    let pcs = pcs.borrow();
+    for e in &log {
+        let taken = e.fate == "received" && e.cleared.is_some_and(|(_, pc)| Some(pc) == irq_pc);
+        if taken {
+            continue;
+        }
+        let t0 = e.t0 + off;
+        let f = s.w.air.frames.iter().find(|f| (f.t0 - t0).abs() < 0.01 && f.psdu.len() == e.len);
+        let what = f.map(|f| {
+            let name = b.iter().find(|x| x.id == f.who).map(|x| x.name.clone()).unwrap_or_else(|| s.w.air.name_of(f.who));
+            match mac_parse(&f.psdu) {
+                Some(m) => {
+                    let nwk = if m.ty == 1 && m.payload.len() >= 8 {
+                        let p = &m.payload;
+                        format!(" nwk {:#06x}->{:#06x} r={} seq={}", u16::from_le_bytes([p[4], p[5]]), u16::from_le_bytes([p[2], p[3]]), p[6], p[7])
+                    } else {
+                        String::new()
+                    };
+                    format!("{name} ty={} seq={} {:?}->{:?}{nwk}", m.ty, m.seq, m.src, m.dst)
+                }
+                None => name,
+            }
+        }).unwrap_or_default();
+        let cleared = e.cleared.map(|(t, pc)| format!(" cleared {:.4} at {pc:#x}", (t + off) / 1000.0)).unwrap_or_default();
+        cx.say(&format!("   FATE [{:9.4}-{:9.4}] len {:3} {}{cleared}: {what}", t0 / 1000.0, (e.t1 + off) / 1000.0, e.len, e.fate));
+        let around: Vec<String> = pcs.iter().filter(|(t, _)| *t > e.t0 - 15.0 && *t < e.t1 + 3.0)
+            .map(|(t, n)| format!("{:.4} {n}", (t + off) / 1000.0)).collect();
+        if !around.is_empty() {
+            cx.say(&format!("        {}", around.join(", ")));
+        }
+    }
+}
+
 /// coordinator - S1 (stock) - R (Rust) - S2 (stock): each hears only its
 /// neighbours in the chain. The bulbs, their addresses; None when a check
 /// already failed (and the scenario is finished).
@@ -521,6 +718,9 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
             s.w.node(x.id).radio.b().rx_log = Some(Vec::new());
         }
     }
+    fates_watch(&mut s, r);
+    // what the Rust bulb's radio does with every frame (`dropped_by_driver`)
+    s.w.node(r).radio.b().rx_log.get_or_insert_with(Vec::new);
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== coordinator - S1 - R - S2: {}; channel 11", describe(&b)));
     let ok = s.run_until(12000.0, 10.0, |s| s.announced(b[0].ext).is_some())?;
@@ -550,6 +750,7 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
     let Some(sh) = join_all(&mut s, &b, 0.0)? else {
         cx.check(s.now(), "R (Rust) and S2 (stock) join, each through its neighbour in the chain", false,
                  &format!("{}; coordinator events: {}", shorts_text(&s, &b), tail_events(&s, 10)));
+        fates_dump(cx, &s, &b, r);
         if std::env::var_os("MIXED_DEBUG").is_some() {
             debug_frames(cx, &s, &b, 24000.0);
             if let Some(a) = b[1].img.symbol("RADIO_DROPPED") {
@@ -634,13 +835,19 @@ fn chain(cx: &mut SimCtx) -> R<()> {
     s.w.coord.source_routes.remove(&s2);
     // ---- broadcast
     s.run(300.0)?;
-    bcast(&mut s, 0x01);
-    s.run(4000.0)?;
+    bcast_acked(&mut s, 0x01, b[0].id)?;
+    s.run(3000.0)?;
     let on: Vec<bool> = b.iter().map(|x| s.light(x.id).on).collect();
     cx.check(s.now(), "a broadcast On reaches the whole chain", on.iter().all(|x| *x),
              &b.iter().zip(&on).map(|(x, o)| format!("{} {}", x.name, onoff(*o))).collect::<Vec<_>>().join(", "));
+    if let Some(lost) = dropped_by_driver(&s, &b[1]) {
+        cx.check(s.now(), "the Rust bulb's driver takes every frame its radio received: none cleared unread before a \
+                  transmission or a BLE event, none overwritten by the next one before its interrupt ran",
+                 lost.is_empty(), &if lost.is_empty() { "none lost".to_string() } else { lost.join("; ") });
+    }
     let (ok, rs) = resets_text(&s, &b);
     cx.check(s.now(), "no resets, nobody left the network", ok && s.events("leave").is_empty(), &format!("resets {rs}"));
+    fates_dump(cx, &s, &b, b[1].id);
     finish(cx, &s, &b);
     Ok(())
 }

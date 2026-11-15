@@ -2241,6 +2241,76 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     assert_eq!(net.nodes[n].short(), me);
 }
 
+/// Passive acknowledgement (R22 3.6.5) waits for the neighbours known to
+/// pass broadcasts on. A router at the edge of a network that has just
+/// formed may have passed on nothing but route requests, or the bulb's own
+/// announcement; it counts all the same. In the emulator's `mixed_chain` a
+/// stock router behind the Rust bulb, deaf to the bulb's relay of a
+/// broadcast On (its own BLE advertising), never got a second copy: it had
+/// been heard relaying route requests only.
+#[test]
+fn a_neighbor_seen_passing_on_a_route_request_or_our_own_broadcast_is_waited_for() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    net.run(181_000);
+    let copies = |net: &Net, seq: u8, since: u32| {
+        net.timed_nwk_sent_by(id, since).into_iter().filter(|(_, _, h, _)| h.src == 0x0000 && h.seq == seq).count()
+    };
+    // x passes broadcasts on (it relayed one of the coordinator's) and passes the next on as well
+    let mut x = neighbor(&mut net, n, 0x2B02);
+    let aps = net.coord.aps_frame(0x08, 1, 0x0003, 0x0104, 1, &[0x01, 1, 0x01]);
+    let mut relayed = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 4);
+    relayed.src = 0x5E07;
+    x.mac_send(0xFFFF, relayed, &aps);
+    net.run(1_500);
+    // y has relayed a route request of the coordinator's and nothing else;
+    // z has passed on the bulb's own announcement and nothing else
+    let mut y = neighbor(&mut net, n, 0x2B03);
+    let mut request = net.coord.header(nwk::FRAME_CMD, 0xFFFC, 29);
+    request.src = 0x0000;
+    y.mac_send(0xFFFF, request, &[nwk::CMD_ROUTE_REQUEST, 0x08, 0x41, 0xFC, 0xFF, 0]);
+    net.run(1_500);
+    let mut z = neighbor(&mut net, n, 0x2B04);
+    let own = net.nwk_sent_by(id, 0).into_iter().find(|(_, h, _)| h.src == me && h.dst == 0xFFFD && h.frame_type == nwk::FRAME_DATA).unwrap();
+    let mut echo = own.1;
+    echo.radius -= 1;
+    z.mac_send(0xFFFF, echo, &own.2);
+    net.run(1_500);
+    for (y_quiet, what) in [(true, "a route request"), (false, "our own broadcast")] {
+        // the coordinator's broadcast: x passes it on, and y or z, the other stays silent
+        let t = net.now();
+        let h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
+        let seq = h.seq;
+        net.coord.nwk_send(h, &aps, None);
+        net.run(70);
+        let mut copy = h;
+        copy.radius = 4;
+        x.mac_send(0xFFFF, copy, &aps);
+        if y_quiet {
+            z.mac_send(0xFFFF, copy, &aps);
+        } else {
+            y.mac_send(0xFFFF, copy, &aps);
+        }
+        net.run(1_500);
+        assert_eq!(copies(&net, seq, t), 2, "a neighbour seen passing on {what} did not pass this on: retransmitted");
+    }
+    // all of them heard: no retransmission
+    let t = net.now();
+    let h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
+    let seq = h.seq;
+    net.coord.nwk_send(h, &aps, None);
+    net.run(70);
+    let mut copy = h;
+    copy.radius = 4;
+    for r in [&mut x, &mut y, &mut z] {
+        r.mac_send(0xFFFF, copy, &aps);
+    }
+    net.run(1_500);
+    assert_eq!(copies(&net, seq, t), 1, "every neighbour that relays passed it on");
+}
+
 /// The AwoX stock firmware forgets a broadcast within a second and sometimes
 /// relays a copy many seconds late; the other stock bulbs then pass that copy
 /// on as a new one (docs/address-conflicts.md). A copy of the bulb's own

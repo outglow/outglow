@@ -98,6 +98,15 @@ pub trait Hal {
         false
     }
 
+    /// Whether the radio's other user has heard its neighbours just now, a
+    /// frame received within the last few milliseconds or arriving: more of
+    /// theirs are to be expected right after it. An advertising event whose
+    /// advDelay ran out while `radio_busy` is left out then (a few in a row
+    /// at most); its own traffic only delays an event. Never by default.
+    fn neighbours_talking(&mut self) -> bool {
+        false
+    }
+
     /// Mesh between bulbs: listens on a data channel with the network's
     /// access code for up to `ticks`; a packet with a good CRC goes to `pdu`
     /// (header and payload) and its length is returned.

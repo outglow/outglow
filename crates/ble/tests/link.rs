@@ -419,3 +419,84 @@ fn a_change_whose_instant_has_passed_ends_the_connection() {
     rig.run(300);
     assert_eq!(rig.state(), LinkState::Advertising);
 }
+
+/// 802.15.4 traffic (`Hal::radio_busy`) from `from` for `ms`: a frame of 2 ms
+/// every `every` ms, or without a pause (`every` 0); the neighbours' with
+/// `neighbours`, the bulb's own without.
+fn zigbee_traffic(rig: &mut Rig, from: u64, ms: u64, every: u64, neighbours: bool) {
+    let mut w = rig.world.borrow_mut();
+    if every == 0 {
+        w.zigbee_busy.push((from, from.saturating_add(ms.saturating_mul(MS)), neighbours));
+        return;
+    }
+    let mut t = from;
+    while t < from + ms * MS {
+        w.zigbee_busy.push((t, t + 2 * MS, neighbours));
+        t += every * MS;
+    }
+}
+
+fn advertised_since(rig: &Rig, t: u64) -> Vec<u64> {
+    rig.world.borrow().advertised_at.iter().copied().filter(|&a| a >= t).collect()
+}
+
+#[test]
+fn advertising_waits_for_a_quiet_moment_of_the_other_radio_user() {
+    // a frame of 2 ms every 20 ms: there is a quiet moment within every advDelay
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(1000);
+    let t0 = rig.world.borrow().now;
+    zigbee_traffic(&mut rig, t0, 3000, 20, true);
+    rig.run(3000);
+    let at = advertised_since(&rig, t0);
+    assert!((10..=11).contains(&at.len()), "{} advertising events in 3 s", at.len());
+    let w = rig.world.borrow();
+    for t in &at {
+        assert!(!w.zigbee_busy.iter().any(|&(a, b, _)| (a..b).contains(t)), "an advertising event in the middle of 802.15.4 traffic");
+    }
+    for p in at.windows(2) {
+        // advInterval + advDelay (Core Vol 6 Part B 4.4.2.2.1), and the main loop's pass
+        assert!(p[1] - p[0] <= 310 * MS, "{} ms between two events", (p[1] - p[0]) / MS);
+    }
+}
+
+#[test]
+fn an_advertising_event_is_left_out_while_the_neighbours_talk() {
+    // A stock router's Link Status and, 0.4 ms after it, its Device_annce
+    // (sent once) came while an advertising event was due: the radio is not
+    // taken while the neighbours talk, the event waits for the end of its
+    // advDelay and is left out when they go on.
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(1000);
+    let t0 = rig.world.borrow().now;
+    zigbee_traffic(&mut rig, t0, 700, 0, true);
+    rig.run(1000);
+    let at = advertised_since(&rig, t0);
+    assert!(!at.iter().any(|t| (t0..t0 + 700 * MS).contains(t)), "no advertising event in 700 ms of the neighbours' traffic");
+    assert!(at.first().is_some_and(|t| t - (t0 + 700 * MS) <= 310 * MS), "advertising again within an interval of the end of the traffic");
+
+    // neighbours that never fall silent do not keep the bulb from being
+    // found: at most three events in a row are left out, the fourth goes
+    let t1 = rig.world.borrow().now;
+    zigbee_traffic(&mut rig, t1, u64::MAX / MS - t1 / MS - 1, 0, true);
+    rig.run(3000);
+    let n = advertised_since(&rig, t1).len();
+    assert!((2..=3).contains(&n), "{n} advertising events in 3 s of unbroken traffic (one every four intervals)");
+}
+
+#[test]
+fn the_bulbs_own_traffic_only_delays_an_advertising_event_within_its_advdelay() {
+    // its own transmissions bring nothing that BLE would take the radio
+    // from: the event goes at the end of its advDelay, every interval
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(1000);
+    let t0 = rig.world.borrow().now;
+    zigbee_traffic(&mut rig, t0, 3000, 0, false);
+    rig.run(3000);
+    let at = advertised_since(&rig, t0);
+    // (every one at the end of its advDelay: 309 ms apart)
+    assert!((9..=11).contains(&at.len()), "{} advertising events in 3 s", at.len());
+    for p in at.windows(2) {
+        assert!(p[1] - p[0] <= 310 * MS, "{} ms between two events", (p[1] - p[0]) / MS);
+    }
+}

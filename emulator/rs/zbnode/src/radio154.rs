@@ -109,8 +109,13 @@ pub struct RxFate {
     /// error), "collision", "off at start: ..." / "off at end: ..." with
     /// the reason ("BLE mode", "transmitting", "TX mode", "RX state off",
     /// "RX disabled"), "other channel" (or "BLE mode" when the radio was
-    /// lent to BLE), "RX DMA off", "too long for the buffer"
+    /// lent to BLE), "RX DMA off", "too long for the buffer"; "overwritten"
+    /// when the next frame's DMA replaced it before its status bit was cleared
     pub fate: &'static str,
+    /// For a frame handed to the driver: when its "frame received" status
+    /// bit was cleared, and the program counter of the write that did it (the
+    /// interrupt handler that took it, or code that threw it away)
+    pub cleared: Option<(f64, u32)>,
 }
 
 /// Why the receiver cannot take a frame now (None: it can).
@@ -168,6 +173,8 @@ pub struct Radio154State {
     /// When set (not in Go): the fate of every frame that reached the radio,
     /// for diagnostics; nothing else depends on it.
     pub rx_log: Option<Vec<RxFate>>,
+    /// (with `rx_log`) the entry whose "frame received" status is set
+    rx_pending: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -220,6 +227,7 @@ impl Radio154 {
             collisions: 0,
             bad_fcs: 0,
             rx_log: None,
+            rx_pending: None,
         })));
         let prev_w = m.reg_write_hook.clone();
         let r1 = r.clone();
@@ -335,6 +343,12 @@ impl Radio154 {
             for i in 0..size {
                 let (a, b) = (o + i, (val >> (8 * i as u32)) as u8);
                 if a == 0xF20 || a == 0xF21 {
+                    if a == 0xF20 && b & m.regs[a] & STATUS_RX != 0 {
+                        let mut s = self.b();
+                        if let (Some(i), Some(l)) = (s.rx_pending.take(), s.rx_log.as_mut()) {
+                            l[i].cleared = Some((m.ms(), m.r[15]));
+                        }
+                    }
                     m.regs[a] &= !b;
                 } else {
                     m.reg_write(a, 1, b as u32)?;
@@ -427,7 +441,7 @@ impl Radio154 {
             let mut s = self.b();
             if let Some(log) = &mut s.rx_log {
                 let fate = if zigbee_mode(m) { "other channel" } else { "BLE mode" };
-                log.push(RxFate { t0: f.t0, t1: f.t1, fcs: fcs_of(&f.psdu), len: f.psdu.len(), fate });
+                log.push(RxFate { t0: f.t0, t1: f.t1, fcs: fcs_of(&f.psdu), len: f.psdu.len(), fate, cleared: None });
             }
             return;
         }
@@ -475,7 +489,7 @@ impl Radio154 {
         let logging = self.b().rx_log.is_some();
         let log = |me: &Self, fate: &'static str| {
             if let Some(l) = &mut me.b().rx_log {
-                l.push(RxFate { t0: f.t0, t1: f.t1, fcs: fcs_of(&f.psdu), len: f.psdu.len(), fate });
+                l.push(RxFate { t0: f.t0, t1: f.t1, fcs: fcs_of(&f.psdu), len: f.psdu.len(), fate, cleared: None });
             }
         };
         if let Some(w) = drop_why {
@@ -516,6 +530,19 @@ impl Radio154 {
             return;
         }
         log(self, if bad_fcs { "bad FCS" } else { "received" });
+        {
+            let mut s = self.b();
+            if s.rx_log.is_some() {
+                if m.regs[0xF20] & STATUS_RX != 0 {
+                    if let (Some(i), Some(l)) = (s.rx_pending, s.rx_log.as_mut()) {
+                        if l[i].cleared.is_none() {
+                            l[i].fate = "overwritten";
+                        }
+                    }
+                }
+                s.rx_pending = s.rx_log.as_ref().map(|l| l.len() - 1);
+            }
+        }
         // Go on arm64 fuses this into one FNMSUB: (T1-T0)*1000 - 160, rounded once.
         let since_sfd_us = (f.t1 - f.t0).mul_add(1000.0, -((5 * US_PER_BYTE) as f64));
         let ts = m.stimer_now().wrapping_sub((since_sfd_us * TICKS_PER_US) as u32);

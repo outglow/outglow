@@ -105,8 +105,16 @@ const FIRST_RX_GRACE: u32 = 400 * TICKS_PER_US;
 const RX_GUARD: u32 = 2100 * TICKS_PER_US;
 /// Anchor point from the timestamp of the first packet [6.5].
 const TIMESTAMP_TO_ANCHOR: u32 = 0x500;
-/// Before an advertising event an 802.15.4 frame that is arriving may finish.
+/// How long an advertising event or a moment on the mesh waits for the
+/// 802.15.4 traffic of the moment to end (`wait_for_quiet`, `let_zigbee_finish`).
 const ADV_PATIENCE: u32 = 6000 * TICKS_PER_US;
+/// An 802.15.4 neighbour heard this recently may still be about to send
+/// the frames its last one brings: nwkcMaxBroadcastJitter (R22 3.6.5,
+/// 64 ms), the longest a router waits before it relays a broadcast. (A
+/// stock router answers a broadcast at once and relays it 10 to 30 ms
+/// later.) An advertising event then uses the first advertising channel only
+/// (`advertise`).
+const NEIGHBOURS_QUIET: u32 = 64_000 * TICKS_PER_US;
 
 #[repr(C, align(4))]
 struct Aligned<const N: usize>([u8; N]);
@@ -368,6 +376,23 @@ fn let_zigbee_finish(latest: u32) {
     while radio::receiving() && !reached(tick(), latest) {}
 }
 
+/// Before an advertising event: lets an 802.15.4 frame that is arriving
+/// finish, and the frames of the neighbours that follow it closely, while
+/// there is time until `latest`. The link layer chooses its moment when the
+/// radio has been quiet for a while (`ble::Hal::radio_busy`), or at the end
+/// of its advDelay; but a frame may begin between that and here, and one
+/// frame often brings another. The radio used to be taken right at the end
+/// of the first: in the emulator's `mixed_chain` a stock router's Link
+/// Status was heard and its Device_annce, sent 0.4 ms later and only once,
+/// was not. (Only received frames count: what follows a frame of our own,
+/// its acknowledgement, `radio::transmit` has waited for. An event that
+/// waits here may start a few milliseconds after its advDelay range, as it
+/// did before for a frame that was arriving; a lost broadcast costs more
+/// than a late advertisement.)
+fn wait_for_quiet(latest: u32) {
+    while (radio::receiving() || radio::rx_quiet_ticks() < crate::ble::RADIO_QUIET) && !reached(tick(), latest) {}
+}
+
 /// One advertising channel [5.1, 5.2]: the advertisement, then a short
 /// wait for an answer. Returns 0 when none came, 1 when a scan request was
 /// answered, 2 when a connect request for this device is in the receive
@@ -455,7 +480,7 @@ pub fn advertise(adv: &[u8], scan_rsp: &[u8], connect: &mut [u8; CONNECT_LEN]) -
     }
     #[cfg(feature = "trace")]
     let t_ev = tick();
-    let_zigbee_finish(tick().wrapping_add(ADV_PATIENCE));
+    wait_for_quiet(tick().wrapping_add(ADV_PATIENCE));
     let s = enter();
     count!(adv_events);
     trx_off();
@@ -465,8 +490,16 @@ pub fn advertise(adv: &[u8], scan_rsp: &[u8], connect: &mut [u8; CONNECT_LEN]) -
     write16(RF_IRQ_MASK, 0);
     // packet air time, settling, turnaround and the first bytes of an answer
     let answer_window = (adv[1] as u32 + 60) * 8 * TICKS_PER_US;
+    // Core 5.4 Vol 6 Part B 4.4.2.2: at most one PDU on each advertising
+    // channel, "usually" one on every channel. While the 802.15.4
+    // neighbours may still be sending (a relay of a broadcast after the
+    // relayer's own answer to it, sent once), the event is a third as long,
+    // and so is the time in which such a frame is lost: in the emulator's
+    // `mixed_chain` a stock router's relay of a broadcast On that came 20 ms
+    // after its answer to it fell into a whole event three times in 71 runs.
+    let channels: &[u8] = if radio::rx_quiet_ticks() < NEIGHBOURS_QUIET { &[37] } else { &[37, 38, 39] };
     let mut result = None;
-    for chn in [37, 38, 39] {
+    for &chn in channels {
         match adv_channel(chn, answer_window) {
             0 => {}
             2 => {

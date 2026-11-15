@@ -29,7 +29,7 @@ pub const IDENTITY: Identity = Identity {
 /// (`ble::Hal::radio_busy`, within its advDelay): a frame that follows
 /// another (an acknowledgement, an answer, a broadcast after a unicast)
 /// comes within a few milliseconds.
-const RADIO_QUIET: u32 = 3 * 16_000;
+pub(crate) const RADIO_QUIET: u32 = 3 * 16_000;
 
 /// Flash sector with the device's address, written at the factory: the BLE
 /// address is its first six bytes (the start of the Zigbee EUI-64), as on
@@ -183,7 +183,12 @@ impl Hal for BleHal {
     }
 
     fn radio_busy(&mut self) -> bool {
-        radio::quiet_ticks() < RADIO_QUIET
+        // (the time since the last frame counts from its end: one arriving now is traffic too)
+        radio::receiving() || radio::quiet_ticks() < RADIO_QUIET
+    }
+
+    fn neighbours_talking(&mut self) -> bool {
+        radio::receiving() || radio::rx_quiet_ticks() < RADIO_QUIET
     }
 
     fn mesh_listen(&mut self, channel: u8, access_code: u32, ticks: u32, pdu: &mut [u8; ADV_PDU_MAX]) -> Option<usize> {
