@@ -17,10 +17,9 @@
 //! and calls nothing in the flash: flash fetches would add latency to the
 //! acknowledgement turnaround.
 
-use core::ptr::{addr_of, addr_of_mut};
-
 use zigbee::TxStatus;
 
+use crate::cell::{SharedBuf, Shared};
 use crate::flash;
 use crate::reg::{self, read16, read8, set8, clear8, tick, write16, write32, write8};
 
@@ -149,33 +148,30 @@ const BACKOFF_US: u32 = 320;
 /// and assessment of the sender's after it.
 const RX_GAP_US: u32 = 1200;
 
-#[repr(C, align(4))]
-struct Aligned<const N: usize>([u8; N]);
-
-static mut RX_BUF: Aligned<RX_BUF_LEN> = Aligned([0; RX_BUF_LEN]);
-static mut TX_BUF: Aligned<132> = Aligned([0; 132]);
+static RX_BUF: SharedBuf<RX_BUF_LEN> = SharedBuf::new([0; RX_BUF_LEN]);
+static TX_BUF: SharedBuf<132> = SharedBuf::new([0; 132]);
 /// DMA length 4, PHR 5, frame control 0x0002, sequence number; the radio appends the FCS.
-static mut ACK_BUF: Aligned<12> = Aligned([4, 0, 0, 0, 5, 0x02, 0x00, 0, 0, 0, 0, 0]);
+static ACK_BUF: SharedBuf<12> = SharedBuf::new([4, 0, 0, 0, 5, 0x02, 0x00, 0, 0, 0, 0, 0]);
 
-static mut QUEUE: [[u8; SLOT_LEN]; SLOTS] = [[0; SLOT_LEN]; SLOTS];
+static QUEUE: SharedBuf<{ SLOTS * SLOT_LEN }> = SharedBuf::new([0; SLOTS * SLOT_LEN]);
 /// Next slot the interrupt writes / the main loop reads.
-static mut HEAD: u8 = 0;
-static mut TAIL: u8 = 0;
+static HEAD: Shared<u8> = Shared::new(0);
+static TAIL: Shared<u8> = Shared::new(0);
 
 /// Frequency as an offset from 2400 MHz.
-static mut FREQ_OFFSET: u8 = 5;
-static mut PAN: u16 = 0xffff;
+static FREQ_OFFSET: Shared<u8> = Shared::new(5);
+static PAN: Shared<u16> = Shared::new(0xffff);
 /// Motion sensing: broadcasts to this PAN (the probes) pass the filter too.
 #[cfg(feature = "sense")]
-static mut PROBE_PAN: u16 = 0xffff;
-static mut SHORT: u16 = 0xffff;
-static mut EXT: [u8; 8] = [0; 8];
+static PROBE_PAN: Shared<u16> = Shared::new(0xffff);
+static SHORT: Shared<u16> = Shared::new(0xffff);
+static EXT: Shared<[u8; 8]> = Shared::new([0; 8]);
 
 /// Acknowledgement wait: sequence number expected, and bit 0 set by the
 /// interrupt when it arrives.
-static mut ACK_WANTED: u8 = 0;
-static mut ACK_SEQ: u8 = 0;
-static mut ACK_SEEN: u8 = 0;
+static ACK_WANTED: Shared<u8> = Shared::new(0);
+static ACK_SEQ: Shared<u8> = Shared::new(0);
+static ACK_SEEN: Shared<u8> = Shared::new(0);
 
 /// Addresses with frames waiting for their poll, as many as the stack can
 /// name (`zigbee::stack::PENDING_SHORTS`, `INDIRECT`): short addresses, and
@@ -186,57 +182,47 @@ static mut ACK_SEEN: u8 = 0;
 /// size of the tables.
 const PENDING_SHORT_SLOTS: usize = zigbee::stack::PENDING_SHORTS;
 const PENDING_EXT_SLOTS: usize = zigbee::stack::INDIRECT;
-static mut PENDING_SHORT: [u16; PENDING_SHORT_SLOTS] = [0xffff; PENDING_SHORT_SLOTS];
-static mut PENDING_EXT: [[u8; 8]; PENDING_EXT_SLOTS] = [[0; 8]; PENDING_EXT_SLOTS];
-static mut N_PENDING_SHORT: u8 = 0;
-static mut N_PENDING_EXT: u8 = 0;
+static PENDING_SHORT: Shared<[u16; PENDING_SHORT_SLOTS]> = Shared::new([0xffff; PENDING_SHORT_SLOTS]);
+static PENDING_EXT: Shared<[u8; 8 * PENDING_EXT_SLOTS]> = Shared::new([0; 8 * PENDING_EXT_SLOTS]);
+static N_PENDING_SHORT: Shared<u8> = Shared::new(0);
+static N_PENDING_EXT: Shared<u8> = Shared::new(0);
 
 /// Short addresses of the end-device children, the first `N_CHILDREN` in use.
 const CHILD_SLOTS: usize = zigbee::stack::CHILDREN;
-static mut CHILDREN: [u16; CHILD_SLOTS] = [0xffff; CHILD_SLOTS];
-static mut N_CHILDREN: u8 = 0;
+static CHILDREN: Shared<[u16; CHILD_SLOTS]> = Shared::new([0xffff; CHILD_SLOTS]);
+static N_CHILDREN: Shared<u8> = Shared::new(0);
 
 /// The last `transmit` (`trace` builds): attempts, channel assessments
 /// that found the channel busy, system timer tick at its start.
 #[cfg(feature = "trace")]
-pub static mut LAST_TX: [u32; 3] = [0; 3];
+pub static LAST_TX: Shared<[u32; 3]> = Shared::new([0; 3]);
 
 /// System timer tick of the last 802.15.4 traffic: the end of a frame
 /// received (whoever it was for) or of one sent (`quiet_ticks`).
-static mut LAST_AIR: u32 = 0;
+static LAST_AIR: Shared<u32> = Shared::new(0);
 /// System timer tick of the end of the last frame received (`rx_quiet_ticks`).
-static mut LAST_RX: u32 = 0;
+static LAST_RX: Shared<u32> = Shared::new(0);
 
 /// Frames lost because the queue was full.
+#[allow(unsafe_code)] // a linker attribute
 #[no_mangle]
-pub static mut RADIO_DROPPED: u32 = 0;
+pub static RADIO_DROPPED: Shared<u32> = Shared::new(0);
 /// The most frames that waited in the queue at once.
-static mut RX_PEAK: u8 = 0;
+static RX_PEAK: Shared<u8> = Shared::new(0);
 /// Clear channel assessments that found the channel busy, since the start.
-static mut CCA_BUSY: u32 = 0;
+static CCA_BUSY: Shared<u32> = Shared::new(0);
 /// How often the last `transmit` put its frame on the air.
-static mut TX_SENT: u8 = 0;
+static TX_SENT: Shared<u8> = Shared::new(0);
 
-macro_rules! get {
-    ($s:ident) => {
-        // SAFETY: plain data shared with the interrupt handler; every access is volatile.
-        unsafe { addr_of!($s).read_volatile() }
-    };
-}
-macro_rules! put {
-    ($s:ident, $v:expr) => {
-        // SAFETY: as in `get!`.
-        unsafe { addr_of_mut!($s).write_volatile($v) }
-    };
-}
 
 /// Switches the radio's state machine, re-tuning the synthesizer as the
 /// vendor driver does on every switch.
+#[allow(unsafe_code)] // a linker attribute
 #[link_section = ".ram_code"]
 #[inline(never)]
 extern "C" fn set_state(state: u8) {
     write8(RF_MODE_CTRL, 0x45);
-    let f = 2400 + get!(FREQ_OFFSET) as u16;
+    let f = 2400 + FREQ_OFFSET.get() as u16;
     let band = if f > 2549 {
         0x00
     } else if f > 2519 {
@@ -273,9 +259,9 @@ extern "C" fn set_state(state: u8) {
 
 /// Hands a DMA buffer to the transmitter; the transmission starts at once.
 #[inline(always)]
-fn start_tx(buf: *const u8) {
+fn start_tx(buf: usize) {
     write8(DMA_TX_ADDR_HIGH, 0x04);
-    write16(DMA_TX_ADDR, buf as usize as u16);
+    write16(DMA_TX_ADDR, buf as u16);
     set8(DMA_TX_READY, DMA_CHANNEL_RF_TX);
 }
 
@@ -298,14 +284,10 @@ pub fn init() {
     write8(0x1226, (read8(0x1226) & 0x7f) | 0x80);
     write8(0x1227, (read8(0x1227) & 0xe0) | 0x1f);
 
-    // SAFETY: the receiver is off; nothing else uses the buffer yet.
-    let rx = unsafe { addr_of_mut!(RX_BUF.0) as *mut u8 };
-    // SAFETY: indices 0 and 4 are inside the buffer.
-    unsafe {
-        rx.write_volatile(0);
-        rx.add(4).write_volatile(0);
-    }
-    write16(DMA_RX_ADDR, rx as usize as u16);
+    // the receiver is off; nothing else uses the buffer yet
+    RX_BUF.write(0, 0);
+    RX_BUF.write(4, 0);
+    write16(DMA_RX_ADDR, RX_BUF.addr() as u16);
     clear8(0xf03, 0x04); // no receive timeout
     write8(DMA_RX_SIZE, (RX_BUF_LEN / 16) as u8);
     write8(DMA_RX_MODE, 0x01);
@@ -328,9 +310,9 @@ pub fn init() {
 const LENT8: [u16; 9] = [0x124a, 0x124b, 0x1245, 0x40d, 0xf03, 0xf06, 0xf0c, 0xf0e, 0xf10];
 const LENT16: [u16; 2] = [0xf04, 0xf0a];
 const LENT32: [u16; 2] = [0x424, 0xf18];
-static mut SAVED8: [u8; 9] = [0; 9];
-static mut SAVED16: [u16; 2] = [0; 2];
-static mut SAVED32: [u32; 2] = [0; 2];
+static SAVED8: Shared<[u8; 9]> = Shared::new([0; 9]);
+static SAVED16: Shared<[u16; 2]> = Shared::new([0; 2]);
+static SAVED32: Shared<[u32; 2]> = Shared::new([0; 2]);
 
 /// Lends the radio to BLE (`ble_radio`): interrupts go off and stay off
 /// until `resume`, which takes the returned state. A frame that is arriving
@@ -352,9 +334,9 @@ pub fn suspend() -> u8 {
     for (v, addr) in saved8.iter_mut().zip(LENT8) {
         *v = read8(addr as usize);
     }
-    put!(SAVED8, saved8);
-    put!(SAVED16, [read16(LENT16[0] as usize), read16(LENT16[1] as usize)]);
-    put!(SAVED32, [reg::read32(LENT32[0] as usize), reg::read32(LENT32[1] as usize)]);
+    SAVED8.set(saved8);
+    SAVED16.set([read16(LENT16[0] as usize), read16(LENT16[1] as usize)]);
+    SAVED32.set([reg::read32(LENT32[0] as usize), reg::read32(LENT32[1] as usize)]);
     s
 }
 
@@ -366,31 +348,27 @@ pub fn resume(s: u8) {
     write8(0x61, 0x00);
     set8(0x61, 0x01);
     clear8(0x61, 0x01);
-    // SAFETY: the receiver is off and interrupts are disabled.
-    let rx = unsafe { addr_of_mut!(RX_BUF.0) as *mut u8 };
-    // SAFETY: indices 0 and 4 are inside the buffer.
-    unsafe {
-        rx.write_volatile(0);
-        rx.add(4).write_volatile(0);
-    }
+    // the receiver is off and interrupts are disabled
+    RX_BUF.write(0, 0);
+    RX_BUF.write(4, 0);
     write16(RF_IRQ_STATUS, 0xffff);
     for (addr, value) in INIT_TABLE {
         write8(addr as usize, value);
     }
-    for (addr, value) in LENT8.iter().zip(get!(SAVED8)) {
+    for (addr, value) in LENT8.iter().zip(SAVED8.get()) {
         write8(*addr as usize, value);
     }
-    for (addr, value) in LENT16.iter().zip(get!(SAVED16)) {
+    for (addr, value) in LENT16.iter().zip(SAVED16.get()) {
         write16(*addr as usize, value);
     }
-    for (addr, value) in LENT32.iter().zip(get!(SAVED32)) {
+    for (addr, value) in LENT32.iter().zip(SAVED32.get()) {
         write32(*addr as usize, value);
     }
     set_state(STATE_OFF);
     clear8(0x1225, 0x40);
     write8(0x1226, (read8(0x1226) & 0x7f) | 0x80);
     write8(0x1227, (read8(0x1227) & 0xe0) | 0x1f);
-    write16(DMA_RX_ADDR, rx as usize as u16);
+    write16(DMA_RX_ADDR, RX_BUF.addr() as u16);
     write8(DMA_RX_SIZE, (RX_BUF_LEN / 16) as u8);
     write8(DMA_RX_MODE, 0x01);
     clear8(DMA_IRQ_ENABLE, DMA_CHANNEL_RF_RX | DMA_CHANNEL_RF_TX);
@@ -403,13 +381,13 @@ pub fn resume(s: u8) {
 
 /// System timer ticks since the last 802.15.4 traffic (`LAST_AIR`).
 pub fn quiet_ticks() -> u32 {
-    tick().wrapping_sub(get!(LAST_AIR))
+    tick().wrapping_sub(LAST_AIR.get())
 }
 
 /// System timer ticks since the end of the last frame received (`LAST_RX`):
 /// how long the neighbours have been silent.
 pub fn rx_quiet_ticks() -> u32 {
-    tick().wrapping_sub(get!(LAST_RX))
+    tick().wrapping_sub(LAST_RX.get())
 }
 
 /// The noise floor of the channel the receiver listens on: the signal
@@ -458,7 +436,7 @@ pub fn set_channel(channel: u8) {
         return;
     }
     let s = reg::irq_disable();
-    put!(FREQ_OFFSET, (channel - 10) * 5);
+    FREQ_OFFSET.set((channel - 10) * 5);
     set_state(STATE_RX);
     reg::irq_restore(s);
 }
@@ -489,9 +467,9 @@ fn bounded(n: u8, max: usize) -> usize {
 /// Sets the addresses the receive filter accepts and acknowledges.
 pub fn set_filter(pan: u16, short: u16, ext: u64) {
     let s = reg::irq_disable();
-    put!(PAN, pan);
-    put!(SHORT, short);
-    put!(EXT, ext.to_le_bytes());
+    PAN.set(pan);
+    SHORT.set(short);
+    EXT.set(ext.to_le_bytes());
     reg::irq_restore(s);
 }
 
@@ -499,28 +477,26 @@ pub fn set_filter(pan: u16, short: u16, ext: u64) {
 /// and acknowledges none of them.
 #[cfg(feature = "sense")]
 pub fn set_probe_pan(pan: u16) {
-    put!(PROBE_PAN, pan);
+    PROBE_PAN.set(pan);
 }
 
 /// Sets the addresses whose Data Requests are acknowledged with the
 /// frame-pending bit.
 pub fn set_pending(shorts: &[u16], exts: &[u64]) {
     let mut short_table = [0xffffu16; PENDING_SHORT_SLOTS];
-    let mut ext_table = [[0u8; 8]; PENDING_EXT_SLOTS];
+    let mut ext_table = [0u8; 8 * PENDING_EXT_SLOTS];
     let ns = shorts.len().min(PENDING_SHORT_SLOTS);
     let ne = exts.len().min(PENDING_EXT_SLOTS);
     short_table[..ns].copy_from_slice(&shorts[..ns]);
-    for (slot, e) in ext_table.iter_mut().zip(&exts[..ne]) {
-        *slot = e.to_le_bytes();
+    for (slot, e) in ext_table.chunks_exact_mut(8).zip(&exts[..ne]) {
+        slot.copy_from_slice(&e.to_le_bytes());
     }
     let s = reg::irq_disable();
-    // SAFETY: interrupts are off, so the handler does not read the tables meanwhile.
-    unsafe {
-        addr_of_mut!(PENDING_SHORT).write_volatile(short_table);
-        addr_of_mut!(PENDING_EXT).write_volatile(ext_table);
-    }
-    put!(N_PENDING_SHORT, ns as u8);
-    put!(N_PENDING_EXT, ne as u8);
+    // interrupts are off, so the handler does not read the tables halfway written
+    PENDING_SHORT.set(short_table);
+    PENDING_EXT.set(ext_table);
+    N_PENDING_SHORT.set(ns as u8);
+    N_PENDING_EXT.set(ne as u8);
     reg::irq_restore(s);
 }
 
@@ -531,46 +507,37 @@ pub fn set_children(shorts: &[u16]) {
     let n = shorts.len().min(CHILD_SLOTS);
     table[..n].copy_from_slice(&shorts[..n]);
     let s = reg::irq_disable();
-    // SAFETY: interrupts are off, so the handler does not read the table meanwhile.
-    unsafe { addr_of_mut!(CHILDREN).write_volatile(table) };
-    put!(N_CHILDREN, n as u8);
+    // interrupts are off, so the handler does not read the table halfway written
+    CHILDREN.set(table);
+    N_CHILDREN.set(n as u8);
     reg::irq_restore(s);
 }
 
 /// The interrupt entry, called from `__irq` in start.S. Only the radio's
 /// "frame received" interrupt is enabled.
+#[allow(unsafe_code)] // a linker attribute
 #[no_mangle]
 #[link_section = ".ram_code"]
 pub extern "C" fn irq_handler() {
     if read8(RF_IRQ_STATUS) & RF_IRQ_RX != 0 {
         write8(RF_IRQ_STATUS, RF_IRQ_RX);
-        // SAFETY: the DMA wrote the buffer; the handler owns it until it re-enables the channel.
-        let p = unsafe { addr_of_mut!(RX_BUF.0) as *mut u8 };
         // another frame is already coming in: its interrupt will follow
         if read8(RF_RX_STATUS) & 0x20 == 0 {
+            // the DMA wrote the buffer; the handler has it until it re-enables the channel
             clear8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF_RX);
-            // SAFETY: `p` points to RX_BUF_LEN bytes.
-            unsafe {
-                on_frame(p);
-                p.write_volatile(0);
-                p.add(4).write_volatile(0);
-            }
+            on_frame();
+            RX_BUF.write(0, 0);
+            RX_BUF.write(4, 0);
             set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF_RX);
         }
     }
     write8(DMA_IRQ_STATUS, 0xfc);
 }
 
-/// Filters one received frame, queues it and acknowledges it.
-///
-/// # Safety
-/// `p` must point to the DMA receive buffer.
+/// Filters the frame in the receive buffer, queues it and acknowledges it.
 #[inline(always)]
-unsafe fn on_frame(p: *mut u8) {
-    let at = |i: usize| -> u8 {
-        // SAFETY: every index below is checked against the buffer length first.
-        unsafe { p.add(i).read_volatile() }
-    };
+fn on_frame() {
+    let at = |i: usize| RX_BUF.read(i);
     let dma_len = at(0) as usize;
     let phr = at(4) as usize;
     // length consistent, CRC good
@@ -578,8 +545,8 @@ unsafe fn on_frame(p: *mut u8) {
         return;
     }
     let now = tick();
-    put!(LAST_AIR, now);
-    put!(LAST_RX, now);
+    LAST_AIR.set(now);
+    LAST_RX.set(now);
     let len = phr - 2;
     let mac = 5;
     let fcf0 = at(mac);
@@ -588,8 +555,8 @@ unsafe fn on_frame(p: *mut u8) {
     let frame_type = fcf0 & 7;
     if frame_type == 2 {
         // an acknowledgement: only of interest while `transmit` waits for it
-        if phr == 5 && get!(ACK_WANTED) != 0 && seq == get!(ACK_SEQ) {
-            put!(ACK_SEEN, 1);
+        if phr == 5 && ACK_WANTED.get() != 0 && seq == ACK_SEQ.get() {
+            ACK_SEEN.set(1);
         }
         return;
     }
@@ -605,21 +572,21 @@ unsafe fn on_frame(p: *mut u8) {
         }
         let pan = at(mac + 3) as u16 | (at(mac + 4) as u16) << 8;
         #[cfg(not(feature = "sense"))]
-        if pan != 0xffff && pan != get!(PAN) {
+        if pan != 0xffff && pan != PAN.get() {
             return;
         }
         // a probe of the motion sensing: a broadcast to the probes' PAN
         #[cfg(feature = "sense")]
         if pan != 0xffff
-            && pan != get!(PAN)
-            && !(pan == get!(PROBE_PAN) && dst_mode == 0x08 && at(mac + 5) == 0xff && at(mac + 6) == 0xff)
+            && pan != PAN.get()
+            && !(pan == PROBE_PAN.get() && dst_mode == 0x08 && at(mac + 5) == 0xff && at(mac + 6) == 0xff)
         {
             return;
         }
         if dst_mode == 0x08 {
             let dst = at(mac + 5) as u16 | (at(mac + 6) as u16) << 8;
             if dst != 0xffff {
-                if dst != get!(SHORT) {
+                if dst != SHORT.get() {
                     return;
                 }
                 acknowledge = true;
@@ -628,11 +595,9 @@ unsafe fn on_frame(p: *mut u8) {
             if len < 13 {
                 return;
             }
-            let ext = addr_of!(EXT) as *const u8;
             let mut i = 0;
             while i < 8 {
-                // SAFETY: `ext` points to 8 bytes.
-                if at(mac + 5 + i) != unsafe { ext.add(i).read_volatile() } {
+                if Some(at(mac + 5 + i)) != EXT.at(i) {
                     return;
                 }
                 i += 1;
@@ -655,36 +620,33 @@ unsafe fn on_frame(p: *mut u8) {
         acknowledge = false;
     }
 
-    let head = get!(HEAD) as usize;
+    let head = HEAD.get() as usize;
     let next = if head + 1 == SLOTS { 0 } else { head + 1 };
-    if next == get!(TAIL) as usize {
+    if next == TAIL.get() as usize {
         // nowhere to put it: drop it unacknowledged, the sender will retry
-        let dropped = get!(RADIO_DROPPED);
-        put!(RADIO_DROPPED, dropped.wrapping_add(1));
+        let dropped = RADIO_DROPPED.get();
+        RADIO_DROPPED.set(dropped.wrapping_add(1));
         return;
     }
     if acknowledge {
         // start the synthesizer now so that it has settled when the wait is over
         set_state(STATE_TX);
     }
-    let slot = addr_of_mut!(QUEUE) as *mut u8;
-    // SAFETY: `head < SLOTS` and `len <= 125`, so everything stays inside the slot.
-    unsafe {
-        let slot = slot.add(head * SLOT_LEN);
-        slot.write_volatile(len as u8);
-        slot.add(1).write_volatile(at(dma_len + 2));
-        let mut i = 0;
-        while i < 4 {
-            slot.add(2 + i).write_volatile((end >> (8 * i)) as u8);
-            i += 1;
-        }
-        i = 0;
-        while i < len {
-            slot.add(6 + i).write_volatile(at(mac + i));
-            i += 1;
-        }
+    // `head < SLOTS` and `len <= 125`: everything stays inside the slot
+    let slot = head * SLOT_LEN;
+    QUEUE.write(slot, len as u8);
+    QUEUE.write(slot + 1, at(dma_len + 2));
+    let mut i = 0;
+    while i < 4 {
+        QUEUE.write(slot + 2 + i, (end >> (8 * i)) as u8);
+        i += 1;
     }
-    put!(HEAD, next as u8);
+    i = 0;
+    while i < len {
+        QUEUE.write(slot + 6 + i, at(mac + i));
+        i += 1;
+    }
+    HEAD.set(next as u8);
 
     if acknowledge {
         // A Data Request from a child with frames waiting is acknowledged
@@ -703,37 +665,31 @@ unsafe fn on_frame(p: *mut u8) {
             if src_len != 0 && src + src_len < mac + len && at(src + src_len) == 0x04 {
                 if src_len == 2 {
                     let poller = at(src) as u16 | (at(src + 1) as u16) << 8;
-                    let table = addr_of!(PENDING_SHORT) as *const u16;
-                    let n = bounded(get!(N_PENDING_SHORT), PENDING_SHORT_SLOTS);
+                    let n = bounded(N_PENDING_SHORT.get(), PENDING_SHORT_SLOTS);
                     let mut i = 0;
                     while i < n && !pending {
-                        // SAFETY: `i` is below PENDING_SHORT_SLOTS.
-                        pending = unsafe { table.add(i).read_volatile() } == poller;
+                        pending = PENDING_SHORT.at(i) == Some(poller);
                         i += 1;
                     }
                     if !pending {
                         // A poll under a short address that is no child's: the
                         // stack answers it with a Leave ("rejoin"), which only
                         // a device that stays awake will hear.
-                        let children = addr_of!(CHILDREN) as *const u16;
-                        let n = bounded(get!(N_CHILDREN), CHILD_SLOTS);
+                        let n = bounded(N_CHILDREN.get(), CHILD_SLOTS);
                         let mut known = false;
                         i = 0;
                         while i < n && !known {
-                            // SAFETY: `i` is below CHILD_SLOTS.
-                            known = unsafe { children.add(i).read_volatile() } == poller;
+                            known = CHILDREN.at(i) == Some(poller);
                             i += 1;
                         }
                         pending = !known;
                     }
                 } else {
-                    let table = addr_of!(PENDING_EXT) as *const u8;
-                    let n = bounded(get!(N_PENDING_EXT), PENDING_EXT_SLOTS);
+                    let n = bounded(N_PENDING_EXT.get(), PENDING_EXT_SLOTS);
                     let mut slot = 0;
                     while slot < n && !pending {
                         let mut i = 0;
-                        // SAFETY: `slot * 8 + i` stays inside the table for i < 8.
-                        while i < 8 && unsafe { table.add(slot * 8 + i).read_volatile() } == at(src + i) {
+                        while i < 8 && PENDING_EXT.at(slot * 8 + i) == Some(at(src + i)) {
                             i += 1;
                         }
                         pending = i == 8;
@@ -742,14 +698,10 @@ unsafe fn on_frame(p: *mut u8) {
                 }
             }
         }
-        let ack = addr_of_mut!(ACK_BUF.0) as *mut u8;
-        // SAFETY: indices 5 and 7 are inside the 12-byte buffer.
-        unsafe {
-            ack.add(5).write_volatile(if pending { 0x12 } else { 0x02 });
-            ack.add(7).write_volatile(seq);
-        }
+        ACK_BUF.write(5, if pending { 0x12 } else { 0x02 });
+        ACK_BUF.write(7, seq);
         while (tick().wrapping_sub(end) as i32) < (ACK_TURNAROUND_US * reg::TICKS_PER_US) as i32 {}
-        start_tx(ack);
+        start_tx(ACK_BUF.addr());
         let t = tick();
         while read8(RF_IRQ_STATUS) & RF_IRQ_TX == 0 && tick().wrapping_sub(t) <= 1000 * reg::TICKS_PER_US {}
         write8(RF_IRQ_STATUS, RF_IRQ_TX);
@@ -761,30 +713,30 @@ unsafe fn on_frame(p: *mut u8) {
 /// busy channel assessments, frames lost to a full queue, the queue's
 /// high-water mark, and how often the last `transmit` sent its frame.
 pub fn counters() -> (u32, u32, u8, u8) {
-    (get!(CCA_BUSY), get!(RADIO_DROPPED), get!(RX_PEAK), get!(TX_SENT))
+    (CCA_BUSY.get(), RADIO_DROPPED.get(), RX_PEAK.get(), TX_SENT.get())
 }
 
 /// Takes the next received MPDU; returns its length, the RSSI in dBm and
 /// the system timer tick at which the frame ended.
 pub fn receive(buf: &mut [u8; 127]) -> Option<(usize, i32, u32)> {
-    let tail = get!(TAIL) as usize;
-    let head = get!(HEAD) as usize;
+    let tail = TAIL.get() as usize;
+    let head = HEAD.get() as usize;
     if tail == head {
         return None;
     }
     // how many the main loop finds waiting (the high-water mark is taken
     // here, not in the interrupt, which is on its way to an acknowledgement)
     let waiting = if head >= tail { head - tail } else { head + SLOTS - tail };
-    if waiting as u8 > get!(RX_PEAK) {
-        put!(RX_PEAK, waiting as u8);
+    if waiting as u8 > RX_PEAK.get() {
+        RX_PEAK.set(waiting as u8);
     }
-    // SAFETY: the interrupt never touches the slot at TAIL (it stops before it).
-    let slot = unsafe { &*(addr_of!(QUEUE) as *const [u8; SLOT_LEN]).add(tail) };
-    let len = (slot[0] as usize).min(SLOT_LEN - 6);
-    buf[..len].copy_from_slice(&slot[6..6 + len]);
-    let rssi = slot[1] as i32 - 110;
-    let end = u32::from_le_bytes([slot[2], slot[3], slot[4], slot[5]]);
-    put!(TAIL, if tail + 1 == SLOTS { 0 } else { tail as u8 + 1 });
+    // the interrupt never writes the slot at TAIL (it stops before it)
+    let slot = tail * SLOT_LEN;
+    let len = (QUEUE.read(slot) as usize).min(SLOT_LEN - 6);
+    QUEUE.copy_to(slot + 6, &mut buf[..len]);
+    let rssi = QUEUE.read(slot + 1) as i32 - 110;
+    let end = u32::from_le_bytes([QUEUE.read(slot + 2), QUEUE.read(slot + 3), QUEUE.read(slot + 4), QUEUE.read(slot + 5)]);
+    TAIL.set(if tail + 1 == SLOTS { 0 } else { tail as u8 + 1 });
     Some((len, rssi, end))
 }
 
@@ -828,12 +780,9 @@ fn channel_clear() -> bool {
 fn csma_transmit(random: &mut impl FnMut() -> u32) -> bool {
     let mut be = MIN_BE;
     for _attempt in 0..MAX_CCA_ATTEMPTS {
-        // SAFETY: main loop only.
         #[cfg(feature = "trace")]
-        unsafe {
-            if _attempt > 0 {
-                (*addr_of_mut!(LAST_TX))[1] += 1;
-            }
+        if _attempt > 0 {
+            LAST_TX.update(|[a, b, t]| [a, b + 1, t]);
         }
         // Unslotted CSMA-CA: a random number of backoff periods before every
         // assessment, the first included. (The vendor stack skips the first
@@ -863,25 +812,25 @@ fn csma_transmit(random: &mut impl FnMut() -> u32) -> bool {
         // status is not cleared before the transmission either: whatever is
         // set then is a frame for the handler.
         if channel_clear() && !rx_pending() {
-            put!(ACK_SEEN, 0);
+            ACK_SEEN.set(0);
             set_state(STATE_TX);
             reg::delay_us(TX_SETTLE_US);
             write8(RF_IRQ_STATUS, RF_IRQ_TX);
-            // SAFETY: the buffer was filled by `transmit` and is not touched during the transmission.
-            start_tx(unsafe { addr_of!(TX_BUF.0) as *const u8 });
+            // the buffer was filled by `transmit` and is not touched during the transmission
+            start_tx(TX_BUF.addr());
             let t = tick();
             while read8(RF_IRQ_STATUS) & RF_IRQ_TX == 0 && tick().wrapping_sub(t) <= 10_000 * reg::TICKS_PER_US {}
             write8(RF_IRQ_STATUS, RF_IRQ_TX);
             set_state(STATE_RX);
-            put!(LAST_AIR, tick());
+            LAST_AIR.set(tick());
             reg::irq_restore(s);
-            let sent = get!(TX_SENT);
-            put!(TX_SENT, sent.saturating_add(1));
+            let sent = TX_SENT.get();
+            TX_SENT.set(sent.saturating_add(1));
             return true;
         }
         reg::irq_restore(s);
-        let busy = get!(CCA_BUSY);
-        put!(CCA_BUSY, busy.wrapping_add(1));
+        let busy = CCA_BUSY.get();
+        CCA_BUSY.set(busy.wrapping_add(1));
     }
     false
 }
@@ -896,14 +845,9 @@ pub fn transmit_at(mpdu: &[u8], at: u32) {
     if !(3..=125).contains(&len) || until(tick()) < 0 {
         return;
     }
-    // SAFETY: as in `transmit`.
-    let tx = unsafe { &mut *addr_of_mut!(TX_BUF.0) };
-    tx[0] = len as u8 + 1;
-    tx[1] = 0;
-    tx[2] = 0;
-    tx[3] = 0;
-    tx[4] = len as u8 + 2;
-    tx[5..5 + len].copy_from_slice(mpdu);
+    TX_BUF.write32(0, len as u32 + 1);
+    TX_BUF.write(4, len as u8 + 2);
+    TX_BUF.copy_from(5, mpdu);
     // keep receiving until shortly before; then tune the transmitter and hit the moment
     while until(tick()) > (2 * TX_SETTLE_US * reg::TICKS_PER_US) as i32 {}
     let s = reg::irq_disable();
@@ -911,8 +855,8 @@ pub fn transmit_at(mpdu: &[u8], at: u32) {
     while until(tick()) > 0 {}
     // (a frame received just before stays for the interrupt handler, as in `csma_transmit`)
     write8(RF_IRQ_STATUS, RF_IRQ_TX);
-    // SAFETY: the buffer is not touched during the transmission.
-    start_tx(unsafe { addr_of!(TX_BUF.0) as *const u8 });
+    // the buffer is not touched during the transmission
+    start_tx(TX_BUF.addr());
     let t = tick();
     while read8(RF_IRQ_STATUS) & RF_IRQ_TX == 0 && tick().wrapping_sub(t) <= 10_000 * reg::TICKS_PER_US {}
     write8(RF_IRQ_STATUS, RF_IRQ_TX);
@@ -926,8 +870,7 @@ pub fn transmit(mpdu: &[u8], random: impl FnMut() -> u32) -> TxStatus {
     let status = transmit_frame(mpdu, random);
     #[cfg(feature = "trace")]
     {
-        // SAFETY: main loop only.
-        let [attempts, busy, t0] = unsafe { *addr_of!(LAST_TX) };
+        let [attempts, busy, t0] = LAST_TX.get();
         let us = tick().wrapping_sub(t0) / reg::TICKS_PER_US;
         let dst = if mpdu.len() >= 7 { u16::from_le_bytes([mpdu[5], mpdu[6]]) } else { 0xffff };
         crate::trace::record(zigbee::hal::Trace {
@@ -948,34 +891,21 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
     if !(3..=125).contains(&len) {
         return TxStatus::Ok;
     }
-    // SAFETY: only `transmit` writes the buffer, and it does not run concurrently with itself.
-    let tx = unsafe { &mut *addr_of_mut!(TX_BUF.0) };
-    tx[0] = len as u8 + 1;
-    tx[1] = 0;
-    tx[2] = 0;
-    tx[3] = 0;
-    tx[4] = len as u8 + 2;
-    tx[5..5 + len].copy_from_slice(mpdu);
+    // only `transmit` writes the buffer, and it does not run concurrently with itself
+    TX_BUF.write32(0, len as u32 + 1);
+    TX_BUF.write(4, len as u8 + 2);
+    TX_BUF.copy_from(5, mpdu);
     let wants_ack = mpdu[0] & 0x20 != 0;
-    put!(ACK_SEQ, mpdu[2]);
-    put!(TX_SENT, 0);
-    // SAFETY: main loop only.
+    ACK_SEQ.set(mpdu[2]);
+    TX_SENT.set(0);
     #[cfg(feature = "trace")]
-    unsafe {
-        *addr_of_mut!(LAST_TX) = [0, 0, tick()];
-    }
+    LAST_TX.set([0, 0, tick()]);
     let mut busy = false;
     for _ in 0..=MAX_FRAME_RETRIES {
-        put!(ACK_WANTED, wants_ack as u8);
+        ACK_WANTED.set(wants_ack as u8);
         busy = !csma_transmit(&mut random);
-        // SAFETY: main loop only.
         #[cfg(feature = "trace")]
-        unsafe {
-            (*addr_of_mut!(LAST_TX))[0] += 1;
-            if busy {
-                (*addr_of_mut!(LAST_TX))[1] += 1;
-            }
-        }
+        LAST_TX.update(|[a, b, t]| [a + 1, b + busy as u32, t]);
         if busy {
             continue;
         }
@@ -984,13 +914,13 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
         }
         let t = tick();
         while tick().wrapping_sub(t) <= ACK_WAIT_US * reg::TICKS_PER_US {
-            if get!(ACK_SEEN) != 0 {
-                put!(ACK_WANTED, 0);
+            if ACK_SEEN.get() != 0 {
+                ACK_WANTED.set(0);
                 return TxStatus::Ok;
             }
         }
     }
-    put!(ACK_WANTED, 0);
+    ACK_WANTED.set(0);
     if busy {
         TxStatus::ChannelBusy
     } else {

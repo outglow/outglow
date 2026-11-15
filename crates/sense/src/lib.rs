@@ -28,6 +28,7 @@
 //!                  calibrated takes the s of its quietest hour (the highest
 //!                  s that hour left), and that hour's noise as its anchor
 //! ```
+#![forbid(unsafe_code)]
 #![no_std]
 
 pub mod probe;

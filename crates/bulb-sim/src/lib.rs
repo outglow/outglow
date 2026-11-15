@@ -5,6 +5,7 @@
 //! of time, cutting power with the wall switch (reboot) and injecting commands from
 //! the network.
 
+#![forbid(unsafe_code)]
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;

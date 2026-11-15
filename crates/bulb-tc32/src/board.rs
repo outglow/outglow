@@ -5,6 +5,7 @@
 //! board the image is built for (`BOARD`, from `boards.rs`): what the stock
 //! firmware of that product and hardware revision does (docs/stock-profiles.md).
 
+use crate::cell::Shared;
 use core::cell::Cell;
 
 use bulb_core::hal::{Clock, ConfigStore, Pwm};
@@ -203,7 +204,7 @@ const RETAINED_ALIVE: u8 = 0x01;
 const WD_STATUS: usize = 0x72;
 
 /// Why this start happened (`warm_reset` finds out).
-static mut CAUSE: ResetCause = ResetCause::PowerOn;
+static CAUSE: Shared<ResetCause> = Shared::new(ResetCause::PowerOn);
 
 /// True when this start follows a watchdog or software reset rather than a
 /// power-on. Call once, early.
@@ -221,14 +222,12 @@ pub fn warm_reset() -> bool {
         ResetCause::Software
     };
     analog_write(RETAINED, v | RETAINED_ALIVE);
-    // SAFETY: written once here, before anything reads it.
-    unsafe { CAUSE = cause };
+    CAUSE.set(cause);
     cause != ResetCause::PowerOn
 }
 
 pub fn reset_cause() -> ResetCause {
-    // SAFETY: plain data, written once at the start.
-    unsafe { CAUSE }
+    CAUSE.get()
 }
 
 /// Starts the watchdog: the chip resets unless `watchdog_feed` is called at

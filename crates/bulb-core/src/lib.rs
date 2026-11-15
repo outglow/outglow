@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![no_std]
 //! Bulb firmware core — independent of the hardware and of `std`.
 //!

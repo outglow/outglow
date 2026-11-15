@@ -13,6 +13,7 @@
 //!
 //! The light itself is `bulb-core`: commands for it come out of `poll`,
 //! its state comes in through `set_light`.
+#![forbid(unsafe_code)]
 #![no_std]
 
 pub mod crypto;

@@ -20,41 +20,46 @@ pub const MAC: u8 = 18;
 
 #[cfg(feature = "trace")]
 mod ring {
-    use core::ptr::addr_of_mut;
     use zigbee::hal::Trace;
 
+    use crate::cell::SharedBuf;
     use crate::reg;
 
     /// Entries in the ring, a power of two.
     pub const ENTRIES: usize = 512;
 
-    /// `head` counts every entry ever written; entry `head % ENTRIES` is the
-    /// next. An entry: system timer tick, kind | detail << 8 | seq << 16,
-    /// src | peer << 16, aux.
-    #[repr(C)]
-    pub struct Ring {
-        pub magic: u32,
-        pub head: u32,
-        pub entries: [[u32; 4]; ENTRIES],
+    /// The ring: `magic` (word 0), `head` (word 1), then `ENTRIES` entries
+    /// of four words. `head` counts every entry ever written; entry
+    /// `head % ENTRIES` is the next. An entry: system timer tick,
+    /// kind | detail << 8 | seq << 16, src | peer << 16, aux.
+    const LEN: usize = 8 + ENTRIES * 16;
+    const MAGIC: u32 = 0x5452_4345;
+
+    const fn ring() -> [u8; LEN] {
+        let mut r = [0; LEN];
+        let m = MAGIC.to_le_bytes();
+        r[0] = m[0];
+        r[1] = m[1];
+        r[2] = m[2];
+        r[3] = m[3];
+        r
     }
 
+    #[allow(unsafe_code)] // a linker attribute
+
     #[no_mangle]
-    pub static mut ZB_TRACE: Ring = Ring { magic: 0x5452_4345, head: 0, entries: [[0; 4]; ENTRIES] };
+    pub static ZB_TRACE: SharedBuf<LEN> = SharedBuf::new(ring());
 
     pub fn record(ev: Trace) {
+        // interrupts off: an entry and the head move together (the handler never records)
         let s = reg::irq_disable();
-        // SAFETY: interrupts are off and the interrupt handler never records.
-        unsafe {
-            let r = &mut *addr_of_mut!(ZB_TRACE);
-            let i = r.head as usize % ENTRIES;
-            r.entries[i] = [
-                reg::tick(),
-                ev.kind as u32 | (ev.detail as u32) << 8 | (ev.seq as u32) << 16,
-                ev.src as u32 | (ev.peer as u32) << 16,
-                ev.aux,
-            ];
-            core::ptr::write_volatile(&mut r.head, r.head.wrapping_add(1));
-        }
+        let head = ZB_TRACE.read32(4);
+        let at = 8 + (head as usize % ENTRIES) * 16;
+        ZB_TRACE.write32(at, reg::tick());
+        ZB_TRACE.write32(at + 4, ev.kind as u32 | (ev.detail as u32) << 8 | (ev.seq as u32) << 16);
+        ZB_TRACE.write32(at + 8, ev.src as u32 | (ev.peer as u32) << 16);
+        ZB_TRACE.write32(at + 12, ev.aux);
+        ZB_TRACE.write32(4, head.wrapping_add(1));
         reg::irq_restore(s);
     }
 }
