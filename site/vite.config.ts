@@ -15,6 +15,7 @@ export default defineConfig({
         bulbs: resolve(import.meta.dirname, "bulbs.html"),
         why: resolve(import.meta.dirname, "why.html"),
         flasher: resolve(import.meta.dirname, "flasher/index.html"),
+        console: resolve(import.meta.dirname, "console/index.html"),
       },
     },
   },
