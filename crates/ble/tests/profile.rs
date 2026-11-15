@@ -712,3 +712,48 @@ fn the_apps_zigbee_installation_pairs_and_is_told_it_is_done() {
     assert_eq!(rsp[8..10], [0x1e, 0xff]);
     assert_eq!(rsp[10 + 20], 0x60, "provision state in the scan response");
 }
+
+#[test]
+fn the_apps_status_comes_when_the_stock_firmware_s_does() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    rig.write(COMMAND, &block_packet(&key, 2, &[0x0a, 0, 0]));
+    rig.run(400);
+    rig.app_statuses();
+    // brightness 254 -> 128 over 0.2 s: one status some 90 ms after the command, where the
+    // fade has got to, and one when it is over (the stock lamp: 191, then 128)
+    rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x08, 0x00, 0x04, 128, 2, 0, 0, 0, 0]));
+    rig.run(60);
+    assert_eq!(rig.app_statuses().0.len(), 0, "not yet");
+    rig.run(60);
+    let (s, _) = rig.app_statuses();
+    assert_eq!(s.len(), 1);
+    assert!((150..250).contains(&s[0][13]), "on its way: {}", s[0][13]);
+    rig.run(600);
+    let (s, other) = rig.app_statuses();
+    assert_eq!((s.iter().map(|d| d[13]).collect::<Vec<_>>(), other), (vec![128], 0), "and where it ends");
+    rig.run(3000);
+    assert_eq!(rig.app_statuses().0.len(), 0, "then quiet");
+}
+
+#[test]
+fn the_apps_candle_mode() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    let tunnel = |zcl: &[u8]| block_packet(&key, 0, &[&[0x00, 0x00, 0x01, 0x08, 0x00][..], zcl].concat());
+    rig.write(COMMAND, &tunnel(&[0x04, 128, 0, 0, 0, 0, 0]));
+    rig.run(400);
+    rig.app_statuses();
+    rig.write(COMMAND, &tunnel(&[0x10, 1, 1]));
+    rig.run(400);
+    let (s, _) = rig.app_statuses();
+    assert_eq!(s.last().unwrap()[12], 0x11, "on, candle");
+    assert_eq!(s.last().unwrap()[13], 128, "the level is the light's own");
+    assert!(rig.bulb.state().candle);
+    rig.run(10_000);
+    assert_eq!(rig.app_statuses().0.len(), 0, "a flicker is not news");
+    rig.write(COMMAND, &tunnel(&[0x10, 0, 1]));
+    rig.run(400);
+    assert_eq!(rig.app_statuses().0.last().unwrap()[12], 0x01);
+    assert!(!rig.bulb.state().candle);
+}

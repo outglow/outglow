@@ -2,6 +2,7 @@
 //! firmware: its values from the stack and the board, and its commands
 //! carried out.
 
+use crate::cell::Shared;
 use ble::diag::{zigbee_event, DiagCommand, FrameLog, Info, LogEntry, State, TIME_PREVIOUS};
 use bulb_core::Command;
 use zigbee::stack::DIAG_COUNTERS_MAX;
@@ -12,8 +13,8 @@ use crate::zb::Tc32Hal;
 
 /// The latest ZCL frames to the light (`zigbee::Hal::zcl_received`), outside
 /// the stack, and how many have come (for the BLE side to copy them when new).
-static mut FRAMES: FrameLog = FrameLog::EMPTY;
-static mut FRAMES_IN: u32 = 0;
+static FRAMES: Shared<FrameLog> = Shared::new(FrameLog::EMPTY);
+static FRAMES_IN: Shared<u32> = Shared::new(0);
 
 /// How often the state, the settings and the counters are refreshed.
 const REFRESH_MS: u32 = 1_000;
@@ -21,11 +22,11 @@ const REFRESH_MS: u32 = 1_000;
 const RESTART_MS: u32 = 500;
 
 pub fn frame(time_s: u32, src: u16, cluster: u16, cmd: u8, frame_control: u8, lqi: u8, rssi: i8) {
-    // SAFETY: main loop only (the stack's receive path and `Glue::refresh`).
-    unsafe {
-        (*core::ptr::addr_of_mut!(FRAMES)).push(time_s, src, cluster, cmd, frame_control, lqi, rssi);
-        FRAMES_IN = FRAMES_IN.wrapping_add(1);
-    }
+    FRAMES.update(|mut log| {
+        log.push(time_s, src, cluster, cmd, frame_control, lqi, rssi);
+        log
+    });
+    FRAMES_IN.update(|n| n.wrapping_add(1));
 }
 
 fn reached(now: u32, t: u32) -> bool {
@@ -52,8 +53,7 @@ impl Glue {
         ble.set_diag_info(&Info {
             tunable: IDENTITY.tunable,
             watchdog: true,
-            // no motion sensing in this firmware
-            sense: false,
+            sense: cfg!(feature = "sense"),
             // the release is the low byte of the OTA file version (0x00020004: 4)
             release: crate::zb::FILE_VERSION as u8,
             ieee: stack.hal.ieee(),
@@ -68,12 +68,10 @@ impl Glue {
 
     /// Every round: new frames and events at once, the rest about every second.
     pub fn refresh(&mut self, ble: &mut ble::Ble<crate::ble::BleHal>, stack: &mut Stack<Tc32Hal>) {
-        // SAFETY: main loop only.
-        let frames_in = unsafe { FRAMES_IN };
+        let frames_in = FRAMES_IN.get();
         if frames_in != self.frames_seen {
             self.frames_seen = frames_in;
-            // SAFETY: as above; the reference lives for the copy.
-            ble.set_diag_frames(unsafe { &*core::ptr::addr_of!(FRAMES) });
+            ble.set_diag_frames(&FRAMES.get());
         }
         let st = ble.stats;
         let links = (st.connections, st.disconnects, st.links_lost);

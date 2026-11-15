@@ -9,6 +9,7 @@
 //! must not run while the flash cannot be read. Frames that arrive meanwhile
 //! are lost and their senders retry (a sector erase takes tens of ms).
 
+use crate::cell::Shared;
 use crate::reg;
 
 const CMD_WRITE_ENABLE: u8 = 0x06;
@@ -59,14 +60,17 @@ fn finish() {
 /// Programs `len` bytes at `data` to `addr`; they must lie in one 256-byte page.
 #[link_section = ".ram_code"]
 #[inline(never)]
-unsafe extern "C" fn program(addr: usize, data: *const u8, len: usize) {
+extern "C" fn program(addr: usize, data: &[u8; 32], len: usize) {
     command(CMD_WRITE_ENABLE);
     command(CMD_PAGE_PROGRAM);
     address(addr);
     let mut i = 0;
-    while i < len {
-        // SAFETY: the caller passes `len` readable bytes that are in SRAM.
-        send(unsafe { data.add(i).read_volatile() });
+    // `get`, not indexing: a bounds-check panic would call into the flash
+    while let Some(&b) = data.get(i) {
+        if i >= len {
+            break;
+        }
+        send(b);
         i += 1;
     }
     finish();
@@ -94,8 +98,7 @@ pub fn write(addr: usize, data: &[u8]) {
         #[cfg(feature = "trace")]
         let t0 = reg::tick();
         let s = reg::irq_disable();
-        // SAFETY: `buf` holds `n` bytes and is in SRAM.
-        unsafe { program(at, buf.as_ptr(), n) };
+        program(at, &buf, n);
         reg::irq_restore(s);
         #[cfg(feature = "trace")]
         crate::trace::span(crate::trace::FLASH, 0, (at >> 12) as u16, t0);
@@ -106,35 +109,28 @@ pub fn write(addr: usize, data: &[u8]) {
 /// Sector erases outside the OTA staging area since the start (the
 /// settings' wear), and records written to the light's settings and the
 /// power-on counter (`board.rs`): for the Diagnostics cluster.
-pub static mut ERASES: u32 = 0;
+pub static ERASES: Shared<u32> = Shared::new(0);
 /// The longest sector erase since the start (the flash and the interrupts
 /// are busy that long), microseconds.
-pub static mut ERASE_MAX_US: u32 = 0;
-pub static mut STORES: u32 = 0;
+pub static ERASE_MAX_US: Shared<u32> = Shared::new(0);
+pub static STORES: Shared<u32> = Shared::new(0);
 
 /// Counts a record written by a store the Zigbee stack does not see.
 pub fn stored() {
-    // SAFETY: main loop only.
-    unsafe { STORES = STORES.wrapping_add(1) };
+    STORES.update(|n| n.wrapping_add(1));
 }
 
 /// Erases the 4 KB sector containing `addr`.
 pub fn erase_sector(addr: usize) {
     if !(crate::staging::BASE..crate::staging::BASE + crate::staging::SIZE as usize).contains(&addr) {
-        // SAFETY: main loop only.
-        unsafe { ERASES = ERASES.wrapping_add(1) };
+        ERASES.update(|n| n.wrapping_add(1));
     }
     let t0 = reg::tick();
     let s = reg::irq_disable();
     erase(addr & !0xfff);
     reg::irq_restore(s);
     let us = reg::tick().wrapping_sub(t0) / reg::TICKS_PER_US;
-    // SAFETY: main loop only.
-    unsafe {
-        if us > ERASE_MAX_US {
-            ERASE_MAX_US = us;
-        }
-    }
+    ERASE_MAX_US.update(|m| m.max(us));
     #[cfg(feature = "trace")]
     crate::trace::span(crate::trace::FLASH, 1, (addr >> 12) as u16, t0);
 }

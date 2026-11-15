@@ -18,7 +18,8 @@
 //! Output in target/tc32 (the dimmable filament bulb), target/tc32-tw (the
 //! tunable white one) or target/tc32-<board in lower case>:
 //! bulb-tc32.elf, .bin (the image as linked), bulb-tc32-ota.bin (with size
-//! and CRC: what goes into the OTA staging area) and bulb-tc32.ota.
+//! and CRC: what goes into the OTA staging area) and bulb-tc32.ota. The
+//! options add their suffix: -noble, -trace, -sense.
 //!
 //! Needs: llvm-tc32, from `cargo xtask toolchain` (downloaded), or `TC32_LLVM`,
 //! the bin directory of one you built (default ~/oss/llvm-tc32/build/bin); the Rust standard library sources for
@@ -52,6 +53,10 @@ pub struct Args {
     /// diagnostics for the emulator's test harness (suffix -trace); not for bulbs
     #[arg(long)]
     trace: bool,
+    /// motion sensing from the RSSI of frames between bulbs: probes, Occupancy
+    /// Sensing 0x0406, manufacturer cluster 0xFC5E (suffix -sense); not built by default
+    #[arg(long)]
+    sense: bool,
     /// OTA file version, hexadecimal: MAJOR, MINOR (a byte each), PATCH (16 bits); default $BULB_FILE_VERSION or 01000000 (1.0.0)
     #[arg(long)]
     file_version: Option<String>,
@@ -139,6 +144,10 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     if a.trace {
         features.push("trace");
         suffix.push_str("-trace");
+    }
+    if a.sense {
+        features.push("sense");
+        suffix.push_str("-sense");
     }
     let dir = match board_name {
         "ESMLFzm_w6_Dimm-4.63" => "tc32".to_string(),

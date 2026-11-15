@@ -21,6 +21,10 @@ ble = ["dep:ble"]
 # the stack handled and what kept the radio from 802.15.4, for the
 # emulator's test harness (`cargo xtask build --trace`). Not for the bulbs.
 trace = []
+# Motion sensing from the RSSI of frames between bulbs (docs/rf-sensing.md):
+# probes, Occupancy Sensing and the manufacturer cluster 0xFC5E (cargo xtask
+# build --sense). Without it the image is the same as before.
+sense = ["zigbee/sense"]
 
 [dependencies]
 bulb-core = { path = "../bulb-core" }

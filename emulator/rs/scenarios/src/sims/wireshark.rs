@@ -124,7 +124,13 @@ const EXPECT: &[(&str, &str, usize)] = &[
 ];
 
 /// Frames of the device under test of which Wireshark reads a field wrong.
-const QUIRKS: [(&str, &str, &str); 4] = [
+const QUIRKS: [(&str, &str, &str); 5] = [
+    (
+        "",
+        "wpan.dst_pan == 0x5e55",
+        "the motion sensing's probes (crates/sense/src/probe.rs): broadcasts to a PAN of their own with the C \
+         firmware's payload, not NWK frames, which Wireshark reads as NWK and finds cut short",
+    ),
     (
         "",
         "zbee_zcl_general.touchlink.tx_cmd_id == 0x03",

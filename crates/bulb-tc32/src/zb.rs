@@ -1,8 +1,6 @@
 //! The Zigbee stack on this chip: `zigbee::Hal` on the radio, the system
 //! timer and the flash, and the stack as `bulb-core`'s radio link.
 
-use core::mem::MaybeUninit;
-use core::ptr::addr_of_mut;
 
 use bulb_core::command::{Command, StateReport};
 use bulb_core::hal::Radio;
@@ -14,6 +12,7 @@ use zigbee::stack::BleMode;
 use zigbee::{Hal, RxMeta, Stack, TxStatus};
 
 use crate::board::BOARD;
+use crate::cell::{Shared, SharedBuf, TakeOnce};
 use crate::flash;
 use crate::link::DebugLink;
 use crate::nv::Nv;
@@ -22,11 +21,10 @@ use crate::reg;
 use crate::staging::{self, Owner};
 
 /// The longest round of the main loop since the start, microseconds (`lib.rs`).
-pub static mut LOOP_MAX_US: u32 = 0;
+pub static LOOP_MAX_US: Shared<u32> = Shared::new(0);
 /// The BLE stack's counters as of the last round (for the Diagnostics cluster).
 #[cfg(feature = "ble")]
-static mut BLE_STATS: ble::Stats =
-    ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 };
+static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 });
 
 /// What the bulb says it is. Its own model identifiers, not the stock
 /// bulb's ("ESMLFzm_w6_Dimm", "ESMLFzm_w6_TW"): a coordinator must not take
@@ -52,6 +50,8 @@ const IDENTITY: Identity = Identity {
     // these bulbs carry no install code
     install_code: None,
     ble: cfg!(feature = "ble"),
+    #[cfg(feature = "sense")]
+    sense: true,
 };
 
 /// The touchlink master key, if the build was given it: 32 hexadecimal
@@ -127,22 +127,20 @@ const BLE_ORDER_OUIS: [[u8; 3]; 7] = [
 const TICKS_PER_MS: u32 = 16_000;
 
 /// The diagnostic counters kept over a watchdog or software reset: in RAM
-/// that the start-up code leaves alone (`.noinit`), behind a header and a
-/// checksum, since after a power-on it holds whatever the chip woke up with.
-#[repr(C)]
-struct Retained {
-    magic: u32,
-    len: u32,
-    sum: u32,
-    data: [u8; zigbee::stack::RETAIN_MAX],
-}
-
+/// that the start-up code leaves alone (`.noinit`, `RETAINED`), behind a
+/// header and a checksum, since after a power-on it holds whatever the chip
+/// woke up with.
 /// The black box's records (`zigbee::stack::blackbox`), outside `Stack`:
-/// all zero, in .bss.
-static mut BLACK_BOX: zigbee::BlackBox = zigbee::BlackBox::EMPTY;
+/// all zero, in .bss; the hal takes it.
+static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
 
+/// The `Retained` block: magic, length, checksum (a word each), then the
+/// data. Any bit pattern is a valid value of it, which is what memory the
+/// start-up code leaves alone holds after a power-on (the initialiser here
+/// is not loaded); every access is volatile.
+#[allow(unsafe_code)] // a linker attribute
 #[link_section = ".noinit"]
-static mut RETAINED: MaybeUninit<Retained> = MaybeUninit::uninit();
+static RETAINED: SharedBuf<{ 12 + zigbee::stack::RETAIN_MAX }> = SharedBuf::new([0; 12 + zigbee::stack::RETAIN_MAX]);
 const RETAINED_MAGIC: u32 = 0x4449_4147;
 
 fn retained_sum(len: u32, data: &[u8]) -> u32 {
@@ -164,11 +162,12 @@ pub struct Tc32Hal {
     rest: u32,
     ms: u32,
     rng: [u32; 2],
+    black_box: Option<&'static mut zigbee::BlackBox>,
 }
 
 impl Tc32Hal {
     pub fn new() -> Self {
-        let mut hal = Tc32Hal { staging_erased: 0, nv: Nv::new(), ext: 0, last_tick: reg::tick(), rest: 0, ms: 0, rng: [0; 2] };
+        let mut hal = Tc32Hal { staging_erased: 0, nv: Nv::new(), ext: 0, last_tick: reg::tick(), rest: 0, ms: 0, rng: [0; 2], black_box: BLACK_BOX.take_with(|| zigbee::BlackBox::EMPTY) };
         // Nothing here needs unpredictable numbers (keys come from the Trust
         // Center, nonces are counters): the generator only spreads backoffs
         // and jitter, so the timer and whatever the flash holds seed it.
@@ -317,8 +316,7 @@ impl Hal for Tc32Hal {
     #[cfg(feature = "trace")]
     fn trace(&mut self, mut ev: zigbee::hal::Trace) {
         if ev.kind == zigbee::hal::trace::TX && ev.detail <= zigbee::hal::trace::TX_BUSY {
-            // SAFETY: main loop only.
-            let [attempts, busy, t0] = unsafe { *core::ptr::addr_of!(radio::LAST_TX) };
+            let [attempts, busy, t0] = radio::LAST_TX.get();
             let us = reg::tick().wrapping_sub(t0) / reg::TICKS_PER_US;
             ev.aux = attempts.min(255) | busy.min(255) << 8 | us.min(0xffff) << 16;
         }
@@ -346,12 +344,10 @@ impl Hal for Tc32Hal {
         };
         #[cfg(not(feature = "ble"))]
         let (ble_lends, ble_ms, ble_lend_max_us) = (0, 0, 0);
-        // SAFETY: main loop only.
         let (flash_erases, flash_stores, flash_busy_max_us, loop_max_us) =
-            unsafe { (flash::ERASES, flash::STORES, flash::ERASE_MAX_US, LOOP_MAX_US) };
+            (flash::ERASES.get(), flash::STORES.get(), flash::ERASE_MAX_US.get(), LOOP_MAX_US.get());
         #[cfg(feature = "ble")]
-        // SAFETY: main loop only.
-        let b = unsafe { BLE_STATS };
+        let b = BLE_STATS.get();
         let (stack_free, irq_stack_free) = crate::stack::free();
         HalCounters {
             cca_busy,
@@ -385,33 +381,31 @@ impl Hal for Tc32Hal {
     }
 
     fn black_box(&mut self) -> Option<&mut zigbee::BlackBox> {
-        // SAFETY: only the one `Tc32Hal`, in the main loop, reaches it, and
-        // the reference lives no longer than the borrow of the hal.
-        Some(unsafe { &mut *addr_of_mut!(BLACK_BOX) })
+        self.black_box.as_deref_mut()
     }
 
     fn retain(&mut self, data: &[u8]) {
         let n = data.len().min(zigbee::stack::RETAIN_MAX);
-        // SAFETY: main loop only, and nothing else takes a reference to the
-        // block; it is plain bytes, so every bit pattern is a valid value.
-        let r = unsafe { &mut *(*addr_of_mut!(RETAINED)).as_mut_ptr() };
-        r.magic = 0;
-        r.data[..n].copy_from_slice(&data[..n]);
-        r.len = n as u32;
-        r.sum = retained_sum(n as u32, &data[..n]);
-        r.magic = RETAINED_MAGIC;
+        let r = &RETAINED;
+        r.write32(0, 0);
+        r.copy_from(12, &data[..n]);
+        r.write32(4, n as u32);
+        r.write32(8, retained_sum(n as u32, &data[..n]));
+        r.write32(0, RETAINED_MAGIC);
     }
 
     fn retained(&mut self, buf: &mut [u8]) -> Option<usize> {
-        // SAFETY: as in `retain`.
-        let r = unsafe { &mut *(*addr_of_mut!(RETAINED)).as_mut_ptr() };
-        let n = r.len as usize;
-        if r.magic != RETAINED_MAGIC || n > zigbee::stack::RETAIN_MAX || n > buf.len() || retained_sum(n as u32, &r.data[..n]) != r.sum {
+        let r = &RETAINED;
+        let n = r.read32(4) as usize;
+        if r.read32(0) != RETAINED_MAGIC || n > zigbee::stack::RETAIN_MAX || n > buf.len() {
             return None;
         }
-        buf[..n].copy_from_slice(&r.data[..n]);
+        r.copy_to(12, &mut buf[..n]);
+        if retained_sum(n as u32, &buf[..n]) != r.read32(8) {
+            return None;
+        }
         // taken once
-        r.magic = 0;
+        r.write32(0, 0);
         Some(n)
     }
 
@@ -425,6 +419,11 @@ impl Hal for Tc32Hal {
     fn zcl_received(&mut self, src: u16, cluster: u16, cmd: u8, frame_control: u8, lqi: u8, rssi: i8) {
         let t = self.now_ms() / 1000;
         crate::diag::frame(t, src, cluster, cmd, frame_control, lqi, rssi);
+    }
+
+    #[cfg(feature = "sense")]
+    fn sense_listen(&mut self, pan: u16) {
+        radio::set_probe_pan(pan);
     }
 }
 
@@ -458,21 +457,13 @@ pub struct Link {
 /// Where the link (and so both stacks) lives: in .bss, where the linker
 /// counts it against the SRAM, not on the main stack. As a value of `main`
 /// it was there twice (`Bulb::boot` takes it by value), some 20 KB.
-static mut LINK: MaybeUninit<Link> = MaybeUninit::uninit();
-static mut LINK_TAKEN: bool = false;
+static LINK: TakeOnce<Link> = TakeOnce::new();
 
 impl Link {
     /// The link, built in its place. There is one; a second call panics.
     #[inline(never)]
     pub fn take() -> &'static mut Link {
-        // SAFETY: LINK is reached only through the reference made here,
-        // and that is made once (LINK_TAKEN); no interrupt handler uses it.
-        unsafe {
-            let taken = addr_of_mut!(LINK_TAKEN);
-            assert!(!taken.read_volatile(), "the radio link is taken once");
-            taken.write_volatile(true);
-            (*addr_of_mut!(LINK)).write(Link::new())
-        }
+        LINK.take_with(Link::new).expect("the radio link is taken once")
     }
 
     pub fn new() -> Self {
@@ -602,8 +593,7 @@ impl Radio for Link {
         // it runs at all)
         #[cfg(feature = "ble")]
         if let Some(ble) = self.ble.as_mut() {
-            // SAFETY: main loop only.
-            unsafe { BLE_STATS = ble.stats };
+            BLE_STATS.set(ble.stats);
             if !ble.ota_active() {
                 staging::release(Owner::Ble);
             }
@@ -622,6 +612,9 @@ impl Radio for Link {
         if matches!(stack.ota_state(), OtaState::Idle | OtaState::Querying) {
             staging::release(Owner::Zigbee);
         }
+        // no probes of the motion sensing while an image comes in over BLE
+        #[cfg(all(feature = "sense", feature = "ble"))]
+        stack.sense_pause(self.ble.as_ref().is_some_and(|b| b.ota_busy()));
         let c = stack.poll();
         crate::link::publish_network(stack.state() as u8, stack.short_address(), stack.channel());
         c

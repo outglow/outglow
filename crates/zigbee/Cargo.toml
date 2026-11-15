@@ -5,8 +5,22 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Portable Zigbee PRO router stack (no_std, no allocation): 802.15.4 MAC framing, NWK with security and mesh routing, APS, ZDO and the ZCL light clusters"
 
+[features]
+# Motion sensing from the RSSI of frames between bulbs (docs/rf-sensing.md):
+# probes, the detector of the `sense` crate, Occupancy Sensing and the
+# manufacturer cluster 0xFC5E. Only for a stack whose `Identity::sense` is
+# set; built without it the stack is the same code as before.
+sense = ["dep:sense"]
+
 [dependencies]
 bulb-core = { path = "../bulb-core" }
+sense = { path = "../sense", optional = true }
+
+# The tests build the stack with every feature: what a feature adds is off
+# unless the test's `Identity` asks for it, so the others see the stack as
+# it is without.
+[dev-dependencies]
+zigbee = { path = ".", features = ["sense"] }
 
 [lints.rust]
 unsafe_code = "forbid"

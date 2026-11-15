@@ -52,6 +52,8 @@ pub struct Light {
     xy_cleared: bool,
     // A hue turning round (Enhanced Move Hue): enhanced hue steps (1/256 of
     // a hue step) a second, signed, 0 when still; from where and since when.
+    // The candle mode (`candle::Candle`): the level it shows instead.
+    candle: Option<crate::candle::Candle>,
     hue_rate: i32,
     enh_start: u32,
     hue_start_ms: u64,
@@ -93,6 +95,7 @@ impl Light {
             hue_rate: 0,
             enh_start: 0,
             hue_start_ms: 0,
+            candle: None,
         }
     }
 
@@ -252,6 +255,36 @@ impl Light {
         self.render(pwm);
     }
 
+    /// The candle mode on or off (the AwoX app's Level command 0x10).
+    pub fn set_candle<P: Pwm>(&mut self, pwm: &mut P, now_ms: u64, on: bool) {
+        if on == self.candle.is_some() {
+            return;
+        }
+        self.candle = on.then(|| crate::candle::Candle::new(self.level, now_ms, now_ms as u32 ^ 0x9e37_79b9));
+        self.apply(pwm);
+    }
+
+    /// Whether a transition of brightness, colour temperature or colour is on its way.
+    pub fn in_transition(&self) -> bool {
+        self.is_fading() || self.ct != self.ct_target || self.colour_moving()
+    }
+
+    /// What the light shows at this moment (in a transition: where it has
+    /// got to): the level (the last one when it is off), the colour
+    /// temperature, the hue and the saturation.
+    pub fn shown(&self) -> crate::command::Shown {
+        let level = match self.current_level() {
+            0 => self.level,
+            l => l,
+        };
+        crate::command::Shown { level, mireds: self.ct, hue: self.hue.min(254), sat: self.sat }
+    }
+
+    /// Whether the candle mode is on.
+    pub fn candle(&self) -> bool {
+        self.candle.is_some()
+    }
+
     /// Whether the hue is turning (`move_hue`).
     pub fn hue_moving(&self) -> bool {
         self.hue_rate != 0
@@ -404,7 +437,12 @@ impl Light {
 
     /// Advances the smooth transition according to elapsed time and applies the PWM.
     pub fn tick<P: Pwm>(&mut self, pwm: &mut P, now_ms: u64) {
+        let level = self.level;
+        let candle = self.candle.as_mut().is_some_and(|c| c.tick(now_ms, level));
         if self.cur_centi == self.target_centi && self.ct == self.ct_target && !self.colour_moving() && self.hue_rate == 0 {
+            if candle {
+                self.apply(pwm);
+            }
             return;
         }
         if self.hue_rate != 0 {
@@ -464,7 +502,11 @@ impl Light {
     }
 
     fn apply<P: Pwm>(&mut self, pwm: &mut P) {
-        let level = self.current_level();
+        // a candle shows its own level while the light is on and not fading
+        let level = match &self.candle {
+            Some(c) if self.on && !self.is_fading() => c.level(),
+            _ => self.current_level(),
+        };
         if pwm.has_rgb() {
             // a colour bulb: the colour channels in a colour mode, the white
             // ones in the colour temperature mode; both beside each other on

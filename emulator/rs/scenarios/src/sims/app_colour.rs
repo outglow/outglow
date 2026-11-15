@@ -95,6 +95,8 @@ struct Step {
     status: Option<[u8; 19]>,
     statuses: usize,
     other: usize,
+    /// The outputs seen every 20 ms while the step lasted (the candle mode's flicker).
+    seen: Vec<[u16; 6]>,
 }
 
 /// The app's packets, in order: (what, tunnel cluster and ZCL, or the status request; ms to wait).
@@ -115,7 +117,7 @@ const SCRIPT: &[(&str, Pkt, f64)] = &[
     ("animation off (Stop Move Step)", Pkt::Zcl(0x0300, &[0x47, 0, 0, 0]), 1200.0),
     ("status request", Pkt::Status, 800.0),
     ("white 50 % (CT 303)", Pkt::Zcl(0x0300, &[0x0a, 0x2f, 0x01, 2, 0]), 1200.0),
-    ("candle mode on", Pkt::Zcl(0x0008, &[0x10, 1, 1]), 1500.0),
+    ("candle mode on", Pkt::Zcl(0x0008, &[0x10, 1, 1]), 3000.0),
     ("candle mode off", Pkt::Zcl(0x0008, &[0x10, 0, 1]), 1500.0),
     ("off", Pkt::Zcl(0x0006, &[0]), 1500.0),
     ("status request (off)", Pkt::Status, 800.0),
@@ -162,9 +164,22 @@ fn exercise(cx: &mut SimCtx, img: &Image, label: &str) -> R<Vec<Step>> {
         q.extend_from_slice(&hc.to_le_bytes());
         q.extend_from_slice(&v);
         b.att_ok(D, &q)?;
-        b.run(D, *ms)?;
+        let mut outs: Vec<[u16; 6]> = Vec::new();
+        if what.starts_with("candle mode on") {
+            let mut t = 0.0;
+            while t < *ms {
+                b.run(D, 20.0)?;
+                t += 20.0;
+                let p = pwm(&b);
+                if !outs.contains(&p) {
+                    outs.push(p);
+                }
+            }
+        } else {
+            b.run(D, *ms)?;
+        }
         let n = b.ntfs(D);
-        let mut step = Step { what, pwm: pwm(&b), status: None, statuses: 0, other: 0 };
+        let mut step = Step { what, pwm: pwm(&b), status: None, statuses: 0, other: 0, seen: outs };
         for (_, h, v) in &n[seen..] {
             let v = unhx(&v.replace('_', ""));
             match app_status(&key, &v) {
@@ -207,7 +222,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         }
         // the status the app reads
         let same = match (a.status, b.status) {
-            (Some(x), Some(y)) if candle => x[13..] == y[13..] && x[12] & !0x10 == y[12],
             // the stock firmware sends its status some 90 ms after the command, by when its hue has moved on
             (Some(x), Some(y)) if animating => {
                 x[..7] == y[..7] && x[11..16] == y[11..16] && (x[16] as i32 - y[16] as i32).abs() <= 3 && x[17..] == y[17..]
@@ -215,16 +229,21 @@ fn run(cx: &mut SimCtx) -> R<()> {
             (x, y) => x.map(|x| [&x[..7], &x[11..]].concat()) == y.map(|y| [&y[..7], &y[11..]].concat()),
         };
         let text = |s: &Step| s.status.map(|d| show(&d)).unwrap_or_else(|| "none".into());
-        let name = if candle { format!("{}: the status (apart from the candle bit)", a.what) } else { format!("{}: the status", a.what) };
+        let name = format!("{}: the status", a.what);
         cx.check(0.0, &name, same, &format!("stock {}; ours {}", text(a), text(b)));
         cx.check(0.0, &format!("{}: no mesh notification to the app", a.what), b.other == 0, &format!("{} other", b.other));
+        if !a.seen.is_empty() {
+            // a candle flickers at random: ours through levels the stock firmware's shows too
+            let (mut sa, mut sb) = (a.seen.clone(), b.seen.clone());
+            sa.sort();
+            sb.sort();
+            let within = sb.iter().filter(|p| sa.contains(p)).count();
+            cx.check(0.0, &format!("{}: the flicker", a.what),
+                     sa.len() >= 3 && sb.len() >= 3 && within * 10 >= sb.len() * 8,
+                     &format!("stock {} outputs, ours {} ({within} of them the stock's too): stock {:?}, ours {:?}",
+                              sa.len(), sb.len(), sa.iter().map(|p| p[0]).collect::<Vec<_>>(), sb.iter().map(|p| p[0]).collect::<Vec<_>>()));
+        }
     }
-    let candle_on = &s[SCRIPT.iter().position(|x| x.0 == "candle mode on").unwrap()];
-    cx.say(&format!(
-        "\nnot done: the candle mode (Level command 0x10 [1, 1]): stock {} and flickers its whites ({:?}); ours keeps the light as it was",
-        candle_on.status.map(|d| show(&d)).unwrap_or_default(),
-        candle_on.pwm
-    ));
     let _ = hx(&[]);
     Ok(())
 }

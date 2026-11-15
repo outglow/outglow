@@ -4,6 +4,7 @@
 //! and BLE, write here, one at a time, and both hand over to the
 //! bootloader through `activate`, which checks what the flash really holds.
 
+use crate::cell::Shared;
 use crate::board;
 use crate::flash;
 
@@ -19,11 +20,10 @@ pub enum Owner {
     Ble = 2,
 }
 
-static mut OWNER: u8 = 0;
+static OWNER: Shared<u8> = Shared::new(0);
 
 fn owner() -> u8 {
-    // SAFETY: single-threaded; never touched from the interrupt handler.
-    unsafe { (&raw const OWNER).read_volatile() }
+    OWNER.get()
 }
 
 /// Takes the staging area for one update path. False while the other has it.
@@ -31,8 +31,7 @@ pub fn claim(who: Owner) -> bool {
     if owner() != 0 && owner() != who as u8 {
         return false;
     }
-    // SAFETY: as in `owner`.
-    unsafe { (&raw mut OWNER).write_volatile(who as u8) };
+    OWNER.set(who as u8);
     true
 }
 
@@ -43,8 +42,7 @@ pub fn holds(who: Owner) -> bool {
 /// Gives the staging area up (the transfer ended or was abandoned).
 pub fn release(who: Owner) {
     if holds(who) {
-        // SAFETY: as in `owner`.
-        unsafe { (&raw mut OWNER).write_volatile(0) };
+        OWNER.set(0);
     }
 }
 

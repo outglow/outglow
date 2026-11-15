@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble", "crates/outglow-image", "crates/outglow", "xtask"]
+members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble", "crates/sense", "crates/outglow-image", "crates/outglow", "xtask"]
 
 # Alternative firmware for the EGLO/AwoX Connect.Z bulb (Telink TLSR825x chip,
 # TC32 core). Written as a portable `no_std` logic core + a hardware emulator

@@ -8,21 +8,30 @@
 //! borrows the radio for single events), and for tests over the debug link
 //! (`link`).
 #![no_std]
+// `unsafe` only where the hardware needs it: registers (`reg`), the cells
+// shared with the interrupt handler and the DMA (`cell`), reading the flash
+// (`flash`) and the stack's own memory (`stack`).
+#![deny(unsafe_code)]
 
 mod aes;
 mod board;
 mod boards;
+#[allow(unsafe_code)]
+mod cell;
 #[cfg(feature = "ble")]
 mod ble;
 #[cfg(feature = "ble")]
 mod ble_radio;
 #[cfg(feature = "ble")]
 mod diag;
+#[allow(unsafe_code)]
 mod flash;
 mod link;
 mod nv;
 mod radio;
+#[allow(unsafe_code)]
 mod reg;
+#[allow(unsafe_code)]
 mod stack;
 mod staging;
 mod trace;
@@ -34,6 +43,8 @@ use bulb_core::{Bulb, Command};
 
 /// The main loop must come round at least this often, or the chip restarts.
 const WATCHDOG_MS: u32 = 2_000;
+
+#[allow(unsafe_code)] // a linker attribute
 
 #[no_mangle]
 pub extern "C" fn main() -> ! {
@@ -62,12 +73,7 @@ pub extern "C" fn main() -> ! {
         let now = reg::tick();
         let us = now.wrapping_sub(round) / reg::TICKS_PER_US;
         round = now;
-        // SAFETY: main loop only.
-        unsafe {
-            if us > zb::LOOP_MAX_US {
-                zb::LOOP_MAX_US = us;
-            }
-        }
+        zb::LOOP_MAX_US.update(|m| m.max(us));
         bulb.tick();
         cycles.tick(uptime.now_ms());
         link::publish_reset_step(cycles.step());

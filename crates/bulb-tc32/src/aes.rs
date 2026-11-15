@@ -11,6 +11,7 @@
 //! bounded in time. If either fails, `encrypt` says so and the caller
 //! computes in software.
 
+use crate::cell::Shared;
 use crate::reg::{clear8, read32, read8, tick, write32, write8, TICKS_PER_US};
 
 const AES_CTRL: usize = 0x540; // bit 0 decrypt, bit 1 wants data, bit 2 finished
@@ -20,7 +21,7 @@ const AES_KEY: usize = 0x550;
 const LIMIT: u32 = 200 * TICKS_PER_US;
 
 /// 0 not tried yet, 1 good, 2 not usable.
-static mut STATE: u8 = 0;
+static STATE: Shared<u8> = Shared::new(0);
 
 fn block(key: &[u8; 16], data: &mut [u8; 16]) -> bool {
     clear8(AES_CTRL, 0x01);
@@ -59,13 +60,11 @@ fn self_test() -> bool {
 /// untouched or garbage: the caller must keep its own copy) when the
 /// hardware is not usable.
 pub fn encrypt(key: &[u8; 16], data: &mut [u8; 16]) -> bool {
-    // SAFETY: single-threaded; the interrupt handler does not use AES.
-    let state = unsafe { (&raw const STATE).read_volatile() };
+    let state = STATE.get();
     let usable = match state {
         0 => {
             let good = self_test();
-            // SAFETY: as above.
-            unsafe { (&raw mut STATE).write_volatile(if good { 1 } else { 2 }) };
+            STATE.set(if good { 1 } else { 2 });
             good
         }
         1 => true,
@@ -77,7 +76,6 @@ pub fn encrypt(key: &[u8; 16], data: &mut [u8; 16]) -> bool {
     if block(key, data) {
         return true;
     }
-    // SAFETY: as above.
-    unsafe { (&raw mut STATE).write_volatile(2) };
+    STATE.set(2);
     false
 }

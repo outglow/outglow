@@ -1,0 +1,8 @@
+[package]
+name = "sense"
+version = "0.1.0"
+edition = "2021"
+description = "Motion sensing from the RSSI of frames between bulbs (no_std, no allocation): the detector core and the probe frame, as firmware/sense/eglo_sense_core.c"
+
+[lints.rust]
+unsafe_code = "forbid"

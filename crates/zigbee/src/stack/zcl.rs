@@ -6,6 +6,8 @@ use bulb_core::command::{Command, HueDirection, PowerOnBehavior};
 
 use super::aps::{ENDPOINT, PROFILE_HA};
 use super::{diag, objects};
+#[cfg(feature = "sense")]
+use super::sense::{self, OCCUPANCY, SENSE};
 use super::{BleMode, Scene, Stack, State, BLE_WINDOW_DEFAULT_MIN, BLE_WINDOW_MAX_MIN, GROUPS, REPORT_COLOR_TEMP, REPORT_LEVEL, REPORT_ON_OFF};
 use crate::hal::Hal;
 use crate::util::{due, Buf, Long, Reader};
@@ -35,6 +37,18 @@ const CLUSTERS_TW: [u16; 9] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, 
 const CLUSTERS_BLE: [u16; 9] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, DIAGNOSTICS, TOUCHLINK, SETTINGS];
 const CLUSTERS_TW_BLE: [u16; 10] =
     [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK, SETTINGS];
+/// With motion sensing: Occupancy Sensing and its manufacturer cluster as well.
+#[cfg(feature = "sense")]
+const CLUSTERS_SENSE: [u16; 10] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, DIAGNOSTICS, TOUCHLINK, OCCUPANCY, SENSE];
+#[cfg(feature = "sense")]
+const CLUSTERS_TW_SENSE: [u16; 11] =
+    [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK, OCCUPANCY, SENSE];
+#[cfg(feature = "sense")]
+const CLUSTERS_BLE_SENSE: [u16; 11] =
+    [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, DIAGNOSTICS, TOUCHLINK, SETTINGS, OCCUPANCY, SENSE];
+#[cfg(feature = "sense")]
+const CLUSTERS_TW_BLE_SENSE: [u16; 12] =
+    [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK, SETTINGS, OCCUPANCY, SENSE];
 /// The Color Control Options a bulb starts with: "execute if off".
 pub(crate) const COLOR_OPTIONS_DEFAULT: u8 = EXECUTE_IF_OFF;
 /// Level Control Options bit: the colour temperature follows the level.
@@ -299,6 +313,15 @@ pub struct LightSettings {
 impl<H: Hal> Stack<H> {
     /// Server clusters of the light endpoint.
     pub(crate) fn in_clusters(&self) -> &'static [u16] {
+        #[cfg(feature = "sense")]
+        if self.identity.sense {
+            return match (self.identity.color_temperature, self.identity.ble) {
+                (false, false) => &CLUSTERS_SENSE,
+                (true, false) => &CLUSTERS_TW_SENSE,
+                (false, true) => &CLUSTERS_BLE_SENSE,
+                (true, true) => &CLUSTERS_TW_BLE_SENSE,
+            };
+        }
         match (self.identity.color_temperature, self.identity.ble) {
             (false, false) => &CLUSTERS,
             (true, false) => &CLUSTERS_TW,
@@ -402,6 +425,10 @@ impl<H: Hal> Stack<H> {
         let settings = cluster == SETTINGS && self.identity.ble && ep == ENDPOINT
             && manufacturer.is_none_or(|c| c == self.identity.manufacturer_code);
         let ours = diag_mfr || settings;
+        // and so does the manufacturer cluster of the motion sensing
+        #[cfg(feature = "sense")]
+        let ours = ours
+            || (cluster == SENSE && self.sense_cluster(ep, cluster) && manufacturer.is_none_or(|c| c == self.identity.manufacturer_code));
         let status = if manufacturer.is_some() && !ours {
             // no other manufacturer's commands or attributes here, whatever the code
             Some(UNSUP_COMMAND)
@@ -674,6 +701,10 @@ impl<H: Hal> Stack<H> {
             }
             return diag::attribute(mfr, id).map(|a| a.0);
         }
+        #[cfg(feature = "sense")]
+        if self.sense_cluster(c.ep, cluster) {
+            return sense::attribute(cluster, id).map(|a| a.0);
+        }
         // under our code only the settings cluster's own attributes
         if (mfr && cluster != SETTINGS) || !self.has_attribute(cluster, id) {
             None
@@ -713,6 +744,15 @@ impl<H: Hal> Stack<H> {
             }
             return;
         }
+        #[cfg(feature = "sense")]
+        if self.sense_cluster(c.ep, cluster) {
+            for x in sense::attributes(cluster).iter().filter(|x| x.0 >= start) {
+                if !each(x.0, x.1) {
+                    return;
+                }
+            }
+            return;
+        }
         if c.mfr.is_none() || cluster == SETTINGS {
             for x in ATTRIBUTES.iter().filter(|x| x.0 == cluster && x.1 >= start && self.has_attribute(x.0, x.1)) {
                 if !each(x.1, x.2) {
@@ -723,6 +763,10 @@ impl<H: Hal> Stack<H> {
     }
 
     fn writable_at(&self, c: Ctx, cluster: u16, id: u16) -> bool {
+        #[cfg(feature = "sense")]
+        if self.sense_cluster(c.ep, cluster) {
+            return sense::attribute(cluster, id).is_some_and(|a| a.1);
+        }
         match objects::object(c.ep) {
             Some(o) => o.cluster != objects::ANALOG_INPUT && id == objects::A_PRESENT_VALUE,
             None => cluster != DIAGNOSTICS && writable(cluster, id),
@@ -786,6 +830,11 @@ impl<H: Hal> Stack<H> {
             }
             return;
         }
+        #[cfg(feature = "sense")]
+        if self.sense_cluster(c.ep, cluster) {
+            self.sense_value(cluster, id, out);
+            return;
+        }
         self.attribute_value(cluster, id, out);
     }
 
@@ -797,6 +846,10 @@ impl<H: Hal> Stack<H> {
                     Some(t) if t != ty => INVALID_DATA_TYPE,
                     Some(_) => READ_ONLY,
                 };
+            }
+            #[cfg(feature = "sense")]
+            if self.sense_cluster(c.ep, cluster) {
+                return self.sense_write_status(cluster, id, ty, value);
             }
             return self.write_status(cluster, id, ty, value);
         };
@@ -817,6 +870,11 @@ impl<H: Hal> Stack<H> {
     }
 
     fn write_at(&mut self, c: Ctx, cluster: u16, id: u16, value: &[u8]) {
+        #[cfg(feature = "sense")]
+        if self.sense_cluster(c.ep, cluster) {
+            self.sense_write(cluster, id, value);
+            return;
+        }
         match objects::object(c.ep) {
             Some(o) => self.object_write(o, value),
             None => self.attribute_write(cluster, id, value),
@@ -881,6 +939,8 @@ impl<H: Hal> Stack<H> {
                     // a record is at most 5 bytes and a 32-character string,
                     // or a 64-byte page of a diagnostics table
                     let table = cluster == DIAGNOSTICS && self.type_of(c, cluster, id) == Some(diag::T_OCTETS);
+                    #[cfg(feature = "sense")]
+                    let table = table || self.sense_long(cluster, id);
                     if rsp.room() < if table { 70 } else { 40 } {
                         break;
                     }
@@ -1084,6 +1144,8 @@ impl<H: Hal> Stack<H> {
                 let mut left = max;
                 let list: &[u8] = match (c.mfr, c.ep == ENDPOINT) {
                     // the one manufacturer-specific command (Diagnostics)
+                    #[cfg(feature = "sense")]
+                    (Some(_), _) if cluster == SENSE => &[],
                     (Some(_), _) if cmd == DISCOVER_COMMANDS_RECEIVED => &[diag::CMD_CLEAR],
                     (Some(_), _) | (None, false) => &[],
                     (None, true) if cluster == COLOR && self.identity.color && cmd == DISCOVER_COMMANDS_RECEIVED => &COLOR_COMMANDS_FULL,
@@ -1147,6 +1209,8 @@ impl<H: Hal> Stack<H> {
                     self.ble_window = BLE_WINDOW_DEFAULT_MIN;
                     self.store_settings();
                 }
+                #[cfg(feature = "sense")]
+                self.sense_reset();
                 self.push_command(Command::SetPowerOnBehavior(PowerOnBehavior::Previous));
                 self.push_command(Command::SetStartupLevel(0xFF));
                 if self.identity.color_temperature {

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![no_std]
 //! Zigbee PRO router stack for the bulb, independent of the hardware.
 //!

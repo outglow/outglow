@@ -27,8 +27,7 @@ fn untouched(from: usize, to: usize) -> u32 {
 /// Bytes of the main stack (with the free RAM below it) and of the
 /// interrupt stack that have never been used since the start.
 pub fn free() -> (u32, u32) {
-    // SAFETY: only the addresses of linker symbols are taken.
-    let (bss, main_top, irq_top) =
-        unsafe { (addr_of!(_end_bss_) as usize, addr_of!(_stack_end_) as usize, addr_of!(_irq_stack_top_) as usize) };
+    // only the addresses of the linker symbols are taken
+    let (bss, main_top, irq_top) = (addr_of!(_end_bss_) as usize, addr_of!(_stack_end_) as usize, addr_of!(_irq_stack_top_) as usize);
     (untouched(bss, main_top), untouched(main_top, irq_top))
 }

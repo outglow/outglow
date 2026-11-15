@@ -28,6 +28,8 @@ pub mod rust_radio;
 pub mod rust_ble_switch;
 pub mod rust_diag;
 pub mod rust_fw;
+pub mod rust_sense;
+pub mod sense_zcl;
 pub mod rust_staging;
 pub mod rust_touchlink;
 pub mod stress;
@@ -73,6 +75,7 @@ pub fn sims() -> Vec<SimDef> {
         rust_fw::def(),
         rust_gp::def(),
         rust_radio::def(),
+        rust_sense::def(),
         rust_touchlink::def(),
         rust_staging::def(),
         wireshark::def(),

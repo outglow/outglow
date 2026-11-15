@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #![no_std]
 //! Bulb firmware core — independent of the hardware and of `std`.
 //!
@@ -9,6 +10,7 @@
 //! The hardware layer sits behind the traits in [`hal`]; on the host we substitute
 //! mocks (the `bulb-sim` crate), so all the logic is tested without a real chip.
 
+pub mod candle;
 pub mod colour;
 pub mod command;
 pub mod config;
