@@ -109,6 +109,15 @@ const STATE_OFF: u8 = 3;
 
 /// Time from the end of a received frame to the start of its acknowledgement.
 const ACK_TURNAROUND_US: u32 = 160;
+/// The latest an acknowledgement may still start after the end of its
+/// frame. Its sender waits macAckWaitDuration, 54 symbols (864 us), from the
+/// end of its frame for it to arrive (802.15.4-2006 7.4.2, 7.5.6.4.2); an
+/// acknowledgement 160 us long (SHR, PHR and 5 bytes) that starts later than
+/// this arrives after the sender has given up and started its retry. The
+/// interrupt handler is that late only for a frame that came in while
+/// interrupts were off (`transmit_at`, a flash write): it takes the frame,
+/// and the sender's retry gets the acknowledgement instead.
+const ACK_LATEST_US: u32 = 600;
 /// Settling time after switching the synthesizer to transmit.
 const TX_SETTLE_US: u32 = 120;
 /// Settling time of the receiver before the RSSI means anything.
@@ -134,6 +143,11 @@ const MAX_BE: u32 = 5;
 const MAX_CCA_ATTEMPTS: u32 = 5;
 const MAX_FRAME_RETRIES: u32 = 3;
 const BACKOFF_US: u32 = 320;
+/// How long after the end of a received frame a channel assessment waits
+/// for the frame its sender may follow it with (`csma_transmit`): the
+/// acknowledgement (12 symbols of turnaround, 11 bytes) and a turnaround
+/// and assessment of the sender's after it.
+const RX_GAP_US: u32 = 1200;
 
 #[repr(C, align(4))]
 struct Aligned<const N: usize>([u8; N]);
@@ -187,6 +201,8 @@ pub static mut LAST_TX: [u32; 3] = [0; 3];
 /// System timer tick of the last 802.15.4 traffic: the end of a frame
 /// received (whoever it was for) or of one sent (`quiet_ticks`).
 static mut LAST_AIR: u32 = 0;
+/// System timer tick of the end of the last frame received (`rx_quiet_ticks`).
+static mut LAST_RX: u32 = 0;
 
 /// Frames lost because the queue was full.
 #[no_mangle]
@@ -315,9 +331,20 @@ static mut SAVED32: [u32; 2] = [0; 2];
 
 /// Lends the radio to BLE (`ble_radio`): interrupts go off and stay off
 /// until `resume`, which takes the returned state. A frame that is arriving
-/// is lost; its sender retries.
+/// is lost; its sender retries. One that has arrived is taken first: BLE
+/// clears the radio's status when it sets the radio up, and a frame whose
+/// interrupt had not run by then would be lost without a trace. (The
+/// receiver goes off first, so that none can end after the look; the
+/// handler turns it on again when it acknowledges a frame.)
 pub fn suspend() -> u8 {
     let s = reg::irq_disable();
+    loop {
+        set_state(STATE_OFF);
+        if !rx_pending() {
+            break;
+        }
+        irq_handler();
+    }
     let mut saved8 = [0u8; 9];
     for (v, addr) in saved8.iter_mut().zip(LENT8) {
         *v = read8(addr as usize);
@@ -374,6 +401,12 @@ pub fn resume(s: u8) {
 /// System timer ticks since the last 802.15.4 traffic (`LAST_AIR`).
 pub fn quiet_ticks() -> u32 {
     tick().wrapping_sub(get!(LAST_AIR))
+}
+
+/// System timer ticks since the end of the last frame received (`LAST_RX`):
+/// how long the neighbours have been silent.
+pub fn rx_quiet_ticks() -> u32 {
+    tick().wrapping_sub(get!(LAST_RX))
 }
 
 /// The noise floor of the channel the receiver listens on: the signal
@@ -534,7 +567,9 @@ unsafe fn on_frame(p: *mut u8) {
     if dma_len != phr + 9 || phr < 5 || phr > 127 || at(dma_len + 3) & 0x51 != 0x10 {
         return;
     }
-    put!(LAST_AIR, tick());
+    let now = tick();
+    put!(LAST_AIR, now);
+    put!(LAST_RX, now);
     let len = phr - 2;
     let mac = 5;
     let fcf0 = at(mac);
@@ -596,6 +631,10 @@ unsafe fn on_frame(p: *mut u8) {
         | (at(dma_len - 2) as u32) << 16
         | (at(dma_len - 1) as u32) << 24;
     let end = stamp.wrapping_add((phr as u32 + 1) * 32 * reg::TICKS_PER_US);
+    // too late for its sender to take the acknowledgement: none is sent
+    if (tick().wrapping_sub(end) as i32) > (ACK_LATEST_US * reg::TICKS_PER_US) as i32 {
+        acknowledge = false;
+    }
 
     let head = get!(HEAD) as usize;
     let next = if head + 1 == SLOTS { 0 } else { head + 1 };
@@ -734,15 +773,28 @@ fn rssi_dbm() -> i32 {
     read8(RF_RSSI) as i8 as i32 - 110
 }
 
-/// Clear channel assessment, with interrupts off: restarts the receiver
-/// (unless a frame is coming in), lets it settle and averages the RSSI.
+/// A received frame is in the DMA buffer, waiting for the interrupt handler
+/// (interrupts are off).
+#[inline(always)]
+fn rx_pending() -> bool {
+    read8(RF_IRQ_STATUS) & RF_IRQ_RX != 0
+}
+
+/// Clear channel assessment, with interrupts off: restarts the receiver,
+/// lets it settle and averages the RSSI. A frame that is coming in (the
+/// receiver has found its start, or its signal shows: `receiving`) makes
+/// the channel busy at once, and the receiver is not restarted under it: a
+/// restart drops the frame. (The emulator shows the signal but not the
+/// start bit; a neighbour's frame for us that ended while the receiver was
+/// being restarted for an assessment was lost there, in `mixed_chain`.)
 fn channel_clear() -> bool {
-    let t = tick();
-    if read8(RF_RX_STATUS) & 0x20 == 0 {
-        set_state(STATE_OFF);
-        set_state(STATE_RX);
-        reg::delay_us(RX_SETTLE_US);
+    if receiving() {
+        return false;
     }
+    let t = tick();
+    set_state(STATE_OFF);
+    set_state(STATE_RX);
+    reg::delay_us(RX_SETTLE_US);
     let mut sum = rssi_dbm();
     let mut count = 1;
     while tick().wrapping_sub(t) <= CCA_WINDOW_US * reg::TICKS_PER_US {
@@ -769,13 +821,33 @@ fn csma_transmit(random: &mut impl FnMut() -> u32) -> bool {
         // one; with it, two nodes answering the same frame do not collide.)
         reg::delay_us((random() % (1 << be)) * BACKOFF_US);
         be = (be + 1).min(MAX_BE);
+        // A neighbour that has just sent a frame often sends the next one
+        // right after it: a stock router's Device_annce follows its Link
+        // Status 0.4 ms after its end (the vendor's CSMA-CA skips the first
+        // backoff), and the frame after one that was acknowledged comes
+        // that long after the acknowledgement. An assessment in that gap
+        // finds the channel clear and the transmission takes the radio from
+        // the frame that follows: the assessment waits until the gap is
+        // over, and then hears it.
+        while rx_quiet_ticks() < RX_GAP_US * reg::TICKS_PER_US {}
         let s = reg::irq_disable();
-        if channel_clear() {
+        // A frame that ended while interrupts were off for the assessment
+        // (in the receiver's settling time, before the averaging starts) is
+        // waiting in the receive buffer: the channel was busy after all, and
+        // the frame is taken first, when interrupts come back on. It used to
+        // be thrown away here with its status bit, unacknowledged. In the
+        // emulator's `mixed_chain` that was a stock bulb's answer to a frame
+        // the Rust bulb had just relayed to it: it ended during the
+        // assessment for the relay of the next one, the stock bulb's retry
+        // collided with a frame of the other neighbour, which it cannot
+        // hear, and the answer never reached the coordinator. The receive
+        // status is not cleared before the transmission either: whatever is
+        // set then is a frame for the handler.
+        if channel_clear() && !rx_pending() {
             put!(ACK_SEEN, 0);
             set_state(STATE_TX);
             reg::delay_us(TX_SETTLE_US);
             write8(RF_IRQ_STATUS, RF_IRQ_TX);
-            write8(RF_IRQ_STATUS, RF_IRQ_RX);
             // SAFETY: the buffer was filled by `transmit` and is not touched during the transmission.
             start_tx(unsafe { addr_of!(TX_BUF.0) as *const u8 });
             let t = tick();
@@ -818,8 +890,8 @@ pub fn transmit_at(mpdu: &[u8], at: u32) {
     let s = reg::irq_disable();
     set_state(STATE_TX);
     while until(tick()) > 0 {}
+    // (a frame received just before stays for the interrupt handler, as in `csma_transmit`)
     write8(RF_IRQ_STATUS, RF_IRQ_TX);
-    write8(RF_IRQ_STATUS, RF_IRQ_RX);
     // SAFETY: the buffer is not touched during the transmission.
     start_tx(unsafe { addr_of!(TX_BUF.0) as *const u8 });
     let t = tick();
