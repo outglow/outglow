@@ -103,6 +103,11 @@ fn home() -> PathBuf {
 const PINNED_RUSTC: [(&str, &str); 3] =
     [("release", "1.99.0"), ("commit-hash", "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4"), ("LLVM version", "21.1.8")];
 
+/// The version of what the rustc wrapper does to the firmware's crates
+/// (`-C metadata`, link order): raise it with every change, so that no image is
+/// built from a cache made under the old rules.
+const WRAPPER_RULES: u32 = 1;
+
 fn rustc() -> std::ffi::OsString {
     std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())
 }
@@ -280,7 +285,23 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         "-C linker-plugin-lto -C force-frame-pointers=no --emit=llvm-bc --remap-path-prefix={}=~ --remap-path-prefix={}=rust --remap-path-prefix={}=outglow",
         home().display(), rust_src.display(), root.display()
     );
-    let cargo_dir = out.join("cargo");
+    // The firmware's cargo cache belongs to one rustc and one set of the
+    // wrapper's rules: cargo does not see a change of either (the wrapper
+    // rewrites flags behind its back), and a stale cache gives another image.
+    let cache_id = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        tool_output(Command::new(rustc()).arg("-vV"))?.hash(&mut h);
+        WRAPPER_RULES.hash(&mut h);
+        h.finish()
+    };
+    let cargo_dir = out.join(format!("cargo-{cache_id:016x}"));
+    for e in std::fs::read_dir(&out)?.flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        if (n == "cargo" || n.starts_with("cargo-")) && e.path() != cargo_dir {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
     let mut cargo = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
     cargo.current_dir(&here)
         .env("RUSTC_BOOTSTRAP", "1")
