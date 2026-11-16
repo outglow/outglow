@@ -388,28 +388,19 @@ fn link_status_outgoing(s: &mut Session) -> R<String> {
 // ---------------------------------------------------------------- broadcasts
 fn broadcast_relay(s: &mut Session) -> R<String> {
     net(s)?;
-    // A broadcast that began while the bulb's radio was lent to a BLE event
-    // never reached it: the coordinator sends a new one (up to three), as it
-    // would. Any other broadcast not passed on fails.
-    s.w.dut_rx_log();
-    let mut tries = 0;
-    let (orig, rel) = loop {
-        tries += 1;
-        let i = s.mark();
-        let r = s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(5));
-        s.run(300.0)?;
-        let Some(orig) = s
-            .frames(i, Some(NodeId::Coord), |f| f.nwk.as_ref().is_some_and(|n| n.seq == r.nwk_seq && n.dst == 0xFFFD))
-            .into_iter()
-            .next()
-        else {
-            return Err(Stop::Error("StopIteration: the Trust Center's broadcast is not on the air".into()));
-        };
-        let rel = s.frames(i, DUT, |f| nwk_is(f, 0, 0xFFFD, r.nwk_seq));
-        if rel.is_empty() && tries < 3 && s.w.lent_to_ble(orig.t0, orig.psdu.len()) {
-            continue;
-        }
-        break (orig, rel);
+    let i = s.mark();
+    let r = s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(5));
+    s.run(300.0)?;
+    // (a copy that began while the bulb's radio was lent to BLE goes again: `World::ble_retry`)
+    let copies = s.frames(i, Some(NodeId::Coord), |f| f.nwk.as_ref().is_some_and(|n| n.seq == r.nwk_seq && n.dst == 0xFFFD));
+    if copies.is_empty() {
+        return Err(Stop::Error("StopIteration: the Trust Center's broadcast is not on the air".into()));
+    }
+    let rel = s.frames(i, DUT, |f| nwk_is(f, 0, 0xFFFD, r.nwk_seq));
+    // the copy the bulb passed on: the last one before its retransmission
+    let orig = match rel.first() {
+        Some(f) => copies.iter().filter(|c| c.t1 <= f.t0).last().unwrap_or(&copies[0]).clone(),
+        None => copies[0].clone(),
     };
     expect(!rel.is_empty(), "the broadcast was not retransmitted")?;
     let f = &rel[0];

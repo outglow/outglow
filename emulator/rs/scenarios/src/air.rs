@@ -8,7 +8,7 @@
 //! bulb and the rest with 6 decimals, as they do over the zbnode protocol, so
 //! a scenario sees the same timing here as the Python suite does.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use zbnode::{Frame, Node, RunEvent};
@@ -90,6 +90,8 @@ pub enum Ev {
     Peer(u8, PeerEv),
     /// an event of a further coordinator
     Coord2(u8, CoordEv),
+    /// A scripted node's broadcast again (`World::ble_retry`).
+    Again { sender: NodeId, psdu: Rc<Vec<u8>>, ch: i64, dur: f64, rssi: i64 },
 }
 
 /// A time as the zbnode protocol carries it: 6 decimals.
@@ -488,6 +490,15 @@ pub struct World {
     /// the worker threads of the parallel lockstep, once it ran
     pool: Option<Pool>,
     pub par_stats: ParStats,
+    /// A broadcast of a scripted node (coordinator, peer) that began while the
+    /// bulb's radio was lent to a BLE event goes again 5 ms later, at most
+    /// three times: the broadcast retry of R22 3.6.5 (a sender that does not
+    /// hear its neighbour pass the frame on sends it again), limited to the
+    /// copies the bulb could not have heard (its receive log says so). A
+    /// frame the bulb heard and ignored is never sent again. Off by default;
+    /// the conformance sessions turn it on (with `dut_rx_log`).
+    pub ble_retry: bool,
+    ble_again: HashMap<Vec<u8>, u8>,
 }
 
 /// How `World::lockstep` advances the bulbs.
@@ -609,6 +620,8 @@ impl World {
             par: ParOptions::from_env(),
             pool: None,
             par_stats: ParStats::default(),
+            ble_retry: false,
+            ble_again: HashMap::new(),
         }
     }
 
@@ -644,6 +657,23 @@ impl World {
     fn dispatch(&mut self, ev: Ev) {
         match ev {
             Ev::Deliver { idx, rx, psdu, ch, t0, t1 } => {
+                let dut_rssi = rx.iter().find(|x| x.0 == NodeId::Dut).map(|x| x.1);
+                if self.ble_retry {
+                    let sender = self.air.frames[idx].who;
+                    let scripted = matches!(sender, NodeId::Coord | NodeId::Peer(_) | NodeId::Coord2(_));
+                    // a MAC data frame to the broadcast address: no acknowledgement, no MAC retry
+                    let broadcast = psdu.len() > 7 && psdu[0] & 0x27 == 0x01 && psdu[5..7] == [0xFF, 0xFF];
+                    if let (true, true, Some(rssi)) = (scripted, broadcast, dut_rssi) {
+                        if self.lent_to_ble(t0, psdu.len()) {
+                            let n = self.ble_again.entry((*psdu).clone()).or_insert(0);
+                            if *n < 3 {
+                                *n += 1;
+                                let ev = Ev::Again { sender, psdu: psdu.clone(), ch, dur: t1 - t0, rssi };
+                                self.air.at(t1 + 5.0, ev);
+                            }
+                        }
+                    }
+                }
                 for (n, rssi) in rx {
                     if let Some(c) = &mut self.air.channel {
                         if !matches!(n, NodeId::Dut | NodeId::Bulb(_)) && !c.heard(idx, n, &self.air.frames) {
@@ -665,6 +695,10 @@ impl World {
             }
             Ev::Peer(i, e) => self.peers[i as usize].on_peer_event(&mut self.air, e),
             Ev::Coord2(i, e) => self.coords[i as usize].on_event(&mut self.air, e),
+            Ev::Again { sender, psdu, ch, dur, rssi } => {
+                let now = self.air.t;
+                self.air.transmit(sender, (*psdu).clone(), ch, now, now + dur, rssi);
+            }
         }
     }
 
