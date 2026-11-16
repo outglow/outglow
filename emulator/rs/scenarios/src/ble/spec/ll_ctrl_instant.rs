@@ -387,21 +387,35 @@ fn channel_map_update(s: &mut BleSession) -> R<String> {
 }
 
 fn channel_map_minus_one(s: &mut BleSession) -> R<String> {
-    // 5.1.2 / 5.5.1 as above; the PDU goes out in the event Instant - 1.
+    // 5.1.2 / 5.5.1 as above; the PDU goes out in the event Instant - 1. Up to three connections: one
+    // whose instant the bulb lost to its Zigbee side (`lost_to_154`) shows nothing of the map.
     let hop = 7;
     let new = [0x00u8, 0xff, 0x00, 0xff, 0x00];
-    s.connect(LinkOpts::new().set("interval", 12).set("timeout", 200).set("hop", hop))?;
-    s.wait_event(9, None)?;
-    let inst = s.event()? + 2;
-    s.channel_map(&new, inst)?;
-    s.wait_event(inst + 30, None)?;
-    s.link_run(3.0)?;
-    let tx = update_tx_events(s, "LL_CHANNEL_MAP_IND")?;
-    if tx.is_empty() || tx[0].event != inst - 1 || tx[0].missed {
-        let e = tx.first().map(|t| t.event.to_string()).unwrap_or_else(|| "None".into());
-        return Err(Stop::Inconclusive(format!("the map PDU went out in event {e}, wanted {}", inst - 1)));
-    }
-    let (wrong, got) = map_check(s, hop, &ALL_CHANNELS, &new, inst, inst + 30);
+    let mut tries = 0;
+    let (inst, wrong, got) = loop {
+        tries += 1;
+        s.connect(LinkOpts::new().set("interval", 12).set("timeout", 200).set("hop", hop))?;
+        s.wait_event(9, None)?;
+        let inst = s.event()? + 2;
+        s.channel_map(&new, inst)?;
+        s.wait_event(inst + 30, None)?;
+        s.link_run(3.0)?;
+        let tx = update_tx_events(s, "LL_CHANNEL_MAP_IND")?;
+        if tx.is_empty() || tx[0].event != inst - 1 || tx[0].missed {
+            let e = tx.first().map(|t| t.event.to_string()).unwrap_or_else(|| "None".into());
+            return Err(Stop::Inconclusive(format!("the map PDU went out in event {e}, wanted {}", inst - 1)));
+        }
+        let (wrong, got) = map_check(s, hop, &ALL_CHANNELS, &new, inst, inst + 30);
+        if got.contains(&inst) || s.lost_to_154(&[inst])?.is_empty() {
+            break (inst, wrong, got);
+        }
+        if tries == 3 {
+            return Err(Stop::Inconclusive(format!(
+                "in each of {tries} connections the bulb's radio was with 802.15.4 in the instant's event"
+            )));
+        }
+        s.drop_link(6000.0)?;
+    };
     expect(wrong.is_empty(), format!("(event, channel, expected) {}", triples(&wrong)))?;
     let w = why(s)?;
     expect(

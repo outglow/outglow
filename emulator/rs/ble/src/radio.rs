@@ -1056,6 +1056,9 @@ impl RadioRef {
             r.brx.clone()
         };
         let why = match &b {
+            // (in 802.15.4 mode: a combined chip's other radio user had the
+            // radio, or its main loop was away for the whole event)
+            None if m.regs[0x404] & 0x03 == 0 => "peripheral not listening (radio in 802.15.4 mode)".to_string(),
             None => "peripheral not listening".to_string(),
             Some(b) => {
                 let bb = b.borrow();

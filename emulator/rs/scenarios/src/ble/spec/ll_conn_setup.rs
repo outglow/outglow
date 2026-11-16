@@ -342,10 +342,31 @@ fn peripheral_latency(s: &mut BleSession) -> R<String> {
     // 4.5.5: active in every event until a packet with NESN = 1 arrives; 4.5.1: listen at least once within
     // each supervision timeout.
     let (lat, iv, to) = (4i64, 24i64, 100i64);
-    s.connect(LinkOpts::new().set("interval", iv).set("latency", lat).set("timeout", to))?;
-    s.wait_event(120, None)?;
-    s.link_run(3.0)?;
-    let got: Vec<i64> = s.lk().pdus.iter().map(|p| p.event).collect::<BTreeSet<_>>().into_iter().collect();
+    // Up to three connections: one whose event 0 or 1 the bulb lost to its
+    // Zigbee side (`lost_to_154`, a beacon request of the network steering
+    // just then) says nothing about latency.
+    let mut tries = 0;
+    let got = loop {
+        tries += 1;
+        s.connect(LinkOpts::new().set("interval", iv).set("latency", lat).set("timeout", to))?;
+        s.wait_event(120, None)?;
+        s.link_run(3.0)?;
+        let got: Vec<i64> = s.lk().pdus.iter().map(|p| p.event).collect::<BTreeSet<_>>().into_iter().collect();
+        if got.contains(&0) && got.contains(&1) {
+            break got;
+        }
+        let lost = s.lost_to_154(&[0, 1])?;
+        if lost.is_empty() {
+            break got;
+        }
+        if tries == 3 {
+            return Err(Stop::Inconclusive(format!(
+                "in each of {tries} connections the bulb's radio was with 802.15.4 in event 0 or 1 (last: {})",
+                py::ints(lost.iter().copied())
+            )));
+        }
+        s.drop_link(6000.0)?;
+    };
     expect(
         got.contains(&0) && got.contains(&1),
         format!("events answered at the start: {} (0 and 1 are required)", py::ints(got.iter().take(6).copied())),

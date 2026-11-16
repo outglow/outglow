@@ -860,6 +860,26 @@ impl BleSession {
             .collect())
     }
 
+    /// The ones of `events` in which the bulb did not hear the central
+    /// because its radio was with 802.15.4 (the Zigbee side was sending, or
+    /// the main loop was away for the whole event): a combined chip's
+    /// coexistence, which costs a connection event now and then by design
+    /// (`ble::ll`, LEAD), not anything the link layer chose. A test that
+    /// needs the bulb in one particular event tries again when it lost that
+    /// event this way.
+    pub fn lost_to_154(&mut self, events: &[i64]) -> R<Vec<i64>> {
+        let misses = self.misses(0)?;
+        let mut v: Vec<i64> = self
+            .central_log()?
+            .iter()
+            .filter(|t| t.missed && events.contains(&t.event))
+            .filter(|t| misses.iter().any(|m| (m.0 - t.ms).abs() < 0.01 && m.2.contains("802.15.4")))
+            .map(|t| t.event)
+            .collect();
+        v.dedup();
+        Ok(v)
+    }
+
     pub fn lost(&mut self) -> R<Vec<(f64, i64, i64, Vec<u8>)>> {
         Ok(self
             .bs_lines("BSLOST 0")?
@@ -1051,14 +1071,50 @@ impl BleSession {
         })
     }
 
-    /// Runs until the central has started event k.
+    /// Runs until the central has started event k, and on to the middle of
+    /// that event's interval (`between_events`): what a test queues then goes
+    /// out in event k + 1.
     pub fn wait_event(&mut self, k: i64, max_ms: Option<f64>) -> R<i64> {
         let ev = self.event()?;
         let iv = self.interval_ms();
         let max_ms = max_ms.filter(|m| *m != 0.0).unwrap_or(((k - ev).abs() + 4) as f64 * iv * 2.0 + 100.0);
         let step = 0.5f64.max(5.0f64.min(iv / 3.0));
         self.link_until(max_ms, Some(step), |s| Ok(if s.lk().st.event() >= k { Some(()) } else { None }))?;
+        self.between_events()?;
         Ok(self.lk().st.event())
+    }
+
+    /// Runs on to half an interval after the start of the central's latest
+    /// event, when that event's exchange is over and the next one is still
+    /// far. The event counter moves when the central sends the event's first
+    /// packet; a test that polls for it at a fixed step comes back anywhere
+    /// in the interval, on some code layouts of the bulb (where its
+    /// advertising, and so the connection, fell) between the central's first
+    /// packet and the bulb's answer. What it queued there went out in the
+    /// same event, after the answer, not in the next one
+    /// (ll_conn_more_data: "sent 0 of the 4 PDUs", the PING_REQs all in
+    /// event k; ll_ctrl_channel_map_before_instant: the map PDU in event 9,
+    /// not 10, on CI's TW image).
+    pub fn between_events(&mut self) -> R<()> {
+        let st = self.poll()?;
+        let (Some(n), Some(now)) = (st.i("sent"), st.f("now")) else { return Ok(()) };
+        if n <= 0 {
+            return Ok(());
+        }
+        let last = self.bs_lines(&format!("BSSENT {}", n - 1))?;
+        let Some((k, t)) = last.last().map(|ln| {
+            let f: Vec<&str> = ln.split_whitespace().collect();
+            (pi(f[1]), pf(f[2]))
+        }) else {
+            return Ok(());
+        };
+        // (times of the bulb's clock, as BSSTATE's now: it starts again at a reset)
+        let left = t + self.interval_ms() / 2.0 - now;
+        if k == st.event() && left > 0.0 {
+            self.run(left)?;
+            self.poll()?;
+        }
+        Ok(())
     }
 
     pub fn run_events(&mut self, n: i64) -> R<i64> {
