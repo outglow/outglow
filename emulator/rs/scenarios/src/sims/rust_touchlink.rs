@@ -728,8 +728,18 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
         }
         listed
     };
+    // Link Status every 15 s: one of them may be lost (the stock bulb's
+    // radio in BLE mode for its advertising just then, over other starts of
+    // the system timer), so up to four periods
     let t0 = c.now();
+    let (r, t) = (c.r, c.t);
+    let both = |s: &Sim| link_status_of(s, r, t0).contains(&new_short("T")) && link_status_of(s, t, t0).contains(&new_short("R"));
     c.run(35000.0)?;
+    let mut waited = 35000.0;
+    while !both(&c.s) && waited < 65000.0 {
+        c.run(1000.0)?;
+        waited += 1000.0;
+    }
     let (lr, lt) = (link_status_of(&c.s, c.r, t0), link_status_of(&c.s, c.t, t0));
     let hs = |v: &[u16]| {
         let mut h: Vec<String> = v.iter().map(|x| format!("{x:#x}")).collect();
@@ -770,22 +780,31 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
         let (st, epid, ch, pan) = (r[4], u64::from_le_bytes(r[5..13].try_into().unwrap()), r[14], u16::from_le_bytes([r[15], r[16]]));
         ok = ok && epid != 0 && (11..=26).contains(&ch) && pan != 0 && pan != 0xFFFF;
         let detail = format!("status {st}, extended PAN {epid:#018x}, channel {ch}, PAN {pan:#06x}; response as long as the stock's");
-        // is it there? a beacon request on that channel
+        // is it there? a beacon request on that channel, sent when the air
+        // is free (the scripted initiator has no CSMA-CA: one that came
+        // 0.03 ms after the end of the bulb's own Link Status found its
+        // radio still turning round from sending, over other starts of the
+        // system timer), and again up to twice, as a scan would
         c.run(1500.0)?;
         c.set_channel(ch as i64);
-        let n0 = c.s.w.air.frames.len();
-        let psdu = with_fcs(&mac_build(3, 0x55, &[0x07], 0xFFFF, 0xFFFF, 2, 0, 0, None, false, false));
-        let b0 = c.now() + 1.0;
-        let b1 = b0 + airtime_us(psdu.len()) / 1000.0;
-        c.s.w.air.at(b0, Ev::Node(c.ini.id, StationEv::Transmit { psdu, t0: b0, t1: b1 }));
-        c.run(300.0)?;
         let mut beacons: Vec<(u64, u64, u64)> = Vec::new();
-        for f in &c.s.w.air.frames[n0..] {
-            if f.who == c.r && f.ch == ch as i64 && f.psdu[0] & 7 == 0 {
-                if let Some(m) = mac_parse(&f.psdu) {
-                    let e = m.payload.get(7..15).map(|b| u64::from_le_bytes(b.try_into().unwrap())).unwrap_or(0);
-                    beacons.push((m.span.unwrap_or(0) as u64, m.src.unwrap_or(0), e));
+        for _ in 0..3 {
+            let n0 = c.s.w.air.frames.len();
+            let psdu = with_fcs(&mac_build(3, 0x55, &[0x07], 0xFFFF, 0xFFFF, 2, 0, 0, None, false, false));
+            let b0 = (c.now() + 1.0).max(c.s.w.air.air_free_at() + 1.0);
+            let b1 = b0 + airtime_us(psdu.len()) / 1000.0;
+            c.s.w.air.at(b0, Ev::Node(c.ini.id, StationEv::Transmit { psdu, t0: b0, t1: b1 }));
+            c.run(300.0)?;
+            for f in &c.s.w.air.frames[n0..] {
+                if f.who == c.r && f.ch == ch as i64 && f.psdu[0] & 7 == 0 {
+                    if let Some(m) = mac_parse(&f.psdu) {
+                        let e = m.payload.get(7..15).map(|b| u64::from_le_bytes(b.try_into().unwrap())).unwrap_or(0);
+                        beacons.push((m.span.unwrap_or(0) as u64, m.src.unwrap_or(0), e));
+                    }
                 }
+            }
+            if !beacons.is_empty() {
+                break;
             }
         }
         cx.check(c.now(), "Network Start Request leaving the choice to the Rust bulb: it answers with a network of its own", ok, &detail);
