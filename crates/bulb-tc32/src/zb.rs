@@ -25,6 +25,25 @@ pub static LOOP_MAX_US: Shared<u32> = Shared::new(0);
 /// The system timer tick at which BLE needs the radio next, as of the last
 /// round (None: BLE off): the main loop's wait ends before it (`lib.rs`).
 pub static BLE_NEXT: Shared<Option<u32>> = Shared::new(None);
+/// An advertising event due this soon keeps the Zigbee stack from its
+/// round (`Link::poll`): a frame it began to send then would hold the main
+/// loop past the event's moment. One CSMA-CA attempt of a short frame takes
+/// up to 3.1 ms (a backoff of up to 7 periods, 2.24 ms, the assessment, the
+/// turnaround and a beacon request's 0.5 ms), and the event came 1 to 2 ms
+/// later than advInterval + 10 ms after the one before (Core 5.4 Vol 6
+/// Part B 4.4.2.2.1: the emulator's ll_adv_interval, over other starts of
+/// the system timer, 2 runs of 32), although the advDelay is drawn from
+/// 0 to 9 ms only (`ble::ll`). Frames that come meanwhile wait in the
+/// radio's queue (16 places), acknowledged. A longer frame begun just
+/// before, or one sent again for want of an acknowledgement, can still make
+/// an event late; connection events are taken as they come (`ble::ll`,
+/// LEAD), a missed one costs nothing but its interval.
+#[cfg(feature = "ble")]
+const ADV_GUARD: u32 = 4_000 * reg::TICKS_PER_US;
+/// The time before BLE's next event that the refresh of the diagnostics
+/// (`diag::Glue::refresh`) needs to run in that round (`Link::poll`).
+#[cfg(feature = "ble")]
+const DIAG_ROOM: u32 = 6_000 * reg::TICKS_PER_US;
 /// The BLE stack's counters as of the last round (for the Diagnostics cluster).
 #[cfg(feature = "ble")]
 static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 });
@@ -608,16 +627,33 @@ impl Radio for Link {
             if !ble.ota_active() {
                 staging::release(Owner::Ble);
             }
-            self.diag.refresh(ble, stack);
+            // Only with room before BLE's next event: the refresh takes the
+            // hardware counters, and with them the stack depth, counted
+            // word by word up through the free RAM (`stack::free`), a
+            // millisecond or two of the CPU while the stack has not gone
+            // deep. Just before an advertising event it made the event
+            // late, 310.2 ms after the one before (the emulator's
+            // ll_adv_interval over other starts of the system timer: the
+            // CPU in stack::untouched when the event was due). Put off, it
+            // comes a round or an event later.
+            if ble.idle_time() >= DIAG_ROOM {
+                self.diag.refresh(ble, stack);
+            }
             if let Some(d) = ble.take_diag_command() {
                 if let Some(c) = self.diag.execute(d, stack) {
                     return Some(c);
                 }
             }
             let c = ble.poll();
-            BLE_NEXT.set(Some(reg::tick().wrapping_add(ble.idle_time())));
+            let idle = ble.idle_time();
+            BLE_NEXT.set(Some(reg::tick().wrapping_add(idle)));
             if let Some(c) = c {
                 return Some(c);
+            }
+            // (also while an event waits for a quiet moment within its
+            // advDelay: idle is 0 then, and nothing of ours is to break it)
+            if idle < ADV_GUARD && ble.link_state() == ble::LinkState::Advertising {
+                return None;
             }
         }
         #[cfg(feature = "ble")]
