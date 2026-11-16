@@ -120,7 +120,7 @@ pub fn run(a: Args) -> Result<()> {
 /// The default build of one board (Bluetooth, no options) into its default
 /// directory, for other tasks; returns that directory.
 pub fn board_default(board_name: &str) -> Result<PathBuf> {
-    let a = Args { board: Some(board_name.into()), all: false, no_ble: false, trace: false, sense: false, file_version: None, out_dir: None };
+    let a = Args { board: Some(board_name.into()), all: false, no_ble: false, trace: false, no_sense: false, file_version: None, out_dir: None };
     build(&crate::root(), board_name, &a, None)?;
     Ok(default_dir(&crate::root(), board_name))
 }
