@@ -230,6 +230,7 @@
     bulb sends a short probe frame a few times a second (5 by default) and measures the signal strength (RSSI) of
     the probes of its neighbours. Each sender heard is a line; when a line's signal starts to swing more than its usual
     noise, someone is crossing it, and the bulb reports occupancy. Philips Hue's MotionAware works on the same idea.</p>
+  <p><a href="sensing.html">How motion sensing works, step by step, with an animation →</a></p>
   <ul class="caveats">
     <li><strong>The probes</strong> go to a separate PAN identifier (<code>0x5E55</code>), without acknowledgement:
       devices without the feature drop them in their radio filter, nobody relays them. About 1 ms of air time each,
