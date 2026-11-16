@@ -11,7 +11,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-use zbnode::{blespec, Node};
+use zbnode::blespec;
 
 use crate::air::{Log, NodeId, World};
 use crate::coord::{Coord, NWK_KEY};
@@ -452,9 +452,7 @@ fn link_defaults() -> LinkOpts {
 
 impl BleSession {
     pub fn new(image: &Image, cpi: i64, log: Option<Log>, boot_ms: f64) -> R<BleSession> {
-        let img = image.bytes().map_err(Stop::Error)?;
-        let shift = image.shift(&img);
-        let node = Node::new(&img, cpi, shift).map_err(emu)?;
+        let node = image.node(cpi).map_err(emu)?;
         // no Trust Center: the bulb is alone on the 802.15.4 air (an empty Medium in Python)
         let coord = Coord::new(11, NWK_KEY);
         let mut w = World::new(node, coord, Keys::default(), log);

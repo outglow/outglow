@@ -119,6 +119,10 @@ pub enum RunEvent {
 /// One emulated bulb: the machine, its 802.15.4 radio and its BLE radio.
 pub struct Node {
     pub m: Machine,
+    /// Where the firmware waits with nothing to do (the Rust image's
+    /// `bulb_idle`): the machine jumps over the wait to its next event
+    /// (`Machine::run`'s idle skipping). Empty: every instruction runs.
+    pub idle: Vec<tc32emu::Range>,
     pub radio: Radio154,
     pub ble_radio: RadioRef,
     /// BLE packets put on the air, not yet handed out.
@@ -434,6 +438,7 @@ impl Node {
         }
         let mut node = Node {
             m: mm,
+            idle: Vec::new(),
             radio,
             ble_radio,
             air_pending,
@@ -475,7 +480,7 @@ impl Node {
         if m.ms() >= target {
             return RunEvent::At;
         }
-        let err = m.run_ms(target, &[]);
+        let err = m.run_ms(target, &self.idle);
         if self.sram_boot_pending.get() {
             self.sram_boot_pending.set(false);
             let mut n = (m.sram[0x0C] as usize | (m.sram[0x0D] as usize) << 8) * 16;
