@@ -187,16 +187,42 @@ function drawRoom(t: number, p: Pt, moving: boolean) {
   const X = (q: Pt) => q.x * w;
   const Y = (q: Pt) => q.y * h;
   g.clearRect(0, 0, w, h);
-  // links
+  // ripples around a moving person: the body disturbs the radio waves near it
+  if (moving && p.x > -0.05 && p.x < 1.05) {
+    for (let k = 0; k < 3; k++) {
+      const f = ((t / 900 + k / 3) % 1);
+      g.strokeStyle = colors.accent!;
+      g.globalAlpha = 0.35 * (1 - f);
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(X(p), Y(p) - 2, 10 + f * 0.16 * w, 0, 2 * Math.PI);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  // links: a disturbed one wobbles (more, the closer the person), a detected one is solid
   for (const l of links) {
     const a = BULBS[l.a]!, b = BULBS[l.b]!;
-    g.lineWidth = l.on ? 4 : 1.5;
-    g.strokeStyle = l.on ? colors.accent! : colors.line!;
-    g.setLineDash(l.on ? [] : [5, 6]);
+    const e = l.near(p) * (moving ? 1 : 0.25);
+    const ax = X(a), ay = Y(a), bx = X(b), by = Y(b);
+    const len = Math.hypot(bx - ax, by - ay);
+    const nx = -(by - ay) / len, ny = (bx - ax) / len;
+    g.lineWidth = l.on ? 4 : 1.5 + 2.5 * e;
+    g.strokeStyle = l.on || e > 0.05 ? colors.accent! : colors.line!;
+    g.globalAlpha = l.on ? 1 : 0.45 + 0.55 * Math.min(1, e * 1.5);
+    g.setLineDash(l.on || e > 0.05 ? [] : [5, 6]);
     g.beginPath();
-    g.moveTo(X(a), Y(a));
-    g.lineTo(X(b), Y(b));
+    const n = 60;
+    for (let i = 0; i <= n; i++) {
+      const f = i / n;
+      // the wobble is largest in the middle of the link, and moves
+      const amp = 7 * e * Math.sin(Math.PI * f) * Math.sin(f * 18 - t / 70);
+      const px = ax + (bx - ax) * f + nx * amp, py = ay + (by - ay) * f + ny * amp;
+      if (i === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
     g.stroke();
+    g.globalAlpha = 1;
   }
   g.setLineDash([]);
   // probes: every bulb sends RATE per second, staggered; a dot travels to each other bulb
@@ -372,13 +398,20 @@ function setPaused(v: boolean) {
 pauseBtn.addEventListener("click", () => setPaused(!paused));
 setPaused(paused);
 
-/// Runs the radio side from `simT` to `end`: a probe from each sender every 1000 / RATE ms.
+/// The radio side's own clock: it catches up with the animation in whole
+/// steps (a browser frame is shorter than a step).
+let radioT = 0;
+const STEP = 20;
+
+/// Runs the radio side up to `end`: a probe from each sender every 1000 / RATE ms.
 function advance(end: number) {
-  for (let ts = simT + 20; ts <= end; ts += 20) {
+  while (radioT + STEP <= end) {
+    const ts = radioT + STEP;
     const { p, moving } = personAt(ts);
-    if (Math.floor(ts / (1000 / RATE)) !== Math.floor((ts - 20) / (1000 / RATE))) {
+    if (Math.floor(ts / (1000 / RATE)) !== Math.floor(radioT / (1000 / RATE))) {
       for (const l of links) l.frame(ts, p, moving, s);
     }
+    radioT = ts;
   }
   simT = end;
 }
@@ -386,11 +419,15 @@ function advance(end: number) {
 // `?at=ms` starts at that moment of the walk (and paused); with motion
 // reduced the demo starts paused too, on a moment worth seeing
 const at = Number(new URLSearchParams(location.search).get("at"));
+// (in browser-frame sized steps, as the animation does)
+const replay = (end: number) => {
+  for (let x = 16; x <= end; x += 16) advance(x);
+};
 if (at > 0) {
-  advance(at);
+  replay(at);
   setPaused(true);
 } else if (paused) {
-  advance(4200);
+  replay(4200);
 }
 
 function tick(now: number) {
