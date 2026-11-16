@@ -175,7 +175,8 @@ jobs:
       # some frames differently (touchlink commands, BLE advertising names)
       - name: tshark 4.6 (wireshark and ble_wireshark check the frames with it)
         run: |
-          sudo add-apt-repository -y ppa:wireshark-dev/stable
+          # (Launchpad answers 500 now and then: a few tries)
+          for i in 1 2 3 4 5; do sudo add-apt-repository -y ppa:wireshark-dev/stable && break; sleep 20; done
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
           tshark --version | head -1
