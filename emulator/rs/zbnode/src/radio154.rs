@@ -335,10 +335,20 @@ impl Radio154 {
         }));
         m.level_sources.push(Rc::new(irq_level));
         let r5 = r.clone();
+        // A reset (a power cut above all) ends whatever the radio was doing:
+        // a frame arriving then is gone with its signal strength, and the
+        // events still scheduled for it (its end, the end of one being sent)
+        // are in the clock that has just started again at zero. Left in
+        // place, a frame cut by a power cycle kept the RSSI register at its
+        // level until another frame ended (the bulb took the channel for
+        // busy and left out three advertising events of four: rust_ble_switch
+        // on CI's image), and a stale end could hand the driver a ghost frame.
         m.reset_hooks.push(Rc::new(move |_m: &mut Machine| {
             let mut s = r5.b();
             s.tx_busy = false;
             s.rx.clear();
+            s.rssi_now = 0;
+            s.sched.clear();
         }));
         r
     }
@@ -638,5 +648,32 @@ impl Radio154 {
             self.b().received += 1;
         }
         m.regs[0xF20] |= STATUS_RX;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tc32emu::{Config, Flash};
+
+    /// A power cut while a frame arrives: after the reset the RSSI register
+    /// reads the quiet channel again, and nothing of that frame is left to
+    /// come (its end was scheduled in the clock the reset started again).
+    #[test]
+    fn reset_mid_frame_forgets_the_frame() {
+        let mut fl = Flash::new(Config::env().flash_size);
+        fl.mem[8] = 0x4B;
+        let mut m = Machine::new(fl, -1, 1).unwrap();
+        let r = Radio154::new(&mut m);
+        // tuned to 2405 MHz, channel 11
+        m.regs[0x1245] = 37;
+        m.regs[0x1244] = 37 << 2;
+        assert_eq!(channel(&m), 11);
+        r.inject(Frame { t0: 0.0, t1: 1.0, channel: 11, psdu: vec![0x02, 0x00, 0x01, 0x00, 0x00] }, -40);
+        m.update_time().unwrap();
+        assert_eq!(m.reg_read(0x441, 1).unwrap(), 70, "the frame's signal while it arrives");
+        m.reset(-1, false).unwrap();
+        assert_eq!(m.reg_read(0x441, 1).unwrap(), 0, "the signal after the reset");
+        assert!(r.b().sched.is_empty(), "the frame's end is still scheduled");
     }
 }
