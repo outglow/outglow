@@ -104,7 +104,7 @@ cargo sims -- addr_conflict_house                # a weekly one, by its whole na
 ```
 
 The weekly ones (`WEEKLY` in `scenarios/src/sims/mod.rs`: `addr_conflict`,
-`_btt`, `_echo`, `_multihop`, `_house`, `enddev_wallswitch`, `_edinit`)
+`_echo`, `_multihop`, `_house`, `enddev_wallswitch`, `_edinit`)
 measure the original firmware for the address conflict study; their checks
 hold whatever the numbers, so CI runs them once a week, not every night.
 
@@ -133,7 +133,7 @@ flash as it was at that moment.
 | Scenario | What |
 |---|---|
 | `addr_conflict` | a router joined through a bulb changes its address while the bulb is off; probes after power-up |
-| `addr_conflict_btt` | how long a bulb remembers a broadcast; two broadcasts at once; Route Request duplicates; Device_annce checks |
+| `addr_conflict_btt` | the house problem in small: a Device_annce and the coordinator's permit-join 0-20 ms apart, both relayed in time and never late (Rust by default: checked; in the pull request set); `ADDR_CONFLICT_BTT_FULL=1`: how long a bulb remembers a broadcast, Route Request duplicates, Device_annce checks |
 | `addr_conflict_echo` | how long one broadcast is relayed in a full mesh |
 | `addr_conflict_child` | a neighbouring router changes its address while the bulb is on (Rust by default: checked) |
 | `addr_conflict_multihop` | the router reached through two bulbs; route discovery, a power cycle |
@@ -143,8 +143,8 @@ flash as it was at that moment.
 | `enddev_wallswitch`, `_edinit` | a sleepy end device whose parent bulb is switched off and on: lost presses, rejoin, stale child entries |
 
 Images: `--image bulb=…` (and `--image tw=…` for the tunable white bulbs);
-the original firmware by default, but for `addr_conflict_child`, `_victim`
-and `_channel`, which run the Rust firmware and check what Outglow does (on
+the original firmware by default, but for `addr_conflict_btt`, `_child`,
+`_victim` and `_channel`, which run the Rust firmware and check what Outglow does (on
 the original firmware the checks of child and channel fail, as measured).
 Original bulbs need a valid factory MAC record at 0xFF000 in the image
 (BLE MAC little endian, OUI a4:c1:38 last); anything else is replaced by a

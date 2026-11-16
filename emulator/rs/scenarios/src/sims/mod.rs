@@ -98,7 +98,6 @@ pub fn sims() -> Vec<SimDef> {
 /// named exactly (`cargo sims -- addr_conflict_house`) runs as any other.
 pub const WEEKLY: &[&str] = &[
     "addr_conflict",
-    "addr_conflict_btt",
     "addr_conflict_echo",
     "addr_conflict_multihop",
     "addr_conflict_house",
