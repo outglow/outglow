@@ -3,10 +3,10 @@
   "generated": "2026-11-16",
   "how": "cargo xtask compare: the conformance tests of emulator/rs/scenarios (cargo spec, cargo ble-spec) run in the Outglow emulator on the original firmware images and on Outglow images built from this repository",
   "outglow": {
-    "commit": "1bd4673",
+    "commit": "3ac2dc5",
     "commit_date": "2026-11-16",
-    "describe": "1bd4673",
-    "url": "https://github.com/outglow/outglow/commit/1bd4673"
+    "describe": "3ac2dc5",
+    "url": "https://github.com/outglow/outglow/commit/3ac2dc5"
   },
   "schema": 1,
   "source": "emulator",
@@ -9146,7 +9146,7 @@
     },
     {
       "ambiguous": null,
-      "area": "Bluetooth link layer",
+      "area": "Bluetooth pairing and encryption",
       "clause": "5.1.4, 5.1.4.1",
       "doc": "Core 5.4 Vol 6 Part B",
       "id": "ll_ctrl_feature_used",
@@ -9157,17 +9157,15 @@
       "results": {
         "dimm": {
           "outglow": "PASS",
-          "stock": "FAIL",
-          "stock_note": "FeatureSet_P octet 0 = 0x3d; central octet 0 = 0x00: response octet 0 = 0x3d, expected 0x00; central octet 0 = 0x01: response octet 0 = 0x3d, expected 0x01; central octet 0 = 0x24: response octet 0 = 0x3d, expected 0x24"
+          "stock": "WITHHELD"
         },
         "tw": {
           "outglow": "PASS",
-          "stock": "FAIL",
-          "stock_note": "FeatureSet_P octet 0 = 0x3d; central octet 0 = 0x00: response octet 0 = 0x3d, expected 0x00; central octet 0 = 0x01: response octet 0 = 0x3d, expected 0x01; central octet 0 = 0x24: response octet 0 = 0x3d, expected 0x24"
+          "stock": "WITHHELD"
         }
       },
       "suite": "ble",
-      "withheld": null
+      "withheld": "security"
     },
     {
       "ambiguous": null,
@@ -9403,7 +9401,7 @@
     },
     {
       "ambiguous": null,
-      "area": "Bluetooth link layer",
+      "area": "Bluetooth pairing and encryption",
       "clause": "5.1.6, 2.4.2.3",
       "doc": "Core 5.4 Vol 6 Part B",
       "id": "ll_ctrl_peripheral_terminate",
@@ -9414,21 +9412,19 @@
       "results": {
         "dimm": {
           "outglow": "PASS",
-          "stock": "INCONCLUSIVE",
-          "stock_note": "the application's reset command did not make the bulb end the connection"
+          "stock": "WITHHELD"
         },
         "tw": {
           "outglow": "PASS",
-          "stock": "INCONCLUSIVE",
-          "stock_note": "the application's reset command did not make the bulb end the connection"
+          "stock": "WITHHELD"
         }
       },
       "suite": "ble",
-      "withheld": null
+      "withheld": "security"
     },
     {
       "ambiguous": null,
-      "area": "Bluetooth link layer",
+      "area": "Bluetooth pairing and encryption",
       "clause": "5.1.6",
       "doc": "Core 5.4 Vol 6 Part B",
       "id": "ll_ctrl_peripheral_terminate_timer",
@@ -9439,17 +9435,15 @@
       "results": {
         "dimm": {
           "outglow": "PASS",
-          "stock": "INCONCLUSIVE",
-          "stock_note": "the application's reset command did not make the bulb end the connection"
+          "stock": "WITHHELD"
         },
         "tw": {
           "outglow": "PASS",
-          "stock": "INCONCLUSIVE",
-          "stock_note": "the application's reset command did not make the bulb end the connection"
+          "stock": "WITHHELD"
         }
       },
       "suite": "ble",
-      "withheld": null
+      "withheld": "security"
     },
     {
       "ambiguous": null,

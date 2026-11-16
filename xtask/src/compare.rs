@@ -62,8 +62,13 @@ const SECURITY: &str = "security";
 const ACCESS: &str = "access";
 
 /// Tests (module, id or id prefix) whose result on the original firmware is not published.
-const WITHHELD: [(&str, &str); 13] = [
+const WITHHELD: [(&str, &str); 16] = [
     ("security_keys", SECURITY),
+    // what the original firmware claims about encryption, and its own
+    // reset command over Bluetooth: next to findings not yet disclosed
+    ("ll_ctrl_feature_used", SECURITY),
+    ("ll_ctrl_peripheral_terminate", SECURITY),
+    ("ll_ctrl_peripheral_terminate_timer", SECURITY),
     ("NWK-SEC-", SECURITY),
     ("NWK-REJOIN-", SECURITY),
     ("PAR-JOIN-", SECURITY),
