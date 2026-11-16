@@ -11,7 +11,6 @@ pub mod ble_central;
 pub mod ble_diag;
 pub mod board_check;
 pub mod ble_mesh;
-pub mod ble_ota;
 pub mod enddev_wallswitch;
 pub mod interop;
 pub mod app_colour;
@@ -63,7 +62,6 @@ pub fn sims() -> Vec<SimDef> {
         board_check::def(),
         ble_diag::def(),
         ble_mesh::def(),
-        ble_ota::def(),
         interop::def(),
         app_colour::def(),
         mesh::def(),

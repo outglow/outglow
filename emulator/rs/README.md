@@ -93,7 +93,7 @@ NotApplicable}` are the verdicts.
 
 ```sh
 cargo sims -- --list
-cargo sims -- rust_diag ble_ota                  # some (substring of the name)
+cargo sims -- rust_diag rust_staging             # some (substring of the name)
 cargo sims -- --skip stress --skip addr_conflict # all but the long ones
 cargo sims -- zigbee --image bin=path/to/x.bin   # another image for a role
 cargo sims -- rust_fw -v                         # every line as it happens
@@ -102,7 +102,7 @@ cargo sims -- rust_fw -v                         # every line as it happens
 Among them: joining, light and OTA of the Rust firmware (`rust_fw`,
 `ota_rust`, `power_cut`), Zigbee and BLE together (`rust_ble`,
 `rust_ble_switch`), the first update over BLE from the original firmware
-(`ble_ota`), the vendor app's mesh and colour commands (`ble_mesh`, `mesh`,
+and back (`migrate`, `back_to_stock_ble`, `back_to_stock_ota`), the vendor app's mesh and colour commands (`ble_mesh`, `mesh`,
 `interop`, `app_colour`), the parent role under load (`parent_load`),
 diagnostics (`rust_diag`, `stress_diag`; the device page's BLE service,
 `ble_diag`, with `BLE_DIAG_DUMP=<file>` for the values it read), every board against its original

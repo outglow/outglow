@@ -29,7 +29,6 @@ const COST_S: &[(&str, u32)] = &[
     ("addr_conflict_channel", 160),
     ("enddev_wallswitch", 115),
     ("back_to_stock_ble", 95),
-    ("ble_ota", 55),
     ("rust_sense", 50),
 ];
 const OTHER_S: u32 = 20;
