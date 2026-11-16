@@ -182,7 +182,10 @@ impl<H: Hal> Stack<H> {
         self.allow_children && self.has_child_room()
     }
 
-    /// A short address nobody we know of uses.
+    /// A short address nobody we know of uses: nor in the address map, where
+    /// a device we talk to keeps its address (a child given one of those
+    /// would conflict with it, and its own frames would be taken for the
+    /// conflict, `address_seen`).
     pub(crate) fn new_address(&mut self) -> u16 {
         loop {
             let a = (self.hal.random() % 0xFFF7) as u16;
@@ -190,7 +193,8 @@ impl<H: Hal> Stack<H> {
                 || a == self.nib.short
                 || self.child_index(a).is_some()
                 || self.neighbor_index(a).is_some()
-                || self.route_index(a).is_some();
+                || self.route_index(a).is_some()
+                || self.addr_map.iter().any(|e| e.1 == a && e.0 != 0);
             if !taken {
                 return a;
             }
