@@ -172,7 +172,13 @@ jobs:
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
           tshark --version | head -1
+      # part 1 is addr_conflict_house alone (`--shard` gives the longest a part
+      # of its own): nine original bulbs that never idle, about 500 s of air,
+      # 22 min one after another; its bulbs run in parallel threads instead
+      # (deterministic, the same verdicts; emulator/rs/scenarios/src/par.rs)
       - name: Scenarios (the long ones with the original firmware among them)
+        env:
+          ZB_PARALLEL: ${{ matrix.shard == 1 && '1' || '0' }}
         run: cargo sims -- --shard ${{ matrix.shard }}/6
 
   # what pull requests do not run: the Zigbee conformance tests at full
