@@ -131,7 +131,7 @@ flash as it was at that moment.
 | `addr_conflict_house` | nine bulbs, a corridor out of the coordinator's range; `ADDR_CONFLICT_ROUNDS`, `ADDR_CONFLICT_MINUTES` |
 | `addr_conflict_victim` | late copies of the bulb's own broadcast: does it change its address? |
 | `addr_conflict_channel` | a channel change while a bulb is off (`CH_WAIT_S`, `CH_DUMP`) |
-| `enddev_wallswitch`, `_first`, `_edinit` | a sleepy end device whose parent bulb is switched off and on: lost presses, rejoin, stale child entries |
+| `enddev_wallswitch`, `_edinit` | a sleepy end device whose parent bulb is switched off and on: lost presses, rejoin, stale child entries |
 
 Images: `--image bulb=…` (and `--image tw=…` for the tunable white bulbs).
 Original bulbs need a valid factory MAC record at 0xFF000 in the image
