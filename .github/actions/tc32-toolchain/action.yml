@@ -3,7 +3,9 @@ description: >
   The llvm-tc32 fork (clang, lld and the LLVM tools `cargo xtask build` uses,
   ARM target only) at the commit in xtask/llvm-tc32.ref: the prebuilt package
   from this repository's releases (toolchain workflow), else cached, else built
-  (about an hour). Also the pinned Rust toolchain with rust-src. Sets TC32_LLVM.
+  (about an hour). Also Nix and the shell of flake.nix (the pinned rustc,
+  cargo and the standard library sources: the same image as anywhere else)
+  for every later step. Sets TC32_LLVM.
 inputs:
   llvm-ref:
     description: commit of goyamamoto/llvm-tc32 (default xtask/llvm-tc32.ref)
@@ -11,13 +13,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Rust toolchain
-      shell: bash
-      run: |
-        rustup toolchain install "$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" \
-          --profile minimal --component rust-src
-        rustc -vV
-
     - name: Which llvm-tc32
       id: ref
       shell: bash
@@ -88,3 +83,6 @@ runs:
     - name: Environment
       shell: bash
       run: echo "TC32_LLVM=$RUNNER_TEMP/llvm-tc32/bin" >> "$GITHUB_ENV"
+
+    # last: the steps above (building llvm-tc32 among them) in the runner's own environment
+    - uses: ./.github/actions/nix-shell

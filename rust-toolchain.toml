@@ -1,4 +1,6 @@
-# The stable rustc whose LLVM bitcode the llvm-tc32 fork reads (cargo xtask build).
+# For rustup users: the rustc version of the Nix shell (flake.nix), which builds
+# the images. rustup's 1.99.0 has another LLVM than nixpkgs' and so gives a
+# different firmware image (cargo xtask build warns); `nix develop` ignores this file.
 [toolchain]
 channel = "1.99.0"
 components = ["rust-src"]

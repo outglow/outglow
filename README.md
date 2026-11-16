@@ -61,9 +61,13 @@ Written from scratch in Rust, with no vendor code: the chip start-up, the
 The TC32 core of the TLSR8258 has no backend in upstream LLVM, so the build
 goes through LLVM bitcode and the [llvm-tc32](https://github.com/goyamamoto/llvm-tc32)
 fork. `cargo xtask toolchain` downloads a build of it from this repository's
-releases; elsewhere, build it yourself and set `TC32_LLVM` to its `bin`:
+releases; elsewhere, build it yourself and set `TC32_LLVM` to its `bin`.
+Build in the Nix shell of `flake.nix` (`nix develop`), as CI does: rustc's
+LLVM shapes the code, so only that pinned rustc gives the same image byte for
+byte (`cargo xtask build` warns under any other).
 
 ```sh
+nix develop                                    # the pinned rustc, cargo and std sources
 cargo xtask toolchain                          # downloads llvm-tc32 (Linux x86-64, macOS arm64)
 cargo xtask build                              # dimmable filament bulb
 cargo xtask build --board EGLO_ZM_TW-4.62      # any board of crates/bulb-tc32/boards.tsv
