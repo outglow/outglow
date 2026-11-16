@@ -79,7 +79,10 @@ pub fn run(cx: &mut SimCtx, from: &crate::image::Image, ota_img: &crate::image::
            layout: Layout) -> R<()> {
     let mut z = Z::new(cx, from)?;
     let r = body(&mut z, from, ota_img, expect, layout);
-    finish(&mut z, cx, "ota-sim.pcap");
+    // one pcap per image updated: ota_rust and the lab's ota_awox (the C
+    // firmware) run side by side through this function
+    let stem = from.path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    finish(&mut z, cx, &format!("ota-sim-{stem}.pcap"));
     if let Some(l) = super::util::stack_report(z.w.node(crate::air::NodeId::Dut), from) {
         cx.say(&l);
     }
