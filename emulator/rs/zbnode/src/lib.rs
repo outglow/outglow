@@ -15,6 +15,8 @@ pub mod gostr;
 pub mod radio154;
 pub mod regtrace;
 
+static PROF_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::env;
@@ -117,6 +119,10 @@ pub enum RunEvent {
 /// One emulated bulb: the machine, its 802.15.4 radio and its BLE radio.
 pub struct Node {
     pub m: Machine,
+    /// Where the firmware waits with nothing to do (the Rust image's
+    /// `bulb_idle`): the machine jumps over the wait to its next event
+    /// (`Machine::run`'s idle skipping). Empty: every instruction runs.
+    pub idle: Vec<tc32emu::Range>,
     pub radio: Radio154,
     pub ble_radio: RadioRef,
     /// BLE packets put on the air, not yet handed out.
@@ -285,6 +291,58 @@ impl Node {
                 }));
             }
         }
+        // ZBNODE_CALLERS=0xADDR,...: on entry to each, counts the return
+        // addresses (lr) and prints them when the node goes.
+        if let Ok(list) = env::var("ZBNODE_CALLERS") {
+            for at in list.split(',').filter(|x| !x.is_empty()) {
+                struct Callers(u32, RefCell<std::collections::HashMap<u32, u64>>);
+                impl Drop for Callers {
+                    fn drop(&mut self) {
+                        let mut v: Vec<_> = self.1.borrow().iter().map(|(a, b)| (*b, *a)).collect();
+                        v.sort_by(|a, b| b.cmp(a));
+                        let top: Vec<String> = v.iter().take(12).map(|(n, a)| format!("{a:#x}:{n}")).collect();
+                        eprintln!("CALLERS of {:#x}: {}", self.0, top.join(" "));
+                    }
+                }
+                let a = (hex_i64(at) & !1) as u32;
+                let c = Rc::new(Callers(a, RefCell::new(std::collections::HashMap::new())));
+                m.hooks.insert(a, Rc::new(move |m: &mut Machine| {
+                    *c.1.borrow_mut().entry((m.r[14] & !1) ^ (m.r[2] << 20)).or_insert(0) += 1;
+                    Ok(())
+                }));
+            }
+        }
+        // ZBNODE_PCPROF=file: instructions executed per address, written as
+        // "pc count" lines when the node goes (profiling the firmware's time).
+        if let Ok(path) = env::var("ZBNODE_PCPROF") {
+            if !path.is_empty() && m.trace_step.is_none() {
+                struct Prof {
+                    path: String,
+                    counts: RefCell<std::collections::HashMap<u32, u64>>,
+                }
+                impl Drop for Prof {
+                    fn drop(&mut self) {
+                        use std::io::Write;
+                        let mut v: Vec<_> = self.counts.borrow().iter().map(|(a, b)| (*a, *b)).collect();
+                        v.sort();
+                        let id = std::process::id();
+                        let n = PROF_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if let Ok(mut f) = std::fs::File::create(format!("{}.{id}.{n}", self.path)) {
+                            for (a, c) in v {
+                                let _ = writeln!(f, "{a:#x} {c}");
+                            }
+                        }
+                    }
+                }
+                // the application's size from its header (0x6A000 + 0x18): which image this is
+                let hdr = |i: usize| m.flash.mem.get(0x6A018 + i).copied().unwrap_or(0) as u32;
+                let size = hdr(0) | hdr(1) << 8 | hdr(2) << 16 | hdr(3) << 24;
+                let prof = Rc::new(Prof { path: format!("{path}.size{size}"), counts: RefCell::new(std::collections::HashMap::new()) });
+                m.trace_step = Some(Rc::new(move |_m: &mut Machine, pc: u32, _hw: u16| {
+                    *prof.counts.borrow_mut().entry(pc).or_insert(0) += 1;
+                }));
+            }
+        }
         let ble_log: Option<Rc<dyn Fn(&str)>> = if env_set("ZBNODE_BLE_LOG") { Some(Rc::new(|s: &str| eprintln!("{}", s))) } else { None };
         let ble_radio = RadioRef::new(m, ble_log);
         // BLE air between nodes: every STX/STX2RX goes out as an AirTx.
@@ -380,6 +438,7 @@ impl Node {
         }
         let mut node = Node {
             m: mm,
+            idle: Vec::new(),
             radio,
             ble_radio,
             air_pending,
@@ -421,7 +480,7 @@ impl Node {
         if m.ms() >= target {
             return RunEvent::At;
         }
-        let err = m.run_ms(target, &[]);
+        let err = m.run_ms(target, &self.idle);
         if self.sram_boot_pending.get() {
             self.sram_boot_pending.set(false);
             let mut n = (m.sram[0x0C] as usize | (m.sram[0x0D] as usize) << 8) * 16;

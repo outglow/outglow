@@ -127,6 +127,10 @@ pub const ANA_CTRL: usize = 0xba;
 pub const SYSTEM_TICK: usize = 0x740;
 /// System timer control: bit 0 start.
 pub const SYSTEM_TICK_CTRL: usize = 0x74f;
+/// System timer compare: its interrupt source is set when the tick passes it.
+pub const SYSTEM_TICK_IRQ: usize = 0x744;
+/// Bit 1: the compare's interrupt source enabled (still masked by 0x640).
+pub const SYSTEM_TICK_MODE: usize = 0x74c;
 
 /// PWM0 enable (bit 0).
 pub const PWM0_ENABLE: usize = 0x781;

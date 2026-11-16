@@ -183,6 +183,13 @@ impl<H: Hal> Ble<H> {
     /// Runs the BLE side: an advertising or connection event when one is
     /// due, then received packets and timers. Returns a command for the
     /// light when the app sent one.
+    /// System timer ticks the radio stays free before the link layer needs
+    /// it for its next event (0: now).
+    pub fn idle_time(&mut self) -> u32 {
+        let now = self.hal.now();
+        self.link_idle_time(now)
+    }
+
     pub fn poll(&mut self) -> Option<Command> {
         self.link_poll();
         if self.link.state == LinkState::Connected {

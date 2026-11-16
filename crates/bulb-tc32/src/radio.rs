@@ -718,6 +718,12 @@ pub fn counters() -> (u32, u32, u8, u8) {
 
 /// Takes the next received MPDU; returns its length, the RSSI in dBm and
 /// the system timer tick at which the frame ended.
+/// Whether a received frame waits in the queue (`receive`).
+#[inline(always)]
+pub fn has_frame() -> bool {
+    HEAD.get() != TAIL.get()
+}
+
 pub fn receive(buf: &mut [u8; 127]) -> Option<(usize, i32, u32)> {
     let tail = TAIL.get() as usize;
     let head = HEAD.get() as usize;

@@ -22,6 +22,9 @@ use crate::staging::{self, Owner};
 
 /// The longest round of the main loop since the start, microseconds (`lib.rs`).
 pub static LOOP_MAX_US: Shared<u32> = Shared::new(0);
+/// The system timer tick at which BLE needs the radio next, as of the last
+/// round (None: BLE off): the main loop's wait ends before it (`lib.rs`).
+pub static BLE_NEXT: Shared<Option<u32>> = Shared::new(None);
 /// The BLE stack's counters as of the last round (for the Diagnostics cluster).
 #[cfg(feature = "ble")]
 static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 });
@@ -591,6 +594,12 @@ impl Radio for Link {
         // BLE first: its events have their moments, and it gives the radio
         // back before the stack looks at it (`ble_switch` has decided whether
         // it runs at all)
+        // (no BLE: the main loop's wait does not end for it; a round that
+        // returned before this point keeps the last moment, which is safe)
+        #[cfg(feature = "ble")]
+        if self.ble.is_none() {
+            BLE_NEXT.set(None);
+        }
         #[cfg(feature = "ble")]
         if let Some(ble) = self.ble.as_mut() {
             BLE_STATS.set(ble.stats);
@@ -603,7 +612,9 @@ impl Radio for Link {
                     return Some(c);
                 }
             }
-            if let Some(c) = ble.poll() {
+            let c = ble.poll();
+            BLE_NEXT.set(Some(reg::tick().wrapping_add(ble.idle_time())));
+            if let Some(c) = c {
                 return Some(c);
             }
         }

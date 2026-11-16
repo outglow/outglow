@@ -299,9 +299,7 @@ fn emu(e: String) -> Stop {
 impl Session {
     /// Boots `image` and (with `opts.join`) lets it join the coordinator.
     pub fn new(image: &Image, opts: SessionOpts) -> R<Session> {
-        let img = image.bytes().map_err(Stop::Error)?;
-        let shift = image.shift(&img);
-        let node = Node::new(&img, opts.cpi, shift).map_err(emu)?;
+        let node = image.node(opts.cpi).map_err(emu)?;
         let mut keys = crate::frames::Keys::default();
         keys.set_nwk(0, NWK_KEY);
         keys.add_link(TCLK_DEFAULT);

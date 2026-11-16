@@ -21,9 +21,7 @@ const D: NodeId = NodeId::Dut;
 /// elsewhere (the same code with another layout came up without BLE), and
 /// gives the ELF's offset for the C images and the stock (no ELF) as before.
 pub fn node_heuristic(img: &Image, cpi: i64) -> R<zbnode::Node> {
-    let bytes = img.bytes().map_err(Stop::Error)?;
-    let shift = img.shift(&bytes);
-    zbnode::Node::new(&bytes, cpi, shift).map_err(Stop::Error)
+    img.node(cpi).map_err(Stop::Error)
 }
 
 /// `session()`: boot, connect at 30 ms, discover, log in as "unpaired".

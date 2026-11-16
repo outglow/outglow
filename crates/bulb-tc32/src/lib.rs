@@ -43,6 +43,14 @@ use bulb_core::{Bulb, Command};
 
 /// The main loop must come round at least this often, or the chip restarts.
 const WATCHDOG_MS: u32 = 2_000;
+/// The longest a round with nothing to do waits in `bulb_idle`: what is not
+/// driven by an interrupt (the timers of the stack and of the light, the
+/// debug link) is taken up that much later at most.
+const IDLE_MAX: u32 = 1_000 * reg::TICKS_PER_US;
+/// The main loop comes round this long before BLE needs the radio.
+const IDLE_BLE_MARGIN: u32 = 300 * reg::TICKS_PER_US;
+/// A wait shorter than this is not worth it.
+const IDLE_MIN: u32 = 50 * reg::TICKS_PER_US;
 
 #[allow(unsafe_code)] // a linker attribute
 
@@ -67,17 +75,41 @@ pub extern "C" fn main() -> ! {
     }
     let uptime = board::SystemClock::new();
     board::watchdog_start(WATCHDOG_MS);
-    let mut round = reg::tick();
+    // the compare's interrupt source on, for `bulb_idle`; it stays masked
+    reg::set8(reg::SYSTEM_TICK_MODE, 0x02);
     loop {
         board::watchdog_feed();
-        let now = reg::tick();
-        let us = now.wrapping_sub(round) / reg::TICKS_PER_US;
-        round = now;
-        zb::LOOP_MAX_US.update(|m| m.max(us));
+        let start = reg::tick();
         bulb.tick();
         cycles.tick(uptime.now_ms());
         link::publish_reset_step(cycles.step());
+        let end = reg::tick();
+        zb::LOOP_MAX_US.update(|m| m.max(end.wrapping_sub(start) / reg::TICKS_PER_US));
+        let mut wait = IDLE_MAX;
+        if let Some(next) = zb::BLE_NEXT.get() {
+            // (a moment already past wraps to a huge "left", hence the sign)
+            let left = next.wrapping_sub(end) as i32;
+            wait = wait.min(left.max(0) as u32).saturating_sub(IDLE_BLE_MARGIN);
+        }
+        if wait >= IDLE_MIN {
+            bulb_idle(end.wrapping_add(wait));
+        }
     }
+}
+
+/// A round of the main loop with nothing to do waits here, interrupts on,
+/// until `until` or until a frame has come in. On the chip it is the busy
+/// loop the main loop always was, in one place: the emulator, finding this
+/// function by its name, jumps over the wait to the next event instead of
+/// running it instruction by instruction (idle skipping). For that the
+/// system timer's compare is set to `until`; its interrupt source is on but
+/// masked (0x640), so it is never taken.
+#[allow(unsafe_code)] // a linker attribute
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn bulb_idle(until: u32) {
+    reg::write32(reg::SYSTEM_TICK_IRQ, until);
+    while (until.wrapping_sub(reg::tick()) as i32) > 0 && !radio::has_frame() {}
 }
 
 /// Factory reset: the network, the tables and the light's settings go, and

@@ -170,8 +170,15 @@ fn probe_for(s: &mut Session, total_ms: f64) -> R<Option<f64>> {
 /// key it uses for its own frames shows.
 fn provoke(s: &mut Session, ms: f64) -> R<usize> {
     let i = s.mark();
-    s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(3));
-    s.run(ms)?;
+    // A broadcast nobody passed on goes again, as a coordinator sends it
+    // (R22 3.6.5): the bulb may have been on BLE for the one copy.
+    for _ in 0..3 {
+        s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(3));
+        s.run(ms)?;
+        if !s.frames(i, DUT, |_| true).is_empty() {
+            break;
+        }
+    }
     Ok(i)
 }
 

@@ -51,6 +51,21 @@ impl Image {
         self.link_shift.unwrap_or_else(|| link_shift(img, Some(&self.path)))
     }
 
+    /// A node booted from this image. For an image whose ELF has `bulb_idle`
+    /// (where the Rust firmware waits with nothing to do) the emulator jumps
+    /// over that wait to the next event; `ZBNODE_NO_IDLE=1` runs it instead.
+    pub fn node(&self, cpi: i64) -> Result<zbnode::Node, String> {
+        let bytes = self.bytes()?;
+        let shift = self.shift(&bytes);
+        let mut node = zbnode::Node::new(&bytes, cpi, shift)?;
+        if std::env::var_os("ZBNODE_NO_IDLE").is_none() {
+            if let Some((at, size)) = self.symbol_sized("bulb_idle") {
+                node.idle = vec![tc32emu::Range { lo: at & !1, hi: (at & !1) + size }];
+            }
+        }
+        Ok(node)
+    }
+
     /// A symbol of the ELF next to the .bin (`x.elf` for `x.bin` or `x-ota.bin`).
     pub fn symbol(&self, name: &str) -> Option<u32> {
         self.symbol_sized(name).map(|(v, _)| v)

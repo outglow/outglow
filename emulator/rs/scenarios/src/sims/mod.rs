@@ -201,9 +201,7 @@ pub fn emu(e: String) -> Stop {
 }
 
 pub fn node_of(img: &Image, cpi: i64) -> R<Node> {
-    let bytes = img.bytes().map_err(Stop::Error)?;
-    let shift = img.shift(&bytes);
-    Node::new(&bytes, cpi, shift).map_err(emu)
+    img.node(cpi).map_err(emu)
 }
 
 impl Sim {
