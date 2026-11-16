@@ -89,7 +89,9 @@ jobs:
         part:
           - { name: scenarios, run: cargo sims-quick, devtools: true }
           - { name: with the original firmware, run: cargo sims-stock, stock: true }
-          - { name: Zigbee conformance, run: cargo spec -- --cpi 24 }
+          # full fidelity (--cpi 24 shifts timings) against the committed
+          # verdicts of emulator/rs/scenarios/expect/{zigbee,ble}-dimm.txt
+          - { name: Zigbee conformance, run: cargo spec && cargo ble-spec }
     steps:
       - uses: actions/checkout@v4
       - name: TC32 toolchain (rust_fw disassembles the image with its llvm-objdump)
@@ -181,11 +183,12 @@ jobs:
           ZB_PARALLEL: ${{ matrix.shard == 1 && '1' || '0' }}
         run: cargo sims -- --shard ${{ matrix.shard }}/6
 
-  # what pull requests do not run: the Zigbee conformance tests at full
-  # fidelity (pull requests: --cpi 24), the Bluetooth conformance tests, and
-  # the Zigbee2MQTT converter against the published zigbee-herdsman-converters
+  # what pull requests do not run: the conformance tests on the tunable white
+  # image (where the Color Control tests apply) and the Zigbee2MQTT converter
+  # against the published zigbee-herdsman-converters; every run is checked
+  # against its committed verdicts in emulator/rs/scenarios/expect/
   firmware-nightly-conformance:
-    name: Conformance (full fidelity) and the Zigbee2MQTT converter
+    name: Conformance (dimmable and tunable white) and the Zigbee2MQTT converter
     needs: nightly-build
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -203,13 +206,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Zigbee conformance
+      - name: Zigbee conformance (dimmable)
         run: cargo spec
-      # gatt_cccd_gates_notifications: Outglow notifies with the descriptor off
-      # on purpose, as the stock does, because the vendor app never writes it
-      # (see the comparison page's losses)
-      - name: Bluetooth conformance (but for the vendor app's notifications)
-        run: cargo ble-spec -- --skip gatt_cccd_gates_notifications
+      - name: Bluetooth conformance (dimmable)
+        run: cargo ble-spec
+      - name: Zigbee conformance (tunable white)
+        run: cargo spec -- --image rust=target/tc32-tw/bulb-tc32.bin --expect zigbee-tw
+      - name: Bluetooth conformance (tunable white)
+        run: cargo ble-spec -- --image rust=target/tc32-tw/bulb-tc32.bin --expect ble-tw
       - name: The Zigbee2MQTT converter against zigbee-herdsman-converters
         env:
           ZHC_VERSION: 26.132.0
