@@ -143,7 +143,7 @@ progress { width: 100%; height: 1rem; accent-color: var(--accent); }
 .perks li { position: relative; padding-left: 1.8rem; font-size: 1.05rem; }
 .perks li::before { content: ""; position: absolute; left: .2rem; top: .45em; width: .7rem; height: .7rem; border-radius: 50%; background: var(--accent); box-shadow: 0 0 .6rem var(--accent); }
 
-/* why Outglow: problem / fix cards, the side-by-side table, the light curves */
+/* why Outglow: problem / fix cards, the side-by-side table */
 .small { font-size: .875rem; }
 .why-list { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); margin-top: 1rem; }
 .why { background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; padding: 1rem 1.2rem; min-width: 0; display: flex; flex-direction: column; gap: .5rem; }
@@ -161,24 +161,6 @@ progress { width: 100%; height: 1rem; accent-color: var(--accent); }
 .compare td.y::before { content: "✓"; color: var(--ok); }
 .compare td.n::before { content: "✕"; color: var(--err); }
 .compare td.n { color: var(--muted); }
-.chart-card { background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; padding: 1rem 1.2rem; margin: 1rem 0; }
-.chart-card .filters { margin-bottom: .75rem; }
-.chart-card .filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-.chart-card svg { display: block; width: 100%; height: auto; }
-.chart-card svg text { fill: var(--muted); font: 11px system-ui, sans-serif; }
-.chart-card svg text.note { fill: var(--text); }
-.chart-card .grid { stroke: var(--line); stroke-width: 1; }
-.chart-card .cursor { stroke: var(--muted); stroke-dasharray: 2 3; }
-.line-original { fill: none; stroke: var(--muted); stroke-opacity: .35; stroke-width: 7; stroke-linejoin: round; stroke-linecap: round; }
-.line-outglow { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 4; }
-.dot-original { fill: var(--muted); }
-.dot-outglow { fill: var(--accent); }
-.chart-card figcaption { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; font-size: .9rem; color: var(--muted); margin-top: .5rem; }
-.key { display: inline-flex; align-items: center; gap: .45rem; }
-.key i { display: inline-block; width: 1.4rem; }
-.key-original { border-top: 6px solid var(--muted); opacity: .4; border-radius: 3px; }
-.key-outglow { border-top: 2px dashed var(--accent); }
-.readout { font: .85rem/1.5 ui-monospace, Menlo, monospace; color: var(--muted); margin: .4rem 0 0; font-variant-numeric: tabular-nums; }
 .caveats { padding-left: 1.2rem; }
 .caveats li { margin-bottom: .6rem; }
 .feature { display: inline-flex; align-items: center; gap: .5rem; }
@@ -188,5 +170,4 @@ progress { width: 100%; height: 1rem; accent-color: var(--accent); }
 .info.static { cursor: default; vertical-align: .1em; }
 .compare tr.more td { background: var(--bg); color: var(--text); font-weight: 400; white-space: normal; padding: .75rem 1rem 1rem; }
 .compare tr.more p { margin: 0; max-width: 46rem; }
-.compare tr.more .chart-card { margin: .9rem 0 0; }
-.compare tr:has(+ tr.more:not([hidden])) td { border-bottom-color: transparent; }
+.compare tr.more .compare tr:has(+ tr.more:not([hidden])) td { border-bottom-color: transparent; }

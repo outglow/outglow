@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Outglow vs the original firmware</title>
-<meta name="description" content="What changes when an EGLO connect.z or AwoX bulb switches from its original firmware to Outglow, and what stays the same.">
+<meta name="description" content="What changes when an EGLO connect.z or AwoX bulb switches from its original firmware to Outglow.">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/src/style.css">
 </head>
@@ -23,28 +23,13 @@
 </header>
 <main>
   <h1>Outglow and the original firmware</h1>
-  <p class="lead">What changes when you switch, and what stays the same. Tap <span class="info static" aria-hidden="true">i</span>
+  <p class="lead">What changes when you switch. Tap <span class="info static" aria-hidden="true">i</span>
     on a row to see what it means.</p>
 
   <div class="table-wrap compare">
     <table>
       <thead><tr><th></th><th>Original firmware</th><th>Outglow</th></tr></thead>
       <tbody>
-        <tr><td><span class="feature">Same brightness and colour<button type="button" class="info" aria-expanded="false" aria-controls="more-0" aria-label="About: Same brightness and colour">i</button></span></td><td class="y">Yes</td><td class="y">Yes, identical</td></tr>
-        <tr class="more" id="more-0" hidden><td colspan="3"><p>Outglow drives the LEDs with the original firmware's own brightness and colour curves. We sent every brightness level and colour temperature to both firmwares and recorded the duty cycle on each LED channel. Level 1 is the one difference: Zigbee says dimming to the lowest level with on/off switches the light off, and Outglow does that.</p>
-          <figure class="chart-card">
-            <div class="filters" role="group" aria-label="Sweep">
-              <button type="button" id="sweep-level" aria-pressed="true">Brightness</button>
-              <button type="button" id="sweep-ct" aria-pressed="false">Colour temperature</button>
-            </div>
-            <svg id="curve" viewBox="0 0 720 300" role="img" aria-label="LED duty cycle, original firmware and Outglow"></svg>
-            <figcaption>
-              <span class="key"><i class="key-original"></i>Original firmware</span>
-              <span class="key"><i class="key-outglow"></i>Outglow</span>
-              <span id="curve-diff"></span>
-            </figcaption>
-            <p class="readout" id="curve-readout">ESMLFzm_w6_TW, original version 3.0.2. Point at the chart to read values.</p>
-          </figure></td></tr>
         <tr><td><span class="feature">Works with the vendor app<button type="button" class="info" aria-expanded="false" aria-controls="more-1" aria-label="About: Works with the vendor app">i</button></span></td><td class="y">Yes</td><td class="y">Yes</td></tr>
         <tr class="more" id="more-1" hidden><td colspan="3"><p>Over Bluetooth, Outglow still looks like the original bulb, so the AwoX app keeps working: login, brightness, colour, colour animation, candle mode, and the status the app reads back.</p></td></tr>
         <tr><td><span class="feature">Works with any Zigbee 3.0 hub<button type="button" class="info" aria-expanded="false" aria-controls="more-2" aria-label="About: Works with any Zigbee 3.0 hub">i</button></span></td><td class="y">Yes</td><td class="y">Yes</td></tr>
@@ -68,7 +53,7 @@
       </tbody>
     </table>
   </div>
-  <p class="muted small">Light output, network behaviour and join times were measured in the Outglow emulator, which runs
+  <p class="muted small">Network behaviour and join times were measured in the Outglow emulator, which runs
     the real firmware images, the original ones included, through the same scenarios. Outglow itself runs on a few of its
     developers' bulbs so far. <a href="install.html">How to install and how to go back →</a></p>
 </main>
