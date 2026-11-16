@@ -3,10 +3,10 @@
   "generated": "2026-11-16",
   "how": "cargo xtask compare: the conformance tests of emulator/rs/scenarios (cargo spec, cargo ble-spec) run in the Outglow emulator on the original firmware images and on Outglow images built from this repository",
   "outglow": {
-    "commit": "3ac2dc5",
+    "commit": "c95787f",
     "commit_date": "2026-11-16",
-    "describe": "3ac2dc5",
-    "url": "https://github.com/outglow/outglow/commit/3ac2dc5"
+    "describe": "c95787f",
+    "url": "https://github.com/outglow/outglow/commit/c95787f"
   },
   "schema": 1,
   "source": "emulator",
@@ -27,7 +27,7 @@
       "name": "Dimmable filament bulb (ESMLFzm_w6_Dimm)",
       "outglow": {
         "image_type": "0x0390",
-        "sha256": "f60a0cabb66f02b67f090686b3fd89f95d85920894cf263b14ee3cf8b27b76cb"
+        "sha256": "fab5962a68060a8677db7ab2393057c2f91adfc22c97124e9888691d206684ee"
       },
       "stock": {
         "app_version": "1.14.11 (100055)",
@@ -44,7 +44,7 @@
       "name": "Tunable white filament bulb (ESMLFzm_w6_TW)",
       "outglow": {
         "image_type": "0x0391",
-        "sha256": "ef235758dd29e86b0ed57bffb6dc8ed1a90b24485b470a84160d730513cd57e6"
+        "sha256": "855cf8adb2b4b2d3122b80bbfa954a718e6abfdd27d6ac646c2b47e7ab4dc576"
       },
       "stock": {
         "app_version": "1.14.11 (100055)",
@@ -186,14 +186,14 @@
       "requirement": "A frame sent with acknowledgement request that is never acknowledged is retransmitted apscMaxFrameRetries = 3 times and then given up.",
       "results": {
         "dimm": {
-          "outglow": "INCONCLUSIVE",
-          "outglow_note": "the image did not request an APS acknowledgement for anything provoked (ZDO and ZCL responses to requests with and without acknowledgement request)",
+          "outglow": "N/A",
+          "outglow_note": "the image requested an APS acknowledgement for nothing provoked (ZDO and ZCL responses to requests with and without acknowledgement request): the retransmission rule is about frames sent with one",
           "stock": "FAIL",
           "stock_note": "Active_EP_rsp to a request with acknowledgement request: 2 transmissions in 10.5 s, gaps [2.25] s; 4 required (the original and 3 retransmissions)"
         },
         "tw": {
-          "outglow": "INCONCLUSIVE",
-          "outglow_note": "the image did not request an APS acknowledgement for anything provoked (ZDO and ZCL responses to requests with and without acknowledgement request)",
+          "outglow": "N/A",
+          "outglow_note": "the image requested an APS acknowledgement for nothing provoked (ZDO and ZCL responses to requests with and without acknowledgement request): the retransmission rule is about frames sent with one",
           "stock": "FAIL",
           "stock_note": "Active_EP_rsp to a request with acknowledgement request: 2 transmissions in 10.5 s, gaps [2.26] s; 4 required (the original and 3 retransmissions)"
         }
@@ -213,14 +213,14 @@
       "requirement": "Each retransmission follows after apscAckWaitDuration (1.6 s) without an acknowledgement.",
       "results": {
         "dimm": {
-          "outglow": "INCONCLUSIVE",
-          "outglow_note": "the image did not request an APS acknowledgement for anything provoked (ZDO and ZCL responses to requests with and without acknowledgement request)",
+          "outglow": "N/A",
+          "outglow_note": "the image requested an APS acknowledgement for nothing provoked (ZDO and ZCL responses to requests with and without acknowledgement request): the retransmission rule is about frames sent with one",
           "stock": "FAIL",
           "stock_note": "Active_EP_rsp to a request with acknowledgement request: gaps between transmissions [2.25] s"
         },
         "tw": {
-          "outglow": "INCONCLUSIVE",
-          "outglow_note": "the image did not request an APS acknowledgement for anything provoked (ZDO and ZCL responses to requests with and without acknowledgement request)",
+          "outglow": "N/A",
+          "outglow_note": "the image requested an APS acknowledgement for nothing provoked (ZDO and ZCL responses to requests with and without acknowledgement request): the retransmission rule is about frames sent with one",
           "stock": "FAIL",
           "stock_note": "Active_EP_rsp to a request with acknowledgement request: gaps between transmissions [2.26] s"
         }
@@ -609,13 +609,13 @@
     {
       "ambiguous": null,
       "area": "OTA updates",
-      "clause": "11.13.3.4",
+      "clause": "11.13.3.4, 11.13.4.2",
       "doc": "ZCL8",
       "id": "OTA-NOTIFY-01",
       "level": "shall",
       "mandatory": false,
       "module": "misc_ota_gp",
-      "requirement": "On a unicast Image Notify an OTA Upgrade client always sends a Query Next Image Request to the upgrade server.",
+      "requirement": "On a unicast Image Notify an OTA Upgrade client always sends a Query Next Image Request to the upgrade server, carrying its manufacturer code, its image type and the file version of the image it runs (here: those of the OTA file built with the image), no wild card.",
       "results": {
         "dimm": {
           "outglow": "PASS",
@@ -4573,15 +4573,19 @@
       "level": "shall",
       "mandatory": false,
       "module": "zcl_level",
-      "requirement": "Move to Level with transition time 0xffff takes OnOffTransitionTime (if that optional attribute is implemented; otherwise the device moves as fast as it can) and reaches the level.",
+      "requirement": "Move to Level with transition time 0xffff takes OnOffTransitionTime and reaches the level (N/A when that optional attribute is not implemented; the level must still be reached).",
       "results": {
         "dimm": {
-          "outglow": "PASS",
-          "stock": "PASS"
+          "outglow": "N/A",
+          "outglow_note": "OnOffTransitionTime (0x0010), optional, is not implemented; Move to Level 40 with transition time 0xffff reached the level (duty 2.4% after 1.0 s, 2.4% after 3 s)",
+          "stock": "N/A",
+          "stock_note": "OnOffTransitionTime (0x0010), optional, is not implemented; Move to Level 40 with transition time 0xffff reached the level (duty 2.4% after 1.0 s, 2.4% after 3 s)"
         },
         "tw": {
-          "outglow": "PASS",
-          "stock": "PASS"
+          "outglow": "N/A",
+          "outglow_note": "OnOffTransitionTime (0x0010), optional, is not implemented; Move to Level 40 with transition time 0xffff reached the level (duty 3.5% after 1.0 s, 3.5% after 3 s)",
+          "stock": "N/A",
+          "stock_note": "OnOffTransitionTime (0x0010), optional, is not implemented; Move to Level 40 with transition time 0xffff reached the level (duty 3.5% after 1.0 s, 3.5% after 3 s)"
         }
       },
       "suite": "zigbee",
@@ -5822,7 +5826,7 @@
       "level": "shall",
       "mandatory": false,
       "module": "zdo_services",
-      "requirement": "Mgmt_Bind_req on an empty binding table is answered with SUCCESS and BindingTableEntries = StartIndex = BindingTableListCount = 0 (or NOT_SUPPORTED if the optional request is absent).",
+      "requirement": "Mgmt_Bind_req on an empty binding table is answered with SUCCESS and BindingTableEntries = StartIndex = BindingTableListCount = 0 (N/A when the optional request is answered NOT_SUPPORTED).",
       "results": {
         "dimm": {
           "outglow": "PASS",
@@ -5868,7 +5872,7 @@
       "level": "shall",
       "mandatory": false,
       "module": "zdo_services",
-      "requirement": "Mgmt_Rtg_req is answered: SUCCESS with the routing table, or NOT_SUPPORTED when the optional request is absent.",
+      "requirement": "Mgmt_Rtg_req is answered with SUCCESS and the routing table, five octets per entry (N/A when the optional request is answered NOT_SUPPORTED).",
       "results": {
         "dimm": {
           "outglow": "PASS",
@@ -7499,13 +7503,13 @@
       "results": {
         "dimm": {
           "outglow": "FAIL",
-          "outglow_note": "3 notification(s) with the CCCD at its default 0x0000 (then 2 with the bit set, 2 after clearing it): 1b12000101001300...",
+          "outglow_note": "3 notification(s) with the CCCD at its default 0x0000 (then 2 with the bit set, 2 after clearing it): 1b12000101009900...",
           "stock": "FAIL",
           "stock_note": "1 notification(s) on handle 0x0012 (characteristic 000102030405060708090a0b0c0d1911, properties 0x1a), which has no CCCD: sent without a Notification bit that a client could have set; its descriptors: 2901"
         },
         "tw": {
           "outglow": "FAIL",
-          "outglow_note": "3 notification(s) with the CCCD at its default 0x0000 (then 2 with the bit set, 2 after clearing it): 1b1200010100ca00...",
+          "outglow_note": "3 notification(s) with the CCCD at its default 0x0000 (then 2 with the bit set, 2 after clearing it): 1b12000101009e00...",
           "stock": "FAIL",
           "stock_note": "1 notification(s) on handle 0x0012 (characteristic 000102030405060708090a0b0c0d1911, properties 0x1a), which has no CCCD: sent without a Notification bit that a client could have set; its descriptors: 2901"
         }
@@ -7700,7 +7704,7 @@
       "withheld": null
     },
     {
-      "ambiguous": "7.1: 'If the list of GATT based services and the service definitions cannot change for the lifetime of the device then this characteristic shall not exist, otherwise this characteristic shall exist.' Whether the definitions can change (for example with a firmware update, which replaces the table on these bulbs) is not visible over the air, so a server without the characteristic is neither passed nor failed. 'Only one instance of the GATT service shall be exposed' is read as: not more than one",
+      "ambiguous": "7.1: 'If the list of GATT based services and the service definitions cannot change for the lifetime of the device then this characteristic shall not exist, otherwise this characteristic shall exist.' Whether the definitions can change (for example with a firmware update, which replaces the table on these bulbs) is not visible over the air, so a server without the characteristic is neither passed nor failed, unless it does not pair: then no bonded client keeps an attribute cache across connections (Part G 2.5.2) and the test gives N/A. 'Only one instance of the GATT service shall be exposed' is read as: not more than one",
       "area": "Bluetooth GATT and GAP",
       "clause": "7, 7.1",
       "doc": "Core 5.4 Vol 3 Part G",
@@ -7711,16 +7715,16 @@
       "requirement": "The GATT service (0x1801) is exposed at most once and holds the characteristics of Part G 7; the Service Changed characteristic, which a server whose service definitions can change must have, has properties 0x20, a CCCD and a value that is neither readable nor writable.",
       "results": {
         "dimm": {
-          "outglow": "INCONCLUSIVE",
-          "outglow_note": "no GATT service and no Service Changed characteristic: right only if the service definitions cannot change for the lifetime of the device, which the test cannot see",
-          "stock": "INCONCLUSIVE",
-          "stock_note": "no GATT service and no Service Changed characteristic: right only if the service definitions cannot change for the lifetime of the device, which the test cannot see"
+          "outglow": "N/A",
+          "outglow_note": "no GATT service and no Service Changed characteristic, and the server does not pair (Pairing Request answered Pairing Not Supported): no bonded client keeps an attribute cache across connections (Part G 2.5.2), so a change of the definitions with a firmware update leaves nothing stale",
+          "stock": "N/A",
+          "stock_note": "no GATT service and no Service Changed characteristic, and the server does not pair (Pairing Request answered Pairing Not Supported): no bonded client keeps an attribute cache across connections (Part G 2.5.2), so a change of the definitions with a firmware update leaves nothing stale"
         },
         "tw": {
-          "outglow": "INCONCLUSIVE",
-          "outglow_note": "no GATT service and no Service Changed characteristic: right only if the service definitions cannot change for the lifetime of the device, which the test cannot see",
-          "stock": "INCONCLUSIVE",
-          "stock_note": "no GATT service and no Service Changed characteristic: right only if the service definitions cannot change for the lifetime of the device, which the test cannot see"
+          "outglow": "N/A",
+          "outglow_note": "no GATT service and no Service Changed characteristic, and the server does not pair (Pairing Request answered Pairing Not Supported): no bonded client keeps an attribute cache across connections (Part G 2.5.2), so a change of the definitions with a firmware update leaves nothing stale",
+          "stock": "N/A",
+          "stock_note": "no GATT service and no Service Changed characteristic, and the server does not pair (Pairing Request answered Pairing Not Supported): no bonded client keeps an attribute cache across connections (Part G 2.5.2), so a change of the definitions with a firmware update leaves nothing stale"
         }
       },
       "suite": "ble",

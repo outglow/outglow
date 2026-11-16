@@ -121,6 +121,7 @@ fn hex(b: &[u8]) -> String {
 }
 
 fn own_permit_join(s: &mut Session) -> R<String> {
+    s.set_note("permit_tried", true);
     let Some(b) = s.beacon()? else {
         return Err(Stop::Inconclusive("the bulb sent no beacon in answer to a Beacon Request".into()));
     };
@@ -226,6 +227,12 @@ fn permit_join_broadcast(s: &mut Session) -> R<String> {
 }
 
 fn own_permit_join_lasts(s: &mut Session) -> R<String> {
+    if !s.has_note("permit_tried") {
+        // run alone (--exact): the check right after the join first, as BDB-JOIN-04 does it
+        if let Err(e @ (Stop::Error(_) | Stop::SessionLost(_))) = own_permit_join(s) {
+            return Err(e);
+        }
+    }
     if s.note::<f64>("permit_checked").is_none() {
         return Err(Stop::Inconclusive("permit joining was not on right after the join (see BDB-JOIN-04)".into()));
     }

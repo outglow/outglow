@@ -40,8 +40,8 @@ pub fn tests() -> Vec<Test> {
         Test {
             mandatory: false,
             ..t("ZCL-LEVEL-03", "ZCL8", "3.10.2.3.1.2",
-                "Move to Level with transition time 0xffff takes OnOffTransitionTime (if that optional attribute is \
-                 implemented; otherwise the device moves as fast as it can) and reaches the level.",
+                "Move to Level with transition time 0xffff takes OnOffTransitionTime and reaches the level (N/A \
+                 when that optional attribute is not implemented; the level must still be reached).",
                 move_to_level_default_time)
         },
         t("ZCL-LEVEL-04", "ZCL8", "3.10.2.3.2.4 Table 3-61",
@@ -296,7 +296,11 @@ fn move_to_level_default_time(s: &mut Session) -> R<String> {
                 )?;
                 return Ok("OnOffTransitionTime implemented and used".into());
             }
-            Ok("OnOffTransitionTime not implemented; the level was reached".into())
+            // the optional attribute is absent: what the clause asks of it cannot be seen; the level was reached
+            Err(Stop::NotApplicable(format!(
+                "OnOffTransitionTime (0x0010), optional, is not implemented; Move to Level 40 with transition time \
+                 0xffff reached the level (duty {mid:.1}% after 1.0 s, {d:.1}% after 3 s)"
+            )))
         },
         |s| {
             if has {

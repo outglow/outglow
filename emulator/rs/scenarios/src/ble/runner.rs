@@ -10,7 +10,7 @@ use super::harness::BleSession;
 use super::{tests, BleTest, Level};
 use crate::air::Log;
 use crate::image::Image;
-use crate::runner::{drive, parse_args_with, repo_root, selected, Args, Outcome, TestMeta, Verdict};
+use crate::runner::{drive, parse_args_with, repo_root, selected, Args, Outcome, TestMeta, Verdict, NOT_STARTED};
 use crate::session::Stop;
 
 /// The stock firmware and the Rust firmware.
@@ -44,7 +44,7 @@ fn run_group(image: &Image, session: &str, tests: &[&BleTest], cpi: i64, verbose
                     let m = match e {
                         Stop::Fail(m) | Stop::Inconclusive(m) | Stop::NotApplicable(m) | Stop::SessionLost(m) | Stop::Error(m) => m,
                     };
-                    send(t.id, Verdict::Inconclusive, format!("session could not start: {m}"), 0.0);
+                    send(t.id, Verdict::Inconclusive, format!("{NOT_STARTED}{m}"), 0.0);
                     continue;
                 }
             }
@@ -167,5 +167,5 @@ pub fn main_with(argv: &[String]) -> i32 {
             })
         })
         .collect();
-    drive(&a, &meta, &mut |on| run(&a, on))
+    drive(&a, "ble", &meta, &mut |on| run(&a, on))
 }

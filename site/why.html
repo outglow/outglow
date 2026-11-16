@@ -316,7 +316,7 @@
       <li><strong>Original firmware</strong> Confirms receipt when asked and delivers group messages correctly. <span data-claim="APS-DUP-03">A
         retry that arrives late is carried out a second time.</span> <span data-claim="APS-RETRY-01 APS-RETRY-02">Its own
         retries are fewer and slower than the standard gives.</span> <span data-claim="APS-EXT-01 APS-FRAG-01">It ignores ordinary messages with an optional longer heading and cannot reassemble long messages from parts.</span></li>
-      <li><strong>Outglow</strong> Recognises repeats, sends receipts and reassembles long messages. Its outgoing retries remain inconclusive: the test could not make it send a message that requested a receipt.</li>
+      <li><strong>Outglow</strong> Recognises repeats, sends receipts and reassembles long messages. It sends its replies without asking for a receipt, so it has no outgoing retries to measure.</li>
     </ul>
   </section>
 

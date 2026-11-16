@@ -409,11 +409,12 @@ fn retry_experiment(s: &mut Session) -> R<Retry> {
     r
 }
 
-const NO_AR: &str = "the image did not request an APS acknowledgement for anything provoked (ZDO and ZCL responses to \
-                     requests with and without acknowledgement request)";
+const NO_AR: &str = "the image requested an APS acknowledgement for nothing provoked (ZDO and ZCL responses to \
+                     requests with and without acknowledgement request): the retransmission rule is about frames sent \
+                     with one";
 
 fn retransmission_count(s: &mut Session) -> R<String> {
-    let Some((what, tx)) = retry_experiment(s)? else { return Err(Stop::Inconclusive(NO_AR.into())) };
+    let Some((what, tx)) = retry_experiment(s)? else { return Err(Stop::NotApplicable(NO_AR.into())) };
     let (_, gaps) = gaps_py(&tx);
     let obs = format!("{what}: {} transmissions in 10.5 s, gaps {gaps} s", tx.len());
     expect(
@@ -425,7 +426,7 @@ fn retransmission_count(s: &mut Session) -> R<String> {
 }
 
 fn retransmission_spacing(s: &mut Session) -> R<String> {
-    let Some((what, tx)) = retry_experiment(s)? else { return Err(Stop::Inconclusive(NO_AR.into())) };
+    let Some((what, tx)) = retry_experiment(s)? else { return Err(Stop::NotApplicable(NO_AR.into())) };
     if tx.len() < 2 {
         return Err(Stop::Inconclusive(format!("{what}: the frame was not retransmitted at all")));
     }

@@ -22,9 +22,10 @@ pub fn tests() -> Vec<Test> {
         Test {
             id: "OTA-NOTIFY-01",
             doc: "ZCL8",
-            clause: "11.13.3.4",
+            clause: "11.13.3.4, 11.13.4.2",
             req: "On a unicast Image Notify an OTA Upgrade client always sends a Query Next Image Request to the \
-                  upgrade server.",
+                  upgrade server, carrying its manufacturer code, its image type and the file version of the image \
+                  it runs (here: those of the OTA file built with the image), no wild card.",
             session: S,
             run: ota_image_notify,
             mandatory: false,
@@ -95,5 +96,38 @@ fn ota_image_notify(s: &mut Session) -> R<String> {
     let ver = u32::from_le_bytes([p[5], p[6], p[7], p[8]]);
     let dst = f.nwk.as_ref().unwrap().dst;
     expect(dst == 0x0000, format!("sent to {dst:#06x}, the Image Notify came from 0x0000"))?;
-    Ok(format!("manufacturer {mfg:#06x}, image type {itype:#06x}, file version {ver:#010x}"))
+    let sent = format!("manufacturer {mfg:#06x}, image type {itype:#06x}, file version {ver:#010x}");
+    expect(mfg != 0xFFFF && itype != 0xFFFF && ver != 0xFFFF_FFFF, format!("{sent}: a wild card in the request"))?;
+    // what the image is: the header of the OTA file next to it (bulb-tc32.ota beside bulb-tc32.bin)
+    let Some(bin) = s.note::<std::path::PathBuf>(IMAGE_PATH) else {
+        return Err(Stop::Error("the runner did not say which image this is".into()));
+    };
+    let ota = bin.with_extension("ota");
+    let Some((h_mfg, h_type, h_ver)) = std::fs::read(&ota).ok().as_deref().and_then(ota_header) else {
+        return Err(Stop::Inconclusive(format!(
+            "{sent}; no OTA file {} beside the image to compare them with",
+            ota.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+        )));
+    };
+    expect(
+        (mfg, itype, ver) == (h_mfg, h_type, h_ver),
+        format!(
+            "{sent}; the image's OTA file says manufacturer {h_mfg:#06x}, image type {h_type:#06x}, file version \
+             {h_ver:#010x}"
+        ),
+    )?;
+    Ok(sent + ", as the image's OTA file")
+}
+
+/// The key under which the runner leaves the image's path in a session's notes.
+pub const IMAGE_PATH: &str = "image_path";
+
+/// (manufacturer code, image type, file version) of a Zigbee OTA file header (ZCL8 11.4.2).
+pub fn ota_header(b: &[u8]) -> Option<(u16, u16, u32)> {
+    let u16_at = |i: usize| Some(u16::from_le_bytes(b.get(i..i + 2)?.try_into().ok()?));
+    let u32_at = |i: usize| Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?));
+    if u32_at(0)? != 0x0BEE_F11E {
+        return None;
+    }
+    Some((u16_at(10)?, u16_at(12)?, u32_at(14)?))
 }

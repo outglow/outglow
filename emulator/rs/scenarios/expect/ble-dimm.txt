@@ -1,0 +1,19 @@
+# The expected verdicts of `cargo ble-spec` on the Outglow image of the dimmable filament bulb (target/tc32/bulb-tc32.bin, the default image).
+# One line per test that does not PASS: TEST-ID  VERDICT  reason (a deviation, not applicable
+# by design, a known red test). Every test not listed must PASS. Any other verdict fails the
+# run, a test that newly passes too, so that this file always says what the image does.
+# Checked by: cargo ble-spec (the default on the default image); CI's Zigbee conformance job and the nightly conformance job.
+# After an intended change: cargo ble-spec -- --write-expect,
+# then replace every TODO it leaves with the reason (emulator/rs/scenarios/src/runner.rs, Expect).
+
+att_mtu_server_request                N/A           the server-side MTU exchange is optional; Outglow leaves it to the client
+att_mtu_server_request_notifications  N/A           the server-side MTU exchange is optional; Outglow leaves it to the client
+att_queued_write_execute              N/A           no queued writes (optional): Prepare Write is answered Request Not Supported
+att_prepare_write_errors              N/A           no queued writes (optional): Prepare Write is answered Request Not Supported
+gap_adv_no_gap_gatt_uuid              NOTE          advertises the GAP service UUID 0x1800 as the stock does; the vendor app looks for it
+gatt_cccd_bits_follow_properties      NOTE          the stock's GATT table: the CCCD of the notify-only characteristic 0x0012 keeps an Indication bit
+gatt_cccd_gates_notifications         FAIL          deliberate: notifies with the CCCD off, as the stock does, because the vendor app never writes it
+gatt_service_gatt                     N/A           no Service Changed characteristic and no pairing: no bonded client keeps an attribute cache
+gatt_props_write                      NOTE          the stock's GATT table: the OTA characteristic takes Write Request without the Write property
+ll_ctrl_own_length_req                N/A           Outglow does not start the Data Length Update procedure itself (optional)
+ll_ctrl_procedure_timeout             N/A           Outglow starts no control procedure of its own, so its timeout cannot be exercised
