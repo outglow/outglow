@@ -55,15 +55,15 @@
     <li>Not there after a few minutes? <a href="#reset">Reset it</a> and permit joining again.</li>
     <li>The bulb shows up as <code>outglow-dimm</code>, <code>outglow-tw</code> or similar. If it was already
       in Zigbee2MQTT before, it is simply interviewed again.</li>
-    <li>Optional: for all the diagnostics, the start-up brightness and the motion sensing entities, add
+    <li>Optional: for all the diagnostics, the start-up brightness and the motion sensing switch, add
       <a href="#converter">the Outglow converter</a>. Without it Zigbee2MQTT still shows the light, the router's
       main values and the settings.</li>
   </ol>
 
   <h3 id="converter">The Zigbee2MQTT converter (optional)</h3>
   <p>An external converter, <a href="z2m/outglow.mjs"><code>outglow.mjs</code></a>, tells Zigbee2MQTT about everything
-    the bulb offers: the router diagnostics grouped by topic, the start-up brightness, and, on bulbs built with motion
-    sensing, its entities. It applies only to bulbs running Outglow. It needs Zigbee2MQTT 2.x; from version 2.11,
+    the bulb offers: the router diagnostics grouped by topic, the start-up brightness, and the
+    <a href="#motion">motion sensing</a> switch and settings. It applies only to bulbs running Outglow. It needs Zigbee2MQTT 2.x; from version 2.11,
     allow external converters first in <code>configuration.yaml</code>:</p>
 <pre><code>advanced:
   enable_external_js: true</code></pre>
@@ -86,6 +86,24 @@
   <p>A bulb that was already in Zigbee2MQTT picks the converter up after Zigbee2MQTT restarts or after you interview it
     again. More in <a href="https://www.zigbee2mqtt.io/advanced/more/external_converters.html">Zigbee2MQTT's guide to
     external converters</a>.</p>
+
+  <h3 id="motion">Motion sensing (experimental)</h3>
+  <p>Outglow bulbs can notice people moving through a room from how the radio signal between them changes, and report
+    it as occupancy, like a motion sensor. Every Outglow bulb has it, switched <strong>off</strong>: until you switch
+    it on, the bulb sends nothing extra. It is new and has not run on a real bulb yet; expect it to need tuning.
+    <a href="sensing.html">How it works.</a></p>
+  <ol class="steps">
+    <li>With the converter installed, switch <em>Motion sensing</em> on in <strong>at least two bulbs in the same
+      room</strong>. Each bulb senses along the links to the others, so a bulb on its own sees nothing.</li>
+    <li>Let it calibrate itself: a day after you switch it on, every link takes the setting of its quietest hour.
+      Or calibrate now: leave the room empty and still, choose <em>start</em> under <em>Calibrate motion
+      sensing</em> on each bulb, and wait a minute.</li>
+    <li>Too many false alarms? Lower <em>Motion sensitivity</em>, or calibrate again with the room empty. Setting the
+      sensitivity by hand switches the automatic calibration off.</li>
+  </ol>
+  <p class="muted">Without the converter the settings are the attributes of Occupancy Sensing (0x0406) and of the
+    manufacturer cluster 0xFC5E (code 0x1141): writing 5 to attribute 0x0001 (probes per second) switches it on, 0
+    off.</p>
 
   <h2 id="reset">Factory reset</h2>
   <p>A bulb has no button, so the reset is a pattern of switching it on and off at the wall: three short power-ons,

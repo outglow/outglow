@@ -61,6 +61,8 @@
         <tr class="more" id="more-6" hidden><td colspan="3"><p>Outglow shows how many frames it relayed, retried and lost, its neighbours and children, why it last restarted, and how much radio time Bluetooth took: all 32 counters of the Zigbee Diagnostics cluster, plus a few of its own. <a href="#diagnostics">More below.</a></p></td></tr>
         <tr><td><span class="feature">Bluetooth can be switched off<button type="button" class="info" aria-expanded="false" aria-controls="more-7" aria-label="About: Bluetooth can be switched off">i</button></span></td><td class="n">No</td><td class="y">Yes, or only for minutes after power-on</td></tr>
         <tr class="more" id="more-7" hidden><td colspan="3"><p>The bulb has one radio. Time spent on Bluetooth is time it can't hear Zigbee. Outglow lets you keep Bluetooth on, switch it off, or keep it only for a few minutes after the bulb is powered on, from your hub. A reset turns it back on. <a href="#settings">How to set it.</a></p></td></tr>
+        <tr><td><span class="feature">Motion sensing<button type="button" class="info" aria-expanded="false" aria-controls="more-sense" aria-label="About: Motion sensing">i</button></span></td><td class="n">No</td><td>Experimental, off until you switch it on</td></tr>
+        <tr class="more" id="more-sense" hidden><td colspan="3"><p>Outglow bulbs can notice people moving from how the radio signal between them changes, and report it as occupancy, like a motion sensor. It needs at least two bulbs in the room, and it is off until you switch it on; then the bulbs calibrate themselves over a day. It has run in the emulator only, not yet on a real bulb. <a href="sensing.html">How it works.</a></p></td></tr>
         <tr><td><span class="feature">Joins a new network<button type="button" class="info" aria-expanded="false" aria-controls="more-8" aria-label="About: Joins a new network">i</button></span></td><td>in about 5 s</td><td>in about 1.5 s</td></tr>
         <tr class="more" id="more-8" hidden><td colspan="3"><p>Time from the start of pairing until the bulb is in the network and answering, measured in the emulator with the same coordinator for both.</p></td></tr>
         <tr><td><span class="feature">Source code<button type="button" class="info" aria-expanded="false" aria-controls="more-9" aria-label="About: Source code">i</button></span></td><td class="n">Closed</td><td class="y">Open, GPL</td></tr>
@@ -226,10 +228,11 @@
   </details>
 
   <h2 id="presence">Presence detection <span class="badge">experimental</span></h2>
-  <p>A person between two bulbs changes how strongly each hears the other. With presence detection built in, every
+  <p>A person between two bulbs changes how strongly each hears the other. With presence detection switched on, every
     bulb sends a short probe frame a few times a second (5 by default) and measures the signal strength (RSSI) of
     the probes of its neighbours. Each sender heard is a line; when a line's signal starts to swing more than its usual
-    noise, someone is crossing it, and the bulb reports occupancy. Philips Hue's MotionAware works on the same idea.</p>
+    noise, someone is crossing it, and the bulb reports occupancy. Philips Hue's MotionAware works on the same idea.
+    Every Outglow image has it, switched off: until you switch it on, a bulb sends no probes and reports nothing.</p>
   <p><a href="sensing.html">How motion sensing works, step by step, with an animation →</a></p>
   <ul class="caveats">
     <li><strong>The probes</strong> go to a separate PAN identifier (<code>0x5E55</code>), without acknowledgement:
@@ -245,18 +248,19 @@
       instead; setting the sensitivity by hand switches the automatic calibration off. An optional daily self-tuning
       follows slow changes of a line's noise.</li>
     <li><strong>In Zigbee2MQTT</strong> with the <a href="install.html#converter">converter</a>:
-      <code>occupancy</code>, <code>occupancy_timeout</code>, <code>motion_sensitivity</code>,
+      <code>motion_sensing</code> (the switch), <code>occupancy</code>, <code>occupancy_timeout</code>, <code>motion_sensitivity</code>,
       <code>motion_probes</code>, <code>motion_auto_calibration</code>, <code>motion_self_tuning</code>,
       <code>motion_calibrate</code> (start or stop a recording of the empty room) and
-      <code>motion_calibration_left</code>.</li>
+      <code>motion_calibration_left</code>, and <code>motion_links</code> (the bulbs it senses with: signal, noise,
+      sensitivity, motion).</li>
   </ul>
   <div class="note">
-    <strong>Experimental, and not in the images you install</strong>
-    Presence detection is built only on request (<code>cargo xtask build --sense</code>) and has not run on a bulb.
+    <strong>Experimental, and off until you switch it on</strong>
+    Presence detection is in every image but switched off, and has not run on a bulb.
     It was measured in the emulator, on a channel model built from the link levels and spread the bulbs' own
     neighbour tables reported; how much a person really changes those links, and whether a day is enough to
-    calibrate a real room, is not known yet. It needs at least three bulbs around a room, and a line through a wall
-    sees both rooms.
+    calibrate a real room, is not known yet. It needs at least two bulbs that hear each other (three or more around a
+    room cover it better), and a line through a wall sees both rooms.
   </div>
 
   <h2 id="zigbee">Zigbee, behaviour by behaviour</h2>

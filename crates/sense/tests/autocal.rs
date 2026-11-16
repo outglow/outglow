@@ -109,6 +109,41 @@ fn a_line_calibrated_by_hand_keeps_its_sensitivity() {
 }
 
 #[test]
+fn the_first_day_starts_when_the_sensing_is_switched_on() {
+    // the bulb ran 20 hours with the sensing off (the stack neither feeds nor
+    // ticks the core), then it is switched on: the day the calibration
+    // waits for is the 24 hours from then, not the rest of a day from the
+    // start (4 hours, too few: the calibration would have waited a second day)
+    let l = links()[0];
+    let mut room = Room::new(800, START_S, 5, vec![day_with_people(&l, l.sigma_lo, 800)]);
+    room.core.auto_cal = true;
+    room.t += 20 * 3_600_000;
+    room.core.start(room.t);
+    room.run(DAY_MS - 60_000);
+    assert_eq!(room.core.line[0].anchor_noise, 0, "not before a full day of sensing");
+    room.run(2 * 60_000);
+    assert!(room.core.line[0].anchor_noise != 0, "calibrated a day after the switch-on");
+    assert!(room.core.dirty, "to be stored");
+}
+
+#[test]
+fn switching_on_again_keeps_what_the_lines_learnt() {
+    let l = links()[0];
+    let mut room = Room::new(900, START_S, 5, vec![day_with_people(&l, l.sigma_lo, 900)]);
+    room.run(5000);
+    room.calibrate(60);
+    let line = room.core.line[0];
+    assert!(line.anchor_noise != 0);
+    // off for an hour, on again
+    room.t += 3_600_000;
+    room.core.start(room.t);
+    let after = room.core.line[0];
+    assert_eq!((after.src, after.s, after.anchor_s, after.anchor_noise), (line.src, line.s, line.anchor_s, line.anchor_noise));
+    assert!(!after.on() && room.core.on_mask == 0 && !room.core.cal);
+    assert_eq!((room.core.hour, room.core.t_hour), (0, room.t));
+}
+
+#[test]
 fn without_it_the_first_day_only_sets_the_anchor_noise() {
     // what the C firmware does (and the core by default): s stays
     let l = links()[0];

@@ -5,6 +5,9 @@
 //! the owner's bulbs (`crates/sense/tests/model`): the K1-K2 link of the
 //! corridor, -56.75 dBm, a spread of 0.83 dB (the smaller one its readings
 //! allow; the larger is 2.34), 10 % of the probes lost.
+//!
+//! The sensing is off out of the box; the tests of what it does switch it
+//! on first, as a user does (the rate, `SENSE_ON_RATE`).
 
 mod sim;
 
@@ -18,7 +21,8 @@ use std::rc::Rc;
 use model::{Channel, Crossing, Rng};
 use sim::*;
 use zigbee::mac;
-use zigbee::stack::{SENSE_DEFAULT_OFF_S, SENSE_DEFAULT_RATE, SENSE_DEFAULT_S};
+use zigbee::stack::Identity;
+use zigbee::stack::{SENSE_DEFAULT_OFF_S, SENSE_DEFAULT_RATE, SENSE_DEFAULT_S, SENSE_ON_RATE};
 
 const OCC: u16 = 0x0406;
 const SENSE: u16 = 0xFC5E;
@@ -62,8 +66,23 @@ fn field(net: &mut Net) -> Shared {
     f
 }
 
-/// Two sensing bulbs on the network and the K1-K2 channel between them.
+/// Two sensing bulbs on the network and the K1-K2 channel between them,
+/// the sensing switched on in both.
 fn two() -> (Net, Shared, [usize; 2], [u16; 2]) {
+    let (mut net, f, n, s) = two_off();
+    for a in s {
+        switch(&mut net, a, true);
+    }
+    (net, f, n, s)
+}
+
+/// Switches the sensing of a bulb on or off, as the converter's switch does.
+fn switch(net: &mut Net, short: u16, on: bool) {
+    assert_eq!(write(net, short, SENSE, 0x0001, T_U8, &[if on { SENSE_ON_RATE } else { 0 }]), 0);
+}
+
+/// The same two bulbs as they come: the sensing off.
+fn two_off() -> (Net, Shared, [usize; 2], [u16; 2]) {
     let mut net = Net::new();
     net.identity = IDENTITY_SENSE;
     let a = net.join_node();
@@ -167,7 +186,7 @@ fn past_holdoff(net: &mut Net) {
 
 #[test]
 fn the_clusters_are_on_the_endpoint_with_their_defaults() {
-    let (mut net, _, _, [sa, _]) = two();
+    let (mut net, _, n, [sa, _]) = two_off();
     let s = sa.to_le_bytes();
     net.coord.zdo(sa, 0x0004, &[s[0], s[1], 1]);
     net.run(50);
@@ -182,12 +201,15 @@ fn the_clusters_are_on_the_endpoint_with_their_defaults() {
     assert_eq!(read(&mut net, sa, OCC, 0x0010), Some(SENSE_DEFAULT_OFF_S.to_le_bytes().to_vec()), "OFF delay 30 s");
     assert_eq!(read(&mut net, sa, OCC, 0xFFFD), Some(vec![2, 0]));
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "sensitivity 40");
-    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![SENSE_DEFAULT_RATE]), "5 probes/s");
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![SENSE_DEFAULT_RATE]), "no probes: the sensing is off");
+    assert_eq!(SENSE_DEFAULT_RATE, 0);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![1]), "the automatic calibration ready for when it is on");
     assert_eq!(read(&mut net, sa, SENSE, 0x0003), Some(vec![0]), "no calibration running");
     assert_eq!(read(&mut net, sa, SENSE, 0x0004), Some(vec![0]), "self-tuning off");
     assert_eq!(read(&mut net, sa, SENSE, 0x0002), Some(vec![]), "no lines before the first probe");
     assert_eq!(read(&mut net, sa, SENSE, 0xFF43), Some(vec![0]));
     assert_eq!(read(&mut net, sa, SENSE, 0xFF46), Some(vec![0, 0]));
+    assert_eq!(net.air.borrow().ports[net.nodes[n[0]].id].probe_pan, 0xFFFF, "off: the radio takes no probes");
 
     // a bulb without sensing has neither
     let mut net = Net::new();
@@ -397,7 +419,8 @@ fn leaving_and_reset_to_factory_defaults_bring_the_defaults_back() {
     net.coord.zcl(sa, 0x0000, 0x01, 0x00, &[]);
     net.run(50);
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]));
-    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![5]));
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![0]), "the sensing off again");
+    assert_eq!(net.air.borrow().ports[net.nodes[n[0]].id].probe_pan, 0xFFFF);
     assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![1]), "the automatic calibration on again");
     net.power_cycle(n[0]);
     net.run(500);
@@ -441,6 +464,9 @@ fn the_corridor_after_calibration_reports_a_crossing_and_nothing_else() {
     let f = field(&mut net);
     let names = ["K1", "K2", "K3"];
     let shorts: Vec<u16> = nodes.iter().map(|&n| net.nodes[n].short()).collect();
+    for &s in &shorts {
+        switch(&mut net, s, true);
+    }
     let ports: Vec<usize> = nodes.iter().map(|&n| net.nodes[n].id).collect();
     for i in 0..3 {
         for j in 0..3 {
@@ -493,4 +519,174 @@ fn the_automatic_calibration_is_on_until_a_sensitivity_is_given_by_hand() {
     net.run(500);
     assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![1]));
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![35]));
+}
+
+#[test]
+fn out_of_the_box_the_sensing_is_off_and_the_air_is_as_without_it() {
+    // the same network twice, with bulbs without the sensing and with it
+    // (off): the same frames at the same moments, for longer than the
+    // half-hourly report would take
+    let run = |identity: Identity| {
+        let mut net = Net::new();
+        net.identity = identity;
+        let n = [net.join_node(), net.join_node()];
+        net.run(35 * 60_000);
+        let ports = [net.nodes[n[0]].id, net.nodes[n[1]].id];
+        let log = net.air.borrow().log.clone();
+        let sent: Vec<(u32, usize, Vec<u8>)> = log.into_iter().filter(|e| ports.contains(&e.1)).collect();
+        (net, n, sent)
+    };
+    let (_, _, without) = run(IDENTITY);
+    let (mut net, n, with) = run(IDENTITY_SENSE);
+    assert!(without.len() > 20, "the bulbs sent something: {}", without.len());
+    assert_eq!(with, without, "an image with the sensing off sends what one without it does");
+    let sa = net.nodes[n[0]].short();
+    assert!(probes(&net, net.nodes[n[0]].id, 0).is_empty());
+    let none = |net: &Net| net.coord.zcl_rx.iter().filter(|(_, c, _)| *c == OCC || *c == SENSE).count();
+    assert_eq!(none(&net), 0, "no report");
+    assert_eq!(read(&mut net, sa, OCC, 0x0000), Some(vec![0]), "Occupancy reads 0");
+    assert_eq!(read(&mut net, sa, SENSE, 0x0002), Some(vec![]), "no lines");
+}
+
+#[test]
+fn the_rate_switches_the_sensing_on_and_off() {
+    let (mut net, _, n, [sa, sb]) = two_off();
+    let [pa, pb] = ports(&net, n);
+    past_holdoff(&mut net);
+    // A on: it probes, and its radio takes probes; B, off, neither
+    switch(&mut net, sa, true);
+    assert_eq!(net.air.borrow().ports[pa].probe_pan, PROBE_PAN);
+    assert_eq!(net.air.borrow().ports[pb].probe_pan, 0xFFFF);
+    let t0 = net.now();
+    net.run(5000);
+    let k = probes(&net, pa, t0).len();
+    assert!((20..=30).contains(&k), "~5/s: {k} in 5 s");
+    assert!(probes(&net, pb, t0).is_empty());
+    assert_eq!(read(&mut net, sb, SENSE, 0x0002), Some(vec![]), "B takes no samples");
+    assert_eq!(read(&mut net, sa, SENSE, 0x0002), Some(vec![]), "nobody probes for A");
+    // B on too: a line each
+    switch(&mut net, sb, true);
+    net.run(5000);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0002).unwrap().len(), 6);
+    assert_eq!(read(&mut net, sb, SENSE, 0x0002).unwrap().len(), 6);
+    // A off: no probes, no reports, the radio back to its own PAN only
+    switch(&mut net, sa, false);
+    assert_eq!(net.air.borrow().ports[pa].probe_pan, 0xFFFF);
+    let (t0, n0) = (net.now(), net.coord.zcl_rx.len());
+    net.run(31 * 60_000);
+    assert!(probes(&net, pa, t0).is_empty());
+    assert!(reports(&net, sa, OCC, 0, n0).is_empty() && reports(&net, sa, SENSE, 0xFF46, n0).is_empty(), "nothing from A");
+    assert_eq!(reports(&net, sb, OCC, 0, n0), vec![0], "B, on, still reports every half hour");
+    // what A learnt stays for when it is on again
+    assert_eq!(read(&mut net, sa, SENSE, 0x0005).unwrap().len(), 4);
+}
+
+#[test]
+fn switching_off_ends_the_occupancy() {
+    let (mut net, f, n, [sa, sb]) = two();
+    let p = ports(&net, n);
+    past_holdoff(&mut net);
+    net.run(10_000);
+    let t = net.now() + 500;
+    both(&f, [sa, sb], p, |ch| ch.crossings.push(Crossing { t0: t, t1: t + 1500, depth: 8.0 }));
+    let n0 = net.coord.zcl_rx.len();
+    net.run_until(4000, "occupancy", |net| reports(net, sa, OCC, 0, n0).contains(&1));
+    let n1 = net.coord.zcl_rx.len();
+    switch(&mut net, sa, false);
+    assert_eq!(reports(&net, sa, OCC, 0, n1), vec![0], "told the occupancy is over");
+    assert_eq!(read(&mut net, sa, OCC, 0x0000), Some(vec![0]));
+    assert_eq!(read(&mut net, sa, SENSE, 0xFF46), Some(vec![0, 0]));
+}
+
+#[test]
+fn the_detectors_day_starts_when_the_sensing_is_switched_on() {
+    let (mut net, _, n, [sa, _]) = two_off();
+    let at_start = net.nodes[n[0]].stack.sense_core().t_hour;
+    net.run(2 * 3_600_000);
+    let c = *net.nodes[n[0]].stack.sense_core();
+    assert_eq!((c.hour, c.t_hour), (0, at_start), "off: the detector stood still");
+    let t = net.now();
+    switch(&mut net, sa, true);
+    let c = *net.nodes[n[0]].stack.sense_core();
+    assert_eq!(c.hour, 0);
+    assert!((t..=net.now()).contains(&c.t_hour), "the hours from the switch-on: {} ({t})", c.t_hour);
+}
+
+#[test]
+fn a_calibration_needs_the_sensing_on() {
+    let (mut net, _, _, [sa, _]) = two_off();
+    assert_eq!(write(&mut net, sa, SENSE, 0x0003, T_U8, &[60]), 0x87, "off: nothing to record");
+    assert_eq!(write(&mut net, sa, SENSE, 0x0003, T_U8, &[0]), 0, "an abort is fine");
+    assert_eq!(read(&mut net, sa, SENSE, 0x0003), Some(vec![0]));
+    switch(&mut net, sa, true);
+    assert_eq!(write(&mut net, sa, SENSE, 0x0003, T_U8, &[60]), 0);
+    net.run(1000);
+    assert!(read(&mut net, sa, SENSE, 0x0003).unwrap()[0] > 50);
+    // switched off midway: the recording is abandoned
+    switch(&mut net, sa, false);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0003), Some(vec![0]));
+}
+
+#[test]
+fn the_switch_is_stored_and_an_update_from_an_image_without_sensing_comes_up_off() {
+    let (mut net, _, n, [sa, sb]) = two_off();
+    switch(&mut net, sa, true);
+    net.power_cycle(n[0]);
+    net.power_cycle(n[1]);
+    net.run(1000);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![SENSE_ON_RATE]), "on stays on");
+    assert_eq!(read(&mut net, sb, SENSE, 0x0001), Some(vec![0]), "off stays off");
+    assert_eq!(net.air.borrow().ports[net.nodes[n[0]].id].probe_pan, PROBE_PAN);
+    switch(&mut net, sa, false);
+    net.power_cycle(n[0]);
+    net.run(1000);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![0]), "and off stays off");
+
+    // a bulb that ran an image without the sensing has no record of it
+    let mut net = Net::new();
+    let k = net.join_node();
+    net.identity = IDENTITY_SENSE;
+    net.power_cycle(k);
+    net.run(1000);
+    let s = net.nodes[k].short();
+    assert_eq!(read(&mut net, s, SENSE, 0x0001), Some(vec![0]), "updated: off");
+    assert_eq!(net.air.borrow().ports[net.nodes[k].id].probe_pan, 0xFFFF);
+    net.run(2 * 60_000);
+    assert!(probes(&net, net.nodes[k].id, 0).is_empty());
+}
+
+#[test]
+fn occupancy_reports_can_be_configured() {
+    // as a coordinator without the converter does (Zigbee2MQTT's generated
+    // definition): Occupancy bound and reported at least hourly. That is
+    // asked for, and goes whether the sensing runs or not.
+    let (mut net, f, n, [sa, sb]) = two_off();
+    let ext = net.air.borrow().ports[net.nodes[n[0]].id].ext;
+    let mut bind = ext.to_le_bytes().to_vec();
+    bind.push(1);
+    bind.extend_from_slice(&OCC.to_le_bytes());
+    bind.push(3);
+    bind.extend_from_slice(&COORD_EXT.to_le_bytes());
+    bind.push(1);
+    net.coord.zdo(sa, 0x0021, &bind);
+    net.run(2000);
+    // Occupancy (bitmap8), at most every 0 s, at least every 60 s
+    let seq = net.coord.zcl(sa, OCC, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x18, 0, 0, 60, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(sa, OCC, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00], "configured");
+    let n0 = net.coord.zcl_rx.len();
+    net.run(61_000);
+    assert_eq!(reports(&net, sa, OCC, 0, n0), vec![0], "the periodic report, the sensing off");
+    assert!(probes(&net, net.nodes[n[0]].id, 0).is_empty(), "and still no probes");
+    // on: a crossing reported through the configuration too (and by the sensing itself)
+    switch(&mut net, sa, true);
+    switch(&mut net, sb, true);
+    past_holdoff(&mut net);
+    net.run(10_000);
+    let p = ports(&net, n);
+    let t = net.now() + 500;
+    both(&f, [sa, sb], p, |ch| ch.crossings.push(Crossing { t0: t, t1: t + 1500, depth: 8.0 }));
+    let n1 = net.coord.zcl_rx.len();
+    net.run(4000);
+    assert!(reports(&net, sa, OCC, 0, n1).iter().filter(|v| **v == 1).count() >= 2, "both reports of the change");
 }

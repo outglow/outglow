@@ -16,6 +16,14 @@
 //!
 //! Only a stack whose `Identity::sense` is set has any of this; with the
 //! feature built in and the flag clear it behaves as without the feature.
+//!
+//! Out of the box the sensing is off (rate 0, `DEFAULT_RATE`): the clusters
+//! are there, but no probe goes out, the radio takes none, no frame is a
+//! sample, the detector stands still and nothing is reported; Occupancy
+//! reads 0. On the air the bulb is then what it is without the feature. A
+//! rate written from ZCL switches it on (`ON_RATE` is what a switch
+//! writes); the detector's hours, and the first day of its automatic
+//! calibration, count from then (`Core::start`).
 
 use sense::probe::{self, Heard};
 use sense::{Core, LINES, NO_SRC};
@@ -56,8 +64,12 @@ const T_OCTETS: u8 = 0x41;
 /// not the C firmware's 45: on the links measured between the owner's
 /// bulbs 45 takes their spread for motion (crates/sense/tests/measured.rs);
 /// the automatic calibration sets every line's own after the first day.
+/// The rate 0: the sensing is off until it is switched on.
 pub const DEFAULT_S: u8 = 40;
-pub const DEFAULT_RATE: u8 = 5;
+pub const DEFAULT_RATE: u8 = 0;
+/// The rate that switches the sensing on (the C firmware's default, and
+/// this one's before the sensing was in every image).
+pub const ON_RATE: u8 = 5;
 pub const DEFAULT_OFF_S: u16 = 30;
 pub const MAX_RATE: u8 = 10;
 /// No probes this long after the start (as the C firmware).
@@ -65,7 +77,11 @@ pub const HOLDOFF_MS: u32 = 60_000;
 /// Reports: at a change, not more often than this, and every half hour.
 pub const REPORT_MIN_MS: u32 = 500;
 pub const HEARTBEAT_MS: u32 = 30 * 60 * 1000;
-/// Version of the stored record (`NvItem::Sense`).
+/// Version of the stored record (`NvItem::Sense`). A record is written only
+/// when an attribute is written or the detector learnt something, so a bulb
+/// that never had the sensing on has none and comes up off; one that ran an
+/// image with the sensing on by default (built with `--sense`, before it
+/// was in every image) keeps the rate it stored, 5 unless someone changed it.
 const NV_VERSION: u8 = 3;
 /// The record: version, s, rate, OFF delay (2), self-tuning, automatic
 /// calibration; per line the sender (2), s, anchor s, anchor noise (2).
@@ -110,7 +126,7 @@ pub(crate) fn attribute(cluster: u16, id: u16) -> Option<(u8, bool)> {
 /// The sensing's state in the stack.
 pub(crate) struct Sense {
     pub core: Core,
-    /// Probes per second (0: none sent, the others still heard).
+    /// Probes per second; 0: the sensing is off.
     pub rate: u8,
     /// When the stack was made: no probes for `HOLDOFF_MS` after.
     started: u32,
@@ -156,6 +172,17 @@ impl Sense {
 }
 
 impl<H: Hal> Stack<H> {
+    /// The sensing runs: this bulb probes, takes samples and reports.
+    pub fn sense_on(&self) -> bool {
+        self.identity.sense && self.sense.rate != 0
+    }
+
+    /// The radio takes the probes only while the sensing runs.
+    fn sense_listen(&mut self) {
+        let pan = if self.sense_on() { probe::PAN } else { 0xFFFF };
+        self.hal.sense_listen(pan);
+    }
+
     /// The ON lines as last reported (the attributes show that state).
     pub fn sense_lines_on(&self) -> u16 {
         self.sense.reported
@@ -177,7 +204,11 @@ impl<H: Hal> Stack<H> {
         if !self.identity.sense {
             return;
         }
-        self.hal.sense_listen(probe::PAN);
+        self.sense_load_record(now);
+        self.sense_listen();
+    }
+
+    fn sense_load_record(&mut self, now: u32) {
         let mut raw = [0u8; NV_LEN];
         // version 2 (before the automatic calibration): one octet less, the automatic calibration on
         let (len, head) = match self.hal.nv_load(NvItem::Sense, &mut raw) {
@@ -230,12 +261,19 @@ impl<H: Hal> Stack<H> {
         let now = self.hal.now_ms();
         self.sense.defaults(now);
         self.sense.reported = 0;
+        if self.identity.sense {
+            self.sense_listen();
+        }
     }
 
     /// Reset to Factory Defaults (Basic): the attributes back to what they
     /// were out of the box, the calibration of the lines with them.
     pub(crate) fn sense_reset(&mut self) {
         if self.identity.sense {
+            // off again: the coordinator is told the occupancy is over
+            if self.sense.reported != 0 {
+                self.sense_report(0);
+            }
             self.sense_forget();
             self.sense_store();
         }
@@ -245,7 +283,9 @@ impl<H: Hal> Stack<H> {
     /// network. True when it is a probe (of ours or another's), which the
     /// stack does not see.
     pub(crate) fn sense_heard(&mut self, mpdu: &[u8], rssi: i8) -> bool {
-        if !self.identity.sense {
+        if !self.sense_on() {
+            // off: no samples; and the radio takes no probes then, so nothing
+            // but what reaches a bulb without the sensing comes here
             return false;
         }
         let pan = if self.state == State::Up { self.nib.pan } else { 0xFFFF };
@@ -288,7 +328,8 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn sense_timers(&mut self, now: u32) {
-        if !self.identity.sense {
+        if !self.sense_on() {
+            // off: the detector stands still, nothing is reported
             return;
         }
         let mask = self.sense.core.tick(now);
@@ -358,6 +399,15 @@ impl<H: Hal> Stack<H> {
         self.identity.sense && ep == ENDPOINT && matches!(cluster, OCCUPANCY | SENSE)
     }
 
+    /// Occupancy is reportable (ZCL 8 4.8.2.2.1.1, access RP): a coordinator may configure
+    /// its reports like those of the attributes outside the light's three
+    /// (`objects::XReport`); they go to the bindings, as configured, whether
+    /// the sensing runs or not. The sensing's own reports (`sense_report`)
+    /// are another matter: they go only while it runs.
+    pub(crate) fn sense_reportable(&self, cluster: u16, id: u16) -> bool {
+        self.identity.sense && cluster == OCCUPANCY && id == A_OCCUPANCY
+    }
+
     /// An attribute whose value can be long (the line tables).
     pub(crate) fn sense_long(&self, cluster: u16, id: u16) -> bool {
         self.identity.sense && cluster == SENSE && matches!(id, A_LINES | A_LINE_SENS)
@@ -421,6 +471,8 @@ impl<H: Hal> Stack<H> {
             (SENSE, A_RATE) => v <= MAX_RATE as u32,
             (SENSE, A_SELF_TUNE) => v <= 1,
             (SENSE, A_AUTO_CAL) => v <= 1,
+            // a recording needs the sensing on (0, an abort, is always fine)
+            (SENSE, A_CALIBRATE) => v == 0 || self.sense.rate != 0,
             _ => true,
         };
         if valid {
@@ -448,9 +500,13 @@ impl<H: Hal> Stack<H> {
             }
             (SENSE, A_AUTO_CAL) => c.auto_cal = v != 0,
             (SENSE, A_RATE) => {
+                let was = self.sense.rate;
                 self.sense.rate = v as u8;
                 // the new period from now on
                 self.sense.next_probe = now;
+                if (was == 0) != (v == 0) {
+                    self.sense_switched(now, v != 0);
+                }
             }
             (SENSE, A_SELF_TUNE) => c.selftune = v != 0,
             // N seconds of empty-room recording; 0 aborts it
@@ -461,5 +517,20 @@ impl<H: Hal> Stack<H> {
             _ => return,
         }
         self.sense_store();
+    }
+
+    /// The sensing switched on or off (the rate from or to 0).
+    fn sense_switched(&mut self, now: u32, on: bool) {
+        // the detector's hours, and the first day of the automatic
+        // calibration with them, from now: it does not see the time the
+        // sensing is off; a recording that was running is abandoned
+        self.sense.core.start(now);
+        self.sense.last_report = now;
+        if !on && self.sense.reported != 0 {
+            // the coordinator is told the occupancy is over, and then nothing more is sent
+            self.sense.reported = 0;
+            self.sense_report(0);
+        }
+        self.sense_listen();
     }
 }

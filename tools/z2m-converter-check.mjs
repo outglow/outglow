@@ -4,7 +4,8 @@
 // it and not to a generated or built-in definition, lists its exposes, and
 // feeds its fromZigbee converters a read response of the Diagnostics cluster
 // (standard and manufacturer-specific attributes) and an Analog Input
-// report, as zigbee-herdsman decodes them.
+// report, as zigbee-herdsman decodes them; and, on a bulb with Occupancy
+// Sensing, the motion sensing entities, their decoding and the switch.
 //
 //   node tools/z2m-converter-check.mjs model.json [z2m/outglow.mjs]
 
@@ -214,6 +215,67 @@ const optNames = (definition.options ?? []).map((o) => o.property ?? o.name);
 check("Bluetooth and the diagnostics level are device options", ["bluetooth", "bluetooth_window", "diagnostics"].every((n) => optNames.includes(n)),
       optNames.join(" "));
 check("no Bluetooth entities any more", !propsOf(exposesWith({diagnostics: "full"})).some((n) => ["ble_mode", "ble_active", "analog_output_8"].includes(n)));
+
+// motion sensing: in every image, off until switched on (crates/zigbee/src/stack/sense.rs)
+const SENSE_KEYS = ["motion_sensing", "occupancy", "occupancy_timeout", "motion_sensitivity", "motion_probes", "motion_auto_calibration",
+                    "motion_self_tuning", "motion_calibrate", "motion_calibration_left", "motion_links"];
+const hasOcc = model.endpoints.some((x) => x.ID === 1 && x.inputClusters.includes(0x0406));
+const senseEx = exposesWith({});
+const byName = Object.fromEntries(senseEx.map((x) => [x.property ?? x.name, x]));
+if (hasOcc) {
+    check("the motion sensing entities on a bulb with Occupancy Sensing", SENSE_KEYS.every((k) => byName[k]),
+          SENSE_KEYS.filter((k) => !byName[k]).join(" "));
+    const cat = (k) => byName[k]?.category;
+    check("motion_sensing is the main control, a switch", byName.motion_sensing?.type === "binary" && cat("motion_sensing") === undefined &&
+          byName.motion_sensing.value_on === "ON" && (byName.motion_sensing.access & 7) === 7);
+    check("the settings are config, the links and the countdown diagnostic",
+          ["occupancy_timeout", "motion_sensitivity", "motion_probes", "motion_auto_calibration", "motion_self_tuning", "motion_calibrate"].every((k) => cat(k) === "config") &&
+              cat("motion_links") === "diagnostic" && cat("motion_calibration_left") === "diagnostic" && byName.motion_links.type === "list");
+    check("every motion entity says what it does", SENSE_KEYS.every((k) => (byName[k]?.description ?? "").length > 20));
+    const sc = Zcl.Utils.getCluster("outglowSense", 0x1141, device.customClusters);
+    check("the sensing cluster's attributes are known under code 0x1141",
+          sc.ID === 0xfc5e && Zcl.Utils.getClusterAttribute(sc, 0xff46, 0x1141)?.name === "lineState" && Zcl.Utils.getClusterAttribute(sc, 0x0002, 0x1141)?.name === "lines");
+    const off = await convert("outglowSense", "readResponse", {probeRate: 0, sensitivity: 40});
+    const on = await convert("outglowSense", "readResponse", {probeRate: 5});
+    check("the rate reads as the switch", off.motion_sensing === "OFF" && off.motion_probes === 0 && off.occupancy === false && off.motion_sensitivity === 40 &&
+          on.motion_sensing === "ON" && on.motion_probes === 5, `${JSON.stringify(off)} ${JSON.stringify(on)}`);
+    // two links: 0x1a2b at -57 dBm, noise 1.5 dB, still; 0x3c4d at -71 dBm in slot 3, ON
+    const lines = Buffer.from([0x2b, 0x1a, 0xc7, 12, 2, 0x00, 0x4d, 0x3c, 0xb9, 20, 30, 0x31]);
+    const sens = Buffer.from([0x2b, 0x1a, 38, 38, 0x4d, 0x3c, 31, 33]);
+    const lk = await convert("outglowSense", "readResponse", {lines, lineSensitivity: sens});
+    const [l0, l1] = lk.motion_links ?? [];
+    check("the links decode", lk.motion_links?.length === 2 && l0.address === "0x1a2b" && l0.signal === -57 && l0.noise === 1.5 && !l0.motion &&
+          l0.sensitivity === 38 && l1.address === "0x3c4d" && l1.motion && l1.slot === 3 && l1.calibrated_sensitivity === 33, JSON.stringify(lk.motion_links));
+    const fzs = definition.fromZigbee.filter((x) => x.cluster === "outglowSense");
+    let st = {};
+    for (const f of fzs) Object.assign(st, f.convert(definition, {type: "attributeReport", cluster: "outglowSense", data: {zone: 0, lineState: 0}, endpoint: ep, device, meta: {}}, () => {}, {}, {device, logger: console, state: lk}) ?? {});
+    check("a report of the line state updates the links", st.motion_links?.length === 2 && st.motion_links.every((l) => !l.motion), JSON.stringify(st.motion_links));
+    // the switch writes the rate
+    const writes = [];
+    const fakeEp = {write: async (c, a, o) => writes.push([c, a, o]), read: async () => {}};
+    const tzOf = (k) => definition.toZigbee.find((x) => x.key?.includes(k));
+    const r1 = await tzOf("motion_sensing").convertSet(fakeEp, "motion_sensing", "ON", {state: {motion_probes: 0}, device, mapped: definition, options: {}, message: {}});
+    const r2 = await tzOf("motion_sensing").convertSet(fakeEp, "motion_sensing", "OFF", {state: {motion_probes: 5}, device, mapped: definition, options: {}, message: {}});
+    check("motion_sensing ON writes 5 probes/s, OFF writes 0 and clears occupancy",
+          writes[0]?.[0] === "outglowSense" && writes[0][1].probeRate === 5 && writes[0][2].manufacturerCode === 0x1141 && writes[1]?.[1].probeRate === 0 &&
+              r1.state.motion_sensing === "ON" && r2.state.occupancy === false, JSON.stringify(writes));
+    let refused = false;
+    try {
+        await tzOf("motion_calibrate").convertSet(fakeEp, "motion_calibrate", "start", {state: {motion_sensing: "OFF"}, device, mapped: definition, options: {}, message: {}});
+    } catch (err) {
+        refused = /motion_sensing on/.test(err.message);
+    }
+    check("a calibration with the sensing off says to switch it on", refused);
+    // a bulb without Occupancy Sensing (built with --no-sense) shows none of it
+    const ep1 = device.endpoints.find((x) => x.ID === 1);
+    const saved = ep1.supportsInputCluster;
+    ep1.supportsInputCluster = (k) => (clusterOf(k, device)?.ID === 0x0406 ? false : saved(k));
+    const none = exposesWith({}).map((x) => x.property ?? x.name);
+    ep1.supportsInputCluster = saved;
+    check("no motion entity on a bulb without Occupancy Sensing", !SENSE_KEYS.some((k) => none.includes(k)), none.filter((k) => SENSE_KEYS.includes(k)).join(" "));
+} else {
+    check("no motion entity on a bulb without Occupancy Sensing", !SENSE_KEYS.some((k) => byName[k]));
+}
 
 process.exit(failed ? 1 : 0);
 

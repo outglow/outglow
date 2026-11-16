@@ -13,7 +13,7 @@ description = "Bare-metal bulb firmware for the Telink TLSR8258 (TC32 core): sta
 crate-type = ["staticlib"]
 
 [features]
-default = ["ble"]
+default = ["ble", "sense"]
 # Bluetooth LE next to Zigbee: the stock bulb's profile for the AwoX app and
 # for updates over BLE (`cargo xtask build --no-ble` leaves it out).
 ble = ["dep:ble"]
@@ -22,8 +22,9 @@ ble = ["dep:ble"]
 # emulator's test harness (`cargo xtask build --trace`). Not for the bulbs.
 trace = []
 # Motion sensing from the RSSI of frames between bulbs (docs/rf-sensing.md):
-# probes, Occupancy Sensing and the manufacturer cluster 0xFC5E (cargo xtask
-# build --sense). Without it the image is the same as before.
+# probes, Occupancy Sensing and the manufacturer cluster 0xFC5E. In every
+# image, off until switched on from Zigbee; `cargo xtask build --no-sense`
+# leaves it out.
 sense = ["zigbee/sense"]
 
 [dependencies]

@@ -34,6 +34,14 @@ pub fn def() -> SimDef {
 }
 
 const QUANTUM: f64 = 0.25;
+/// Scan requests per discovery on a channel: as on an initiator's first
+/// primary channel (BDB 3.0.1 8.6, step 3).
+const SCAN_REQUESTS: usize = 5;
+/// bdbcTLScanTimeBaseDuration: the wait for responses after each scan request.
+const SCAN_WAIT_MS: f64 = 250.0;
+/// macMaxFrameRetries, and the time from one copy of a unicast to the next.
+const MAC_RETRIES: usize = 3;
+const MAC_RETRY_MS: f64 = 5.0;
 const REC_R: [u8; 8] = mac_record([0x01, 0x00, 0x52, 0x00, 0x00]);
 const REC_T: [u8; 8] = mac_record([0x02, 0x00, 0x54, 0x00, 0x00]);
 const EXT_R: u64 = ieee_of(Fw::Rust, &REC_R);
@@ -185,6 +193,12 @@ impl Ctx {
 
     /// A touchlink command: broadcast (dst None) or to one device.
     fn send(&mut self, dst: Option<u64>, cmd: u8, payload: &[u8], delay_ms: f64) {
+        let psdu = self.frame(dst, cmd, payload);
+        self.put(psdu, delay_ms);
+    }
+
+    /// The PSDU of a touchlink command, with the next MAC and ZCL sequence numbers.
+    fn frame(&mut self, dst: Option<u64>, cmd: u8, payload: &[u8]) -> Vec<u8> {
         self.ini.zcl_seq = self.ini.zcl_seq.wrapping_add(1);
         self.ini.mac_seq = self.ini.mac_seq.wrapping_add(1);
         let mut body = vec![0x0B, 0x00, if dst.is_none() { 0x0B } else { 0x03 }];
@@ -196,10 +210,42 @@ impl Ctx {
             None => mac_build(1, self.ini.mac_seq, &body, 0xFFFF, 0xFFFF, 2, INI_EXT, 3, Some(0x7777), false, false),
             Some(d) => mac_build(1, self.ini.mac_seq, &body, 0xFFFF, d, 3, INI_EXT, 3, Some(0x7777), true, false),
         };
-        let psdu = with_fcs(&mpdu);
+        with_fcs(&mpdu)
+    }
+
+    /// Puts a PSDU on the air `delay_ms` from now.
+    fn put(&mut self, psdu: Vec<u8>, delay_ms: f64) {
         let t0 = self.s.w.air.now() + delay_ms;
         let t1 = t0 + airtime_us(psdu.len()) / 1000.0;
         self.s.w.air.at(t0, Ev::Node(self.ini.id, StationEv::Transmit { psdu, t0, t1 }));
+    }
+
+    /// Whether `who` acknowledged MAC sequence number `seq` since `since`.
+    fn acked(&self, who: NodeId, seq: u8, since: f64) -> bool {
+        self.s.w.air.frames.iter().any(|f| f.t0 >= since && f.who == who && f.psdu.len() == 5 && f.psdu[0] & 7 == 2 && f.psdu[2] == seq)
+    }
+
+    /// A unicast to one bulb ("R" or "T") as the initiator's MAC sends it
+    /// (802.15.4-2006 7.5.6.4): the same frame again while it is not
+    /// acknowledged, macMaxFrameRetries (3) times at most, a few
+    /// milliseconds apart (the acknowledgement wait and a backoff). Either
+    /// bulb's receiver is off for about 2 ms every 300 ms while its radio
+    /// is lent to a BLE advertising event; a request sent once was lost
+    /// whenever its moment fell into one (with the Rust image that moment
+    /// moves with the code's layout). Whether it was acknowledged.
+    fn send_mac(&mut self, name: &str, cmd: u8, payload: &[u8]) -> R<bool> {
+        let who = if name == "R" { self.r } else { self.t };
+        let psdu = self.frame(Some(ext_of(name)), cmd, payload);
+        let seq = self.ini.mac_seq;
+        for _ in 0..=MAC_RETRIES {
+            let sent = self.now();
+            self.put(psdu.clone(), 1.0);
+            self.run(MAC_RETRY_MS)?;
+            if self.acked(who, seq, sent) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// A unicast to one bulb ("R" or "T"), sent again while it is not
@@ -212,26 +258,36 @@ impl Ctx {
             let sent = self.now();
             self.send(Some(ext_of(name)), cmd, payload, 1.0);
             self.run(wait_ms)?;
-            let seq = self.ini.mac_seq;
-            let ack = |f: &crate::air::AirFrame| f.t0 >= sent && f.who == who && f.psdu.len() == 5 && f.psdu[0] & 7 == 2 && f.psdu[2] == seq;
-            if self.s.w.air.frames.iter().any(ack) {
+            if self.acked(who, self.ini.mac_seq, sent) {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
-    /// Scans on a channel until the wanted bulbs have answered one and the same scan; their responses.
-    fn scan(&mut self, channel: i64, want: &[&str], tries: usize) -> R<Vec<(&'static str, ScanRsp)>> {
+    /// Touchlink device discovery on one channel (BDB 3.0.1 8.6, steps 2
+    /// and 3): one new transaction identifier for all of it, up to
+    /// `requests` scan requests with it, bdbcTLScanTimeBaseDuration
+    /// (0.25 s) after each, until the wanted bulbs have answered; the
+    /// responses to any of them. A target answers the transaction once: the
+    /// stock one (Telink's target) ignores a scan request with the
+    /// transaction it has answered, and while it is not factory new also
+    /// one with a new transaction, until its transaction timer
+    /// (bdbcTLInterPANTransIdLifetime, 8 s) has run out. So the bulbs must
+    /// not be asked to answer one and the same request: a bulb whose radio
+    /// was lent to a BLE advertising event as the first request went by
+    /// answers the next one.
+    fn discover(&mut self, channel: i64, want: &[&str], requests: usize) -> R<Vec<(&'static str, ScanRsp)>> {
         self.set_channel(channel);
-        for _ in 0..tries {
-            self.transaction += 1;
-            let t0 = self.now();
+        self.transaction += 1;
+        let t0 = self.now();
+        let mut got: Vec<(&'static str, ScanRsp)> = Vec::new();
+        for _ in 0..requests {
             let mut pl = self.transaction.to_le_bytes().to_vec();
             pl.extend_from_slice(&[0x05, 0x12]);
             self.send(None, 0x00, &pl, 1.0);
-            self.run(250.0)?;
-            let mut got: Vec<(&'static str, ScanRsp)> = Vec::new();
+            self.run(SCAN_WAIT_MS)?;
+            got.clear();
             for (t, src, cmd, p) in self.my_rx() {
                 if t < t0 || cmd != 0x01 || p.len() < 4 {
                     continue;
@@ -240,12 +296,26 @@ impl Ctx {
                 if u32::from_le_bytes(p[0..4].try_into().unwrap()) != self.transaction {
                     continue;
                 }
+                // the latest response of a bulb: the one whose response identifier it keeps
                 let d = ScanRsp::parse(&p);
                 match got.iter_mut().find(|(k, _)| *k == w) {
                     Some(e) => e.1 = d,
                     None => got.push((w, d)),
                 }
             }
+            if want.iter().all(|k| got.iter().any(|(x, _)| x == k)) {
+                break;
+            }
+        }
+        Ok(got)
+    }
+
+    /// Scans on a channel as an initiator scans its first primary channel
+    /// (five scan requests, `discover`) until the wanted bulbs have answered
+    /// within one discovery, `tries` discoveries at most; their responses.
+    fn scan(&mut self, channel: i64, want: &[&str], tries: usize) -> R<Vec<(&'static str, ScanRsp)>> {
+        for _ in 0..tries {
+            let got = self.discover(channel, want, SCAN_REQUESTS)?;
             if want.iter().all(|k| got.iter().any(|(x, _)| x == k)) {
                 return Ok(got);
             }
@@ -254,11 +324,12 @@ impl Ctx {
         Ok(Vec::new())
     }
 
+    /// A request to one bulb (with MAC retries, `send_mac`), and its response.
     fn request(&mut self, name: &str, cmd: u8, payload: &[u8], rsp_cmd: u8, wait: f64) -> R<Option<Vec<u8>>> {
         let t0 = self.now();
         let mut pl = self.transaction.to_le_bytes().to_vec();
         pl.extend_from_slice(payload);
-        self.send(Some(ext_of(name)), cmd, &pl, 1.0);
+        self.send_mac(name, cmd, &pl)?;
         let e = ext_of(name);
         let (chans, id) = (self.ini.chans.clone(), self.ini.id);
         self.run_until(wait, 10.0, |s| Ctx::rx(s, &chans, id).iter().any(|(t, src, k, _)| *t >= t0 && *src == e && *k == rsp_cmd))?;
@@ -329,10 +400,11 @@ impl Ctx {
     fn find(&mut self, name: &'static str, tries: usize) -> R<Option<ScanRsp>> {
         const CH: [i64; 20] = [11, 11, 11, 11, 11, 15, 20, 25, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24, 26];
         for i in 0..tries {
-            let got = self.scan(CH[i % CH.len()], &[name], 1)?;
+            let got = self.discover(CH[i % CH.len()], &[name], 1)?;
             if let Some((_, d)) = got.into_iter().find(|(k, _)| *k == name) {
                 return Ok(Some(d));
             }
+            self.run(400.0)?;
         }
         Ok(None)
     }

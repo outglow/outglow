@@ -1,6 +1,6 @@
-//! Motion detection from RSSI on the Rust firmware built with the `sense`
-//! feature (`cargo xtask build --sense`): three emulated
-//! bulbs and the coordinator, the channel between the bulbs the one
+//! Motion detection from RSSI on the Rust firmware (the `sense` feature, in
+//! every image, off until switched on): three emulated bulbs and the
+//! coordinator, which switches the sensing on in each (the probe rate), the channel between the bulbs the one
 //! measured between the owner's corridor bulbs K1, K2, K3
 //! (`crates/sense/tests/model`: the level of every link, the smaller spread
 //! its readings allow, the share of probes lost). It checks what the C
@@ -23,7 +23,7 @@ use crate::py;
 use crate::session::R;
 
 pub fn def() -> SimDef {
-    SimDef { name: "rust_sense", doc: "motion detection from RSSI between three Rust bulbs built with the sense feature, on the measured corridor links", run }
+    SimDef { name: "rust_sense", doc: "motion detection from RSSI between three Rust bulbs, switched on from ZCL, on the measured corridor links", run }
 }
 
 const NAMES: [&str; 3] = ["K1", "K2", "K3"];
@@ -126,7 +126,7 @@ fn wait_occupied(x: &mut Sense, shorts: &[u16], t: f64, ms: f64) -> R<()> {
 }
 
 fn run(cx: &mut SimCtx) -> R<()> {
-    let img = cx.image("bin", "target/tc32-sense/bulb-tc32.bin");
+    let img = cx.image("bin", "target/tc32/bulb-tc32.bin");
     let mut nodes = vec![];
     for ext in EXTS {
         let mut n = node_of(&img, cx.cpi)?;
@@ -177,9 +177,15 @@ fn run(cx: &mut SimCtx) -> R<()> {
             occ.as_deref() == Some(&[0x00][..]) && delay.as_deref() == Some(&30u16.to_le_bytes()[..]),
             &format!("occ={} delay={}", hexo(&occ), hexo(&delay)));
     // 40, not the C firmware's 45 (crates/zigbee DEFAULT_S: 45 takes the measured spread for motion)
-    x.check(cx, "manufacturer cluster 0xFC5E: sensitivity=40, probes=5/s, self-tuning off",
-            sens.as_deref() == Some(&[40][..]) && rate.as_deref() == Some(&[5][..]) && tune.as_deref() == Some(&[0][..]),
+    x.check(cx, "manufacturer cluster 0xFC5E: sensitivity=40, probes=0/s (the sensing off out of the box), self-tuning off",
+            sens.as_deref() == Some(&[40][..]) && rate.as_deref() == Some(&[0][..]) && tune.as_deref() == Some(&[0][..]),
             &format!("s={} rate={} tune={}", hexo(&sens), hexo(&rate), hexo(&tune)));
+    // switched on in every bulb, as the converter's motion_sensing switch does
+    let mut on = true;
+    for s in &sh {
+        on &= x.write(*s, CL_SENSE, A_RATE, 0x20, &[5], Some(MANU))?;
+    }
+    x.check(cx, "the sensing switched on in every bulb (rate 5)", on, "");
 
     // 3. no probes in the first minute of each bulb
     x.run_until(70_000.0, |s| s.now() >= 61_000.0)?;
@@ -343,7 +349,20 @@ fn run(cx: &mut SimCtx) -> R<()> {
             tw && delay.as_deref() == Some(&5u16.to_le_bytes()[..]) && rate.as_deref() == Some(&[5][..]) && tune.as_deref() == Some(&[1][..]) && ls == after[0],
             &format!("delay={} rate={} tune={} lines={}", hexo(&delay), hexo(&rate), hexo(&tune), sens_text(&ls)));
 
-    // 14. stability
+    // 14. switched off: no probes, Occupancy 0, nothing reported
+    let w = x.write(sh[0], CL_SENSE, A_RATE, 0x20, &[0], Some(MANU))?;
+    x.s.run(500.0)?;
+    let t0 = x.now();
+    let n_occ = x.reports(sh[0], CL_OCC, 0, t0).len();
+    x.s.run(10_000.0)?;
+    let n_probes = probes(&x, t0, x.now(), Some(0)).len();
+    let occ = x.read(sh[0], CL_OCC, 0x0000, None)?;
+    let n_occ = x.reports(sh[0], CL_OCC, 0, t0).len() - n_occ;
+    x.check(cx, "K1 switched off (rate 0): no probes, no reports, Occupancy 0",
+            w && n_probes == 0 && n_occ == 0 && occ.as_deref() == Some(&[0][..]),
+            &format!("probes={n_probes} reports={n_occ} occ={}", hexo(&occ)));
+
+    // 15. stability
     let resets: Vec<u32> = ids.iter().map(|i| x.s.w.bulb_resets(*i)).collect();
     x.check(cx, "no firmware resets and no network leave", resets.iter().all(|r| *r == 0) && x.s.events("leave").is_empty(),
             &format!("resets K1={} K2={} K3={}", resets[0], resets[1], resets[2]));

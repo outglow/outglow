@@ -111,6 +111,8 @@ fn join(img: &crate::image::Image, max_ms: f64, ev: &Rc<RefCell<Vec<String>>>) -
         e.borrow_mut().push(format!("[{:9.3} ms] {text}", m.ms()));
     }));
     let mut w = World::new(node, Coord::new_plain(CHANNEL, DEFAULT_KEY), Keys::default(), None);
+    // what became of every frame at the bulb's receiver (`lent_to_ble`)
+    w.air.dut.radio.b().rx_log = Some(Vec::new());
     w.coord.start(&mut w.air);
     let joined = |w: &World| w.coord.has_event("device-announce");
     let end = w.now() + max_ms;
@@ -164,11 +166,27 @@ fn snapshot(w: &World) -> (Vec<(usize, u8)>, Vec<u8>) {
     (d, m.analog[..256].to_vec())
 }
 
+/// Whether the frame on the air at `t0` (air time), `len` bytes long, began
+/// while the bulb's radio was lent to a BLE event: its receiver was in BLE
+/// mode (on a BLE channel, or still on the network's). Both images do that
+/// for about 2 ms every 300 ms (an advertising event); a frame that starts
+/// then is lost whatever the driver does, and its sender's MAC retry gets
+/// the acknowledgement. Which frames those are depends on where the
+/// advertising events fall, which moves with every change of the code's
+/// timing (the firmware's random numbers are stirred with the timer).
+fn lent_to_ble(w: &World, t0: f64, len: usize) -> bool {
+    let off = w.air.t_off;
+    w.air.dut.radio.b().rx_log.as_ref().is_some_and(|log| {
+        log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode"))
+    })
+}
+
 /// For each coordinator frame that asks for an acknowledgement: microseconds
 /// from its end to the start of the bulb's ACK when the ACK came before the
-/// coordinator's next frame (None: no ACK), and whether the coordinator sent
-/// the same frame again (its MAC retry, which gets an entry of its own).
-fn ack_delays(w: &World) -> Vec<(Option<f64>, bool)> {
+/// coordinator's next frame (None: no ACK), whether the coordinator sent
+/// the same frame again (its MAC retry, which gets an entry of its own), and
+/// whether the frame began while the bulb's radio was lent to BLE.
+fn ack_delays(w: &World) -> Vec<(Option<f64>, bool, bool)> {
     let fr = &w.air.frames;
     let mut out = Vec::new();
     for (i, f) in fr.iter().enumerate() {
@@ -185,11 +203,13 @@ fn ack_delays(w: &World) -> Vec<(Option<f64>, bool)> {
             .iter()
             .find(|g| g.who == NodeId::Dut && g.psdu.len() == 5 && g.psdu[0] & 7 == 2 && g.psdu[2] == m.seq);
         let retried = rest.get(next).is_some_and(|g| g.psdu == f.psdu);
-        out.push((ack.map(|g| (g.t0 - f.t1) * 1000.0), retried));
+        out.push((ack.map(|g| (g.t0 - f.t1) * 1000.0), retried, lent_to_ble(w, f.t0, f.psdu.len())));
     }
     out
 }
 
+/// The radio model's complaints, and whether there are none but frames that
+/// began while the radio was lent to BLE (`lent_to_ble`).
 fn complaints(w: &World) -> (String, bool) {
     let r = w.air.dut.radio.b();
     let why = if r.dropped.is_empty() {
@@ -197,7 +217,10 @@ fn complaints(w: &World) -> (String, bool) {
     } else {
         format!("{{{}}}", r.dropped.iter().map(|(k, v)| format!("'{k}': {v}")).collect::<Vec<_>>().join(", "))
     };
-    (format!("sent {}, received {}, dropped {why}, collisions {}", r.sent, r.received, r.collisions), r.dropped.is_empty())
+    let dropped: i64 = r.dropped.values().map(|v| *v as i64).sum();
+    let ble = r.rx_log.as_ref().map_or(0, |l| l.iter().filter(|e| e.fate == "off at start: BLE mode").count()) as i64;
+    let lent = if ble > 0 { format!(" ({ble} of them begun while the radio was lent to BLE)") } else { String::new() };
+    (format!("sent {}, received {}, dropped {why}{lent}, collisions {}", r.sent, r.received, r.collisions), dropped == ble)
 }
 
 fn run(cx: &mut SimCtx) -> R<()> {
@@ -283,12 +306,13 @@ fn run(cx: &mut SimCtx) -> R<()> {
         for (name, w) in [("vendor", &cw), ("Rust", &rw)] {
             let d = ack_delays(w);
             let got: Vec<f64> = d.iter().filter_map(|x| x.0).collect();
-            // a first copy the bulb did not hear (with BLE in the image the radio is
-            // lent to an advertising event for about 2 ms every 300 ms), acknowledged on the retry
-            let retried = d.iter().filter(|x| x.0.is_none() && x.1).count();
+            // a first copy the bulb did not hear because its radio was lent to
+            // a BLE event (`lent_to_ble`), acknowledged on the retry; how many
+            // depends on where the events fall, not on the driver
+            let retried = d.iter().filter(|x| x.0.is_none() && x.1 && x.2).count();
             let mut line = format!("{} of {} frames acknowledged", got.len(), d.len());
             if retried > 0 {
-                line += &format!(" ({retried} first copy/copies missed and acknowledged on the coordinator's MAC retry)");
+                line += &format!(" ({retried} first copy/copies missed while the radio was lent to BLE, acknowledged on the coordinator's MAC retry)");
             }
             let (lo, hi) = (got.iter().copied().fold(f64::INFINITY, f64::min), got.iter().copied().fold(f64::NEG_INFINITY, f64::max));
             if !got.is_empty() {
@@ -298,7 +322,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
                 cx.say(&format!("      vendor firmware: {line}"));
             } else {
                 check(cx, "every frame with an acknowledgement request is acknowledged, at the latest on the MAC retry",
-                      d.len() >= 8 && got.len() + retried == d.len() && retried <= 1, &line);
+                      d.len() >= 8 && got.len() + retried == d.len(), &line);
                 check(cx, "the ACK starts 160..260 us after the end of the frame", !got.is_empty() && 160.0 <= lo && hi <= 260.0,
                       &if got.is_empty() { String::new() } else { format!("{lo:.0}..{hi:.0} us") });
             }
@@ -327,7 +351,8 @@ fn run(cx: &mut SimCtx) -> R<()> {
         let (line, _) = complaints(&cw);
         cx.say(&format!("      vendor firmware: {line}"));
         let (line, clean) = complaints(&rw);
-        check(cx, "no transmission outside TX mode, no frame lost to a receiver left off", clean, &line);
+        check(cx, "no transmission outside TX mode, no frame lost to a receiver left off (but for frames begun while BLE had the radio)",
+              clean, &line);
         check(cx, "no MAC retries were needed by the coordinator",
               !rw.coord.events.iter().any(|e| e.kind == "mac-retry-upper" || e.kind == "mac-no-ack"), "");
     }
