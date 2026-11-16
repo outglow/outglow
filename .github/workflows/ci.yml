@@ -163,6 +163,8 @@ jobs:
       - uses: ./.github/actions/original-firmware
         with:
           key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+      - name: tshark (wireshark and ble_wireshark check the frames with it)
+        run: sudo apt-get update -q && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
       - name: Scenarios (the long ones with the original firmware among them)
         run: cargo sims -- --shard ${{ matrix.shard }}/6
 
