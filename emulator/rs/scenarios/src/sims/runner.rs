@@ -19,6 +19,45 @@ fn selected(a: &Args, name: &str) -> bool {
         && !a.skip.iter().any(|f| name.contains(f.as_str()))
 }
 
+/// Rough wall time of the long scenarios [s] (one core, cpi 3), to balance
+/// `--shard`; every other scenario counts as `OTHER_S`.
+const COST_S: &[(&str, u32)] = &[
+    ("addr_conflict_house", 620),
+    ("addr_conflict_child", 260),
+    ("addr_conflict_echo", 215),
+    ("migrate", 190),
+    ("addr_conflict_channel", 160),
+    ("enddev_wallswitch", 115),
+    ("back_to_stock_ble", 95),
+    ("ble_ota", 55),
+    ("rust_sense", 50),
+];
+const OTHER_S: u32 = 20;
+
+fn cost(name: &str) -> u32 {
+    let n = name.trim_start_matches("sims::");
+    COST_S.iter().find(|(p, _)| n.starts_with(p)).map_or(OTHER_S, |c| c.1)
+}
+
+/// Part `k` (1-based) of `n` of `idx`: the longest first, each to the part
+/// with the least so far (ties: the lower part, then the name), so that every
+/// CI job computes the same split from the same list.
+fn shard(idx: Vec<usize>, names: &[String], k: usize, n: usize) -> Vec<usize> {
+    let mut by_cost = idx;
+    by_cost.sort_by(|&a, &b| cost(&names[b]).cmp(&cost(&names[a])).then(names[a].cmp(&names[b])));
+    let mut load = vec![0u32; n];
+    let mut mine = Vec::new();
+    for i in by_cost {
+        let part = (0..n).min_by_key(|&p| (load[p], p)).unwrap();
+        load[part] += cost(&names[i]);
+        if part + 1 == k {
+            mine.push(i);
+        }
+    }
+    mine.sort();
+    mine
+}
+
 pub fn main_with(argv: &[String]) -> i32 {
     main_with_extra(argv, Vec::new())
 }
@@ -35,13 +74,19 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
     let mut all = sims();
     all.extend(extra);
     let names: Vec<String> = all.iter().map(|d| format!("sims::{}", d.name)).collect();
+    let mut chosen: Vec<usize> = (0..all.len()).filter(|i| selected(&a, &names[*i])).collect();
+    if let Some((k, n)) = a.shard {
+        chosen = shard(chosen, &names, k, n);
+    }
     if a.list {
-        for n in names.iter().filter(|n| selected(&a, n)) {
-            println!("{n}: test");
+        for &i in &chosen {
+            println!("{}: test", names[i]);
         }
         return 0;
     }
-    let todo: VecDeque<usize> = (0..all.len()).filter(|i| selected(&a, &names[*i])).collect();
+    // the longest first, so a long one does not start last
+    chosen.sort_by(|&x, &y| cost(&names[y]).cmp(&cost(&names[x])).then(x.cmp(&y)));
+    let todo: VecDeque<usize> = chosen.into_iter().collect();
     let n_sel = todo.len();
     println!("\nrunning {n_sel} scenario{}", if n_sel == 1 { "" } else { "s" });
     let t0 = Instant::now();
@@ -114,5 +159,32 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
         0
     } else {
         1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shards_cover_every_scenario_once() {
+        let names: Vec<String> = sims().iter().map(|d| format!("sims::{}", d.name)).collect();
+        for n in 1..=8 {
+            let mut seen = vec![0; names.len()];
+            for k in 1..=n {
+                for i in shard((0..names.len()).collect(), &names, k, n) {
+                    seen[i] += 1;
+                }
+            }
+            assert!(seen.iter().all(|&c| c == 1), "{n} shards: {seen:?}");
+        }
+    }
+
+    #[test]
+    fn no_other_long_scenario_shares_the_longest_ones_shard() {
+        let names: Vec<String> = sims().iter().map(|d| format!("sims::{}", d.name)).collect();
+        let part = shard((0..names.len()).collect(), &names, 1, 6);
+        assert!(part.iter().any(|&i| names[i] == "sims::addr_conflict_house"));
+        assert!(part.iter().all(|&i| names[i] == "sims::addr_conflict_house" || cost(&names[i]) == OTHER_S), "{part:?}");
     }
 }

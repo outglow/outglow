@@ -6,7 +6,8 @@
 //! Arguments (after `--`): substring filters on `label::TEST-ID` (`a|b` = a or
 //! b), `--list`, `--exact`, `--image label=path[@0xOFFSET]` (repeatable),
 //! `--json out.json` (the verdicts), `--meta-json tests.json` (what each test checks),
-//! `--cpi N` (3 = full fidelity), `--jobs N` / `--test-threads N`, `-v`.
+//! `--cpi N` (3 = full fidelity), `--jobs N` / `--test-threads N`, `-v`,
+//! `--shard K/N` (the scenarios only: the K-th of N parts, for parallel CI jobs).
 //! Environment: SCENARIO_IMAGES=label=path,... SCENARIO_CPI, SCENARIO_JOBS (or RUST_TEST_THREADS), NO_COLOR.
 
 use std::collections::VecDeque;
@@ -70,6 +71,8 @@ pub struct Args {
     pub skip: Vec<String>,
     /// colour the verdicts (libtest's --color auto|always|never, NO_COLOR)
     pub color: bool,
+    /// run only part K (1-based) of N of the selected scenarios
+    pub shard: Option<(usize, usize)>,
 }
 
 /// The repository root, from this crate's place in it (emulator/rs/scenarios).
@@ -84,6 +87,17 @@ pub fn default_images() -> Vec<Image> {
         .iter()
         .map(|(l, p)| Image { label: l.to_string(), path: if p.starts_with("stock/") { crate::sims::image_path(p) } else { r.join(p) }, link_shift: None })
         .collect()
+}
+
+/// `K/N` with 1 <= K <= N.
+fn parse_shard(v: &str) -> Result<(usize, usize), String> {
+    let (k, n) = v.split_once('/').ok_or(format!("--shard {v}: expected K/N"))?;
+    let k: usize = k.parse().map_err(|e| format!("--shard {v}: {e}"))?;
+    let n: usize = n.parse().map_err(|e| format!("--shard {v}: {e}"))?;
+    if k == 0 || k > n {
+        return Err(format!("--shard {v}: K must be 1..=N"));
+    }
+    Ok((k, n))
 }
 
 pub fn parse_args(argv: &[String]) -> Result<Args, String> {
@@ -107,6 +121,7 @@ pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<
         matrix: false,
         skip: Vec::new(),
         color: std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var_os("NO_COLOR").is_none(),
+        shard: None,
     };
     if let Ok(v) = std::env::var("RUST_TEST_THREADS") {
         a.jobs = v.parse::<usize>().map_err(|e| format!("RUST_TEST_THREADS: {e}"))?.max(1);
@@ -138,6 +153,7 @@ pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<
             "--meta-json" => a.meta_json = Some(PathBuf::from(it.next().ok_or("--meta-json needs a value")?)),
             "--matrix" => a.matrix = true,
             "--skip" => a.skip.push(it.next().ok_or("--skip needs a value")?.clone()),
+            "--shard" => a.shard = Some(parse_shard(it.next().ok_or("--shard needs K/N")?)?),
             "--image" => cli_images.push(Image::parse(it.next().ok_or("--image needs a value")?)?),
             // libtest flags cargo/nextest may pass: accepted, no effect here
             "--nocapture" | "--show-output" | "-q" | "--quiet" | "--include-ignored" | "--ignored" => {}
