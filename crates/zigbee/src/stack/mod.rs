@@ -37,7 +37,7 @@ pub use diag::{ev, LoggedEvent, MacCounters, NeighborCounts, DIAG_COUNTERS_MAX};
 pub use ota::OtaState;
 pub use zcl::LightSettings;
 #[cfg(feature = "sense")]
-pub use sense::{DEFAULT_OFF_S as SENSE_DEFAULT_OFF_S, DEFAULT_RATE as SENSE_DEFAULT_RATE, DEFAULT_S as SENSE_DEFAULT_S};
+pub use sense::{DEFAULT_OFF_S as SENSE_DEFAULT_OFF_S, DEFAULT_RATE as SENSE_DEFAULT_RATE, DEFAULT_S as SENSE_DEFAULT_S, ON_RATE as SENSE_ON_RATE};
 
 use crate::aes::Aes128;
 use crate::hal::Hal;
