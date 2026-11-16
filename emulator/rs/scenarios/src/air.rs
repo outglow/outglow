@@ -15,6 +15,7 @@ use zbnode::{Frame, Node, RunEvent};
 
 use crate::coord::{Coord, CoordEv};
 use crate::frames::Keys;
+use crate::par::{BulbPtr, Job, Phase, Pool};
 use crate::peer::{Peer, PeerEv};
 use crate::station::{Station, StationEv};
 
@@ -151,6 +152,112 @@ pub struct BleAir {
     pub blocked: HashSet<(NodeId, NodeId)>,
 }
 
+/// What reaches a further bulb while it runs on a worker thread of the
+/// parallel lockstep: kept until the phase is over (`World::drain_lent`).
+enum Deferred {
+    /// an 802.15.4 frame, in air time
+    Rx { bulb: u8, t0: f64, t1: f64, ch: i64, psdu: Vec<u8>, rssi: i64, bad: bool },
+    /// a BLE packet, in air time
+    Ble { bulb: u8, t0: f64, t1: f64, ch: u8, aa: u32, pdu: Vec<u8> },
+}
+
+/// The further bulbs are out on the worker threads (`World::lockstep` in
+/// parallel): their number, and what the air sent them meanwhile.
+struct Lent {
+    n: usize,
+    q: Vec<Deferred>,
+}
+
+/// An 802.15.4 frame reaching a bulb's radio (in air time; `off`: the air
+/// time of the bulb's power-on).
+#[allow(clippy::too_many_arguments)]
+fn inject_154(node: &Node, off: f64, psdu: &[u8], ch: i64, t0: f64, t1: f64, rssi: i64, bad: bool) {
+    let mut p = psdu.to_vec();
+    if bad {
+        // what the radio demodulates of a corrupted frame: some bits flipped
+        if let Some(x) = p.get_mut(psdu.len() / 2) {
+            *x ^= 0x5A;
+        }
+        node.inject_rx_bad_fcs(Frame { t0: r6(t0 - off), t1: r6(t1 - off), channel: ch, psdu: p }, rssi);
+    } else {
+        node.inject_rx(Frame { t0: r6(t0 - off), t1: r6(t1 - off), channel: ch, psdu: p }, rssi);
+    }
+}
+
+/// What a bulb that runs on its own (`bulb_next`) put out, for the air.
+pub enum BulbOut {
+    /// an 802.15.4 frame, air time
+    Tx { t0: f64, t1: f64, ch: i64, psdu: Vec<u8> },
+    /// a BLE packet, air time
+    Ble { t0: f64, t1: f64, ch: u8, aa: u32, pdu: Vec<u8> },
+    /// a line for the scenario's log
+    Log(String),
+}
+
+/// `GoEngine.run_alone` of a bulb that does not own the schedule, up to its
+/// next output: runs it towards `target` (air time) and returns the first
+/// frame, packet or log line it puts out, or None at `target`. Touches
+/// nothing but the bulb. With `commit`, it also stops (None) as soon as its
+/// radio no longer waits in TX mode (`Node::tx_committed`).
+pub(crate) fn bulb_next(b: &mut Bulb, target: f64, powered: bool, commit: bool) -> Result<Option<BulbOut>, String> {
+    loop {
+        let (t, off) = (b.t, b.t_off);
+        if t >= target {
+            return Ok(None);
+        }
+        let run_to = r6(target - off);
+        if !powered {
+            b.t = target;
+            return Ok(None);
+        }
+        loop {
+            if commit && !b.node.tx_committed_or_started() {
+                b.t = b.t.max(r6(b.node.ms()) + off);
+                return Ok(None);
+            }
+            if let Some(t) = &mut b.tap {
+                t.sync();
+            }
+            match b.node.step_run(run_to) {
+                RunEvent::Tx(fr) => {
+                    let (t0, t1) = (r6(fr.t0) + off, r6(fr.t1) + off);
+                    b.t = t0;
+                    return Ok(Some(BulbOut::Tx { t0, t1, ch: fr.channel, psdu: fr.psdu }));
+                }
+                RunEvent::BleTx(a) => {
+                    b.t = r6(a.t0) + off;
+                    return Ok(Some(BulbOut::Ble { t0: r6(a.t0) + off, t1: r6(a.t1) + off, ch: a.ch, aa: a.aa, pdu: a.pdu }));
+                }
+                RunEvent::At => {
+                    b.t = b.t.max(r6(b.node.ms()) + off).max(target);
+                    break;
+                }
+                RunEvent::Ran => {}
+                RunEvent::SramBoot { pc: _, ram_code } => {
+                    let ms = r6(b.node.ms());
+                    return Ok(Some(BulbOut::Log(format!(
+                        "[{ms:9.3} ms] bootloader -> application (start from SRAM, ram_code={ram_code:#x})"
+                    ))));
+                }
+                RunEvent::Reset { cause, pc } => {
+                    b.resets += 1;
+                    let ms = r6(b.node.ms());
+                    let slot = b.node.m.boot_slot;
+                    return Ok(Some(BulbOut::Log(format!(
+                        "[{ms:9.3} ms] RESET firmware: {} {pc:#x} @ slot={slot:#x}",
+                        cause.replace(' ', "_")
+                    ))));
+                }
+                RunEvent::Error(e) => {
+                    let pc = b.node.m.r[15];
+                    return Err(format!("emulation error ({}): {e} pc={pc:#x}", b.name));
+                }
+                RunEvent::Fatal(e) => return Err(format!("emulator ({}): {e}", b.name)),
+            }
+        }
+    }
+}
+
 /// An emulated bulb other than the first: its own clock and power-on offset
 /// (a further `GoEngine` on the same `Medium`, driven by `lockstep`).
 pub struct Bulb {
@@ -205,6 +312,9 @@ pub struct Air {
     pub channel: Option<Box<dyn Channel>>,
     /// bulbs without power (`World::power_off`): they do not run, send or receive
     pub off: HashSet<NodeId>,
+    /// (parallel lockstep) the further bulbs are out on worker threads and
+    /// `bulbs` is empty: what the air sends them waits here
+    lent: Option<Lent>,
 }
 
 impl Air {
@@ -266,25 +376,20 @@ impl Air {
                     .collect()
             }
         };
-        for (n, r, bad) in &rx {
+        for &(n, r, bad) in &rx {
             // a bulb's radio: not before it was powered on, in its own time
-            let (node, off) = match *n {
-                NodeId::Dut if t0 >= self.t_off => (&self.dut, self.t_off),
-                NodeId::Bulb(i) if t0 >= self.bulbs[i as usize].t_off => {
-                    let b = &self.bulbs[i as usize];
-                    (&b.node, b.t_off)
-                }
-                _ => continue,
-            };
-            let mut p = (*psdu).clone();
-            if *bad {
-                // what the radio demodulates of a corrupted frame: some bits flipped
-                if let Some(x) = p.get_mut(psdu.len() / 2) {
-                    *x ^= 0x5A;
-                }
-                node.inject_rx_bad_fcs(Frame { t0: r6(t0 - off), t1: r6(t1 - off), channel: ch, psdu: p }, *r);
-            } else {
-                node.inject_rx(Frame { t0: r6(t0 - off), t1: r6(t1 - off), channel: ch, psdu: p }, *r);
+            match n {
+                NodeId::Dut if t0 >= self.t_off => inject_154(&self.dut, self.t_off, &psdu, ch, t0, t1, r, bad),
+                NodeId::Bulb(i) => match &mut self.lent {
+                    Some(l) => l.q.push(Deferred::Rx { bulb: i, t0, t1, ch, psdu: (*psdu).clone(), rssi: r, bad }),
+                    None => {
+                        let b = &self.bulbs[i as usize];
+                        if t0 >= b.t_off {
+                            inject_154(&b.node, b.t_off, &psdu, ch, t0, t1, r, bad);
+                        }
+                    }
+                },
+                _ => {}
             }
         }
         // a scripted node's MAC drops a corrupted frame
@@ -333,17 +438,32 @@ impl Air {
     pub fn ble_transmit(&mut self, sender: NodeId, t0: f64, t1: f64, ch: u8, aa: u32, pdu: Vec<u8>) {
         let Some(ba) = &mut self.ble_air else { return };
         ba.packets.push((t0, t1, ch, aa, sender, pdu.clone()));
+        let n_bulbs = self.lent.as_ref().map_or(self.bulbs.len(), |l| l.n);
         let rx: Vec<NodeId> = std::iter::once(NodeId::Dut)
-            .chain((0..self.bulbs.len()).map(|i| NodeId::Bulb(i as u8)))
+            .chain((0..n_bulbs).map(|i| NodeId::Bulb(i as u8)))
             .filter(|n| *n != sender && !ba.blocked.contains(&(sender, *n)))
             .collect();
         for n in rx {
-            let (node, off) = match n {
-                NodeId::Dut => (&self.dut, self.t_off),
-                NodeId::Bulb(i) => (&self.bulbs[i as usize].node, self.bulbs[i as usize].t_off),
-                _ => continue,
-            };
-            node.ble_radio.air_rx(&node.m, pdu.clone(), ch, aa, r6(t0 - off), r6(t1 - off));
+            match n {
+                NodeId::Dut => self.dut.ble_radio.air_rx(&self.dut.m, pdu.clone(), ch, aa, r6(t0 - self.t_off), r6(t1 - self.t_off)),
+                NodeId::Bulb(i) => match &mut self.lent {
+                    Some(l) => l.q.push(Deferred::Ble { bulb: i, t0, t1, ch, aa, pdu: pdu.clone() }),
+                    None => {
+                        let b = &self.bulbs[i as usize];
+                        b.node.ble_radio.air_rx(&b.node.m, pdu.clone(), ch, aa, r6(t0 - b.t_off), r6(t1 - b.t_off));
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
+    /// What a bulb that ran on its own put out goes on the air.
+    fn put_out(&mut self, id: NodeId, o: BulbOut) {
+        match o {
+            BulbOut::Tx { t0, t1, ch, psdu } => self.transmit(id, psdu, ch, t0, t1, -40),
+            BulbOut::Ble { t0, t1, ch, aa, pdu } => self.ble_transmit(id, t0, t1, ch, aa, pdu),
+            BulbOut::Log(s) => self.log(&s),
         }
     }
 
@@ -363,6 +483,75 @@ pub struct World {
     pub coords: Vec<Coord>,
     /// Watchdog and software resets of the bulb seen by the run loop.
     pub resets: u32,
+    /// how `lockstep` runs the bulbs (`ZB_PARALLEL`...)
+    pub par: ParOptions,
+    /// the worker threads of the parallel lockstep, once it ran
+    pool: Option<Pool>,
+    pub par_stats: ParStats,
+}
+
+/// How `World::lockstep` advances the bulbs.
+///
+/// Sequential (the default): the first bulb and the scripted nodes, then
+/// each further bulb in turn, each to the end of the quantum; a bulb sees
+/// what an earlier one sent in the same quantum, an earlier one does not
+/// see a later one's until the next.
+///
+/// Parallel (`ZB_PARALLEL=1`, with at least two bulbs): all bulbs run the
+/// quantum at the same time, the further ones on worker threads; the scripted
+/// nodes stay with the first bulb on the scenario's thread. What they put on
+/// the air reaches the others at the end of the quantum, in a fixed order
+/// (the scenario's thread first, then the bulbs by index, each in time
+/// order), so the run does not depend on the threads' timing. With the
+/// lookahead (`ZB_PARALLEL_LOOKAHEAD`, on unless 0), every bulb whose radio
+/// waits in TX mode at the start of a quantum is first run alone until its
+/// frame starts: the drivers spend the synthesizer's settling time in TX
+/// mode, deaf, before a frame (at least 119.6 µs over a thousand frames of
+/// the stock and the Rust firmware, `ZB_TX_LEADS`), so with a quantum no longer
+/// than that, every frame a bulb starts in a quantum is known before the
+/// others run it, and they hear it from its first bit. The quantum is the
+/// scenario's, at most `ZB_PARALLEL_QUANTUM` ms (default 0.1).
+#[derive(Clone, Copy, Debug)]
+pub struct ParOptions {
+    pub parallel: bool,
+    pub lookahead: bool,
+    pub max_quantum: f64,
+}
+
+impl ParOptions {
+    pub fn from_env() -> ParOptions {
+        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        ParOptions {
+            parallel: var("ZB_PARALLEL").is_some_and(|v| v != "0"),
+            lookahead: var("ZB_PARALLEL_LOOKAHEAD").map_or(true, |v| v != "0"),
+            max_quantum: var("ZB_PARALLEL_QUANTUM").and_then(|v| v.parse().ok()).unwrap_or(0.1),
+        }
+    }
+}
+
+/// Counts of the parallel lockstep (`ZB_PARALLEL_STATS=1` prints them when
+/// the world goes).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParStats {
+    pub quanta: u64,
+    /// quanta with a lookahead phase of the further bulbs / of the first bulb
+    pub commit_phases: u64,
+    pub dut_commits: u64,
+    /// frames started in the lookahead: heard by everybody from their start
+    pub frames_ahead: u64,
+    /// frames of further bulbs started in the quantum they were decided in:
+    /// the other bulbs learn of them at its end
+    pub frames_late_bulb: u64,
+    /// frames of the first bulb and the scripted nodes in the parallel phase:
+    /// the further bulbs learn of them at its end
+    pub frames_late_main: u64,
+    /// BLE packets that reached other bulbs at the end of a quantum
+    pub ble_late: u64,
+    /// emulated time the further bulbs ran in lookahead phases, ms
+    pub commit_ms: f64,
+    /// wall time the scenario's thread spent running the first bulb and the
+    /// scripted nodes in the parallel phases
+    pub main_busy: std::time::Duration,
 }
 
 impl World {
@@ -386,11 +575,21 @@ impl World {
             ble_tx: 0,
             channel: None,
             off: HashSet::new(),
+            lent: None,
             keys,
             dut,
             log,
         };
-        World { air, coord, peers: Vec::new(), coords: Vec::new(), resets: 0 }
+        World {
+            air,
+            coord,
+            peers: Vec::new(),
+            coords: Vec::new(),
+            resets: 0,
+            par: ParOptions::from_env(),
+            pool: None,
+            par_stats: ParStats::default(),
+        }
     }
 
     pub fn now(&self) -> f64 {
@@ -451,6 +650,20 @@ impl World {
 
     /// Runs the scenario to `target` ms (`GoEngine.run_alone`).
     pub fn run_ms(&mut self, target: f64) -> Result<(), String> {
+        self.run_ms_inner(target, false)
+    }
+
+    /// `run_ms` while the first bulb waits in TX mode (the parallel
+    /// lockstep's lookahead): it stops once the bulb's frame has started or
+    /// its radio has left TX mode.
+    fn run_ms_commit(&mut self, target: f64) -> Result<(), String> {
+        self.air.dut.set_stop_uncommitted(true);
+        let r = self.run_ms_inner(target, true);
+        self.air.dut.set_stop_uncommitted(false);
+        r
+    }
+
+    fn run_ms_inner(&mut self, target: f64, commit: bool) -> Result<(), String> {
         loop {
             while let Some(ev) = self.air.pop_due() {
                 self.dispatch(ev);
@@ -470,6 +683,10 @@ impl World {
                 continue;
             }
             loop {
+                if commit && !self.air.dut.tx_committed_or_started() {
+                    self.air.t = self.air.t.max(r6(self.air.dut.ms()) + off);
+                    return Ok(());
+                }
                 if let Some(t) = &mut self.air.dut_tap {
                     t.sync();
                 }
@@ -478,6 +695,9 @@ impl World {
                         let (t0, t1) = (r6(fr.t0) + off, r6(fr.t1) + off);
                         self.air.t = t0;
                         self.air.transmit(NodeId::Dut, fr.psdu, fr.channel, t0, t1, -40);
+                        if commit {
+                            return Ok(());
+                        }
                         break;
                     }
                     RunEvent::BleTx(a) => {
@@ -596,63 +816,20 @@ impl World {
     /// `GoEngine.run_alone` of a bulb that does not own the schedule: it runs
     /// to `target` (its own schedule is empty), stopping when it transmits.
     pub fn run_bulb(&mut self, i: usize, target: f64) -> Result<(), String> {
-        loop {
-            let (t, off) = (self.air.bulbs[i].t, self.air.bulbs[i].t_off);
-            if t >= target {
-                return Ok(());
-            }
-            let nxt = target;
-            let run_to = r6(nxt - off);
-            if self.air.off.contains(&NodeId::Bulb(i as u8)) {
-                self.air.bulbs[i].t = nxt;
-                return Ok(());
-            }
-            loop {
-                if let Some(t) = &mut self.air.bulbs[i].tap {
-                    t.sync();
-                }
-                let ev = self.air.bulbs[i].node.step_run(run_to);
-                match ev {
-                    RunEvent::Tx(fr) => {
-                        let (t0, t1) = (r6(fr.t0) + off, r6(fr.t1) + off);
-                        self.air.bulbs[i].t = t0;
-                        self.air.transmit(NodeId::Bulb(i as u8), fr.psdu, fr.channel, t0, t1, -40);
-                        break;
-                    }
-                    RunEvent::BleTx(a) => {
-                        self.air.bulbs[i].t = r6(a.t0) + off;
-                        self.air.ble_transmit(NodeId::Bulb(i as u8), r6(a.t0) + off, r6(a.t1) + off, a.ch, a.aa, a.pdu);
-                        break;
-                    }
-                    RunEvent::At => {
-                        let b = &mut self.air.bulbs[i];
-                        b.t = b.t.max(r6(b.node.ms()) + off).max(nxt);
-                        break;
-                    }
-                    RunEvent::Ran => {}
-                    RunEvent::SramBoot { pc: _, ram_code } => {
-                        let ms = r6(self.air.bulbs[i].node.ms());
-                        self.air.log(&format!("[{ms:9.3} ms] bootloader -> application (start from SRAM, ram_code={ram_code:#x})"));
-                    }
-                    RunEvent::Reset { cause, pc } => {
-                        self.air.bulbs[i].resets += 1;
-                        let ms = r6(self.air.bulbs[i].node.ms());
-                        let slot = self.air.bulbs[i].node.m.boot_slot;
-                        self.air.log(&format!("[{ms:9.3} ms] RESET firmware: {} {pc:#x} @ slot={slot:#x}", cause.replace(' ', "_")));
-                    }
-                    RunEvent::Error(e) => {
-                        let pc = self.air.bulbs[i].node.m.r[15];
-                        return Err(format!("emulation error ({}): {e} pc={pc:#x}", self.air.bulbs[i].name));
-                    }
-                    RunEvent::Fatal(e) => return Err(format!("emulator ({}): {e}", self.air.bulbs[i].name)),
-                }
-            }
+        let powered = !self.air.off.contains(&NodeId::Bulb(i as u8));
+        while let Some(o) = bulb_next(&mut self.air.bulbs[i], target, powered, false)? {
+            self.air.put_out(NodeId::Bulb(i as u8), o);
         }
+        Ok(())
     }
 
     /// `ble_air.lockstep`: all bulbs advance to `target` alternately in quanta,
-    /// the schedule's owner (the first bulb) first.
+    /// the schedule's owner (the first bulb) first. In parallel (`ParOptions`)
+    /// when there is more than one bulb.
     pub fn lockstep(&mut self, target: f64, quantum: f64) -> Result<(), String> {
+        if self.par.parallel && !self.air.bulbs.is_empty() {
+            return self.lockstep_par(target, quantum);
+        }
         loop {
             let now = self.air.bulbs.iter().map(|b| b.t).fold(self.air.t, f64::min);
             if now >= target {
@@ -665,6 +842,126 @@ impl World {
             for i in 0..self.air.bulbs.len() {
                 if self.air.bulbs[i].t < step {
                     self.run_bulb(i, step)?;
+                }
+            }
+        }
+    }
+
+    /// `lockstep` with the bulbs in parallel (`ParOptions`): the further bulbs
+    /// are taken out of the air for the run and lent to the worker threads.
+    fn lockstep_par(&mut self, target: f64, quantum: f64) -> Result<(), String> {
+        let mut bulbs = std::mem::take(&mut self.air.bulbs);
+        let n = bulbs.len();
+        let pool = match self.pool.take() {
+            Some(p) if p.len() == n => p,
+            _ => Pool::new(n),
+        };
+        self.air.lent = Some(Lent { n, q: Vec::new() });
+        let r = self.lockstep_par_with(&mut bulbs, &pool, target, quantum.min(self.par.max_quantum));
+        // whatever an error left undelivered goes with it
+        self.air.lent = None;
+        self.air.bulbs = bulbs;
+        self.pool = Some(pool);
+        r
+    }
+
+    fn lockstep_par_with(&mut self, bulbs: &mut [Bulb], pool: &Pool, target: f64, quantum: f64) -> Result<(), String> {
+        let powered: Vec<bool> = (0..bulbs.len()).map(|i| !self.air.off.contains(&NodeId::Bulb(i as u8))).collect();
+        let job = |b: &mut Bulb, i: usize, step: f64, phase: Phase| Job { bulb: BulbPtr::new(b), target: step, powered: powered[i], phase };
+        loop {
+            let now = bulbs.iter().map(|b| b.t).fold(self.air.t, f64::min);
+            if now >= target {
+                return Ok(());
+            }
+            let step = target.min(now + quantum);
+            self.par_stats.quanta += 1;
+            if self.par.lookahead {
+                // the further bulbs that wait in TX mode: run until their frames start
+                let jobs: Vec<Option<Job>> = bulbs
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(i, b)| (b.t < step && powered[i] && b.node.tx_committed()).then(|| job(b, i, step, Phase::Commit)))
+                    .collect();
+                if jobs.iter().any(Option::is_some) {
+                    self.par_stats.commit_phases += 1;
+                    let t_before: f64 = jobs.iter().zip(bulbs.iter()).filter(|(j, _)| j.is_some()).map(|(_, b)| b.t).sum();
+                    let ran: Vec<bool> = jobs.iter().map(Option::is_some).collect();
+                    // SAFETY: the bulbs are not touched until `wait` returns
+                    unsafe { pool.start(jobs) };
+                    pool.wait();
+                    let t_after: f64 = ran.iter().zip(bulbs.iter()).filter(|(r, _)| **r).map(|(_, b)| b.t).sum();
+                    self.par_stats.commit_ms += t_after - t_before;
+                    let sent = self.collect_outs(bulbs, pool)?;
+                    self.par_stats.frames_ahead += sent;
+                }
+                // the first bulb, likewise, with the scripted nodes up to then
+                let off = self.air.off.contains(&NodeId::Dut);
+                if self.air.t < step && !off && self.air.dut.tx_committed() {
+                    self.par_stats.dut_commits += 1;
+                    let n0 = self.air.frames.len();
+                    self.run_ms_commit(step)?;
+                    self.par_stats.frames_ahead += (self.air.frames.len() - n0) as u64;
+                    self.drain_lent(bulbs);
+                }
+            }
+            let jobs: Vec<Option<Job>> =
+                bulbs.iter_mut().enumerate().map(|(i, b)| (b.t < step).then(|| job(b, i, step, Phase::Run))).collect();
+            // SAFETY: the bulbs are not touched until `wait` returns (the air
+            // sends them nothing directly while they are lent)
+            unsafe { pool.start(jobs) };
+            let n0 = self.air.frames.len();
+            let t_main = std::time::Instant::now();
+            let main = if self.air.t < step { self.run_ms(step) } else { Ok(()) };
+            self.par_stats.main_busy += t_main.elapsed();
+            pool.wait();
+            self.par_stats.frames_late_main += (self.air.frames.len() - n0) as u64;
+            main?;
+            self.drain_lent(bulbs);
+            self.par_stats.frames_late_bulb += self.collect_outs(bulbs, pool)?;
+        }
+    }
+
+    /// What the workers' bulbs put out in the last phase goes on the air, bulb
+    /// by bulb (each in its own order), and reaches the other further bulbs.
+    /// Returns the frames.
+    fn collect_outs(&mut self, bulbs: &mut [Bulb], pool: &Pool) -> Result<u64, String> {
+        let mut frames = 0;
+        let mut err = None;
+        for k in 0..bulbs.len() {
+            let (outs, e) = pool.take(k);
+            for o in outs {
+                match &o {
+                    BulbOut::Tx { .. } => frames += 1,
+                    BulbOut::Ble { .. } => self.par_stats.ble_late += 1,
+                    BulbOut::Log(_) => {}
+                }
+                self.air.put_out(NodeId::Bulb(k as u8), o);
+            }
+            if err.is_none() {
+                err = e;
+            }
+        }
+        self.drain_lent(bulbs);
+        match err {
+            Some(e) => Err(e),
+            None => Ok(frames),
+        }
+    }
+
+    /// Delivers what the air kept for the lent bulbs, in the order it was sent.
+    fn drain_lent(&mut self, bulbs: &[Bulb]) {
+        let Some(l) = &mut self.air.lent else { return };
+        for d in std::mem::take(&mut l.q) {
+            match d {
+                Deferred::Rx { bulb, t0, t1, ch, psdu, rssi, bad } => {
+                    let b = &bulbs[bulb as usize];
+                    if t0 >= b.t_off {
+                        inject_154(&b.node, b.t_off, &psdu, ch, t0, t1, rssi, bad);
+                    }
+                }
+                Deferred::Ble { bulb, t0, t1, ch, aa, pdu } => {
+                    let b = &bulbs[bulb as usize];
+                    b.node.ble_radio.air_rx(&b.node.m, pdu, ch, aa, r6(t0 - b.t_off), r6(t1 - b.t_off));
                 }
             }
         }
@@ -710,6 +1007,10 @@ impl World {
     /// in that order (the one whose `run_ms` was called first; the first bulb
     /// still owns the schedule).
     pub fn lockstep_from(&mut self, first: NodeId, target: f64, quantum: f64) -> Result<(), String> {
+        if self.par.parallel && !self.air.bulbs.is_empty() {
+            // all bulbs at once: the order does not matter
+            return self.lockstep_par(target, quantum);
+        }
         let mut order = vec![first];
         for id in std::iter::once(NodeId::Dut).chain((0..self.air.bulbs.len()).map(|i| NodeId::Bulb(i as u8))) {
             if id != first {
@@ -748,6 +1049,37 @@ impl World {
             NodeId::Dut => self.air.dut_tap.as_ref(),
             NodeId::Bulb(i) => self.air.bulbs[i as usize].tap.as_ref(),
             _ => panic!("not a bulb: {id:?}"),
+        }
+    }
+}
+
+impl Drop for World {
+    /// `ZB_PARALLEL_STATS=1`: the parallel lockstep's counts on stderr.
+    /// `ZB_AIR_LOG_DIR=dir`: every frame that went on the air, one file per
+    /// world named by a hash of its content, and a line `name frames hash`
+    /// in `dir/index.txt` (two runs of a scenario compare as these).
+    fn drop(&mut self) {
+        let set = |k: &str| std::env::var_os(k).is_some_and(|v| !v.is_empty());
+        if set("ZB_PARALLEL_STATS") && self.par_stats.quanta > 0 {
+            let busy: Vec<String> = self.pool.as_ref().map_or(Vec::new(), |p| p.busy()).iter().map(|d| format!("{:.1}", d.as_secs_f64())).collect();
+            eprintln!("parallel lockstep ({}): {:?}; workers busy {} s", self.air.dut_name, self.par_stats, busy.join(" "));
+        }
+        if let Some(dir) = std::env::var_os("ZB_AIR_LOG_DIR").filter(|v| !v.is_empty()) {
+            use std::fmt::Write as _;
+            let mut text = String::new();
+            for f in &self.air.frames {
+                let hex: String = f.psdu.iter().map(|b| format!("{b:02x}")).collect();
+                let _ = writeln!(text, "{:.6} {:.6} {} {} {hex}", f.t0, f.t1, f.ch, self.air.name_of(f.who));
+            }
+            // FNV-1a
+            let h = text.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+            let dir = std::path::PathBuf::from(dir);
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(dir.join(format!("{h:016x}.txt")), &text);
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("index.txt")) {
+                use std::io::Write as _;
+                let _ = writeln!(f, "{} {} {h:016x}", self.air.dut_name, self.air.frames.len());
+            }
         }
     }
 }

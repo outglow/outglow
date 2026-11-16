@@ -175,6 +175,56 @@ pub struct Radio154State {
     pub rx_log: Option<Vec<RxFate>>,
     /// (with `rx_log`) the entry whose "frame received" status is set
     rx_pending: Option<usize>,
+    /// Stop a run as soon as the radio is no longer waiting to transmit
+    /// (`committed`): a run of a scenario's parallel lockstep that must not
+    /// go on once the node can hear the others again.
+    pub stop_uncommitted: bool,
+    /// `ZB_TX_LEADS` set: measure the time from TX mode to each frame's start
+    /// (`tx_leads`); nothing else depends on it.
+    track_leads: bool,
+    /// (with `track_leads`) when the radio was first seen waiting to transmit
+    /// (time checks come every 32 instructions)
+    tx_mode_since: Option<f64>,
+    /// (with `track_leads`) for every frame sent: how long before its start
+    /// the radio was seen waiting in TX mode, µs (None: not seen, it went to
+    /// TX mode and started within one time check)
+    pub tx_leads: Vec<Option<f32>>,
+}
+
+impl Drop for Radio154State {
+    /// `ZB_TX_LEADS`: the leads of this node's frames, as a histogram on stderr.
+    fn drop(&mut self) {
+        if !self.track_leads || self.tx_leads.is_empty() {
+            return;
+        }
+        const EDGES: [f32; 9] = [25.0, 50.0, 100.0, 110.0, 120.0, 130.0, 150.0, 250.0, 500.0];
+        let mut n = [0usize; EDGES.len() + 2];
+        let mut min = f32::INFINITY;
+        for l in &self.tx_leads {
+            match l {
+                None => n[0] += 1,
+                Some(us) => {
+                    min = min.min(*us);
+                    n[1 + EDGES.iter().position(|e| us < e).unwrap_or(EDGES.len())] += 1;
+                }
+            }
+        }
+        let mut s = format!("tx leads: {} frames, min {min:.1} us; unseen {}", self.tx_leads.len(), n[0]);
+        for (i, e) in EDGES.iter().enumerate() {
+            s += &format!(", <{e} {}", n[1 + i]);
+        }
+        eprintln!("{s}, >= {} {}", EDGES[EDGES.len() - 1], n[EDGES.len() + 1]);
+    }
+}
+
+/// Waiting to transmit: in 802.15.4 TX mode, deaf to the air, and the frame
+/// not started yet. The drivers switch to TX mode and let the synthesizer
+/// settle (120 µs in the vendor's and the Rust firmware's CSMA path, the
+/// rest of the 160 µs turnaround for an acknowledgement) before they start
+/// the frame, so a node in this state at some moment starts nothing in the
+/// shortest settling time after it, and hears nothing meanwhile.
+fn committed(m: &Machine, s: &Radio154State) -> bool {
+    zigbee_mode(m) && m.regs[0xF02] & 0x10 != 0 && !s.tx_busy && s.tx_pending.is_empty()
 }
 
 #[derive(Clone)]
@@ -228,6 +278,10 @@ impl Radio154 {
             bad_fcs: 0,
             rx_log: None,
             rx_pending: None,
+            stop_uncommitted: false,
+            track_leads: std::env::var_os("ZB_TX_LEADS").is_some_and(|v| !v.is_empty()),
+            tx_mode_since: None,
+            tx_leads: Vec::new(),
         })));
         let prev_w = m.reg_write_hook.clone();
         let r1 = r.clone();
@@ -242,8 +296,22 @@ impl Radio154 {
                 p(m)?;
             }
             r3.tick(m);
-            if !r3.b().tx_pending.is_empty() {
+            let mut s = r3.b();
+            if !s.tx_pending.is_empty() {
                 return Err(stop_err("tx"));
+            }
+            if s.stop_uncommitted || s.track_leads {
+                let c = committed(m, &s);
+                if s.track_leads {
+                    if !c {
+                        s.tx_mode_since = None;
+                    } else if s.tx_mode_since.is_none() {
+                        s.tx_mode_since = Some(m.ms());
+                    }
+                }
+                if s.stop_uncommitted && !c {
+                    return Err(stop_err("tx mode left"));
+                }
             }
             Ok(())
         }));
@@ -296,6 +364,11 @@ impl Radio154 {
             };
             f(m);
         }
+    }
+
+    /// Waiting to transmit (`committed`): in TX mode, the frame not started yet.
+    pub fn committed(&self, m: &Machine) -> bool {
+        committed(m, &self.0.borrow())
     }
 
     /// The time of the nearest event or -1.
@@ -394,6 +467,10 @@ impl Radio154 {
         let ch = channel(m);
         {
             let mut s = self.b();
+            if s.track_leads {
+                let lead = s.tx_mode_since.take().map(|t| ((now - t) * 1000.0) as f32);
+                s.tx_leads.push(lead);
+            }
             s.tx_busy = true;
             s.sent += 1;
             s.tx_pending.push_back(Frame { t0: now, t1, channel: ch, psdu });

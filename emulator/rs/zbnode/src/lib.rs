@@ -513,6 +513,24 @@ impl Node {
         }
     }
 
+    /// The 802.15.4 radio is in TX mode waiting to start a frame: until it
+    /// does, the node hears nothing and sends nothing (`radio154::committed`).
+    pub fn tx_committed(&self) -> bool {
+        self.radio.committed(&self.m)
+    }
+
+    /// `tx_committed`, or the frame has started and `step_run` has yet to
+    /// hand it out: a run of the parallel lockstep's lookahead goes on.
+    pub fn tx_committed_or_started(&self) -> bool {
+        !self.radio.b().tx_pending.is_empty() || self.tx_committed()
+    }
+
+    /// While set, a run stops (`RunEvent::Ran`) as soon as `tx_committed`
+    /// no longer holds.
+    pub fn set_stop_uncommitted(&self, on: bool) {
+        self.radio.b().stop_uncommitted = on;
+    }
+
     /// An 802.15.4 frame arriving on the node's channel.
     pub fn inject_rx(&self, f: Frame, rssi: i64) {
         self.radio.inject(f, rssi);
