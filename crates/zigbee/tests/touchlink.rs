@@ -142,6 +142,55 @@ fn responses_go_to_the_broadcast_pan_from_the_bulbs_pan_or_a_made_up_one() {
     assert_eq!(net.air.borrow().ports[port].pan, 0xFFFF);
 }
 
+/// A scan request of the transaction `id`.
+fn scan_with(net: &mut Net, i: &mut Initiator, id: [u8; 4]) -> Vec<(u8, Vec<u8>)> {
+    let mut p = id.to_vec();
+    p.extend_from_slice(&[0x05, 0x12]);
+    i.send(net, None, 0x00, &p);
+    i.received(net)
+}
+
+#[test]
+fn the_repeats_of_a_scan_are_not_answered_again_so_the_response_identifier_holds() {
+    // An initiator broadcasts five scan requests of one transaction on its first
+    // channel (BDB 3.0.1 8.6 step 3). The bulb answers once and discards the
+    // repeats (8.7): a second answer would carry a new response identifier, and
+    // the transport key comes from the one the initiator kept (ZCL 8 13.3.4.11).
+    let mut net = Net::new();
+    net.coord.permit_join = false;
+    let n = net.add_node();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let mut i = Initiator::new(&mut net);
+    let (response_id, _) = scan_for(&mut net, &mut i);
+    for _ in 0..4 {
+        net.run(250);
+        assert!(scan(&mut net, &mut i).is_empty(), "a repeat of the transaction it answered");
+    }
+    // the key handed over under the first (and only) response identifier is the one it takes
+    i.send(&mut net, Some(ext), 0x12, &join_request(15, response_id));
+    let rsp = i.received(&mut net);
+    assert_eq!((rsp[0].0, rsp[0].1[4]), (0x13, 0x00), "Network Join Router Response, success");
+    net.run(1_000);
+    assert_eq!((net.nodes[n].stack.state(), net.nodes[n].stack.pan_id()), (State::Up, 0x4321));
+
+    // a new transaction is answered afresh, its repeats are not; once a
+    // transaction is over its identifier opens a new one
+    let mut net = Net::new();
+    net.join_node();
+    let mut i = Initiator::new(&mut net);
+    let first = scan(&mut net, &mut i);
+    assert_eq!(first.len(), 1);
+    assert!(scan(&mut net, &mut i).is_empty());
+    let other = [0x01, 0x02, 0x03, 0x04];
+    let second = scan_with(&mut net, &mut i, other);
+    assert_eq!(second.len(), 1, "a new transaction");
+    assert_eq!(&second[0].1[..4], &other);
+    assert_ne!(second[0].1[9..13], first[0].1[9..13], "with a response identifier of its own");
+    assert!(scan_with(&mut net, &mut i, other).is_empty());
+    net.run(8_500);
+    assert_eq!(scan(&mut net, &mut i).len(), 1, "after the transaction's lifetime");
+}
+
 #[test]
 fn a_scan_request_that_is_not_from_a_link_initiator_is_ignored() {
     let mut net = Net::new();
