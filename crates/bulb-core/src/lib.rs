@@ -19,6 +19,7 @@ pub mod hal;
 pub mod light;
 pub mod nv;
 pub mod reset;
+pub mod staging;
 pub mod store;
 
 mod firmware;

@@ -179,6 +179,7 @@ name = "bulb-sim"
 version = "0.1.0"
 dependencies = [
  "bulb-core",
+ "outglow-image",
  "zigbee",
 ]
 
