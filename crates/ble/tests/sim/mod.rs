@@ -283,6 +283,12 @@ impl Ether {
         self.sends.iter().filter(|s| s.4 == node && pdu_filter(&s.3)).count()
     }
 
+    /// When node `node` started each of its bursts (its first channel).
+    pub fn bursts_of(&self, node: usize) -> Vec<u64> {
+        let first = self.sends.iter().find(|s| s.4 == node).map(|s| s.1);
+        self.sends.iter().filter(|s| s.4 == node && Some(s.1) == first).map(|s| s.0).collect()
+    }
+
     fn hears(&self, a: usize, b: usize) -> bool {
         a != b && !self.blocked.contains(&(a, b)) && !self.blocked.contains(&(b, a))
     }

@@ -6,7 +6,7 @@ mod sim;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use sim::{run_all, Ether, Rig, DIMMABLE};
+use sim::{run_all, Ether, Rig, DIMMABLE, MS};
 
 const COMMAND: u16 = 0x15;
 const OP_POWER: u8 = 0xd0;
@@ -68,16 +68,23 @@ fn a_command_for_everyone_reaches_the_neighbour() {
 
 #[test]
 fn a_command_goes_on_air_as_often_as_every_other_while_the_app_is_answered() {
-    // The connected bulb tells the app its new state; until that packet has
-    // gone at the next connection event the radio cannot send a burst. The
-    // bursts left out are not counted: the train keeps its length, or a
-    // listener's window could fall into the gap (emulator, sims::mesh).
+    // The connected bulb tells the app its new state; until the central has
+    // acknowledged that packet the radio cannot send a burst. The bursts
+    // left out are not counted, and after such a gap the train goes on for
+    // a listener's period at least: a listener's window could have fallen
+    // into it, and its next one comes up to 310 ms later (emulator,
+    // sims::mesh).
     let (ether, mut rigs) = bulbs(&[A, B]);
     let before = ether.borrow().sent_by(0, |_| true);
     send(&mut rigs, 0xffff, OP_BRIGHTNESS, &[50], 1500);
     assert_eq!(rigs[1].level(), rigs[0].level());
     let sent = ether.borrow().sent_by(0, |_| true) - before;
-    assert_eq!(sent, 64 * 4, "every burst of the train on all four channels");
+    assert!(sent >= 64 * 4, "every burst of the train on all four channels: {sent}");
+    let bursts = ether.borrow().bursts_of(0);
+    let gap_end = bursts.windows(2).filter(|w| w[1] - w[0] > 30 * MS).map(|w| w[1]).last();
+    let gap_end = gap_end.expect("the answer to the app held the radio");
+    let last = *bursts.last().unwrap();
+    assert!(last - gap_end >= 310 * MS, "the train ended {} ms after the gap", (last - gap_end) / MS);
 }
 
 #[test]
@@ -176,5 +183,74 @@ fn bulbs_in_the_factory_network_leave_the_radio_to_zigbee() {
         let stats = rig.ble.borrow().air_stats();
         assert_eq!((stats.bursts, stats.received, stats.rejected), (0, 0, 0));
         assert_eq!(rig.world.borrow().mesh_listens, 0, "no listening either");
+    }
+}
+
+#[test]
+fn a_neighbour_whose_window_falls_into_a_gap_of_the_train_hears_it_at_its_next() {
+    // While the radio holds an answer for the app (until the central has
+    // acknowledged it, at the next connection event but one) the connected
+    // bulb sends no burst. A neighbour listens 12 ms after each of its
+    // advertising events, 300 to 309 ms apart; when its window falls into
+    // that gap, the train must still be on air at its next window. Here the
+    // app reads a characteristic during the train, and the neighbour's
+    // windows are moved round the whole period: before, the train ended
+    // before the next window when the gap came late in it (emulator,
+    // sims::mesh on CI).
+    const READ_AT: u64 = 200;
+    let mut missed = vec![];
+    for offset in (0..320).step_by(4) {
+        let (_ether, mut rigs) = bulbs(&[A, B]);
+        // one of B's advertising events, then its next one (and its window)
+        // about `offset` ms after the command
+        let seen = rigs[1].world.borrow().advertised_at.len();
+        while rigs[1].world.borrow().advertised_at.len() == seen {
+            step(&mut rigs, 1);
+        }
+        step(&mut rigs, 300 - offset.min(300));
+        let packet = rigs[0].command_packet(0xffff, OP_POWER, &[0]);
+        rigs[0].central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
+        step(&mut rigs, READ_AT);
+        rigs[0].central().send_att(&[0x0a, 0x03, 0x00]);
+        step(&mut rigs, 1500 - READ_AT);
+        assert!(!rigs[0].is_on());
+        if rigs[1].is_on() {
+            missed.push(offset);
+        }
+    }
+    assert!(missed.is_empty(), "B missed the command with its window this many ms after it: {missed:?}");
+}
+
+#[test]
+fn a_neighbour_that_leaves_out_an_advertising_event_still_listens() {
+    // An advertising event that falls due while the Zigbee neighbours are
+    // talking is left out (`ll.rs`), and the next one comes 300 ms later. Its
+    // listening window is only put off until they are quiet: without it the
+    // bulb would not listen for 600 ms, longer than a train (emulator,
+    // sims::mesh with the bulbs' Zigbee network steering).
+    for after in [20, 50, 80] {
+        let (_ether, mut rigs) = bulbs(&[A, B]);
+        let seen = rigs[1].world.borrow().advertised_at.len();
+        while rigs[1].world.borrow().advertised_at.len() == seen {
+            step(&mut rigs, 1);
+        }
+        let last = *rigs[1].world.borrow().advertised_at.last().unwrap();
+        // B's next event, 300 to 309 ms after its last, while its neighbours talk
+        rigs[1].world.borrow_mut().zigbee_busy.push((last + 295 * MS, last + 325 * MS, true));
+        step(&mut rigs, after);
+        send(&mut rigs, 0xffff, OP_POWER, &[0], 1500);
+        let next = rigs[1].world.borrow().advertised_at.iter().copied().find(|t| *t > last).unwrap();
+        assert!(next > last + 400 * MS, "the event was left out");
+        assert!(!rigs[1].is_on(), "B heard the command sent {after} ms after its window");
+    }
+}
+
+/// Runs the bulbs side by side for `ms`, in steps of a millisecond.
+fn step(rigs: &mut [Rig], ms: u64) {
+    for _ in 0..ms {
+        let now = rigs[0].world.borrow().now + MS;
+        for rig in rigs.iter_mut() {
+            rig.run_until(now);
+        }
     }
 }

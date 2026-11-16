@@ -15,8 +15,8 @@ use crate::{reached, Ble};
 /// lateness adds to the interval; the last millisecond is kept for it, so
 /// that the intervals stay within advInterval + 10 ms (Core 5.4 Vol 6 Part
 /// B 4.4.2.2.1).
-const ADV_INTERVAL: u32 = 300 * TICKS_PER_MS;
-const ADV_DELAY_MAX_MS: u32 = 9;
+pub(crate) const ADV_INTERVAL: u32 = 300 * TICKS_PER_MS;
+pub(crate) const ADV_DELAY_MAX_MS: u32 = 9;
 /// Advertising events in a row that may be left out because the radio's
 /// other user's neighbours were still talking when their advDelay ran out
 /// (`Hal::neighbours_talking`, see `link_poll`); the next one goes in any
@@ -267,6 +267,9 @@ impl<H: Hal> Ble<H> {
                 if self.hal.neighbours_talking() && self.link.adv_skipped < ADV_SKIP_MAX {
                     self.link.adv_skipped += 1;
                     self.schedule_advertising(now);
+                    // its mesh listening window is only put off until the
+                    // radio is quiet (`air_poll`)
+                    self.air.listen_owed = true;
                     return;
                 }
             }
