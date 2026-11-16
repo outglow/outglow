@@ -8,9 +8,14 @@
 //!         [--out site/public/compare.json] [--no-build] [--jobs N] [--cpi N]
 //!
 //! The Outglow images are built first (`cargo xtask build`, default options)
-//! unless `--no-build`; the original images come from OUTGLOW_STOCK_DIR
-//! (`firmware/<board>.bin` and its `manifest.json`), which is not part of
-//! this repository.
+//! unless `--no-build`; the original images come from OUTGLOW_STOCK_DIR (a
+//! checkout of outglow/original-firmware, not part of this repository): every
+//! image its `manifest.json` lists for one of the two boards is tested, so a
+//! newer original version there is tested by the next run, and several
+//! versions of one board give results per version. The website's workflow
+//! (.github/workflows/site.yml) runs this before it builds the site; the
+//! committed site/public/compare.json is what a build without the original
+//! images (a fork) shows.
 //!
 //! The original firmware's results of the tests on security (keys, frame
 //! security, Bluetooth pairing and encryption) and on access control (who
@@ -116,17 +121,6 @@ fn stock_dir() -> Result<PathBuf> {
     Ok(PathBuf::from(d))
 }
 
-/// The original image of a board and its manifest entry.
-fn stock_image(dir: &Path, board: &str) -> Result<(PathBuf, Value)> {
-    let path = [dir.join("firmware").join(format!("{board}.bin")), dir.join(format!("{board}.bin"))]
-        .into_iter()
-        .find(|p| p.exists())
-        .with_context(|| format!("no original image of {board} in {}", dir.display()))?;
-    let manifest: Value = serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).context("manifest.json of OUTGLOW_STOCK_DIR")?)?;
-    let entry = manifest["images"].as_array().and_then(|a| a.iter().find(|i| i["board"] == board)).cloned().unwrap_or(Value::Null);
-    Ok((path, entry))
-}
-
 fn git(root: &Path, args: &[&str]) -> String {
     Command::new("git")
         .arg("-C")
@@ -136,6 +130,22 @@ fn git(root: &Path, args: &[&str]) -> String {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The original images of a board: (manifest entry, path), every version the manifest lists.
+fn stock_images(dir: &Path, manifest: &Value, board: &str) -> Vec<(Value, PathBuf)> {
+    manifest["images"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|i| i["board"] == board)
+                .filter_map(|i| {
+                    let p = dir.join(i["file"].as_str().unwrap_or_default());
+                    p.is_file().then(|| (i.clone(), p))
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -184,49 +194,70 @@ pub fn run(a: Args) -> Result<()> {
     let tmp = root.join("target/compare");
     std::fs::create_dir_all(&tmp)?;
 
-    let mut boards = Vec::new();
+    let manifest: Value = serde_json::from_slice(
+        &std::fs::read(stock_dir.join("manifest.json")).context("manifest.json of OUTGLOW_STOCK_DIR")?,
+    )?;
+
+    // one target per (board, original version)
+    let mut targets = Vec::new();
     // test id -> (suite, its description)
     let mut tests: Vec<(String, &str, Value)> = Vec::new();
-    // (board, suite) -> verdicts
-    let mut results: Vec<(&str, Value)> = Vec::new();
+    // (target, verdicts by "label:id")
+    let mut results: Vec<(String, Value)> = Vec::new();
     for (bid, board, name) in BOARDS {
+        let stocks = stock_images(&stock_dir, &manifest, board);
+        if stocks.is_empty() {
+            println!("== {board}: no original image in {}, left out", stock_dir.display());
+            continue;
+        }
         let dir = if a.no_build { crate::build::default_dir(&root, board) } else { crate::build::board_default(board)? };
         let outglow = dir.join("bulb-tc32.bin");
-        let (stock, entry) = stock_image(&stock_dir, board)?;
         let known = outglow_image::board::known(board).with_context(|| format!("board {board}"))?;
-        boards.push(json!({
-            "id": bid,
-            "board": board,
-            "name": name,
-            "stock": {
-                "firmware_version": entry["firmware_version"],
-                "sha256": crate::index::hex::<Sha256>(&std::fs::read(&stock)?),
-                "source": "the image the AwoX HomeControl app installs (outglow/original-firmware)",
-            },
-            "outglow": {
-                "image_type": format!("{:#06x}", known.image_type),
-                "sha256": crate::index::hex::<Sha256>(&std::fs::read(&outglow)?),
-            },
-        }));
-        let mut merged = Map::new();
-        for (sid, bin, _) in SUITES {
-            std::fs::create_dir_all(tmp.join(bid))?;
-            let (res, meta) = run_suite(&root, bin, &stock, &outglow, &a, &tmp.join(bid))?;
-            for t in meta.as_array().context("test list")? {
-                let id = t["id"].as_str().unwrap_or_default().to_string();
-                if !tests.iter().any(|(i, _, _)| *i == id) {
-                    tests.push((id.clone(), sid, t.clone()));
+        let several = stocks.len() > 1;
+        for (entry, stock) in &stocks {
+            let version = entry["firmware_version"].as_str().unwrap_or("unknown").to_string();
+            let tid = if several { format!("{bid}-{version}") } else { bid.to_string() };
+            targets.push(json!({
+                "id": tid,
+                "board": board,
+                "name": name,
+                "stock": {
+                    "firmware_version": version,
+                    "hw_revision": entry["hw_revision"],
+                    "sha256": crate::index::hex::<Sha256>(&std::fs::read(stock)?),
+                    "source": format!("outglow/original-firmware, {}", entry["file"].as_str().unwrap_or_default()),
+                    "from": manifest["source"]["app"],
+                    "app_version": manifest["source"]["version"],
+                },
+                "outglow": {
+                    "image_type": format!("{:#06x}", known.image_type),
+                    "sha256": crate::index::hex::<Sha256>(&std::fs::read(&outglow)?),
+                },
+            }));
+            let mut merged = Map::new();
+            for (sid, bin, _) in SUITES {
+                let work = tmp.join(&tid);
+                std::fs::create_dir_all(&work)?;
+                let (res, meta) = run_suite(&root, bin, stock, &outglow, &a, &work)?;
+                for t in meta.as_array().context("test list")? {
+                    let id = t["id"].as_str().unwrap_or_default().to_string();
+                    if !tests.iter().any(|(i, _, _)| *i == id) {
+                        tests.push((id.clone(), sid, t.clone()));
+                    }
                 }
-            }
-            for label in ["stock", "outglow"] {
-                if let Some(m) = res[label].as_object() {
-                    for (id, v) in m {
-                        merged.entry(format!("{label}:{id}")).or_insert(v.clone());
+                for label in ["stock", "outglow"] {
+                    if let Some(m) = res[label].as_object() {
+                        for (id, v) in m {
+                            merged.entry(format!("{label}:{id}")).or_insert(v.clone());
+                        }
                     }
                 }
             }
+            results.push((tid, Value::Object(merged)));
         }
-        results.push((bid, Value::Object(merged)));
+    }
+    if targets.is_empty() {
+        bail!("no original image of {} in {}", BOARDS.map(|b| b.1).join(" or "), stock_dir.display());
     }
 
     let mut list = Vec::new();
@@ -269,12 +300,18 @@ pub fn run(a: Args) -> Result<()> {
 
     let commit = git(&root, &["rev-parse", "--short=7", "HEAD"]);
     let dirty = !git(&root, &["status", "--porcelain", "--", "crates", "emulator", "Cargo.lock"]).is_empty();
+    let commit = if dirty { format!("{commit}+changes") } else { commit };
     let data = json!({
         "schema": 1,
         "generated": crate::index::today(),
         "how": "cargo xtask compare: the conformance tests of emulator/rs/scenarios (cargo spec, cargo ble-spec) run in the Outglow emulator on the original firmware images and on Outglow images built from this repository",
         "source": "emulator",
-        "outglow_commit": if dirty { format!("{commit}+changes") } else { commit },
+        "outglow": {
+            "commit": commit,
+            "commit_date": git(&root, &["log", "-1", "--format=%cs"]),
+            "describe": git(&root, &["describe", "--tags", "--always"]),
+            "url": format!("https://github.com/outglow/outglow/commit/{}", commit.trim_end_matches("+changes")),
+        },
         "cpi": a.cpi,
         "suites": SUITES.iter().map(|(id, _, what)| json!({"id": id, "covers": what})).collect::<Vec<_>>(),
         "withheld": {
@@ -291,11 +328,11 @@ pub fn run(a: Args) -> Result<()> {
             "ERROR": "the emulator could not run the test",
             "WITHHELD": "not published (see withheld)",
         },
-        "boards": boards,
+        "targets": targets,
         "tests": list,
     });
     std::fs::write(&out, serde_json::to_string_pretty(&data)? + "\n")?;
     let n = data["tests"].as_array().map(|v| v.len()).unwrap_or(0);
-    println!("== {}: {n} tests on {} boards", out.display(), BOARDS.len());
+    println!("== {}: {n} tests on {} original images", out.display(), data["targets"].as_array().map(|v| v.len()).unwrap_or(0));
     Ok(())
 }
