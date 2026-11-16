@@ -555,6 +555,26 @@ pub struct ParStats {
 }
 
 impl World {
+    /// Whether the frame on the air at `t0` (air time), `len` bytes long, began
+    /// while the bulb's radio was lent to a BLE event: its receiver was in BLE
+    /// mode (on a BLE channel, or still on the network's). The bulb does that
+    /// for about 2 ms every 300 ms (an advertising event); a frame that starts
+    /// then is lost whatever the driver does. Which frames those are depends on
+    /// where the advertising events fall, which moves with every change of the
+    /// code's timing (the firmware's random numbers are stirred with the timer).
+    /// Needs the bulb's receive log (`dut_rx_log`).
+    pub fn lent_to_ble(&self, t0: f64, len: usize) -> bool {
+        let off = self.air.t_off;
+        self.air.dut.radio.b().rx_log.as_ref().is_some_and(|log| {
+            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode"))
+        })
+    }
+
+    /// Turns on the bulb's receive log (what became of every frame at its receiver).
+    pub fn dut_rx_log(&mut self) {
+        self.air.dut.radio.b().rx_log.get_or_insert_with(Vec::new);
+    }
+
     pub fn new(dut: Node, coord: Coord, keys: Keys, log: Option<Log>) -> World {
         let air = Air {
             t: 0.0,

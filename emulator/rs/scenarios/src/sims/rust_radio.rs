@@ -166,21 +166,6 @@ fn snapshot(w: &World) -> (Vec<(usize, u8)>, Vec<u8>) {
     (d, m.analog[..256].to_vec())
 }
 
-/// Whether the frame on the air at `t0` (air time), `len` bytes long, began
-/// while the bulb's radio was lent to a BLE event: its receiver was in BLE
-/// mode (on a BLE channel, or still on the network's). Both images do that
-/// for about 2 ms every 300 ms (an advertising event); a frame that starts
-/// then is lost whatever the driver does, and its sender's MAC retry gets
-/// the acknowledgement. Which frames those are depends on where the
-/// advertising events fall, which moves with every change of the code's
-/// timing (the firmware's random numbers are stirred with the timer).
-fn lent_to_ble(w: &World, t0: f64, len: usize) -> bool {
-    let off = w.air.t_off;
-    w.air.dut.radio.b().rx_log.as_ref().is_some_and(|log| {
-        log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode"))
-    })
-}
-
 /// For each coordinator frame that asks for an acknowledgement: microseconds
 /// from its end to the start of the bulb's ACK when the ACK came before the
 /// coordinator's next frame (None: no ACK), whether the coordinator sent
@@ -203,7 +188,7 @@ fn ack_delays(w: &World) -> Vec<(Option<f64>, bool, bool)> {
             .iter()
             .find(|g| g.who == NodeId::Dut && g.psdu.len() == 5 && g.psdu[0] & 7 == 2 && g.psdu[2] == m.seq);
         let retried = rest.get(next).is_some_and(|g| g.psdu == f.psdu);
-        out.push((ack.map(|g| (g.t0 - f.t1) * 1000.0), retried, lent_to_ble(w, f.t0, f.psdu.len())));
+        out.push((ack.map(|g| (g.t0 - f.t1) * 1000.0), retried, w.lent_to_ble(f.t0, f.psdu.len())));
     }
     out
 }
