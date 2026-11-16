@@ -2,7 +2,7 @@
 //! procedures show it (Core 5.4 Vol 3 Part G 3.1, 3.2, 3.3, 4.4-4.7, 7);
 //! emulator/spec_ble/gatt_discovery.py.
 
-use crate::ble::harness::{att_error, hx, BleSession, LinkOpts};
+use crate::ble::harness::{att_error, hx, BleSession, LinkOpts, CID_SMP};
 use crate::ble::util::{describe, error_problem, link, read_all, some, table, value};
 use crate::ble::{BleTest, Level};
 use crate::py;
@@ -87,7 +87,9 @@ pub fn tests() -> Vec<BleTest> {
                  of the device then this characteristic shall not exist, otherwise this characteristic shall exist.' \
                  Whether the definitions can change (for example with a firmware update, which replaces the table on \
                  these bulbs) is not visible over the air, so a server without the characteristic is neither passed \
-                 nor failed. 'Only one instance of the GATT service shall be exposed' is read as: not more than one",
+                 nor failed, unless it does not pair: then no bonded client keeps an attribute cache across \
+                 connections (Part G 2.5.2) and the test gives N/A. 'Only one instance of the GATT service shall be \
+                 exposed' is read as: not more than one",
             ),
             ..t(
                 "gatt_service_gatt",
@@ -605,10 +607,25 @@ fn service_gatt(s: &mut BleSession) -> R<String> {
     )?;
     let sc: Vec<_> = g.chars.iter().filter(|c| c.uuid[..] == 0x2A05u16.to_le_bytes()).collect();
     if sc.is_empty() {
+        let what = if gs.is_empty() { "no GATT service and no" } else { "a GATT service without" };
+        // Part G 2.5.2: only a bonded client keeps its attribute cache beyond the connection. The table of
+        // these bulbs changes only with a firmware update, which ends the connection; a server that does not
+        // pair has no client whose cache such a change could leave stale.
+        s.poll()?;
+        let n0 = s.lk().frames.len();
+        s.l2cap(CID_SMP, &[0x01, 0x03, 0x00, 0x01, 0x10, 0x00, 0x01])?;
+        let rsp = s.frame_wait(CID_SMP, |_| true, 4000.0, Some(n0))?.map(|f| f.data);
+        if rsp.as_deref() == Some(&[0x05, 0x05][..]) {
+            return Err(Stop::NotApplicable(format!(
+                "{what} Service Changed characteristic, and the server does not pair (Pairing Request answered \
+                 Pairing Not Supported): no bonded client keeps an attribute cache across connections (Part G \
+                 2.5.2), so a change of the definitions with a firmware update leaves nothing stale"
+            )));
+        }
         return Err(Stop::Inconclusive(format!(
-            "{} Service Changed characteristic: right only if the service definitions cannot change for the \
-             lifetime of the device, which the test cannot see",
-            if gs.is_empty() { "no GATT service and no" } else { "a GATT service without" }
+            "{what} Service Changed characteristic: right only if the service definitions cannot change for the \
+             lifetime of the device, which the test cannot see (Pairing Request answered {})",
+            rsp.as_deref().map(hx).unwrap_or_else(|| "with nothing".into())
         )));
     }
     expect(sc.len() == 1, format!("{} Service Changed characteristics", sc.len()))?;

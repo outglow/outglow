@@ -278,7 +278,7 @@ group("ZCL-SCENE", [
 group("ZCL-LEVEL", [
   "Reports brightness, remaining fade time, dimming options and the power-on brightness setting.",
   "Fades smoothly to the requested brightness over the requested time.",
-  "Uses its default fade duration when asked to use the default, or changes immediately if none is configured.",
+  "Uses its configured default fade duration when asked to use the default.",
   "Brightens or dims at the requested speed, stopping at its limits without changing the on/off state.",
   "Stops a fade at its current brightness and reports that no fade time remains.",
   "Changes brightness by a requested step within its limits, without changing the on/off state.",
@@ -344,10 +344,10 @@ group("ZDO-BIND", [
   "Saves a direct connection between devices, called a binding, and includes it when asked to list saved connections.",
   "Reports that a saved direct connection does not exist when asked to remove it.",
   "Ignores a binding request addressed to the whole network.",
-  "Answers a query for an empty list of saved direct connections, or clearly reports that listing is unsupported.",
+  "Answers a query for an empty list of saved direct connections.",
 ]);
 group("ZDO-LQI", ["Returns its list of nearby devices, including the hub it joined through, for the hub's network map."]);
-group("ZDO-RTG", ["Returns its known routes, or explicitly says that listing routes is unsupported."]);
+group("ZDO-RTG", ["Returns its known routes."]);
 group("ZDO-PERMIT", [
   "Opens joining for the requested duration and closes it afterwards, or closes it immediately when asked.",
   "Acts on a network-wide request to open or close joining without sending a reply.",
@@ -521,7 +521,7 @@ function observed(side: Side | "both", verdict: string, ids: string, text: strin
 observed("stock", "FAIL", "APS-DUP-03 NWK-BCAST-03", "Carries out a late repeat again. In this test, a toggle command switches the light twice.");
 observed("stock", "FAIL", "APS-RETRY-01", "Retries fewer times than required before giving up.");
 observed("stock", "FAIL", "APS-RETRY-02", "Waits longer than required before retrying.");
-observed("outglow", "INCONCLUSIVE", "APS-RETRY-01 APS-RETRY-02", "The test could not make Outglow request a receipt, so it could not measure its retry behaviour.");
+observed("outglow", "N/A", "APS-RETRY-01 APS-RETRY-02", "Sends its replies without asking for a receipt, so it has no retries to measure.");
 observed("stock", "FAIL", "APS-EXT-01", "Does not answer the request when it uses the optional longer heading.");
 observed("stock", "N/A", "APS-FRAG-01 APS-FRAG-02", "Does not support reassembling a message from parts, and does not claim to support it.");
 observed("stock", "FAIL", "BDB-JOIN-03", "Sends the invitation to every device instead of just the hub and routers.");
@@ -564,6 +564,7 @@ observed("stock", "FAIL", "ZCL-SCENE-13", "Keeps the saved scenes after their gr
 observed("stock", "FAIL", "ZCL-LEVEL-08", "Stays on at its dimmest glow instead of switching fully off.");
 observed("stock", "FAIL", "ZCL-LEVEL-19", "Reports the same brightness after off and on, but restores a lower LED drive signal in the emulator.");
 observed("stock", "N/A", "ZCL-LEVEL-14", "Does not offer a fixed switch-on brightness setting.");
+observed("both", "N/A", "ZCL-LEVEL-03", "Does not offer the optional default fade time for switching on and off, so this check does not apply. It still reaches the requested brightness.");
 observed("stock", "FAIL", "ZCL-LEVEL-16", "Accepts a reserved brightness value as if it were an ordinary level.");
 observed("stock", "FAIL", "ZDO-RTG-01", "Does not answer the request to list its routes.");
 observed("stock", "FAIL", "att_write_cmd_not_answered", "Replies to writes sent in the form that must not receive a reply.");
@@ -595,7 +596,7 @@ observed("outglow", "NOTE", "gatt_cccd_bits_follow_properties", "Accepts a subsc
 observed("stock", "FAIL", "gatt_cccd_gates_notifications", "Sends updates without a standard subscription setting that the phone could enable.");
 observed("outglow", "FAIL", "gatt_cccd_gates_notifications", "Sends updates even with the standard subscription switched off. It follows the vendor app's separate subscription command.");
 observed("stock", "FAIL", "gatt_char_declaration_value", "Returns only part of a value's description when read directly, unlike the complete description returned during discovery.");
-observed("both", "INCONCLUSIVE", "gatt_service_gatt", "Has no service-change notification. That is allowed only if its services never change during its lifetime, which this test cannot establish.");
+observed("both", "N/A", "gatt_service_gatt", "Has no service-change notification and does not pair, so no phone keeps a stored copy of its services between connections that a change could leave out of date.");
 observed("stock", "FAIL", "gatt_gap_name_advertised", "Advertises itself as unpaired but returns the bulb's model name when the phone reads its device name.");
 observed("both", "NOTE", "gatt_props_write", "Accepts a write request to the update channel even though its advertised permissions do not allow that form of write.");
 observed("stock", "NOTE", "gatt_props_write_without_response", "Changes a value after a write that requires no reply, despite not advertising permission for that form of write.");

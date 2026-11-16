@@ -204,6 +204,7 @@ fn run_group(image: &Image, session: &str, tests: &[&Test], cpi: i64, verbose: u
     };
     let mut s = match Session::new(image, SessionOpts { cpi, join: def.join, log, tc: def.tc, ..Default::default() }) {
         Ok(mut s) => {
+            s.set_note(spec::misc_ota_gp::IMAGE_PATH, image.path.clone());
             // a broadcast lost to the bulb's BLE event is sent again (`World::ble_retry`)
             s.w.dut_rx_log();
             s.w.ble_retry = true;

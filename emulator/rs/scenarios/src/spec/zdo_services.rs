@@ -73,12 +73,12 @@ pub fn tests() -> Vec<Test> {
         t!("ZDO-BIND-03", "R22", "2.4.3.2.2.2", "A broadcast Bind_req is dropped: no response and no binding entry.",
            bind_broadcast),
         t!("ZDO-BIND-04", "R22", "2.4.3.3.4.2", "Mgmt_Bind_req on an empty binding table is answered with SUCCESS and \
-           BindingTableEntries = StartIndex = BindingTableListCount = 0 (or NOT_SUPPORTED if the optional \
-           request is absent).", mgmt_bind_empty, mandatory: false),
+           BindingTableEntries = StartIndex = BindingTableListCount = 0 (N/A when the optional request is \
+           answered NOT_SUPPORTED).", mgmt_bind_empty, mandatory: false),
         t!("ZDO-LQI-01", "R22", "2.4.3.3.2.2", "Mgmt_Lqi_req is answered with SUCCESS and the neighbour table (mandatory \
            since R22); the coordinator the device joined through is in it with its addresses.", mgmt_lqi),
-        t!("ZDO-RTG-01", "R22", "2.4.3.3.3.2", "Mgmt_Rtg_req is answered: SUCCESS with the routing table, or \
-           NOT_SUPPORTED when the optional request is absent.", mgmt_rtg, mandatory: false),
+        t!("ZDO-RTG-01", "R22", "2.4.3.3.3.2", "Mgmt_Rtg_req is answered with SUCCESS and the routing table, \
+           five octets per entry (N/A when the optional request is answered NOT_SUPPORTED).", mgmt_rtg, mandatory: false),
         t!("ZDO-PERMIT-01", "R22", "2.4.3.3.7.2", "A unicast Mgmt_Permit_Joining_req is answered with SUCCESS; joining \
            is permitted for PermitDuration seconds and then closes; duration 0 closes at once.", permit_joining),
         t!("ZDO-PERMIT-02", "R22", "2.4.3.3.7.2", "A broadcast Mgmt_Permit_Joining_req is acted on but not answered.",
@@ -447,8 +447,11 @@ fn bind(s: &mut Session) -> R<String> {
     expect(b(&p, 0) == SUCCESS, format!("Bind_rsp status {:#04x}", b(&p, 0)))?;
     let (st, table) = mgmt_bind(s)?;
     if st == NOT_SUPPORTED {
-        return Ok("Bind_rsp SUCCESS; Mgmt_Bind_req is optional and answered NOT_SUPPORTED, so the entry was not read back"
-            .into());
+        rsp(s, 0x0022, &bind_payload(s, 0x0008, None, 1))?;
+        return Err(Stop::Inconclusive(
+            "Bind_rsp SUCCESS; Mgmt_Bind_req is optional and answered NOT_SUPPORTED, so the entry could not be read back"
+                .into(),
+        ));
     }
     expect(st == SUCCESS, format!("Mgmt_Bind_rsp status {st:#04x}"))?;
     let want: Entry = (s.dut_ext, 1, 0x0008, 3, s.w.coord.ext, Some(1));
@@ -488,7 +491,7 @@ fn bind_broadcast(s: &mut Session) -> R<String> {
 fn mgmt_bind_empty(s: &mut Session) -> R<String> {
     let (st, table) = mgmt_bind(s)?;
     if st == NOT_SUPPORTED {
-        return Ok("NOT_SUPPORTED".into());
+        return Err(Stop::NotApplicable("the optional Mgmt_Bind_req is answered NOT_SUPPORTED".into()));
     }
     for e in &table {
         // leftovers of other tests in this session
@@ -544,14 +547,15 @@ fn mgmt_lqi(s: &mut Session) -> R<String> {
 
 fn mgmt_rtg(s: &mut Session) -> R<String> {
     let p = rsp(s, 0x0032, &[0x00])?;
-    expect(b(&p, 0) == SUCCESS || b(&p, 0) == NOT_SUPPORTED, format!("status {:#04x}", b(&p, 0)))?;
-    if b(&p, 0) == SUCCESS {
-        expect(
-            p.len() == 4 + 5 * b(&p, 3) as usize,
-            format!("{} entries announced, {} octets follow (5 per entry)", b(&p, 3), p.len() as i64 - 4),
-        )?;
+    if b(&p, 0) == NOT_SUPPORTED {
+        return Err(Stop::NotApplicable("the optional Mgmt_Rtg_req is answered NOT_SUPPORTED".into()));
     }
-    Ok(if b(&p, 0) == SUCCESS { "SUCCESS" } else { "NOT_SUPPORTED" }.into())
+    expect(b(&p, 0) == SUCCESS, format!("status {:#04x}", b(&p, 0)))?;
+    expect(
+        p.len() == 4 + 5 * b(&p, 3) as usize,
+        format!("{} entries announced, {} octets follow (5 per entry)", b(&p, 3), p.len() as i64 - 4),
+    )?;
+    Ok(format!("SUCCESS, {} entries", b(&p, 3)))
 }
 
 fn permit_joining(s: &mut Session) -> R<String> {
@@ -608,7 +612,7 @@ fn nwk_update_scan(s: &mut Session) -> R<String> {
     let Some(f) = f else { return Err(Stop::Fail("no Mgmt_NWK_Update_notify after an energy scan request".into())) };
     let p = f.zdo().unwrap().payload;
     if b(&p, 0) == NOT_SUPPORTED {
-        return Ok("NOT_SUPPORTED (the request is optional)".into());
+        return Err(Stop::NotApplicable("the optional Mgmt_NWK_Update_req is answered NOT_SUPPORTED".into()));
     }
     expect(b(&p, 0) == SUCCESS, format!("status {:#04x}", b(&p, 0)))?;
     let scanned = u32_at(&p, 1);
@@ -630,7 +634,7 @@ fn nwk_update_invalid(s: &mut Session) -> R<String> {
     };
     let p = f.zdo().unwrap().payload;
     if b(&p, 0) == NOT_SUPPORTED {
-        return Ok("NOT_SUPPORTED (the request is optional)".into());
+        return Err(Stop::NotApplicable("the optional Mgmt_NWK_Update_req is answered NOT_SUPPORTED".into()));
     }
     expect(
         b(&p, 0) == 0x80 || b(&p, 0) == 0xC2,
