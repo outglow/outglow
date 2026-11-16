@@ -88,7 +88,16 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
     chosen.sort_by(|&x, &y| cost(&names[y]).cmp(&cost(&names[x])).then(x.cmp(&y)));
     let todo: VecDeque<usize> = chosen.into_iter().collect();
     let n_sel = todo.len();
-    println!("\nrunning {n_sel} scenario{}", if n_sel == 1 { "" } else { "s" });
+    let short = |i: &usize| names[*i].trim_start_matches("sims::").to_string();
+    println!(
+        "\nrunning {n_sel} scenario{}: {}",
+        if n_sel == 1 { "" } else { "s" },
+        todo.iter().map(short).collect::<Vec<_>>().join(", ")
+    );
+    // which scenarios run now and since when: a scenario's output comes in
+    // one piece when it ends, so a long one would leave the log silent
+    let running: Arc<Mutex<Vec<(usize, Instant)>>> = Arc::new(Mutex::new(Vec::new()));
+    let heartbeat = std::env::var("SIMS_HEARTBEAT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(60u64);
     let t0 = Instant::now();
     let q = Arc::new(Mutex::new(todo));
     let (tx, rx) = mpsc::channel();
@@ -102,10 +111,11 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
     let mut skipped = 0;
     std::thread::scope(|sc| {
         for _ in 0..a.jobs.max(1) {
-            let (q, tx, all) = (q.clone(), tx.clone(), &all);
+            let (q, tx, all, running) = (q.clone(), tx.clone(), &all, running.clone());
             let (cpi, verbose, images) = (a.cpi, a.verbose, a.images.clone());
             sc.spawn(move || loop {
                 let Some(i) = q.lock().unwrap().pop_front() else { break };
+                running.lock().unwrap().push((i, Instant::now()));
                 let mut cx = SimCtx { cpi, verbose, images: images.clone(), out: String::new(), results: Vec::new(), t_wall: Instant::now(), missing: Default::default() };
                 let r = (all[i].run)(&mut cx);
                 let err = match r {
@@ -118,11 +128,32 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
                 let skip = (err.is_some() && !missing.is_empty()).then(|| {
                     missing.iter().map(|m| format!("{m} ({})", SimCtx::how_to_get(m))).collect::<Vec<_>>().join(", ")
                 });
+                running.lock().unwrap().retain(|r| r.0 != i);
                 let _ = tx.send((i, cx.out.clone(), cx.passed() && err.is_none(), err, skip));
             });
         }
         drop(tx);
-        for (i, out, ok, err, skip) in rx.iter() {
+        let tick = std::time::Duration::from_secs(heartbeat.max(1));
+        loop {
+            let (i, out, ok, err, skip) = match rx.recv_timeout(tick) {
+                Ok(m) => m,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let now: Vec<String> = running
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|(i, t)| {
+                            let s = t.elapsed().as_secs();
+                            format!("{} ({}:{:02})", short(i), s / 60, s % 60)
+                        })
+                        .collect();
+                    if !now.is_empty() {
+                        println!("… still running: {}", now.join(", "));
+                    }
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            };
             if let Some(why) = skip {
                 println!("test {} ... {}: no image {why}\n", names[i], paint("skipped"));
                 skipped += 1;
