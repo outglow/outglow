@@ -5,8 +5,12 @@
 //!
 //! Layout awox (the AwoX bootloader, which we do not have): after Upgrade End
 //! and the reset the flash must look as stock leaves it after BLE OTA (image B
-//! @0x6000 with 0x4B @+8, nothing outside staging and NV touched) and the old
-//! image must keep working. Layout ownbl: our bootloader installs image B.
+//! @0x6000 with 0x4B @+8, nothing outside staging and NV touched). Then either
+//! the old image must keep working (`Layout::Awox`: the emulator starts it
+//! again), or the bootloader's install as inferred (`transfer::install_staged`)
+//! puts image B in place and image B must come back with its network and
+//! report its version (`Layout::AwoxInstalled`). Layout ownbl: our bootloader
+//! installs image B.
 
 use super::zigbee::{decode_attrs, finish, fmt_light, sector_ranges, Z};
 use super::{SimCtx, SimDef};
@@ -20,18 +24,31 @@ pub fn defs() -> Vec<SimDef> {
 }
 
 /// ota_sim.py --layout awox --from target/tc32/bulb-tc32.bin --ota target/tc32-v2/bulb-tc32.ota
-///   --expect-bin target/tc32-v2/bulb-tc32-ota.bin (docs/rust-radio.md)
+///   --expect-bin target/tc32-v2/bulb-tc32-ota.bin (docs/rust-radio.md), then
+/// the staged image installed and started: version 2 (file version
+/// 0x01000001, `cargo xtask build --file-version 01000001 --out-dir
+/// target/tc32-v2`) back on the network from the NV of version 1.
 fn ota_rust(cx: &mut SimCtx) -> R<()> {
     let from = cx.image("from", "target/tc32/bulb-tc32.bin");
     let ota = cx.image("ota", "target/tc32-v2/bulb-tc32.ota");
     let exp = cx.image("expect", "target/tc32-v2/bulb-tc32-ota.bin");
-    run(cx, &from, &ota, Some(&exp), Layout::Awox)
+    run(cx, &from, &ota, Some(&exp), Layout::AwoxInstalled)
 }
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Layout {
     Ownbl,
+    /// staged at 0x6000 for the AwoX bootloader; the old image starts again
     Awox,
+    /// as `Awox`, then installed as the AwoX bootloader is taken to install it
+    /// (`transfer::install_staged`) and started
+    AwoxInstalled,
+}
+
+impl Layout {
+    fn awox(self) -> bool {
+        matches!(self, Layout::Awox | Layout::AwoxInstalled)
+    }
 }
 
 /// Python's `str(d)` of an event's details, every value a string except `none` keys.
@@ -187,7 +204,7 @@ pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image
         let r = rng.iter().map(|[a, b]| format!("{a:#x}-{:#x}", b + 0xfff)).collect::<Vec<_>>().join(", ");
         z.say(&format!("   non-empty 4K sectors: {nv}; ranges: {r}"));
     }
-    if layout == Layout::Awox {
+    if layout.awox() {
         if let Some(exp) = &exp_bytes {
             let staged = &flash[0x6000..0x6000 + exp.len()];
             let diff: Vec<usize> = (0..exp.len()).filter(|i| staged[*i] != exp[*i]).collect();
@@ -213,8 +230,15 @@ pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image
             z.check("[awox] nothing written outside staging/NV/image/power-on counter", bad.is_empty(), &bad.join(", "));
             let r = z.w.resets;
             z.check("[awox] one reset, no restart loop", r == resets0 + 1, &format!("resets={r}"));
-            z.say("   [awox] without the AwoX bootloader in the simulation the old image starts again; below we check that it works.");
+            if layout == Layout::Awox {
+                z.say("   [awox] without the AwoX bootloader in the simulation the old image starts again; below we check that it works.");
+            }
         }
+    }
+    if layout == Layout::AwoxInstalled {
+        let inst = super::transfer::install_staged(&mut z.w.air.dut).map_err(crate::session::Stop::Error)?;
+        z.say(&format!("   [awox] the AwoX bootloader's install, as inferred: {} B to 0x6a000; restart", inst.len()));
+        z.w.reboot().map_err(crate::session::Stop::Error)?;
     }
     if layout == Layout::Ownbl {
         if let Some(exp) = &exp_bytes {
