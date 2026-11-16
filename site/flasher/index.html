@@ -13,25 +13,35 @@
 <header class="site">
   <a class="logo" href="../"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
-  <nav id="site-nav">
+  <nav id="site-nav" aria-label="Main navigation">
     <a href="../">Overview</a>
-    <a href="../why.html">Compare</a>
-    <a href="../bulbs.html">Supported bulbs</a>
-    <a href="../sensing.html">Sensing</a>
-    <a href="../install.html">Install</a>
-    <a href="./" aria-current="page">Flasher</a>
-    <a href="../console/">Console</a>
+    <details class="nav-group">
+      <summary>Docs</summary>
+      <div class="nav-links">
+        <a href="../why.html">Compare</a>
+        <a href="../bulbs.html">Supported bulbs</a>
+        <a href="../sensing.html">Sensing</a>
+        <a href="../install.html">Install</a>
+      </div>
+    </details>
+    <details class="nav-group current">
+      <summary>Tools</summary>
+      <div class="nav-links">
+        <a href="../flasher/index.html" aria-current="page">Flasher</a>
+        <a href="../console/index.html">Console</a>
+      </div>
+    </details>
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
 <main>
-  <h1>Flasher</h1>
-  <p class="lead">Installs Outglow on a bulb over Bluetooth, the same way the vendor app installs its updates.
-    New here? Read the <a href="../install.html">install guide</a> first.</p>
+  <h1>Install or restore firmware</h1>
+  <p class="lead">Connect to read the bulb’s identity and see which firmware is available. Connecting does not install
+    anything; the update begins only after you select a file and confirm. Read the <a href="../install.html">install guide</a> before your first update.</p>
 
   <div id="support" class="note" hidden>
     <strong>This browser has no Web Bluetooth.</strong>
-    Use Chrome or Edge on a desktop or on Android. Safari and all browsers on iPhone and iPad cannot do this.
+    Try Chrome or Edge on a computer or Android device with Web Bluetooth support. Availability also depends on the operating system.
   </div>
 
   <div class="flash-layout">
@@ -40,10 +50,10 @@
       <ol id="phases" class="phases">
         <li data-phase="connect">Connect</li>
         <li data-phase="login">Log in</li>
-        <li data-phase="erasing">Erase</li>
-        <li data-phase="writing">Write</li>
-        <li data-phase="verifying">Verify</li>
-        <li data-phase="reboot">Restart</li>
+        <li data-phase="erasing">Prepare storage</li>
+        <li data-phase="writing">Transfer</li>
+        <li data-phase="verifying">Check file</li>
+        <li data-phase="reboot">Ready to restart</li>
       </ol>
       <div class="meter">
         <progress id="bar" max="100" value="0"></progress>
@@ -55,8 +65,7 @@
       <div class="panel">
         <h2>1. Bulb</h2>
         <div id="detected" class="detected" hidden></div>
-        <div id="bulb" class="facts"><p class="muted">Not connected. Switch the bulb off and on, then connect within
-          20 minutes.</p></div>
+        <div id="bulb" class="facts"><p class="muted">Not connected. Power the bulb on and keep it nearby. If another app is connected, disconnect it first.</p></div>
         <div class="row">
           <button id="connect" class="primary">Connect to a bulb</button>
           <button id="disconnect">Disconnect</button>
@@ -65,7 +74,7 @@
 
       <div class="panel">
         <h2>2. Firmware</h2>
-        <p id="proposal" class="muted">Connect to a bulb to see what can go on it.</p>
+        <p id="proposal" class="muted">Connect to see the available firmware for this bulb.</p>
         <div class="choice" role="radiogroup" aria-label="Firmware to install">
           <label class="option"><input type="radio" name="target" id="pick-outglow" value="outglow" disabled>
             <span><strong>Outglow</strong><small id="opt-outglow">—</small></span></label>
@@ -92,31 +101,33 @@
         <div class="row"><label>Local image <input id="file" type="file" accept=".bin"></label></div>
         <div class="row"><label><input id="stock" type="checkbox"> Allow the original firmware from a local file</label></div>
         <div class="row">
-          <label><input id="login" type="checkbox"> Log in to the bulb's Bluetooth mesh first (usually not needed)</label>
+          <label><input id="login" type="checkbox"> Log in with the vendor app’s credentials first, if the bulb requires it</label>
         </div>
         <div class="row">
-          <label>Mesh name <input id="mesh-name" type="text" value="unpaired" size="12"></label>
-          <label>MAC <input id="mac" type="text" placeholder="a4:c1:38:xx:xx:xx" size="17"></label>
+          <label>Vendor-app network name <input id="mesh-name" type="text" value="unpaired" size="12"></label>
+          <label>Bluetooth address <input id="mac" type="text" placeholder="a4:c1:38:xx:xx:xx" size="17"></label>
         </div>
-        <div class="row"><label>Password (hex, 16 bytes; empty = derived from the MAC)
+        <div class="row"><label>Encoded password (16 bytes written as hexadecimal pairs; leave empty to derive it from the Bluetooth address)
           <input id="password" type="text" size="34" spellcheck="false"></label></div>
         <p class="muted small">Only if an update is refused without it. A bulb paired to the vendor app has its own
-          mesh name and password; a new bulb is "unpaired", with a password derived from its MAC (the first six
-          bytes of its Zigbee IEEE address).</p>
+          network name and password. A new bulb is usually named "unpaired"; its password can be derived from its
+          Bluetooth address, the first six byte pairs of the permanent Zigbee address shown by your hub. This field
+          expects encoded bytes, not an ordinary text password.</p>
         <div class="row">
           <label>Block size <select id="chunk">
-            <option value="">16 B (classic, verified)</option>
+            <option value="">16 bytes (default)</option>
             <option>32</option><option>57</option><option>120</option><option>240</option>
           </select></label>
           <label>Delay between writes <input id="delay" type="number" min="0" max="200" value="0" style="width:5em"> ms</label>
           <label>Max resends <input id="resends" type="number" min="1" max="100" value="10" style="width:4em"></label>
         </div>
-        <p class="muted small">Larger blocks need a larger ATT_MTU, which the browser negotiates on its own and does not
-          report; the original firmware takes up to 240 B, Outglow up to 57 B. If the transfer fails, go back to 16 B.</p>
-        <div class="row"><label><input id="any-revision" type="checkbox"> Flash although the hardware revision differs</label></div>
+        <p class="muted small">Block size is the amount of firmware sent in each write. Larger blocks require a larger Bluetooth message
+          limit, which the browser negotiates without exposing its value. The tested original firmware accepts up to
+          240 bytes and Outglow up to 57 bytes. Keep the default unless you are troubleshooting transfer speed.</p>
+        <div class="row"><label><input id="any-revision" type="checkbox"> Override the hardware-revision check</label></div>
         <div id="any-revision-confirm" class="danger" hidden>
-          <p>Another hardware revision may have its LEDs on other pins: the bulb can stay dark and only Zigbee OTA
-            (if it joins at all) could fix it. Type <code>I accept</code> to go on.</p>
+          <p>Another hardware revision may wire the light differently. The bulb could stay dark or fail to start;
+            recovery may require a working wireless connection that you no longer have. Type <code>I accept</code> to go on.</p>
           <input id="any-revision-text" type="text" size="12" autocomplete="off">
         </div>
         <div class="row"><label><input id="all-devices" type="checkbox"> Show all Bluetooth devices when connecting</label></div>
@@ -127,7 +138,7 @@
 
   <div class="panel">
     <div class="row log-head">
-      <h2>Log</h2>
+      <h2>Transfer log</h2>
       <button id="copy">Copy</button>
       <button id="download">Download</button>
     </div>

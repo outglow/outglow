@@ -22,7 +22,7 @@ describe("console decoders", () => {
     expect(counters.list).toHaveLength(Object.keys(D.COUNTERS).length);
     expect(counters.byId.get(0x011d)).toBe(-52);
     expect(counters.byId.get(0x0104)).toBe(812);
-    expect(counters.list.find((c) => c.id === 0x5003)).toMatchObject({ name: "Router neighbours", manufacturer: true, value: 4 });
+    expect(counters.list.find((c) => c.id === 0x5003)).toMatchObject({ name: "Nearby routers", manufacturer: true, value: 4 });
     expect(counters.macRetryRate).toBeGreaterThan(0);
   });
 

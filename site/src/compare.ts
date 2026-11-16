@@ -81,6 +81,7 @@ export interface Tally {
   applicable: number;
   pass: number;
   fail: number;
+  error: number;
   note: number;
   inconclusive: number;
   na: number;
@@ -88,7 +89,7 @@ export interface Tally {
 }
 
 export function tally(tests: Test[], target: string, side: Side): Tally {
-  const t: Tally = { total: 0, applicable: 0, pass: 0, fail: 0, note: 0, inconclusive: 0, na: 0, withheld: 0 };
+  const t: Tally = { total: 0, applicable: 0, pass: 0, fail: 0, error: 0, note: 0, inconclusive: 0, na: 0, withheld: 0 };
   for (const x of tests) {
     const v = x.results[target]?.[side];
     if (!v) continue;
@@ -98,7 +99,8 @@ export function tally(tests: Test[], target: string, side: Side): Tally {
     else {
       t.applicable++;
       if (v === "PASS") t.pass++;
-      else if (v === "FAIL" || v === "ERROR") t.fail++;
+      else if (v === "FAIL") t.fail++;
+      else if (v === "ERROR") t.error++;
       else if (v === "NOTE") t.note++;
       else t.inconclusive++;
     }
@@ -110,9 +112,10 @@ export function tally(tests: Test[], target: string, side: Side): Tally {
 export function tallyText(t: Tally): string {
   if (t.total === 0) return "no tests";
   if (t.withheld === t.total) return "not published";
-  if (t.applicable === 0) return t.na === t.total ? "does not have it" : "not published";
+  if (t.applicable === 0) return t.na === t.total ? "not applicable" : `${t.na} not applicable, ${t.withheld} not published`;
   const rest: string[] = [];
   if (t.fail) rest.push(`${t.fail} failed`);
+  if (t.error) rest.push(`${t.error} test ${t.error === 1 ? "error" : "errors"}`);
   if (t.note) rest.push(`${t.note} ${t.note === 1 ? "note" : "notes"}`);
   if (t.inconclusive) rest.push(`${t.inconclusive} inconclusive`);
   if (t.na) rest.push(`${t.na} not applicable`);
@@ -132,9 +135,9 @@ export function sectionTests(tests: Test[], tokens: string[], taken?: Set<string
   return out;
 }
 
-/** The tests the original firmware passes and Outglow does not: the losses. */
+/** Definite failures on Outglow where the original firmware passed. */
 export function losses(tests: Test[], target: string): Test[] {
-  return tests.filter((t) => t.results[target]?.stock === "PASS" && t.results[target]?.outglow !== "PASS");
+  return tests.filter((t) => t.results[target]?.stock === "PASS" && t.results[target]?.outglow === "FAIL");
 }
 
 /** The documents the tests cite, with the publisher's copy. */
@@ -181,6 +184,6 @@ export const VERDICT_WORD: Record<Verdict, string> = {
   NOTE: "note",
   INCONCLUSIVE: "inconclusive",
   "N/A": "not applicable",
-  ERROR: "error",
+  ERROR: "test error",
   WITHHELD: "not published",
 };

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Outglow</title>
-<meta name="description" content="Open-source firmware for EGLO connect.z and AwoX Zigbee bulbs: a dependable Zigbee router you can look inside, installed from your browser.">
+<meta name="description" content="Open-source firmware for compatible EGLO connect.z and AwoX bulbs, with Zigbee updates, network diagnostics and Bluetooth controls.">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/src/style.css">
 </head>
@@ -12,56 +12,89 @@
 <header class="site">
   <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
-  <nav id="site-nav">
+  <nav id="site-nav" aria-label="Main navigation">
     <a href="./" aria-current="page">Overview</a>
-    <a href="why.html">Compare</a>
-    <a href="bulbs.html">Supported bulbs</a>
-    <a href="sensing.html">Sensing</a>
-    <a href="install.html">Install</a>
-    <a href="flasher/">Flasher</a>
-    <a href="console/">Console</a>
+    <details class="nav-group">
+      <summary>Docs</summary>
+      <div class="nav-links">
+        <a href="why.html">Compare</a>
+        <a href="bulbs.html">Supported bulbs</a>
+        <a href="sensing.html">Sensing</a>
+        <a href="install.html">Install</a>
+      </div>
+    </details>
+    <details class="nav-group">
+      <summary>Tools</summary>
+      <div class="nav-links">
+        <a href="flasher/index.html">Flasher</a>
+        <a href="console/index.html">Console</a>
+      </div>
+    </details>
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
-<main>
-  <h1>Open firmware for your smart bulbs</h1>
-  <p class="lead">Outglow is open-source firmware for EGLO connect.z and AwoX Zigbee bulbs. It makes them reliable
-    routers for your Zigbee network and still works with the vendor's app.
-    You install it from your browser in about five minutes.</p>
+<main class="doc">
+  <h1>More control over your Zigbee bulbs</h1>
+  <p class="lead">Outglow replaces the firmware in compatible EGLO connect.z and AwoX bulbs. It adds updates
+    through your Zigbee hub, network diagnostics and control over when Bluetooth runs. Installation uses
+    Bluetooth, without opening the bulb.</p>
   <div class="cta">
-    <a class="button primary" href="install.html">How to install</a>
-    <a class="button" href="bulbs.html">Supported bulbs</a>
-    <a class="button" href="https://github.com/outglow/outglow">Source code</a>
+    <a class="button primary" href="why.html">Compare with the original firmware</a>
+    <a class="button" href="bulbs.html">Check your bulb</a>
   </div>
 
-  <h2>What you get</h2>
-  <ul class="perks">
-    <li>A steadier Zigbee network: your bulbs pass messages along reliably.</li>
-    <li>Built to the Zigbee 3.0 standard, so it works with any Zigbee hub.</li>
-    <li>The vendor app keeps working, and you can always go back.</li>
-    <li>Don't need Bluetooth? Switch it off, and the Zigbee connection gets even steadier.</li>
-    <li>Detailed diagnostics: neighbours, signal quality, retries, a log of what happened, in your hub or in the <a href="console/">console</a>.</li>
-    <li>Updates over the air through Zigbee, like any other firmware update: no app, no cable.</li>
-    <li>Free and open source.</li>
-  </ul>
-  <p><a href="sensing.html">Motion sensing: how bulbs notice someone walking between them (experimental) →</a></p>
-  <p><a href="why.html">Compare with the original firmware →</a></p>
+  <h2>What changes</h2>
+  <div class="grid">
+    <section class="card">
+      <h3>See why a bulb loses contact</h3>
+      <p>Outglow reports nearby routers, failed deliveries, retries and restarts. Read them in Zigbee2MQTT or
+        connect directly with the <a href="console/">Bluetooth console</a>. The original firmware does not offer
+        this diagnostics service.</p>
+    </section>
+    <section class="card">
+      <h3>Update from your hub</h3>
+      <p>The original firmware uses Bluetooth for updates. Outglow also accepts updates over Zigbee. Add its
+        update list to Zigbee2MQTT, then choose when to install a release.</p>
+    </section>
+    <section class="card">
+      <h3>Choose when Bluetooth is available</h3>
+      <p>Keep it on for the vendor app, allow it briefly after power-on, or turn it off. Zigbee and Bluetooth share
+        one radio; limiting Bluetooth leaves more time to listen for Zigbee messages.</p>
+    </section>
+  </div>
 
-  <h2>Which bulbs?</h2>
-  <p>Zigbee bulbs and lights sold as EGLO connect.z and AwoX that use the Telink TLSR8258 module: filament bulbs,
-    GU10 and E14 spots, colour bulbs and ceiling lights. Outglow has a firmware image for each of the 21 module
-    versions inside them, and the flasher picks the right one.</p>
-  <p><a href="bulbs.html">See the list of products →</a></p>
+  <h2>Differences you can see in the tests</h2>
+  <p>In the tested original firmware, a fade-to-off can leave the bulb glowing at its lowest brightness. A
+    repeated group toggle can run twice. A router that has gone silent can remain listed as reachable.
+    Outglow handles these cases as expected in the same emulator tests.</p>
+  <p>The <a href="why.html">comparison</a> explains each situation, what both firmwares did and what a failure
+    could mean in use. These are controlled software tests; they do not promise that every network problem
+    will disappear after installing Outglow.</p>
 
-  <h2>How it gets onto a bulb</h2>
-  <ol class="steps">
-    <li><strong>The first time, over Bluetooth.</strong> Open the <a href="flasher/">flasher</a> in Chrome or Edge,
-      pick the bulb, and it installs the right image, the same way the vendor app installs its updates.</li>
-    <li><strong>After that, over Zigbee.</strong> Your Zigbee hub offers new Outglow versions like any other firmware
-      update.</li>
-    <li><strong>Changed your mind?</strong> The original firmware goes back the same way.</li>
-  </ol>
-  <p><a href="install.html">Step-by-step guide →</a></p>
+  <h2>What stays familiar</h2>
+  <p>The bulb still supports Zigbee light controls and the vendor app's Bluetooth controls. Outglow reproduces
+    the original brightness and colour curves and the wall-switch reset sequence, checked in the emulator.
+    It identifies itself to your hub as Outglow, so the hub needs to discover its features again.</p>
+  <p>You can restore the original firmware when a matching file is available. The vendor's startup and update
+    program stays in place. You may need to pair the bulb again after changing firmware.</p>
+
+  <h2>Where the project stands</h2>
+  <p>Outglow is an experimental, open-source project. The documented hardware testing is on a dimmable filament
+    bulb; most supported hardware variants and protocol behaviours have been tested only in the emulator.
+    It is not Zigbee or Bluetooth certified.</p>
+  <p>Firmware builds cover 21 combinations of module and hardware revision. A product name alone is not enough
+    to choose a build: manufacturers sometimes change the electronics inside the same product.
+    <a href="bulbs.html">Check the compatibility list</a>, then let the firmware tool read your bulb's identity.</p>
+  <p><a href="sensing.html">Experimental motion sensing</a> uses changes in the radio signal between bulbs.
+    It is off by default and has not yet been validated on real bulbs.</p>
+
+  <h2>Install when you are ready</h2>
+  <p>Read the guide, connect to the bulb over Bluetooth and check the proposed firmware before starting.
+    Later updates can use Zigbee2MQTT. You choose when to install them.</p>
+  <div class="cta">
+    <a class="button primary" href="install.html">Read the install guide</a>
+    <a class="button" href="https://github.com/outglow/outglow">Read the source code</a>
+  </div>
 </main>
 <footer class="site">
   Outglow is free software under the GNU GPL version 3 or later.

@@ -12,27 +12,37 @@
 <header class="site">
   <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
-  <nav id="site-nav">
+  <nav id="site-nav" aria-label="Main navigation">
     <a href="./">Overview</a>
-    <a href="why.html">Compare</a>
-    <a href="bulbs.html" aria-current="page">Supported bulbs</a>
-    <a href="sensing.html">Sensing</a>
-    <a href="install.html">Install</a>
-    <a href="flasher/">Flasher</a>
-    <a href="console/">Console</a>
+    <details class="nav-group current">
+      <summary>Docs</summary>
+      <div class="nav-links">
+        <a href="why.html">Compare</a>
+        <a href="bulbs.html" aria-current="page">Supported bulbs</a>
+        <a href="sensing.html">Sensing</a>
+        <a href="install.html">Install</a>
+      </div>
+    </details>
+    <details class="nav-group">
+      <summary>Tools</summary>
+      <div class="nav-links">
+        <a href="flasher/index.html">Flasher</a>
+        <a href="console/index.html">Console</a>
+      </div>
+    </details>
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
 <main>
   <h1>Supported bulbs</h1>
-  <p class="lead">Products known to work with Outglow. Inside each is one of 21 module versions, called boards;
-    Outglow has a firmware image for each.</p>
+  <p class="lead">Find bulbs whose internal hardware matches an Outglow build. A confirmed product match means we know
+    which module a reported example contains; it does not mean Outglow has been tested on that exact product.</p>
 
   <div class="note">
-    <strong>Check the bulb, not the box.</strong>
-    The same product has shipped with different modules, and a vendor update can change what a bulb reports. The
-    <a href="flasher/">flasher</a> reads the board from the bulb itself and only installs the image made for it, so
-    use this list to find candidates.
+    <strong>Check the module and hardware revision.</strong>
+    The same product has shipped with different modules, and a vendor update can change its reported module name. The
+    <a href="flasher/">flasher</a> reads the module name and hardware revision from the bulb and checks them against the firmware.
+    Use this list to identify candidates, then connect to confirm the match before installing.
   </div>
 
   <div class="bulb-tools">
@@ -44,7 +54,7 @@
     </div>
     <label class="search">
       <span class="visually-hidden">Search</span>
-      <input id="search" type="search" placeholder="Article number, name or board" autocomplete="off">
+      <input id="search" type="search" placeholder="Product number, name or module" autocomplete="off">
     </label>
     <span id="count" class="muted" aria-live="polite"></span>
   </div>
@@ -52,19 +62,23 @@
   <div id="bulbs" class="bulb-grid"><p class="muted">Loading…</p></div>
   <noscript><p>The list needs JavaScript; the data is in <code>site/public/bulbs.json</code> in the repository.</p></noscript>
 
-  <h2>How sure is each match?</h2>
+  <h2>Two different kinds of confidence</h2>
+  <p>Product matching tells us which electronics are inside a lamp. Hardware testing tells us whether Outglow
+    has actually run on that module. Each card shows both. Other variants have firmware builds and emulator checks,
+    but no recorded test on a physical bulb.</p>
+  <h3>Product-to-module match</h3>
   <ul>
     <li><span class="badge conf-confirmed">confirmed</span> a bulb with that article number was seen reporting this
-      board (in Zigbee2MQTT reports, its device database, or on a bulb we own).</li>
-    <li><span class="badge conf-likely">likely</span> the same product family and light as a confirmed one, but nobody
-      has reported its board yet.</li>
-    <li><span class="badge conf-inferred">inferred</span> only the board's name points to it (for example
+      module (in Zigbee2MQTT reports, its device database, or on a bulb we own).</li>
+    <li><span class="badge conf-likely">likely</span> the same product family and light as a confirmed one, but the module
+      has not been confirmed for that product.</li>
+    <li><span class="badge conf-inferred">inferred</span> only the module name points to it (for example
       <code>c5_E14</code>: 5&nbsp;W colour, E14 socket). Treat it as a guess until the flasher confirms it.</li>
   </ul>
 
-  <h2>Boards without a confirmed product</h2>
+  <h2>Modules with only guessed or unknown product matches</h2>
   <ul id="unknown"><li class="muted">Loading…</li></ul>
-  <p>Have one of these, or a bulb that is not listed? Connect it in the flasher (nothing is written until you start
+  <p>Have one of these, or a bulb that is not listed? Connect it in the flasher (firmware is not changed until you start
     an update) and <a href="https://github.com/outglow/outglow/issues">open an issue</a> with the model and hardware
     revision it shows and the article number from the box.</p>
 

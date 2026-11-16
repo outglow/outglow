@@ -37,7 +37,7 @@ function renderInfo(i: D.Info) {
   $("subtitle").textContent = `firmware ${i.firmware}`;
   $("model").textContent = i.model;
   $("fw").textContent = i.firmware;
-  $("variant").textContent = i.variant === "tw" ? "tunable white, 2 channels" : "dimmable, 1 channel";
+  $("variant").textContent = i.variant === "tw" ? "Brightness and white-tone controls" : "Brightness controls";
   $("ieee").textContent = i.ieee;
   $("has-wd").innerHTML = i.watchdog ? tag("on", "good") : tag("off");
 }
@@ -52,16 +52,16 @@ function renderState(s: D.State) {
 
   const z = s.zigbee;
   $("zb-state").textContent = z.joined ? "In a network" : "Not in a network";
-  $("zb-sub").textContent = z.joined ? `channel ${z.channel}` : "looking for a network to join";
+  $("zb-sub").textContent = z.joined ? `channel ${z.channel}` : "not currently joined; pairing may need to be enabled";
   $("zb-addr").textContent = z.address !== null ? hex4(z.address) : "–";
   $("zb-pan").textContent = z.pan !== null ? hex4(z.pan) : "–";
   $("zb-chan").textContent = String(z.channel);
-  $("zb-neigh").innerHTML = `${z.routers <= 1 && z.joined ? tag(z.routers, "warn") : z.routers} routers, ${z.children} children`;
-  $("zb-signal").textContent = z.lqi ? `LQI ${z.lqi}, ${z.rssi} dBm` : "–";
+  $("zb-neigh").innerHTML = `${z.routers <= 1 && z.joined ? tag(z.routers, "warn") : z.routers} routers, ${z.children} connected end devices`;
+  $("zb-signal").textContent = z.lqi ? `Quality ${z.lqi} of 255; strength ${z.rssi} dBm` : "–";
   $("lqi-bar").style.width = Math.round((z.lqi * 100) / 255) + "%";
 
   const m = s.mac;
-  $("retry-rate").innerHTML = m.tx ? `${pct(m.retryRate)} ${m.retryRate > 0.3 ? tag("poor link", "bad") : m.retryRate > 0.15 ? tag("busy", "warn") : tag("good", "good")}` : "–";
+  $("retry-rate").innerHTML = m.tx ? `${pct(m.retryRate)} ${m.retryRate > 0.3 ? tag("many retries", "bad") : m.retryRate > 0.15 ? tag("elevated retries", "warn") : tag("few retries", "good")}` : "–";
   $("mac-tx").textContent = num(m.tx);
   $("mac-rx").textContent = num(m.rx);
   $("mac-retry").textContent = num(m.retry);
@@ -69,7 +69,7 @@ function renderState(s: D.State) {
 
   const l = s.light;
   $("light-state").textContent = l.on ? `${l.percent} %` : "Off";
-  $("light-sub").textContent = (l.on ? "on" : `will come back at ${l.percent} %`) + (l.kelvin ? `, ${l.kelvin} K` : "");
+  $("light-sub").textContent = (l.on ? "on" : `saved brightness ${l.percent} %`) + (l.kelvin ? `, ${l.kelvin} K` : "");
   $("toggle").textContent = l.on ? "Turn off" : "Turn on";
   const level = $<HTMLInputElement>("level-in"), ct = $<HTMLInputElement>("ct-in");
   if (Date.now() > holdUntil) {
@@ -105,7 +105,7 @@ const ago = (uptime: number, t: number) => D.formatDuration(Math.max(0, uptime -
 function renderFrames(frames: D.Frame[], uptime: number) {
   $("frames").innerHTML = frames.length
     ? frames.map((f) => `<tr><td class="muted">${ago(uptime, f.time)}</td><td>${f.src === "0x0000" ? "coordinator" : f.src}</td>` +
-      `<td>${f.cluster}</td><td>${f.command}${f.manufacturer ? " (manufacturer)" : ""}</td><td>LQI ${f.lqi}, ${f.rssi} dBm</td></tr>`).join("")
+      `<td>${f.cluster}</td><td>${f.command}${f.manufacturer ? " (manufacturer)" : ""}</td><td>Quality ${f.lqi} of 255; ${f.rssi} dBm</td></tr>`).join("")
     : `<tr><td colspan="5" class="muted">No command has arrived since the start.</td></tr>`;
 }
 
@@ -117,13 +117,13 @@ function renderLog(entries: D.LogEntry[], uptime: number) {
 
 function renderCounters(c: D.Counters) {
   $("counters-card").hidden = false;
-  $("counters-sub").textContent = `Retries on ${pct(c.macRetryRate)} and failures on ${pct(c.macFailRate)} of the unicasts sent.`;
+  $("counters-sub").textContent = `Relative to transmitted direct messages: retries ${pct(c.macRetryRate)}, failed sends ${pct(c.macFailRate)}. A message can be retried more than once, so these are ratios of counts, not percentages of affected messages.`;
   $("counters").innerHTML = c.list.map((a) => {
     const open = openCounters.has(a.id);
     return `<tr><td><span class="feature">${a.name}<button type="button" class="info" data-counter="${a.id}" aria-expanded="${open}" ` +
       `aria-label="About: ${a.name}">i</button></span></td><td class="muted mono">${a.idText}${a.manufacturer ? " · Outglow" : ""}</td>` +
       `<td class="num">${num(a.value)}</td></tr>` +
-      `<tr class="more"${open ? "" : " hidden"}><td colspan="3">${a.what}${a.healthy ? ` <strong>Healthy:</strong> ${a.healthy}` : ""}</td></tr>`;
+      `<tr class="more"${open ? "" : " hidden"}><td colspan="3">${a.what}${a.healthy ? ` <strong>How to read it:</strong> ${a.healthy}` : ""}</td></tr>`;
   }).join("");
 }
 
@@ -227,7 +227,7 @@ async function open(dev: BluetoothDevice) {
     svc = await gatt.getPrimaryService(D.UUID.service);
   } catch {
     gatt.disconnect();
-    throw new Error("This bulb has no console service. It runs the original firmware, or an Outglow version from before the console.");
+    throw new Error("The console service could not be opened. Check that this bulb runs an Outglow version with console support and that the Bluetooth connection is working.");
   }
   const mesh = await gatt.getPrimaryService(TELINK_SERVICE);
   const c: Partial<Chars> = { pair: wrap(await mesh.getCharacteristic(telinkUuid(PAIR))), counters: null };

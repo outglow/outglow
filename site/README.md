@@ -35,6 +35,30 @@ npm run boards     # public/boards.json (cargo xtask boards: all board tables)
   (`{schema: 1, images: [{board, version, fileVersion, url, size, sha256, date, notes}]}`),
   written by `cargo xtask index --site`.
 
+## Comparison page
+
+`why.html` explains what we check and how the original firmware and Outglow behave.
+`src/why.ts` renders the selected bulb's results from `public/compare.json`, generated
+by `cargo xtask compare`. `src/compare-copy.ts` holds the plain-English expectations
+and explanations of recorded outcomes; regenerating measurements does not overwrite it.
+`src/compare-examples.ts` explains a possible practical consequence for each check.
+These examples illustrate a risk; they are not additional measured outcomes.
+
+When adding a check or changing an observed outcome, update its explanation too.
+Describe the situation and observable behaviour without assuming source-code access.
+Explain any necessary technical term or setting name where it appears. Keep test
+standards references in the optional details; keep internal test identifiers and exact
+measurements in the data file without adding download links to the page. Preserve uncertainty, inapplicable checks and
+unpublished results rather than inferring behaviour from a missing result.
+Only an Outglow failure paired with an original-firmware pass belongs in the
+regressions list. A procedure that was not exercised is not a failed check;
+an error in the test is not a demonstrated firmware failure.
+
+When a section relies on a standard, include a short, exact excerpt with its clause
+and source link, followed by a plain-English explanation. Check the surrounding
+text before quoting it. Distinguish emulator findings, physical testing and expected
+real-world consequences throughout the site.
+
 ## Supported bulbs (`bulbs.json`)
 
 Which real products each board runs on. Written by hand; `test/bulbs.test.ts`

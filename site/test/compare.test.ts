@@ -92,7 +92,19 @@ describe("tallies", () => {
     const tests = [mk("PASS", "PASS"), mk("FAIL", "PASS"), mk("N/A", "PASS"), mk("WITHHELD", "PASS")];
     expect(tallyText(tally(tests, "a", "stock"))).toBe("1 of 2 passed (1 failed, 1 not applicable, 1 not published)");
     expect(tallyText(tally(tests, "a", "outglow"))).toBe("4 of 4 passed");
-    expect(losses([mk("PASS", "N/A"), mk("PASS", "PASS")], "a")).toHaveLength(1);
+  });
+
+  test("only a definite failure against a stock pass is a regression", () => {
+    const failed = mk("PASS", "FAIL");
+    const others = ["PASS", "N/A", "NOTE", "INCONCLUSIVE", "ERROR", "WITHHELD"].map((v) => mk("PASS", v));
+    expect(losses([failed, ...others, mk("FAIL", "FAIL")], "a")).toEqual([failed]);
+  });
+
+  test("inapplicable checks and test errors do not imply a missing feature or a firmware failure", () => {
+    expect(tallyText(tally([mk("PASS", "N/A")], "a", "outglow"))).toBe("not applicable");
+    const result = tally([mk("PASS", "ERROR"), mk("PASS", "FAIL")], "a", "outglow");
+    expect(result).toMatchObject({ fail: 1, error: 1 });
+    expect(tallyText(result)).toContain("1 failed, 1 test error");
   });
 
   test("a token selects by prefix, id or module", () => {

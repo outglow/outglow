@@ -13,14 +13,24 @@
 <header class="site">
   <a class="logo" href="../"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
-  <nav id="site-nav">
+  <nav id="site-nav" aria-label="Main navigation">
     <a href="../">Overview</a>
-    <a href="../why.html">Compare</a>
-    <a href="../bulbs.html">Supported bulbs</a>
-    <a href="../sensing.html">Sensing</a>
-    <a href="../install.html">Install</a>
-    <a href="../flasher/">Flasher</a>
-    <a href="./" aria-current="page">Console</a>
+    <details class="nav-group">
+      <summary>Docs</summary>
+      <div class="nav-links">
+        <a href="../why.html">Compare</a>
+        <a href="../bulbs.html">Supported bulbs</a>
+        <a href="../sensing.html">Sensing</a>
+        <a href="../install.html">Install</a>
+      </div>
+    </details>
+    <details class="nav-group current">
+      <summary>Tools</summary>
+      <div class="nav-links">
+        <a href="../flasher/index.html">Flasher</a>
+        <a href="../console/index.html" aria-current="page">Console</a>
+      </div>
+    </details>
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
@@ -28,7 +38,7 @@
   <div class="console-head">
     <div>
       <h1 id="title">Console</h1>
-      <p class="lead" id="subtitle">Look inside a bulb running Outglow, over Bluetooth, from this page.</p>
+      <p class="lead" id="subtitle">Read the bulb’s network status, inspect recent events and change light settings over Bluetooth.</p>
     </div>
     <div class="console-actions">
       <span class="pill" id="status"><span class="dot"></span><span id="status-text">not connected</span></span>
@@ -39,26 +49,24 @@
 
   <div id="support" class="note" hidden>
     <strong>This browser has no Web Bluetooth.</strong>
-    Use Chrome or Edge on a desktop or on Android. Safari and all browsers on iPhone and iPad cannot do this.
+    Try Chrome or Edge on a computer or Android device with Web Bluetooth support. Availability also depends on the operating system.
     You can still <a href="?demo">look at a sample bulb</a>.
   </div>
   <div id="message" class="note" hidden></div>
-  <div id="demo-note" class="note" hidden><strong>Sample data.</strong> This is a made-up bulb, so you can see what
-    the console shows. <a href="./">Connect to a real one →</a></div>
+  <div id="demo-note" class="note" hidden><strong>Sample data.</strong> These values are simulated. They show how the console works and are not readings from a connected bulb. <a href="./">Connect to a real one →</a></div>
 
   <details class="about" id="about">
-    <summary>What is this, and what do I need?</summary>
+    <summary>Before connecting</summary>
     <div class="about-body">
       <p>The console talks to one bulb directly over Bluetooth, the way the vendor app does. It shows what the bulb
-        knows about itself and its Zigbee network, refreshed every second, and lets you control it. Nothing leaves your
-        browser: there is no server between you and the bulb.</p>
+        knows about itself and its Zigbee network, refreshing the main status about once a second and the other readings about every two seconds. It also lets you change light settings. The page communicates directly with the bulb; its readings are not sent to an Outglow server.</p>
       <ul>
         <li><strong>A bulb running Outglow with Bluetooth on.</strong> The original firmware doesn't have this service.
           If you limited Bluetooth to a few minutes after power-on, switch the bulb off and on first.</li>
         <li><strong>Chrome or Edge</strong> on a desktop or Android, within a few metres of the bulb.</li>
         <li><strong>Reading needs nothing else.</strong> To control the light or change settings, log in with the same
-          network name and password as in the vendor app. A bulb that was never added to the app uses
-          <code>unpaired</code>, and the console finds its password by itself.</li>
+          network name and password as in the vendor app. An unpaired bulb normally uses the network name
+          <code>unpaired</code>. Click <em>Log in</em> to try the displayed credentials. If that fails for an unpaired bulb and the browser exposes its Bluetooth address, the console also tries a password derived from that address.</li>
       </ul>
       <p>Tap <span class="info static" aria-hidden="true">i</span> next to a heading or a counter to see what it means.</p>
     </div>
@@ -67,7 +75,7 @@
   <div class="console-grid">
     <section class="card" id="login-card" hidden>
       <h2>Log in</h2>
-      <div class="field"><label for="mesh-name">Network name</label>
+      <div class="field"><label for="mesh-name">Vendor-app network name</label>
         <input type="text" id="mesh-name" value="unpaired" maxlength="16" autocomplete="off"></div>
       <div class="field"><label for="mesh-pass">Password</label>
         <div class="row"><input type="password" id="mesh-pass" value="1234" maxlength="16" autocomplete="off">
@@ -79,7 +87,7 @@
     <section class="card">
       <h2>Light<button type="button" class="info" aria-expanded="false" aria-controls="i-light" aria-label="About: Light">i</button></h2>
       <p class="explain" id="i-light" hidden>The light as the bulb drives it right now. Changes here go straight to the
-        bulb, the same as a command from your hub; the hub will see the new state.</p>
+        bulb, the same as a command from your hub; the bulb reports the changed state to the hub when connected.</p>
       <fieldset id="control-set" disabled>
         <div class="row">
           <div class="grow"><div class="big" id="light-state">–</div><div class="sub" id="light-sub">&nbsp;</div></div>
@@ -87,14 +95,14 @@
         </div>
         <div class="field"><label for="level-in">Brightness <output id="level-out">–</output></label>
           <input type="range" id="level-in" min="1" max="254" value="254"></div>
-        <div class="field" id="ct-field" hidden><label for="ct-in">Colour <output id="ct-out">–</output></label>
+        <div class="field" id="ct-field" hidden><label for="ct-in">White tone <output id="ct-out">–</output></label>
           <input type="range" id="ct-in" min="153" max="454" value="333"></div>
       </fieldset>
     </section>
 
     <section class="card">
       <h2>Settings<button type="button" class="info" aria-expanded="false" aria-controls="i-settings" aria-label="About: Settings">i</button></h2>
-      <p class="explain" id="i-settings" hidden>The same start-up and option attributes your hub can set over Zigbee.
+      <p class="explain" id="i-settings" hidden>These settings control how the light returns after a power cut and how it handles changes while off.
         They are stored in the bulb and survive power cuts.</p>
       <fieldset id="config-set" disabled>
         <div class="field"><label for="su-onoff">When the power comes back</label>
@@ -105,54 +113,57 @@
         <div class="field"><label for="su-level-mode">Brightness at power-on</label>
           <div class="row"><select id="su-level-mode">
             <option value="255">as before</option><option value="0">lowest</option><option value="set">fixed</option>
-          </select><input type="number" id="su-level" min="1" max="254" value="254" hidden></div></div>
-        <div class="field" id="su-ct-field" hidden><label for="su-ct-mode">Colour at power-on</label>
+          </select><input type="number" id="su-level" aria-label="Fixed power-on brightness: 1 is dimmest, 254 is brightest" min="1" max="254" value="254" hidden></div></div>
+        <div class="field" id="su-ct-field" hidden><label for="su-ct-mode">White tone at power-on</label>
           <div class="row"><select id="su-ct-mode"><option value="prev">as before</option><option value="set">fixed</option></select>
-            <input type="number" id="su-ct" min="153" max="454" value="333" hidden></div></div>
-        <label class="check"><input type="checkbox" id="opt-exec"> Change brightness while the bulb is off</label>
-        <label class="check" id="opt-ct-exec-row" hidden><input type="checkbox" id="opt-ct-exec"> Change colour while the bulb is off</label>
-        <label class="check" id="opt-couple-row" hidden><input type="checkbox" id="opt-couple"> Warmer colour as it dims</label>
+            <input type="number" id="su-ct" aria-label="Fixed power-on white tone in mireds: a larger value is warmer" min="153" max="454" value="333" hidden></div></div>
+        <p class="hint">Fixed power-on brightness uses the bulb’s scale: 1 is dimmest and 254 is brightest.
+          A fixed white tone uses mireds, a colour-temperature unit where a larger value means warmer white.</p>
+        <label class="check"><input type="checkbox" id="opt-exec"> Change the saved brightness while the bulb is off</label>
+        <label class="check" id="opt-ct-exec-row" hidden><input type="checkbox" id="opt-ct-exec"> Change the saved white tone while the bulb is off</label>
+        <label class="check" id="opt-couple-row" hidden><input type="checkbox" id="opt-couple"> Warmer white as it dims</label>
       </fieldset>
     </section>
 
     <section class="card">
       <h2>Running<button type="button" class="info" aria-expanded="false" aria-controls="i-run" aria-label="About: Running">i</button></h2>
       <p class="explain" id="i-run" hidden>How long the bulb has been running and why it last started. A watchdog
-        restart means the firmware hung and the chip restarted it. The reset sequence is the switch pattern that
-        factory-resets the bulb (on and off 1, 1, 1, 12, 12 s); it shows how far into it you are.</p>
+        restart means the software did not respond to its safety timer in time, so the chip restarted it. The reset sequence shows the internal progress marker for the wall-switch reset pattern; it is not a count of power cycles.
+        The install guide explains that pattern step by step.</p>
       <div class="big" id="uptime">–</div>
       <div class="sub" id="cause">since the last start</div>
       <dl>
         <dt>Watchdog restarts</dt><dd id="wd">–</dd>
-        <dt>Power-ons</dt><dd id="boots">–</dd>
+        <dt>Total starts</dt><dd id="boots">–</dd>
         <dt>Reset sequence</dt><dd id="step">–</dd>
       </dl>
     </section>
 
     <section class="card">
       <h2>Zigbee<button type="button" class="info" aria-expanded="false" aria-controls="i-zb" aria-label="About: Zigbee">i</button></h2>
-      <p class="explain" id="i-zb" hidden>The bulb's place in your Zigbee network. Neighbours are the routers it hears
-        (2–6 is typical at home; 0–1 means it's at the edge). Children are battery devices that joined through it. LQI
-        (0–255) and RSSI (dBm) describe the last frame it received: higher is better.</p>
+      <p class="explain" id="i-zb" hidden>The bulb's place in your Zigbee network. Neighbours are nearby routers it can hear. Having few neighbours can mean there are fewer alternate
+        routes, but the count alone does not establish a fault. Connected end devices, often battery-powered sensors or remotes, use this bulb to hold
+        and forward messages. Reception quality and signal strength describe the last received message; neither
+        reading alone measures the reliability of the whole route.</p>
       <div class="big" id="zb-state">–</div>
       <div class="sub" id="zb-sub">&nbsp;</div>
       <dl>
         <dt>Address</dt><dd id="zb-addr">–</dd>
-        <dt>Network (PAN)</dt><dd id="zb-pan">–</dd>
+        <dt>Network identifier</dt><dd id="zb-pan">–</dd>
         <dt>Channel</dt><dd id="zb-chan">–</dd>
         <dt>Neighbours</dt><dd id="zb-neigh">–</dd>
-        <dt>Last frame</dt><dd id="zb-signal">–</dd>
+        <dt>Last received message</dt><dd id="zb-signal">–</dd>
       </dl>
-      <div class="bar" title="LQI of the last frame"><i id="lqi-bar"></i></div>
+      <div class="bar" title="Reception quality of the last received message"><i id="lqi-bar"></i></div>
     </section>
 
     <section class="card">
       <h2>Radio<button type="button" class="info" aria-expanded="false" aria-controls="i-radio" aria-label="About: Radio">i</button></h2>
-      <p class="explain" id="i-radio" hidden>Frames sent to one neighbour need an acknowledgement; without one the bulb
-        sends again. Under 10 % retries is a good link, 15–30 % a busy channel, over 30 % a poor link. Failures, frames
-        never acknowledged, should stay under 1 %.</p>
+      <p class="explain" id="i-radio" hidden>The bulb resends a message if its neighbour does not confirm receipt. A rising retry rate can suggest
+        interference, a weak connection or a device that has gone away. The labels here are rough guides: compare
+        the trend with recent events rather than treating one percentage as a diagnosis.</p>
       <div class="big" id="retry-rate">–</div>
-      <div class="sub">of sent frames needed a retry</div>
+      <div class="sub">retries relative to messages sent</div>
       <dl>
         <dt>Sent</dt><dd id="mac-tx">–</dd>
         <dt>Received</dt><dd id="mac-rx">–</dd>
@@ -169,7 +180,7 @@
         <dt>Model</dt><dd id="model">–</dd>
         <dt>Firmware</dt><dd id="fw">–</dd>
         <dt>Light</dt><dd id="variant">–</dd>
-        <dt>IEEE</dt><dd id="ieee" class="mono">–</dd>
+        <dt>Permanent Zigbee address</dt><dd id="ieee" class="mono">–</dd>
         <dt>Watchdog</dt><dd id="has-wd">–</dd>
       </dl>
       <fieldset id="service-set" disabled>
@@ -178,13 +189,13 @@
           <button type="button" id="factory" class="danger">Factory reset</button>
         </div>
       </fieldset>
-      <p class="hint">A factory reset removes the bulb from your Zigbee network and the vendor app.</p>
+      <p class="hint">A factory reset erases the bulb’s Zigbee membership, light settings and vendor-app credentials. Its old entry may remain in your hub or app until you remove it.</p>
     </section>
 
     <section class="card wide">
       <h2>Recent commands<button type="button" class="info" aria-expanded="false" aria-controls="i-frames" aria-label="About: Recent commands">i</button></h2>
       <p class="explain" id="i-frames" hidden>The last Zigbee messages that reached the light: who sent them (the
-        coordinator is 0x0000), which part of the light they were for, and how strong the signal was. Handy when a bulb
+        hub normally uses address 0x0000), which part of the light they were for, and how strong the signal was. Handy when a bulb
         does something you didn't ask for.</p>
       <div class="table-wrap"><table>
         <thead><tr><th>When</th><th>From</th><th>For</th><th>Command</th><th>Signal</th></tr></thead>
@@ -194,19 +205,19 @@
 
     <section class="card wide">
       <h2>Event log<button type="button" class="info" aria-expanded="false" aria-controls="i-log" aria-label="About: Event log">i</button></h2>
-      <p class="explain" id="i-log" hidden>What happened since the bulb started, newest first: joining and leaving the
+      <p class="explain" id="i-log" hidden>Recent recorded events, newest first. Some entries can survive a software restart and are marked as earlier events: joining and leaving the
         network, neighbours coming and going, route problems, Bluetooth connections.</p>
       <ol class="events" id="log"><li class="muted">No data yet.</li></ol>
     </section>
 
     <section class="card wide" id="counters-card" hidden>
-      <h2>All counters<button type="button" class="info" aria-expanded="false" aria-controls="i-counters" aria-label="About: All counters">i</button></h2>
-      <p class="explain" id="i-counters" hidden>Every value of the Zigbee Diagnostics cluster (0x0B05), the same numbers
-        your hub can read, plus Outglow's own from 0x5000. Counters only grow, and they wrap around at their maximum.
-        Tap a row for what it counts and what a healthy bulb shows.</p>
+      <h2>Diagnostic readings<button type="button" class="info" aria-expanded="false" aria-controls="i-counters" aria-label="About: Diagnostic readings">i</button></h2>
+      <p class="explain" id="i-counters" hidden>This is a subset of the diagnostic readings available over Zigbee: the standard counters and selected Outglow readings. Some are running totals; others describe the current state.
+        A counter may return to zero when cleared or when it reaches its limit. The identifier column is the
+        reading’s Zigbee lookup number, not a measurement. Open a row for its meaning and a guide to interpreting it.</p>
       <div class="sub" id="counters-sub">&nbsp;</div>
       <div class="table-wrap"><table class="counters">
-        <thead><tr><th>Counter</th><th>Attribute</th><th class="num">Value</th></tr></thead>
+        <thead><tr><th>Reading</th><th>Reading identifier</th><th class="num">Value</th></tr></thead>
         <tbody id="counters"></tbody>
       </table></div>
     </section>

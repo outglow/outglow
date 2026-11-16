@@ -262,7 +262,7 @@ function propose(): void {
   const latest = state.board ? ota.latestFor(state.manifest, state.board.name) : undefined;
   const original = state.board ? state.originals.find((o) => o.board === state.board!.name) : undefined;
   if (!state.board) {
-    ui.proposal.textContent = `This bulb (${b.model ?? "?"}, hardware ${b.revision ?? "?"}) is not one Outglow supports.`;
+    ui.proposal.textContent = `No matching Outglow build was found for ${b.model ?? "this model"}, hardware ${b.revision ?? "unknown"}.`;
   } else {
     ui.proposal.textContent = b.running === "outglow" ? "This bulb runs Outglow." :
       b.running === "stock" ? "This bulb runs its original firmware." : "";
@@ -274,7 +274,7 @@ function propose(): void {
     : state.board ? "No release for this bulb yet" : "—";
   ui.pickOriginal.disabled = !original;
   ui.optOriginal.textContent = original
-    ? `${original.firmware_version} from the manufacturer${b.running === "stock" ? ": already on the bulb" : ""}`
+    ? `${original.firmware_version} from the manufacturer`
     : state.board ? "Not available on this site" : "—";
   // the obvious choice: Outglow, unless there is nothing to install but the original
   const pick = latest ? ui.pickOutglow : original && b.running === "outglow" ? ui.pickOriginal : null;
@@ -452,12 +452,12 @@ async function start(): Promise<void> {
     art.set(1, "done");
     ui.eta.textContent = "";
     log(`the bulb has the image: ${t.writes} writes, ${t.reads} reads, ${Math.round((performance.now() - t0) / 1000)} s. ` +
-        "It restarts by itself to install it; give it a minute, then switch it off and on if it stays dark.", "ok");
+        "The bulb should restart to install it. This tool has not confirmed that the new firmware booted. Give it a minute, then switch it off and on if it stays dark.", "ok");
     phase("reboot", "done");
   } catch (e) {
     phase(current, "failed");
     art.set(ui.bar.value / 100, "failed");
-    log(`update failed: ${(e as Error).message}. The bulb keeps the firmware it had; it can be tried again ` +
+    log(`update failed: ${(e as Error).message}. The tool could not confirm completion. Check whether the bulb reconnects before retrying ` +
         "(switch the bulb off and on first).", "err");
   } finally {
     await lock?.release().catch(() => {});
@@ -548,7 +548,7 @@ function render(): void {
   } else {
     ui.bulb.replaceChildren(Object.assign(document.createElement("p"), {
       className: "muted",
-      textContent: "Not connected. Switch the bulb off and on, then connect within 20 minutes.",
+      textContent: "Not connected. Power the bulb on and keep it nearby. Disconnect other apps before connecting here.",
     }));
   }
   ui.image.textContent = state.info && state.img

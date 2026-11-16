@@ -3,7 +3,8 @@
 // compare`): the summary per area, a line and a list of tests under every
 // section, the claims about the original firmware that its results still
 // bear out, the losses, the versions tested, and the table of diagnostic
-// fields (from the console's own descriptions).
+// fields (from the console's own descriptions). Reader-facing check copy
+// lives in compare-copy.ts; raw observations remain in the generated data.
 
 import {
   AREAS,
@@ -20,6 +21,8 @@ import {
   type Test,
   VERDICT_WORD,
 } from "./compare.ts";
+import { EXAMPLES } from "./compare-examples.ts";
+import { CHECKS, behaviour } from "./compare-copy.ts";
 import { COUNTERS } from "./console/diag.ts";
 
 for (const b of document.querySelectorAll<HTMLButtonElement>("button.info")) {
@@ -39,29 +42,36 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Record<string,
 }
 
 function badge(v: string, side: Side): HTMLElement {
-  const cls = v === "PASS" ? "v-pass" : v === "FAIL" || v === "ERROR" ? "v-fail" : v === "WITHHELD" ? "v-held" : "v-other";
+  const cls = v === "PASS" ? "v-pass" : v === "FAIL" ? "v-fail" : v === "WITHHELD" ? "v-held" : "v-other";
   const who = side === "stock" ? "Original" : "Outglow";
   return el("span", { class: `badge ${cls}` }, `${who}: ${VERDICT_WORD[v as keyof typeof VERDICT_WORD] ?? v}`);
 }
 
-/** A test's observation as the page shows it: an empty list of gaps (one transmission) left out. */
-function note(text: string): string {
-  return text.replace(/ \(gaps \[\] m?s\)/g, "").replace(/,? (with )?gaps \[\] m?s/g, "");
-}
-
+/** Plain-language expectations and outcomes; exact measurements stay in the data file. */
 function testItem(t: Test, r: Result): HTMLElement {
   const std = standardOf(t.doc);
   const ref = std ? el("a", { href: std.url, rel: "noopener" }, reference(t)) : el("span", {}, reference(t));
   const li = el(
-    "li",
-    {},
-    el("div", { class: "t-head" }, el("code", {}, t.id), badge(r.stock, "stock"), badge(r.outglow, "outglow")),
-    el("p", { class: "t-req" }, t.requirement),
-    el("p", { class: "t-ref small" }, ref, t.level === "should" ? " (a recommendation)" : t.level === "reading" ? " (depends on how the clause is read)" : ""),
+    "li", {},
+    el("p", { class: "t-req" }, el("strong", {}, "What we check: "),
+      CHECKS[t.id] ?? "A new check has been added; its plain-English explanation is not available yet."),
+    el("div", { class: "t-head" }, badge(r.stock, "stock"), badge(r.outglow, "outglow")),
   );
-  if (r.stock_note) li.append(el("p", { class: "t-obs small" }, el("strong", {}, "Original: "), note(r.stock_note)));
-  if (r.outglow_note) li.append(el("p", { class: "t-obs small" }, el("strong", {}, "Outglow: "), note(r.outglow_note)));
-  if (t.ambiguous) li.append(el("p", { class: "t-obs small muted" }, "Reading of the clause: ", t.ambiguous));
+  for (const side of ["stock", "outglow"] as const) {
+    li.append(el("p", { class: "t-obs" }, el("strong", {}, side === "stock" ? "Original firmware: " : "Outglow: "), behaviour(t, r, side)));
+  }
+  if (EXAMPLES[t.id]) li.append(el("p", { class: "t-example" },
+    el("strong", {}, "What could happen: "), EXAMPLES[t.id]!));
+  if (t.level !== "shall" || t.ambiguous) {
+    li.append(el("p", { class: "small muted" }, t.level === "should"
+      ? "This checks a recommendation, rather than a mandatory rule."
+      : "This passage has more than one reasonable reading. Treat the result as a qualified interpretation, not an unambiguous failure."));
+  }
+  li.append(el("details", { class: "test-reference" },
+    el("summary", {}, "Source in the standard"),
+    el("p", { class: "t-ref small" }, ref,
+      ". The numbers identify the document version and section used for this check."),
+  ));
   return li;
 }
 
@@ -79,7 +89,7 @@ function tallyLine(tests: Test[], target: string): HTMLElement {
     "p",
     { class: "tally small" },
     el("span", { class: "who" }, "Tests: "),
-    `original ${tallyText(tally(tests, target, "stock"))}; Outglow ${tallyText(tally(tests, target, "outglow"))}.`,
+    `original firmware ${tallyText(tally(tests, target, "stock"))}; Outglow ${tallyText(tally(tests, target, "outglow"))}.`,
   );
 }
 
@@ -89,24 +99,48 @@ const sections = [...document.querySelectorAll<HTMLElement>("section.std")];
 const AREA_ABOUT: Record<string, string> = {
   "Network layer": "How the bulb works as a Zigbee router: finding routes, relaying frames for others, keeping track of its neighbours, and noticing address and network identifier conflicts.",
   "Parent role (end devices)": "Battery devices (sensors, remotes) that join through the bulb: letting them in, holding their messages until they wake up, and letting them move to another parent.",
-  "Application support (APS)": "The layer that carries messages between applications: acknowledgements, duplicates, group messages, and long messages split into parts.",
-  "Device and service discovery (ZDO)": "The questions every hub asks a device: what it is, which endpoints and clusters it has, who its neighbours are; and how it announces itself.",
+  "Application support (APS)": "Receipt confirmations, repeated commands, group messages and long messages split into parts.",
+  "Device and service discovery (ZDO)": "How the hub learns what the bulb is, which functions it offers, which devices are nearby and how to reach them.",
   "Joining (Base Device Behavior)": "Joining a network the way Zigbee 3.0 asks: which channels it scans, and opening the network for the next device afterwards.",
-  "Zigbee security": "Network and link keys, encrypted frames, and rejoining a network with keys.",
-  "Leaving, removal and binding": "Who may make the bulb leave the network or change its bindings, and what it does then.",
-  "ZCL: reading, writing, reporting": "The commands every cluster shares: reading and writing attributes, reporting changes, and answering commands it does not know.",
+  "Zigbee security": "Getting and replacing encryption keys, rejecting repeated old messages and returning securely to the network.",
+  "Leaving, removal and binding": "Who may remove the bulb or change its saved direct connections to other devices.",
+  "ZCL: reading, writing, reporting": "Reading and changing settings, reporting changes and explaining unsupported commands.",
   "ZCL: Basic and Identify": "What the bulb says about itself (manufacturer, model, version), and blinking when the hub asks it to show itself.",
   "ZCL: On/Off and Level Control": "Switching and dimming: on, off, toggle, fades, switching off after a time, and the level after power returns.",
   "ZCL: Color Control": "Colour temperature on tunable white bulbs: moving and stepping it, its limits, and what the bulb reports.",
   "ZCL: Groups and Scenes": "Groups of bulbs addressed with one message, and scenes stored in the bulb and recalled with one command.",
-  "ZCL: Diagnostics": "Counters of what the bulb's radio and network did, readable from the hub. Only Outglow has this cluster.",
-  "Green Power": "Passing on messages from battery-free switches to the hub.",
-  "OTA updates": "Firmware updates offered by the Zigbee hub.",
+  "ZCL: Diagnostics": "Counters of radio and network activity that the hub can read. Only Outglow offers this standard service.",
+  "Green Power": "Advertising the service that forwards messages from battery-free switches. This check does not exercise forwarding itself.",
+  "OTA updates": "Requesting update details after the Zigbee hub announces available firmware. This check does not install an update.",
   "Bluetooth link layer": "The Bluetooth radio side: advertising, accepting a connection, keeping it, and the control procedures inside it.",
-  "Bluetooth L2CAP": "Putting Bluetooth packets together into messages, and the signalling channel's answers.",
-  "Bluetooth ATT": "Reading and writing the bulb's Bluetooth attributes, and the error answers a phone relies on.",
-  "Bluetooth GATT and GAP": "How a phone finds the bulb's Bluetooth services and characteristics, and what the bulb advertises.",
+  "Bluetooth L2CAP": "Assembling complete Bluetooth messages from radio packets and answering channel-management requests.",
+  "Bluetooth ATT": "Reading and changing Bluetooth values and giving useful answers when a request cannot be carried out.",
+  "Bluetooth GATT and GAP": "How a phone discovers available Bluetooth features, checks permissions and subscribes to updates.",
   "Bluetooth pairing and encryption": "Refusing pairing and encryption requests, what the bulb says it supports, and how it ends a connection itself.",
+};
+
+/** Data keeps its protocol area names; the page uses everyday descriptions. */
+const AREA_NAME: Record<string, string> = {
+  "Network layer": "Forwarding messages through the network",
+  "Parent role (end devices)": "Helping battery sensors and remotes",
+  "Application support (APS)": "Delivering commands and recognising repeats",
+  "Device and service discovery (ZDO)": "Discovering devices and routes",
+  "Joining (Base Device Behavior)": "Joining a network",
+  "Zigbee security": "Zigbee encryption and secure joining",
+  "Leaving, removal and binding": "Leaving, removal and saved device connections",
+  "ZCL: reading, writing, reporting": "Reading settings and reporting changes",
+  "ZCL: Basic and Identify": "Device information and identification",
+  "ZCL: On/Off and Level Control": "Switching and brightness",
+  "ZCL: Color Control": "Warmer and cooler white light",
+  "ZCL: Groups and Scenes": "Groups and saved light scenes",
+  "ZCL: Diagnostics": "Troubleshooting readings",
+  "Green Power": "Battery-free switches",
+  "OTA updates": "Wireless firmware updates",
+  "Bluetooth link layer": "Bluetooth discovery and connections",
+  "Bluetooth L2CAP": "Assembling Bluetooth messages",
+  "Bluetooth ATT": "Reading and changing Bluetooth values",
+  "Bluetooth GATT and GAP": "Bluetooth features and subscriptions",
+  "Bluetooth pairing and encryption": "Bluetooth pairing and encryption",
 };
 
 /** Areas whose test list is open in the summary (kept when the bulb changes). */
@@ -122,7 +156,7 @@ function rank(r: Result): number {
 function render(data: CompareFile, target: string) {
   const tests = data.tests;
   const tgt = data.targets.find((t) => t.id === target)!;
-  for (const s of document.querySelectorAll("[data-stock-version]")) s.textContent = `${tgt.stock.firmware_version} on ${tgt.board}`;
+  for (const s of document.querySelectorAll("[data-stock-version]")) s.textContent = `${tgt.stock.firmware_version} on the ${tgt.name.replace(/ \(.*\)$/, "").toLowerCase()}`;
 
   // summary per area
   const areas = [...new Set(tests.map((t) => t.area))].sort((a, b) => {
@@ -135,7 +169,7 @@ function render(data: CompareFile, target: string) {
     return el(
       "td",
       {},
-      el("span", { class: "frac" }, t.applicable ? `${t.pass}/${t.applicable}` : t.withheld ? "–" : "n/a"),
+      el("span", { class: "frac" }, t.applicable ? `${t.pass} of ${t.applicable} passed` : t.withheld ? "Not published" : "Not applicable"),
       el("span", { class: "bar", "aria-hidden": "true" }, el("span", { style: `width:${Math.round(frac * 100)}%` })),
       el("span", { class: "visually-hidden" }, tallyText(t)),
     );
@@ -148,7 +182,7 @@ function render(data: CompareFile, target: string) {
       "button",
       { type: "button", class: "area-toggle", "aria-expanded": String(open), "aria-controls": id },
       el("span", { class: "chev", "aria-hidden": "true" }),
-      a,
+      AREA_NAME[a] ?? a,
     );
     const sorted = [...mine].sort((x, y) => rank(x.results[target]!) - rank(y.results[target]!));
     const ul = el("ul", { class: "tests" });
@@ -205,8 +239,8 @@ function render(data: CompareFile, target: string) {
     el(
       "p",
       { class: "muted small" },
-      "Passed of the tests that apply to each firmware. “n/a”: the firmware lacks that optional part. “–”: not published. ",
-      "Tap an area to see each of its tests: what it checks, the clause of the standard, and both results.",
+      "Counts include only checks that apply to each firmware and have published results. ",
+      "Open an area to read what we check and how both firmwares behave. Technical references are available separately.",
     ),
   );
 
@@ -228,7 +262,7 @@ function render(data: CompareFile, target: string) {
       stockSide.append(el("span", { class: "auto" }, `In these tests: ${tallyText(tally(mine, target, "stock"))}.`));
     }
     if (!mine.length) continue;
-    s.append(tallyLine(mine, target), testList(mine, target, `The ${mine.length} test${mine.length === 1 ? "" : "s"}`));
+    s.append(tallyLine(mine, target), testList(mine, target, `Read the ${mine.length} check${mine.length === 1 ? "" : "s"}`));
   }
   // tests no section names (a new module, say): listed as they are
   for (const [suite, at] of [["zigbee", "zigbee-other"], ["ble", "ble-other"]] as const) {
@@ -243,34 +277,34 @@ function render(data: CompareFile, target: string) {
           el("h3", {}, "Other tests"),
           el("p", {}, "Tests added after this page was written."),
           tallyLine(rest, target),
-          testList(rest, target, `The ${rest.length} test${rest.length === 1 ? "" : "s"}`),
+          testList(rest, target, `Read the ${rest.length} check${rest.length === 1 ? "" : "s"}`),
         ),
       );
     }
   }
 
-  // losses: what the original passes and Outglow does not
+  // Only definite failures belong here. Optional and unexercised procedures
+  // must not turn a "not applicable" result into a claimed regression.
   const lost = losses(tests, target);
   const lbox = document.getElementById("losses")!;
   lbox.replaceChildren(
     el(
       "p",
       {},
-      el("strong", {}, "In the tests: "),
+      el("strong", {}, "Checks that stock passes and Outglow fails: "),
       lost.length
-        ? `${lost.length} test${lost.length === 1 ? "" : "s"} the original firmware passes and Outglow does not, on the ${tgt.name.replace(/ \(.*\)$/, "").toLowerCase()}:`
-        : "no test that the original firmware passes fails on Outglow.",
+        ? `${lost.length} for the ${tgt.name.replace(/ \(.*\)$/, "").toLowerCase()}.`
+        : "none in the published results for this bulb. This comparison uses only definite pass and fail results on both sides.",
     ),
   );
   if (lost.length) {
-    lbox.append(testList(lost, target, "Show them"));
-    lbox.append(
-      el(
-        "p",
-        { class: "muted small" },
-        "“Not applicable” on Outglow means it lacks an optional part the original has (for example a Bluetooth procedure it never starts), not that it broke a rule.",
-      ),
-    );
+    lbox.append(testList(lost, target, "Read these failures"));
+  }
+  const notApplicable = tests.filter((t) => t.results[target]?.stock === "PASS" && t.results[target]?.outglow === "N/A");
+  if (notApplicable.length) {
+    lbox.append(el("p", {},
+      "Some checks pass on stock but are not applicable to Outglow in this run. This can mean an optional feature is absent or a procedure was not started; it is not a failed check."));
+    lbox.append(testList(notApplicable, target, `Why ${notApplicable.length} checks are not applicable to Outglow`));
   }
 }
 
@@ -279,9 +313,9 @@ function versions(data: CompareFile) {
     el(
       "tr",
       {},
-      el("td", {}, t.name.replace(/ \(.*\)$/, ""), el("br"), el("code", { class: "small" }, t.board)),
+      el("td", {}, t.name.replace(/ \(.*\)$/, ""), el("br"), el("span", { class: "small" }, `Hardware model identifier: ${t.board}`)),
       el("td", {}, el("strong", {}, t.stock.firmware_version), el("br"), el("span", { class: "small muted" }, `from ${t.stock.from ?? "the vendor app"} ${t.stock.app_version ?? ""}`)),
-      el("td", {}, el("a", { href: data.outglow.url }, data.outglow.describe || data.outglow.commit), el("br"), el("span", { class: "small muted" }, `${data.outglow.commit_date}, image type ${t.outglow.image_type}`)),
+      el("td", {}, el("a", { href: data.outglow.url }, data.outglow.describe || data.outglow.commit), el("br"), el("span", { class: "small muted" }, `Source revision dated ${data.outglow.commit_date}`)),
     ),
   );
   document.getElementById("versions-table")!.replaceChildren(
@@ -298,13 +332,8 @@ function versions(data: CompareFile) {
     el(
       "p",
       { class: "muted small" },
-      `Results of ${data.generated}, from the emulator (${data.how}). `,
-      "The original images are the ones the vendor's app installs, kept in ",
-      el("a", { href: "https://github.com/outglow/original-firmware" }, "outglow/original-firmware"),
-      "; every version listed there for these bulbs is tested, and a new one is tested by the next build of this site. ",
-      "Each image's SHA-256 is in ",
-      el("a", { href: `${import.meta.env.BASE_URL}compare.json` }, "compare.json"),
-      ".",
+      `Results generated ${data.generated} in the emulator. `,
+      "The original firmware files came from the vendor’s app. These findings apply to the versions and hardware listed above; a different release may behave differently.",
     ),
   );
   document.getElementById("data-note")!.textContent =
@@ -344,16 +373,21 @@ function fields() {
     return el(
       "li",
       {},
-      el("div", { class: "t-head" }, el("code", {}, hex(id)), el("strong", {}, c?.name ?? spec)),
-      el("p", { class: "small muted" }, spec, " · Zigbee2MQTT: ", el("code", {}, z2m)),
+      el("div", { class: "t-head" }, el("strong", {}, c?.name ?? spec)),
       el("p", { class: "t-req" }, c?.what ?? ""),
-      ...(c?.healthy ? [el("p", { class: "small" }, el("strong", {}, "Healthy: "), c.healthy)] : []),
+      ...(c?.healthy ? [el("p", { class: "small" }, el("strong", {}, "How to read it: "), c.healthy)] : []),
+      el("details", {}, el("summary", {}, "Names for looking up this reading"),
+        el("p", { class: "small muted" }, "Zigbee reading identifier: ", el("code", {}, hex(id)),
+          ". This hexadecimal number identifies the reading; it is not its measured value. Standard name: ", spec,
+          ". Zigbee2MQTT field name: ", el("code", {}, z2m), ".")),
     );
   };
   document.getElementById("fields")!.replaceChildren(
-    el("h4", {}, "Standard attributes (ZCL 8 Tables 3-130, 3-131)"),
+    el("p", {}, "Some diagnostic names use protocol abbreviations. MAC refers to individual radio transmissions between neighbours; APS refers to complete commands or reports; NWK refers to forwarding and protecting messages across the network. A frame is one radio message, a unicast is addressed to one device, and a broadcast is sent to many devices."),
+    el("p", {}, "A child is an end device connected through this bulb, often a battery-powered sensor or remote. A watchdog is a timer that restarts the bulb if its software stops responding. Flash is permanent storage. LQI describes reception quality; RSSI describes signal strength. Signal strength uses dBm, a radio power scale where a more negative reading means a weaker signal."),
+    el("h4", {}, "Standard Zigbee readings"),
     el("ul", { class: "tests fields" }, ...ZCL.map(([id, spec, z]) => item(id, spec, z))),
-    el("h4", {}, "Manufacturer attributes (code 0x1141)"),
+    el("h4", {}, "Additional Outglow readings"),
     el(
       "ul",
       { class: "tests fields" },
@@ -362,7 +396,7 @@ function fields() {
     el(
       "p",
       { class: "small muted" },
-      "Over Zigbee the bulb has more manufacturer attributes from 0x5015 (signal-strength histogram, noise floor, the way to the coordinator, the neighbour table, the event log); the converter shows them in its groups.",
+      "Over Zigbee, Outglow also reports signal-strength patterns, background radio noise, its route to the hub, nearby devices and an event log. The converter groups these readings for you.",
     ),
   );
 }
@@ -389,7 +423,10 @@ function linkRefs() {
       rest = rest.slice(i + n.length);
     }
     parts.push(rest);
-    p.replaceChildren(...parts);
+    p.replaceChildren("Document versions and section numbers: ", ...parts);
+    const details = el("details", { class: "section-reference" }, el("summary", {}, "Other standard sections checked here"));
+    p.before(details);
+    details.append(p);
   }
 }
 

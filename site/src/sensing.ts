@@ -148,7 +148,7 @@ let s = Number(slider.value);
 function showParams() {
   const [thr, m] = params(s);
   sOut.textContent = String(s);
-  paramsOut.textContent = `threshold ${(thr / 4).toLocaleString("en", { maximumFractionDigits: 2 })} dB · M = ${m} · held for ${10 * (100 - s)} ms`;
+  paramsOut.textContent = `Minimum signal change: ${(thr / 4).toLocaleString("en", { maximumFractionDigits: 2 })} dB. Required change score: ${m}. The score must stay high for ${10 * (100 - s)} milliseconds.`;
 }
 slider.addEventListener("input", () => {
   s = Number(slider.value);
@@ -438,7 +438,7 @@ function tick(now: number) {
   drawRoom(simT, p, moving);
   drawChart(simT);
   const any = links.some((l) => l.on);
-  roomState.textContent = any ? "Occupied" : "Empty";
+  roomState.textContent = any ? "Motion detected" : "No recent motion";
   roomState.classList.toggle("on", any);
   requestAnimationFrame(tick);
 }

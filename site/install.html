@@ -8,67 +8,107 @@
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/src/style.css">
 </head>
-<body>
+<body class="has-sidebar">
 <header class="site">
   <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
   <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
-  <nav id="site-nav">
+  <nav id="site-nav" aria-label="Main navigation">
     <a href="./">Overview</a>
-    <a href="why.html">Compare</a>
-    <a href="bulbs.html">Supported bulbs</a>
-    <a href="sensing.html">Sensing</a>
-    <a href="install.html" aria-current="page">Install</a>
-    <a href="flasher/">Flasher</a>
-    <a href="console/">Console</a>
+    <details class="nav-group current">
+      <summary>Docs</summary>
+      <div class="nav-links">
+        <a href="why.html">Compare</a>
+        <a href="bulbs.html">Supported bulbs</a>
+        <a href="sensing.html">Sensing</a>
+        <a href="install.html" aria-current="page">Install</a>
+      </div>
+    </details>
+    <details class="nav-group">
+      <summary>Tools</summary>
+      <div class="nav-links">
+        <a href="flasher/index.html">Flasher</a>
+        <a href="console/index.html">Console</a>
+      </div>
+    </details>
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
+<div class="doc-layout">
+  <aside class="doc-sidebar">
+    <details class="page-menu" open>
+      <summary>On this page</summary>
+      <p class="page-menu-title">On this page</p>
+      <nav class="toc" aria-label="On this page">
+        <a href="#before-you-start">Before you start</a>
+        <a href="#bluetooth-install">Install over Bluetooth</a>
+        <a href="#zigbee2mqtt">Add to Zigbee2MQTT</a>
+        <a href="#updates">Get updates</a>
+        <a href="#converter">Optional converter</a>
+        <a href="#motion">Motion sensing</a>
+        <a href="#reset">Factory reset</a>
+        <a href="#restore">Restore original firmware</a>
+      </nav>
+      <a class="back-to-top" href="#page-top">Back to top ↑</a>
+    </details>
+  </aside>
 <main>
-  <h1>Install</h1>
-  <p class="lead">You install Outglow once over Bluetooth, from your browser. After that, Zigbee2MQTT keeps it up
-    to date.</p>
+  <h1 id="page-top">Install, update or restore firmware</h1>
+  <p class="lead">The first installation uses Bluetooth. After pairing with your hub, you can configure Zigbee2MQTT
+    to offer future releases. Updates start when you choose to install them.</p>
 
-  <h2>What you need</h2>
+  <p>Outglow is experimental. Most hardware variants have only been checked in an emulator; the
+    <a href="bulbs.html">compatibility list</a> distinguishes a known hardware match from a physical test.</p>
+  <h2 id="before-you-start">Before you start</h2>
   <ul>
-    <li>A <a href="bulbs.html">supported bulb</a> still on its original firmware.</li>
-    <li>Chrome or Edge on a computer (Windows, macOS, Linux, ChromeOS) or on Android. Safari and every browser on
-      iPhone and iPad cannot talk to Bluetooth devices.</li>
-    <li><a href="https://www.zigbee2mqtt.io/">Zigbee2MQTT</a>. Other Zigbee hubs can control the bulb too, but the
-      diagnostics and the automatic updates are made for Zigbee2MQTT.</li>
+    <li>A bulb whose module and hardware revision match an <a href="bulbs.html">Outglow build</a>. The firmware tool checks this after connecting.</li>
+    <li>A browser with Web Bluetooth support, such as Chrome or Edge on a supported computer or Android device.
+      Support depends on the browser and operating system; the firmware tool checks availability before connecting.
+      <a href="https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API#browser_compatibility">Browser compatibility</a>.</li>
+    <li><a href="https://www.zigbee2mqtt.io/">Zigbee2MQTT</a>. The guide below uses Zigbee2MQTT. Outglow offers standard Zigbee light controls, but support
+      for its extra settings and updates depends on your hub.</li>
   </ul>
 
-  <h2>1. Install over Bluetooth</h2>
+  <h2 id="bluetooth-install">1. Install over Bluetooth</h2>
   <ol class="steps">
-    <li>Switch the bulb off and on. For the next 20 minutes it accepts a Bluetooth connection (an update already
+    <li>Keep the bulb powered throughout the update. Close the vendor app so it does not hold a Bluetooth connection.</li>
+    <li>Switch the bulb off and on. On the tested original firmware when unpaired from the vendor app, Bluetooth accepts connections for about 20 minutes after power-on (an update already
       running is not cut off when that time is up).</li>
     <li>Open the <a href="flasher/">flasher</a> on a device within a few metres of the bulb.</li>
     <li>Click <em>Connect to a bulb</em> and pick it from the list. The flasher reads its model and proposes the
       matching Outglow release.</li>
-    <li>Tick the confirmation and click <em>Start the update</em>. It takes about four minutes; keep the page open
-      and the device awake.</li>
-    <li>When it is done, the bulb restarts on its own. If it is still dark after a minute, switch it off and on.</li>
+    <li>Tick the confirmation and click <em>Start the update</em>. Allow several minutes. Keep the bulb powered, the page open and your device awake until the tool reports completion.</li>
+    <li>When the transfer completes, allow the bulb to restart. If it is still dark after a minute, switch it off and on. A completed transfer is not confirmation that the new firmware has booted.</li>
   </ol>
 
-  <h2>2. Add it to Zigbee2MQTT</h2>
+  <h2 id="zigbee2mqtt">2. Add it to Zigbee2MQTT</h2>
   <ol class="steps">
     <li>Click <em>Permit join</em> in Zigbee2MQTT. The bulb starts looking for a network as soon as it restarts.</li>
     <li>Not there after a few minutes? <a href="#reset">Reset it</a> and permit joining again.</li>
     <li>The bulb shows up as <code>outglow-dimm</code>, <code>outglow-tw</code> or similar. If it was already
-      in Zigbee2MQTT before, it is simply interviewed again.</li>
+      in Zigbee2MQTT before, ask Zigbee2MQTT to interview it again. An interview reads the bulb’s identity and available controls; check that it now appears as Outglow.</li>
     <li>Optional: for all the diagnostics, the start-up brightness and the motion sensing switch, add
       <a href="#converter">the Outglow converter</a>. Without it Zigbee2MQTT still shows the light, the router's
       main values and the settings.</li>
   </ol>
 
+  <h2 id="updates">3. Get updates</h2>
+  <p>Add the Outglow update list to Zigbee2MQTT's <code>configuration.yaml</code>:</p>
+<pre><code>ota:
+  zigbee_ota_override_index_location: https://outglow.github.io/ota/index.json</code></pre>
+  <p>Outglow periodically asks the hub about updates, normally once a day. With automatic update checks enabled, Zigbee2MQTT can mark a matching release as available. Installation starts when requested, or when an update you scheduled becomes due.
+    <a href="https://www.zigbee2mqtt.io/guide/usage/ota_updates.html">Zigbee2MQTT update controls</a>.</p>
+
+
   <h3 id="converter">The Zigbee2MQTT converter (optional)</h3>
-  <p>An external converter, <a href="z2m/outglow.mjs"><code>outglow.mjs</code></a>, tells Zigbee2MQTT about everything
-    the bulb offers: the router diagnostics grouped by topic, the start-up brightness, and the
-    <a href="#motion">motion sensing</a> switch and settings. It applies only to bulbs running Outglow. It needs Zigbee2MQTT 2.x; from version 2.11,
+  <p>A converter is a device definition that gives Zigbee2MQTT names and controls for Outglow’s extra features.
+    The file <a href="z2m/outglow.mjs"><code>outglow.mjs</code></a> adds controls and names for the router diagnostics grouped by topic, the start-up brightness, and the
+    <a href="#motion">motion sensing</a> switch and settings. It applies only to bulbs running Outglow. Use a current Zigbee2MQTT 2.x release; from version 2.11,
     allow external converters first in <code>configuration.yaml</code>:</p>
 <pre><code>advanced:
   enable_external_js: true</code></pre>
-  <p>Then install it one of these ways.</p>
-  <p><strong>One command, any installation</strong> (needs <code>curl</code>, <code>jq</code> and
+  <p>After enabling external converters if required, restart Zigbee2MQTT. Then choose one installation method below.</p>
+  <details class="setup-detail"><summary>Install from a terminal</summary>
+  <p><strong>Command-line method</strong> (needs <code>curl</code>, <code>jq</code> and
     <code>mosquitto_pub</code>; add <code>-u</code>/<code>-P</code> if your broker has a password, and change
     <code>zigbee2mqtt</code> if you use another base topic):</p>
 <pre><code>curl -fsSL https://outglow.github.io/z2m/outglow.mjs \
@@ -78,7 +118,8 @@
     <code>mosquitto_sub -h YOUR_BROKER -t zigbee2mqtt/bridge/converters -C 1</code> lists
     <code>outglow.mjs</code>. To remove it, send <code>{"name": "outglow.mjs"}</code> to
     <code>zigbee2mqtt/bridge/request/converter/remove</code>.</p>
-  <p><strong>Home Assistant add-on:</strong> in the Zigbee2MQTT frontend, open <em>Settings → Dev console → External
+  </details>
+  <p><strong>Using the Zigbee2MQTT web interface:</strong> in the Zigbee2MQTT frontend, open <em>Settings → Dev console → External
     converters</em>, add one named <code>outglow.mjs</code> and paste the file's contents.</p>
   <p><strong>By hand:</strong> put the file in the <code>external_converters</code> folder next to Zigbee2MQTT's
     <code>configuration.yaml</code> (Docker: <code>./data/external_converters/</code>, a Linux install:
@@ -89,25 +130,23 @@
 
   <h3 id="motion">Motion sensing (experimental)</h3>
   <p>Outglow bulbs can notice people moving through a room from how the radio signal between them changes, and report
-    it as occupancy, like a motion sensor. Every Outglow bulb has it, switched <strong>off</strong>: until you switch
-    it on, the bulb sends nothing extra. It is new and has not run on a real bulb yet; expect it to need tuning.
+    it as occupancy, like a motion sensor. Standard Outglow builds include it, switched <strong>off</strong>: until you switch
+    it on, the bulb sends nothing extra. It has been tested in the emulator only. Reliable room occupancy detection has not been established on hardware.
     <a href="sensing.html">How it works.</a></p>
   <ol class="steps">
     <li>With the converter installed, switch <em>Motion sensing</em> on in <strong>at least two bulbs in the same
       room</strong>. Each bulb senses along the links to the others, so a bulb on its own sees nothing.</li>
-    <li>Let it calibrate itself: a day after you switch it on, every link takes the setting of its quietest hour.
-      Or calibrate now: leave the room empty and still, choose <em>start</em> under <em>Calibrate motion
+    <li>Let it calibrate itself: a day after you switch it on, each radio path can use its quietest recorded hour, provided enough usable samples were collected.
+      Or calibrate by hand once the bulbs have been powered for at least a minute and are receiving each other’s measurements: leave the room empty and still, choose <em>start</em> under <em>Calibrate motion
       sensing</em> on each bulb, and wait a minute.</li>
     <li>Too many false alarms? Lower <em>Motion sensitivity</em>, or calibrate again with the room empty. Setting the
       sensitivity by hand switches the automatic calibration off.</li>
   </ol>
-  <p class="muted">Without the converter the settings are the attributes of Occupancy Sensing (0x0406) and of the
-    manufacturer cluster 0xFC5E (code 0x1141): writing 5 to attribute 0x0001 (probes per second) switches it on, 0
-    off.</p>
+  <p>Use the converter for named motion controls. It avoids entering low-level Zigbee setting numbers by hand.</p>
 
   <h2 id="reset">Factory reset</h2>
   <p>A bulb has no button, so the reset is a pattern of switching it on and off at the wall: three short power-ons,
-    two long ones, then on again. It works the same on the original firmware and on Outglow. It removes the bulb
+    two long ones, then on again. Outglow follows the reset pattern of the tested original firmware. It removes the bulb
     from its Zigbee network and turns Bluetooth back on.</p>
   <div class="reset-timeline" id="reset-timeline" aria-hidden="true"></div>
   <ol class="steps">
@@ -122,25 +161,20 @@
     <div id="reset-now" class="reset-now" aria-live="assertive" hidden></div>
   </div>
 
-  <h2>3. Get updates</h2>
-  <p>Add the Outglow update list to Zigbee2MQTT's <code>configuration.yaml</code>:</p>
-<pre><code>ota:
-  zigbee_ota_override_index_location: https://outglow.github.io/ota/index.json</code></pre>
-  <p>The bulb checks for a new version once a day. Zigbee2MQTT then marks the update as available and installs it
-    when you click <em>Update</em>, or on a schedule or automation you set up.
-    <a href="https://github.com/outglow/outglow/tree/main/ota">More about updates →</a></p>
-
-  <h2>Going back to the original firmware</h2>
-  <p>Use the same flasher: connect to the bulb and click <em>Restore original firmware</em>. It downloads the
-    manufacturer's firmware for that bulb, checks it and puts it back, the same way Outglow went on.</p>
+  <h2 id="restore">Going back to the original firmware</h2>
+  <p>Use the same flasher: connect to the bulb and choose <em>Original firmware</em>, then review and start the update. When a matching original file is available, the tool downloads it and checks its compatibility before
+    transferring it. If the option is unavailable, this site does not currently have a matching original file.
+    You may need to pair the bulb again after restoring it.</p>
   <p>If you switched Bluetooth off in Outglow, switch it back on in Zigbee2MQTT first. A <a href="#reset">reset</a> turns it
     back on too, but also removes the bulb from your network.</p>
 </main>
+</div>
 <footer class="site">
   Outglow is free software under the GNU GPL version 3 or later.
   EGLO, AwoX, Telink and Zigbee are trademarks of their owners; Outglow is not affiliated with or endorsed by them.
 </footer>
 <script type="module" src="/src/reset.ts"></script>
 <script type="module" src="/src/nav.ts"></script>
+<script type="module" src="/src/toc.ts"></script>
 </body>
 </html>

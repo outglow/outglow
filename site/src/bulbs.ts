@@ -125,10 +125,13 @@ function card(b: BulbBoard, p: Product, base: string): HTMLElement {
 
   const badges = el("div", "badges");
   badges.append(el("span", `badge kind-${GROUPS[b.kind] ?? "other"}`, BADGES[b.kind] ?? b.kind));
-  const conf = el("span", `badge conf-${p.confidence}`, p.confidence);
+  const conf = el("span", `badge conf-${p.confidence}`, `${p.confidence} module match`);
   conf.title = CONFIDENCE[p.confidence];
   badges.append(conf);
   body.append(badges);
+  body.append(el("p", "bulb-note", b.hardware_tested
+    ? "Outglow has run on this module. This does not establish testing of every product using it."
+    : "No physical Outglow test recorded for this module; support is based on firmware builds and emulator checks."));
 
   const dl = el("dl");
   const row = (k: string, v: Node | string) => {
@@ -142,13 +145,13 @@ function card(b: BulbBoard, p: Product, base: string): HTMLElement {
   const boardText = el("span");
   boardText.append(el("code", undefined, b.board));
   if (b.revisions.length) boardText.append(` hardware ${b.revisions.join(", ")}`);
-  row("Board", boardText);
+  row("Module", boardText);
   const src = el("span");
   p.source.forEach((s, i) => {
     if (i) src.append("; ");
     src.append(s.url ? link(s.url, s.label) : s.label);
   });
-  row("Source", src);
+  row("Match evidence", src);
   body.append(dl);
   if (p.note) body.append(el("p", "bulb-note muted", p.note));
   const links = el("div", "bulb-links");
