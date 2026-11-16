@@ -57,7 +57,7 @@ pub struct Args {
     base_url: String,
 }
 
-fn hex<D: Digest>(data: &[u8]) -> String {
+pub(crate) fn hex<D: Digest>(data: &[u8]) -> String {
     D::digest(data).iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -69,7 +69,7 @@ fn load(path: &PathBuf, default: Value) -> Result<Value> {
     }
 }
 
-fn today() -> String {
+pub(crate) fn today() -> String {
     // civil date from the Unix day (Howard Hinnant's algorithm), no dependency for one date
     let days = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0) as i64;
     let z = days + 719_468;

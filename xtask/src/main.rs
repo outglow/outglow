@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 
 mod boards;
 mod build;
+mod compare;
 mod index;
 mod mutants;
 mod notes;
@@ -22,6 +23,8 @@ enum Task {
     Build(build::Args),
     /// The board table from the stock profiles (analysis/profiles/)
     Boards(boards::Args),
+    /// The website's comparison data: the conformance tests on the original firmware and on Outglow
+    Compare(compare::Args),
     /// The Zigbee2MQTT OTA index and the web flasher's release list from built images
     Index(index::Args),
     /// Mutation tests: break the code on purpose, the tests must notice
@@ -36,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     match Cli::parse().task {
         Task::Build(a) => build::run(a),
         Task::Boards(a) => boards::run(a),
+        Task::Compare(a) => compare::run(a),
         Task::Index(a) => index::run(a),
         Task::Mutants(a) => mutants::run(a),
         Task::ReleaseNotes(a) => notes::run(a),
