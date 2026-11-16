@@ -637,7 +637,8 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
         info.model == if tw { "ESMLFzm_w6_TW" } else { "ESMLFzm_w6_Dimm" }
             && info.firmware == "3.0.2_1610"
             && info.tunable == tw
-            && info.flags == 0x01
+            // the watchdog and the motion sensing (in every image, off until switched on)
+            && info.flags == 0x03
             && info.ieee == ieee,
         &format!(
             "model {} firmware {} tunable {} flags {:#04x} release {} IEEE {} (Zigbee: {ieee})",

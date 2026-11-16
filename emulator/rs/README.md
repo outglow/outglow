@@ -211,7 +211,7 @@ firmware on Telink's SDK, which is not public:
 | install, install_stock | the C firmware's own bootloader installs an image | not moved: the Rust firmware has no bootloader of its own (layout awox only) |
 | sys, sys_ble | supervision of the C firmware (crash counter, safe mode, watchdog, power-on sequence) | covered for Rust by `rust_fw` (watchdog, power cycles, factory reset sequence) and `rust_diag` (reset cause) |
 | ble_diag | GATT diagnostic service of the C firmware | `ble_diag`, on the Rust firmware (the same layout, plus the counters characteristic) |
-| sense, sense_core | RF motion sensing of the C firmware | not moved here: its Rust counterpart is not in this repository yet |
+| sense, sense_core | RF motion sensing of the C firmware | not moved here: `rust_sense` runs the Rust firmware's |
 | conformance, conformance_clang, stallprobe | the emulator against C code of known behaviour and Telink's own CPU-stall code | not moved: they need Telink's C libraries |
 
 ### Stress scenarios (`cargo stress`)
