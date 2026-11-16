@@ -14,7 +14,7 @@
 //! where it leaves a choice, from what the stock firmware was measured to do
 //! here; the details of each check say which.
 
-use super::util::{after, command, hex_list, hexo, onoff, rel, times, verified};
+use super::util::{after, command, hex_list, hexo, key_confirmed, onoff, rel, times, verified};
 use super::{node_of, Sim, SimCtx, SimDef};
 use crate::air::NodeId;
 use crate::coord::{Coord, HA, NWK_KEY};
@@ -775,9 +775,17 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
     cx.check(s.now(), "R (Rust) joins through S1 and S2 (stock) through R: the Update-Device comes from the parent (R22 4.6.3.2)",
              ur == Some(sh[0]) && us2 == Some(sh[1]),
              &format!("{}; R reported by {}, S2 by {}", shorts_text(&s, &b), hexo(ur), hexo(us2)));
-    s.run_until(15000.0, 10.0, |s| verified(s) >= 3)?;
-    cx.check(s.now(), "the three complete the link key exchange with the Trust Center, R and S2 over the chain", verified(&s) >= 3,
-             &format!("verified link keys: {}", verified(&s)));
+    // done when each joining node has its Confirm Key, not when the Trust
+    // Center has the Verify Key: a scenario that cuts a relay's power in
+    // between leaves the node behind it without the answer, and that node
+    // gives the network up after its retries (BDB 3.0.1 10.2.5, 8.2 step 12)
+    let confirmed = |s: &Sim| -> Vec<bool> { sh.iter().map(|&x| key_confirmed(s, x)).collect() };
+    s.run_until(15000.0, 10.0, |s| verified(s) >= 3 && confirmed(s).iter().all(|x| *x))?;
+    let got = confirmed(&s);
+    cx.check(s.now(), "the three complete the link key exchange with the Trust Center, R and S2 over the chain: \
+              each has its Confirm Key (BDB 3.0.1 10.2.5)", verified(&s) >= 3 && got.iter().all(|x| *x),
+             &format!("verified link keys: {}; Confirm Key received by {}", verified(&s),
+                      b.iter().zip(&got).filter(|x| *x.1).map(|x| x.0.name.as_str()).collect::<Vec<_>>().join(", ")));
     // the coordinator reaches R and S2 through S1
     s.w.coord.st.via.insert(sh[1], sh[0]);
     s.w.coord.st.via.insert(sh[2], sh[0]);
@@ -881,7 +889,16 @@ fn rejoin(cx: &mut SimCtx) -> R<()> {
         }
         Ok(None)
     };
-    let took = |x: Option<f64>| x.map(|t| format!("after {t:.1} s")).unwrap_or_else(|| "no answer".into());
+    // a bulb not answering at its address may have joined again under another
+    let took = |s: &Sim, x: Option<f64>, j: usize| match x {
+        Some(t) => format!("after {t:.1} s"),
+        None => match s.announced(b[j].ext).filter(|&a| a != sh[j]) {
+            Some(a) => format!("no answer; it announced itself again as {a:#06x}"),
+            None => "no answer".into(),
+        },
+    };
+    let updates = |s: &Sim| s.events("update-device").len();
+    let u0 = updates(&s);
     for (k, off_ms, behind) in [(0usize, 60000.0, vec![1usize, 2]), (2, 30000.0, vec![])] {
         let who = format!("{} ({})", b[k].name, b[k].fw.title());
         cx.say(&format!("-- {who} loses power for {:.0} s", off_ms / 1000.0));
@@ -898,15 +915,19 @@ fn rejoin(cx: &mut SimCtx) -> R<()> {
         let l = s.light(b[k].id);
         cx.check(s.now(), &format!("{who} back: its light comes on (power-on behaviour of both firmwares)"), l.on, &format!("duty {:.1} %", l.duty));
         let dt = reach(&mut s, sh[k], 30000.0)?;
-        cx.check(s.now(), &format!("{who} answers again with its address from before"), dt.is_some(), &took(dt));
+        cx.check(s.now(), &format!("{who} answers again with its address from before"), dt.is_some(), &took(&s, dt, k));
         cx.check(s.now(), &format!("{who} resumed from its NV: no association"), assoc(&s) == a0, &format!("associations {}", assoc(&s) - a0));
         for &j in &behind {
             let dt = reach(&mut s, sh[j], 30000.0)?;
-            cx.check(s.now(), &format!("{} behind it is reachable again", b[j].name), dt.is_some(), &took(dt));
+            cx.check(s.now(), &format!("{} behind it is reachable again", b[j].name), dt.is_some(), &took(&s, dt, j));
         }
     }
     let leaves = s.events("leave").len();
     cx.check(s.now(), "nobody left the network", leaves == 0, &format!("{leaves} Leave"));
+    // a router that joins again, by association or rejoin, is reported to the Trust Center by its parent
+    // (R22 4.6.3.2); the Leave of a bulb behind another (one hop) never reaches the coordinator
+    let again = updates(&s) - u0;
+    cx.check(s.now(), "nobody joined again (no Update-Device since the setup)", again == 0, &format!("{again} Update-Device"));
     finish(cx, &s, &b);
     Ok(())
 }
