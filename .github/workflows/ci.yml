@@ -163,8 +163,15 @@ jobs:
       - uses: ./.github/actions/original-firmware
         with:
           key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
-      - name: tshark (wireshark and ble_wireshark check the frames with it)
-        run: sudo apt-get update -q && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
+      # 4.6 from the Wireshark developers' PPA: the expectations of wireshark and
+      # ble_wireshark are Wireshark 4.6's reading; Ubuntu 24.04's own 4.2 decodes
+      # some frames differently (touchlink commands, BLE advertising names)
+      - name: tshark 4.6 (wireshark and ble_wireshark check the frames with it)
+        run: |
+          sudo add-apt-repository -y ppa:wireshark-dev/stable
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
+          tshark --version | head -1
       - name: Scenarios (the long ones with the original firmware among them)
         run: cargo sims -- --shard ${{ matrix.shard }}/6
 
