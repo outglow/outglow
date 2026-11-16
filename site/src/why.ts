@@ -44,6 +44,11 @@ function badge(v: string, side: Side): HTMLElement {
   return el("span", { class: `badge ${cls}` }, `${who}: ${VERDICT_WORD[v as keyof typeof VERDICT_WORD] ?? v}`);
 }
 
+/** A test's observation as the page shows it: an empty list of gaps (one transmission) left out. */
+function note(text: string): string {
+  return text.replace(/ \(gaps \[\] m?s\)/g, "").replace(/,? (with )?gaps \[\] m?s/g, "");
+}
+
 function testItem(t: Test, r: Result): HTMLElement {
   const std = standardOf(t.doc);
   const ref = std ? el("a", { href: std.url, rel: "noopener" }, reference(t)) : el("span", {}, reference(t));
@@ -54,8 +59,8 @@ function testItem(t: Test, r: Result): HTMLElement {
     el("p", { class: "t-req" }, t.requirement),
     el("p", { class: "t-ref small" }, ref, t.level === "should" ? " (a recommendation)" : t.level === "reading" ? " (depends on how the clause is read)" : ""),
   );
-  if (r.stock_note) li.append(el("p", { class: "t-obs small" }, el("strong", {}, "Original: "), r.stock_note));
-  if (r.outglow_note) li.append(el("p", { class: "t-obs small" }, el("strong", {}, "Outglow: "), r.outglow_note));
+  if (r.stock_note) li.append(el("p", { class: "t-obs small" }, el("strong", {}, "Original: "), note(r.stock_note)));
+  if (r.outglow_note) li.append(el("p", { class: "t-obs small" }, el("strong", {}, "Outglow: "), note(r.outglow_note)));
   if (t.ambiguous) li.append(el("p", { class: "t-obs small muted" }, "Reading of the clause: ", t.ambiguous));
   return li;
 }
@@ -80,6 +85,40 @@ function tallyLine(tests: Test[], target: string): HTMLElement {
 
 const sections = [...document.querySelectorAll<HTMLElement>("section.std")];
 
+/** What each area of the summary covers, in plain words. */
+const AREA_ABOUT: Record<string, string> = {
+  "Network layer": "How the bulb works as a Zigbee router: finding routes, relaying frames for others, keeping track of its neighbours, and noticing address and network identifier conflicts.",
+  "Parent role (end devices)": "Battery devices (sensors, remotes) that join through the bulb: letting them in, holding their messages until they wake up, and letting them move to another parent.",
+  "Application support (APS)": "The layer that carries messages between applications: acknowledgements, duplicates, group messages, and long messages split into parts.",
+  "Device and service discovery (ZDO)": "The questions every hub asks a device: what it is, which endpoints and clusters it has, who its neighbours are; and how it announces itself.",
+  "Joining (Base Device Behavior)": "Joining a network the way Zigbee 3.0 asks: which channels it scans, and opening the network for the next device afterwards.",
+  "Zigbee security": "Network and link keys, encrypted frames, and rejoining a network with keys.",
+  "Leaving, removal and binding": "Who may make the bulb leave the network or change its bindings, and what it does then.",
+  "ZCL: reading, writing, reporting": "The commands every cluster shares: reading and writing attributes, reporting changes, and answering commands it does not know.",
+  "ZCL: Basic and Identify": "What the bulb says about itself (manufacturer, model, version), and blinking when the hub asks it to show itself.",
+  "ZCL: On/Off and Level Control": "Switching and dimming: on, off, toggle, fades, switching off after a time, and the level after power returns.",
+  "ZCL: Color Control": "Colour temperature on tunable white bulbs: moving and stepping it, its limits, and what the bulb reports.",
+  "ZCL: Groups and Scenes": "Groups of bulbs addressed with one message, and scenes stored in the bulb and recalled with one command.",
+  "ZCL: Diagnostics": "Counters of what the bulb's radio and network did, readable from the hub. Only Outglow has this cluster.",
+  "Green Power": "Passing on messages from battery-free switches to the hub.",
+  "OTA updates": "Firmware updates offered by the Zigbee hub.",
+  "Bluetooth link layer": "The Bluetooth radio side: advertising, accepting a connection, keeping it, and the control procedures inside it.",
+  "Bluetooth L2CAP": "Putting Bluetooth packets together into messages, and the signalling channel's answers.",
+  "Bluetooth ATT": "Reading and writing the bulb's Bluetooth attributes, and the error answers a phone relies on.",
+  "Bluetooth GATT and GAP": "How a phone finds the bulb's Bluetooth services and characteristics, and what the bulb advertises.",
+  "Bluetooth pairing and encryption": "Refusing pairing and encryption requests, what the bulb says it supports, and how it ends a connection itself.",
+};
+
+/** Areas whose test list is open in the summary (kept when the bulb changes). */
+const openAreas = new Set<string>();
+
+/** Order inside an area: where the two differ first, then what fails, then the rest. */
+function rank(r: Result): number {
+  if (r.stock !== r.outglow && r.stock !== "WITHHELD") return 0;
+  if (r.stock !== "PASS" || r.outglow !== "PASS") return 1;
+  return 2;
+}
+
 function render(data: CompareFile, target: string) {
   const tests = data.tests;
   const tgt = data.targets.find((t) => t.id === target)!;
@@ -101,9 +140,39 @@ function render(data: CompareFile, target: string) {
       el("span", { class: "visually-hidden" }, tallyText(t)),
     );
   };
-  const rows = areas.map((a) => {
-    const mine = tests.filter((t) => t.area === a);
-    return el("tr", {}, el("th", { scope: "row" }, a), cell(mine, "stock"), cell(mine, "outglow"));
+  const rows = areas.flatMap((a, i) => {
+    const mine = tests.filter((t) => t.area === a && t.results[target]);
+    const id = `area-${i}`;
+    const open = openAreas.has(a);
+    const toggle = el(
+      "button",
+      { type: "button", class: "area-toggle", "aria-expanded": String(open), "aria-controls": id },
+      el("span", { class: "chev", "aria-hidden": "true" }),
+      a,
+    );
+    const sorted = [...mine].sort((x, y) => rank(x.results[target]!) - rank(y.results[target]!));
+    const ul = el("ul", { class: "tests" });
+    for (const t of sorted) ul.append(testItem(t, t.results[target]!));
+    const more = el(
+      "tr",
+      { class: "area-more", id },
+      el(
+        "td",
+        { colspan: "3" },
+        el("p", { class: "area-about" }, AREA_ABOUT[a] ?? ""),
+        el("p", { class: "small muted" }, `${mine.length} test${mine.length === 1 ? "" : "s"}; those where the two differ first.`),
+        ul,
+      ),
+    );
+    more.hidden = !open;
+    toggle.addEventListener("click", () => {
+      const now = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(now));
+      more.hidden = !now;
+      if (now) openAreas.add(a);
+      else openAreas.delete(a);
+    });
+    return [el("tr", { class: "area-row" }, el("th", { scope: "row" }, toggle), cell(mine, "stock"), cell(mine, "outglow")), more];
   });
   const suiteName = (suite: string) => (suite === "zigbee" ? "All Zigbee tests" : "All Bluetooth tests");
   const total = (suite: string) => {
@@ -137,7 +206,7 @@ function render(data: CompareFile, target: string) {
       "p",
       { class: "muted small" },
       "Passed of the tests that apply to each firmware. “n/a”: the firmware lacks that optional part. “–”: not published. ",
-      "Failed, notes and inconclusive results are in each section below.",
+      "Tap an area to see each of its tests: what it checks, the clause of the standard, and both results.",
     ),
   );
 
