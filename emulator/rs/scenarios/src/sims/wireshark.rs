@@ -410,7 +410,8 @@ const BLE_QUIRKS: [(&str, &str); 2] = [
 
 const BLE_EXPECT: &[(&str, &str, usize)] = &[
     ("advertises_like_the_stock_bulb", "btle.advertising_header.pdu_type == 0x00 && btcommon.eir_ad.entry.device_name == \"unpaired\" && btcommon.eir_ad.entry.company_id == 0x0160 && btcommon.eir_ad.entry.uuid_16 == 0x1800 && btcommon.eir_ad.entry.flags.le_limited_discoverable_mode == 1 && btcommon.eir_ad.entry.flags.bredr_not_supported == 1", 8),
-    ("advertises_like_the_stock_bulb", "btle.advertising_header.pdu_type == 0x04 && btcommon.eir_ad.entry.device_name == \"unpaired\"", 8),
+    // the scan response: the stock's AwoX manufacturer data (company 0x0160), no name
+    ("advertises_like_the_stock_bulb", "btle.advertising_header.pdu_type == 0x04 && btcommon.eir_ad.entry.company_id == 0x0160 && !btcommon.eir_ad.entry.device_name", 8),
     ("services_and_characteristics_sit_at_the_stock_handles", "btatt.opcode == 0x11 && btatt.uuid16 == 0x1800 && btatt.uuid16 == 0x180a", 1),
     ("services_and_characteristics_sit_at_the_stock_handles", "btatt.opcode == 0x11 && btatt.uuid128 == 10:19:0d:0c:0b:0a:09:08:07:06:05:04:03:02:01:00 && btatt.handle == 0x0010 && btatt.group_end_handle == 0x001f", 1),
     ("services_and_characteristics_sit_at_the_stock_handles", "btatt.opcode == 0x09 && btatt.uuid128 == 11:19:0d:0c:0b:0a:09:08:07:06:05:04:03:02:01:00 && btatt.handle == 0x0012 && btatt.characteristic_properties == 0x1a", 1),
