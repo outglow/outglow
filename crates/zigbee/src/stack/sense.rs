@@ -399,6 +399,15 @@ impl<H: Hal> Stack<H> {
         self.identity.sense && ep == ENDPOINT && matches!(cluster, OCCUPANCY | SENSE)
     }
 
+    /// Occupancy is reportable (ZCL 8 4.8.2.2.1.1, access RP): a coordinator may configure
+    /// its reports like those of the attributes outside the light's three
+    /// (`objects::XReport`); they go to the bindings, as configured, whether
+    /// the sensing runs or not. The sensing's own reports (`sense_report`)
+    /// are another matter: they go only while it runs.
+    pub(crate) fn sense_reportable(&self, cluster: u16, id: u16) -> bool {
+        self.identity.sense && cluster == OCCUPANCY && id == A_OCCUPANCY
+    }
+
     /// An attribute whose value can be long (the line tables).
     pub(crate) fn sense_long(&self, cluster: u16, id: u16) -> bool {
         self.identity.sense && cluster == SENSE && matches!(id, A_LINES | A_LINE_SENS)

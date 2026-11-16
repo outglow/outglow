@@ -774,9 +774,18 @@ impl<H: Hal> Stack<H> {
     }
 
     fn reportable_at(&self, c: Ctx, cluster: u16, id: u16) -> bool {
+        let sense = {
+            #[cfg(feature = "sense")]
+            {
+                c.ep == ENDPOINT && c.mfr.is_none() && self.sense_reportable(cluster, id)
+            }
+            #[cfg(not(feature = "sense"))]
+            false
+        };
         (c.ep == ENDPOINT && c.mfr.is_none() && report_index(cluster, id).is_some())
             || objects::reportable(c.ep, cluster, id, c.mfr.is_some())
             || (c.ep == ENDPOINT && c.mfr.is_none() && self.colour_reportable(cluster, id))
+            || sense
     }
 
     /// The colour of a colour bulb is reported like the attributes outside the

@@ -220,6 +220,10 @@ impl<H: Hal> Stack<H> {
                 _ => (l.color_mode as u32, diag::T_ENUM8),
             });
         }
+        #[cfg(feature = "sense")]
+        if r.ep == super::aps::ENDPOINT && !r.mfr && self.sense_reportable(r.cluster, r.attr) {
+            return Some(((self.sense_lines_on() != 0) as u32, T_BITMAP8));
+        }
         if r.cluster == super::zcl::DIAGNOSTICS {
             let (ty, src) = diag::attribute(r.mfr, r.attr)?;
             return Some((self.diag_value(src), ty));

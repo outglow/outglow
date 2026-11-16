@@ -654,3 +654,39 @@ fn the_switch_is_stored_and_an_update_from_an_image_without_sensing_comes_up_off
     net.run(2 * 60_000);
     assert!(probes(&net, net.nodes[k].id, 0).is_empty());
 }
+
+#[test]
+fn occupancy_reports_can_be_configured() {
+    // as a coordinator without the converter does (Zigbee2MQTT's generated
+    // definition): Occupancy bound and reported at least hourly. That is
+    // asked for, and goes whether the sensing runs or not.
+    let (mut net, f, n, [sa, sb]) = two_off();
+    let ext = net.air.borrow().ports[net.nodes[n[0]].id].ext;
+    let mut bind = ext.to_le_bytes().to_vec();
+    bind.push(1);
+    bind.extend_from_slice(&OCC.to_le_bytes());
+    bind.push(3);
+    bind.extend_from_slice(&COORD_EXT.to_le_bytes());
+    bind.push(1);
+    net.coord.zdo(sa, 0x0021, &bind);
+    net.run(2000);
+    // Occupancy (bitmap8), at most every 0 s, at least every 60 s
+    let seq = net.coord.zcl(sa, OCC, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x18, 0, 0, 60, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(sa, OCC, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00], "configured");
+    let n0 = net.coord.zcl_rx.len();
+    net.run(61_000);
+    assert_eq!(reports(&net, sa, OCC, 0, n0), vec![0], "the periodic report, the sensing off");
+    assert!(probes(&net, net.nodes[n[0]].id, 0).is_empty(), "and still no probes");
+    // on: a crossing reported through the configuration too (and by the sensing itself)
+    switch(&mut net, sa, true);
+    switch(&mut net, sb, true);
+    past_holdoff(&mut net);
+    net.run(10_000);
+    let p = ports(&net, n);
+    let t = net.now() + 500;
+    both(&f, [sa, sb], p, |ch| ch.crossings.push(Crossing { t0: t, t1: t + 1500, depth: 8.0 }));
+    let n1 = net.coord.zcl_rx.len();
+    net.run(4000);
+    assert!(reports(&net, sa, OCC, 0, n1).iter().filter(|v| **v == 1).count() >= 2, "both reports of the change");
+}
