@@ -21,6 +21,10 @@ on:
         description: "Commit of outglow/outglow to build"
         type: string
         default: main
+    secrets:
+      ORIGINAL_FIRMWARE_DEPLOY_KEY:
+        description: "Deploy key of outglow/original-firmware: the comparison page's tests run on the original images"
+        required: false
 
 permissions:
   contents: read
@@ -35,11 +39,53 @@ jobs:
         with:
           repository: outglow/outglow
           ref: ${{ inputs.ref }}
+          # the tags: the comparison page names the release the tested commit belongs to
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
+      # The comparison page (why.html) shows the conformance tests run on the
+      # original firmware and on Outglow (cargo xtask compare). They run here, on
+      # every build, so the page follows the code and every original version in
+      # outglow/original-firmware; without the key (a fork) or when they cannot
+      # run, the committed site/public/compare.json stays, and the page says
+      # from when it is.
+      - name: Original firmware images for the comparison (outglow/original-firmware; never uploaded)
+        id: original
+        env:
+          KEY: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "no deploy key: the comparison page keeps the committed results"
+            exit 0
+          fi
+          install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
+          rm -f "$RUNNER_TEMP/original-firmware-key"
+          # outside the workspace: no artifact path can reach it
+          echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"
+          echo "have=1" >> "$GITHUB_OUTPUT"
+      - if: steps.original.outputs.have == '1'
+        uses: ./.github/actions/tc32-toolchain
+      - if: steps.original.outputs.have == '1'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            emulator/rs
+      - name: The conformance tests on the original firmware and on Outglow (site/public/compare.json)
+        if: steps.original.outputs.have == '1'
+        continue-on-error: true
+        timeout-minutes: 45
+        run: |
+          start=$(date +%s)
+          cargo xtask compare
+          echo "compare: $(( $(date +%s) - start )) s"
+          git diff --stat -- site/public/compare.json
+
       - name: Build the site
         working-directory: site
         env:

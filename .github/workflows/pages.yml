@@ -9,7 +9,11 @@ name: Website
 on:
   push:
     branches: [main]
-    paths: [site/**, ota/**, crates/bulb-tc32/boards.tsv, .github/workflows/pages.yml, .github/workflows/site.yml]
+    # the firmware, the tests and their runner too: the comparison page shows their results
+    paths: [site/**, ota/**, crates/**, emulator/rs/**, xtask/**, .github/workflows/pages.yml, .github/workflows/site.yml]
+  # weekly: a newer original firmware in outglow/original-firmware gets tested
+  schedule:
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -27,8 +31,12 @@ jobs:
     with:
       base: /outglow/
       ref: ${{ github.sha }}
+    # the original firmware's deploy key, for the comparison page's tests
+    secrets: inherit
 
   root:
+    # (the root site has no original images: its comparison page shows the committed results)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Have outglow.github.io build this commit
