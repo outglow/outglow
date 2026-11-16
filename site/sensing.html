@@ -17,6 +17,7 @@
     <a href="./">Overview</a>
     <a href="why.html">Compare</a>
     <a href="bulbs.html">Supported bulbs</a>
+    <a href="sensing.html" aria-current="page">Sensing</a>
     <a href="install.html">Install</a>
     <a href="flasher/">Flasher</a>
     <a href="console/">Console</a>
@@ -35,8 +36,9 @@
     <canvas id="room" aria-label="Three bulbs in a room exchanging short radio frames; a person walks across the link between two of them and the link lights up"></canvas>
     <figcaption>
       <span class="state" id="room-state">Empty</span>
-      Three bulbs send each other short frames (the moving dots). When someone crosses the line between two bulbs, that
-      link's signal starts to wobble and the bulbs report motion.
+      Three bulbs send each other short frames (the moving dots). A person walking disturbs the radio waves around
+      them: the link they cross starts to wobble, and once the wobble lasts, the link turns solid and the bulbs report
+      motion. Standing still, they disturb nothing.
       <button type="button" class="pause" id="pause" aria-pressed="false">Pause</button>
     </figcaption>
   </figure>
