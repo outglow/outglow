@@ -27,16 +27,15 @@ pub fn by_model(model: &str, hw_revision: &str) -> Option<&'static Known> {
 pub fn tag(image: &[u8]) -> Option<String> {
     let at = find(image, TAG).map(|i| i + TAG.len()).or_else(|| find(image, LEGACY_TAG).map(|i| i + LEGACY_TAG.len()))?;
     let rest = &image[at..];
-    let end = rest.iter().position(|&c| !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c == b'.'))
-        .unwrap_or(rest.len());
-    let name = std::str::from_utf8(&rest[..end]).ok()?;
-    let (model, rev) = name.rsplit_once('-')?;
-    let ok = !model.is_empty()
-        && rev.len() >= 3
-        && rev.as_bytes()[0].is_ascii_digit()
-        && rev.as_bytes()[1] == b'.'
-        && rev[2..].bytes().all(|c| c.is_ascii_digit());
-    ok.then(|| name.to_string())
+    let model = rest.iter().position(|&c| !(c.is_ascii_alphanumeric() || c == b'_')).unwrap_or(rest.len());
+    let rev = rest.get(model..model + 5)?;
+    let ok = model > 0
+        && rev[0] == b'-'
+        && rev[1].is_ascii_digit()
+        && rev[2] == b'.'
+        && rev[3].is_ascii_digit()
+        && rev[4].is_ascii_digit();
+    ok.then(|| String::from_utf8_lossy(&rest[..model + 5]).into_owned())
 }
 
 pub fn kind(image: &[u8]) -> Option<&'static str> {
@@ -120,6 +119,14 @@ mod tests {
         assert_eq!(kind(img), Some("outglow-dimm"));
         assert_eq!(identify(img), Ok(Identity::Outglow { board: "ESMLFzm_w6_Dimm-4.63".into() }));
         assert!(known("ESMLFzm_w6_Dimm-4.63").is_some_and(|b| b.ble_product == 0x20a7 && b.image_type == 0x0390));
+    }
+
+    #[test]
+    fn the_tag_ends_with_its_revision_whatever_follows_it_in_flash() {
+        assert_eq!(tag(b"outglow-board:EGLO_ZM_RGB_W-4.62the radio link").as_deref(), Some("EGLO_ZM_RGB_W-4.62"));
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW-4.6312").as_deref(), Some("ESMLFzm_w6_TW-4.63"));
+        assert_eq!(tag(b"outglow-board:EGLO_ZM_RGB_W-4.6"), None);
+        assert_eq!(tag(b"outglow-board:-4.62"), None);
     }
 
     #[test]
