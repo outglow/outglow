@@ -141,6 +141,19 @@ impl<H: Hal> Stack<H> {
             if lqi < MIN_LQI || transaction == 0 || information & LINK_INITIATOR == 0 {
                 return None;
             }
+            // A repeat of the scan we answered: an initiator broadcasts five
+            // scan requests of one transaction on its first channel (BDB 3.0.1
+            // 8.6 step 3). Discarded (8.7: a target "MAY restart the procedure
+            // again from the beginning or discard the frame"): restarting would
+            // pick a new response identifier, and an initiator that kept an
+            // earlier response would derive the transport key from one this
+            // bulb no longer has (ZCL 8 13.3.4.11), so the network key it hands
+            // over would not decrypt. A new transaction starts afresh.
+            if let Some(t) = self.touchlink {
+                if t.id == transaction && t.initiator == initiator && !due(now, t.until) {
+                    return Some(());
+                }
+            }
             let response_id = self.hal.random() | 1;
             let pan = (self.hal.random() % 0xFFFE) as u16 + 1;
             self.touchlink =
