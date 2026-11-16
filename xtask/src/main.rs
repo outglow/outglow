@@ -19,7 +19,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Task {
-    /// Build the firmware of a board (crates/bulb-tc32)
+    /// Build the firmware of a board (crates/bulb-tc32); in `nix develop` (its pinned rustc) the image is the one CI builds
     Build(build::Args),
     /// The board table from the stock profiles (analysis/profiles/)
     Boards(boards::Args),
@@ -36,6 +36,9 @@ enum Task {
 }
 
 fn main() -> anyhow::Result<()> {
+    if let Some(code) = build::rustc_wrapper() {
+        std::process::exit(code);
+    }
     match Cli::parse().task {
         Task::Build(a) => build::run(a),
         Task::Boards(a) => boards::run(a),

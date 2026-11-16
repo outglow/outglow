@@ -23,8 +23,19 @@
 //!
 //! Needs: llvm-tc32, from `cargo xtask toolchain` (downloaded), or `TC32_LLVM`,
 //! the bin directory of one you built (default ~/oss/llvm-tc32/build/bin); the Rust standard library sources for
-//! build-std (the rust-src component, or `RUST_LIB_SRC`). rustc is the stable
-//! one; RUSTC_BOOTSTRAP=1 lets it take build-std.
+//! build-std (`RUST_LIB_SRC`, set by `nix develop`, else the rust-src component).
+//! rustc is the stable one; RUSTC_BOOTSTRAP=1 lets it take build-std.
+//!
+//! The same image on every machine: rustc's LLVM shapes the bitcode (what
+//! gets inlined, and so the layout and the timing the emulator's tests see),
+//! so the image is built with the rustc of the Nix shell (flake.nix,
+//! `nix develop`), as CI does, and the build warns about any other. And
+//! nothing of where it is built may reach the image: source paths in panic
+//! locations are remapped, and the crates' `-C metadata` (which cargo hashes
+//! from the absolute paths of the crates outside the firmware's workspace
+//! and from the host the build scripts run on; it seeds the symbol and
+//! constant names, whose order is the order of the data in flash) is
+//! replaced by one from the crate name (`rustc_wrapper`).
 //!
 //! `TOUCHLINK_MASTER_KEY` (32 hexadecimal digits, not in this repository):
 //! the image then offers and accepts touchlink key index 4, the one commercial
@@ -85,19 +96,98 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
-fn rust_lib_src() -> Result<PathBuf> {
+/// The rustc of the Nix shell (flake.lock's nixpkgs: rustc 1.99.0 with LLVM
+/// 21.1.8), which CI builds the images with; with another one (rustup's
+/// 1.99.0 has the same commit but LLVM 23) the image differs. Update with
+/// flake.lock.
+const PINNED_RUSTC: [(&str, &str); 3] =
+    [("release", "1.99.0"), ("commit-hash", "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4"), ("LLVM version", "21.1.8")];
+
+fn rustc() -> std::ffi::OsString {
+    std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())
+}
+
+/// Say which rustc builds the image; warn when it is not the pinned one.
+fn check_rustc() -> Result<()> {
+    let vv = tool_output(Command::new(rustc()).arg("-vV"))?;
+    let field = |k: &str| vv.lines().find_map(|l| l.strip_prefix(k).and_then(|r| r.strip_prefix(": "))).unwrap_or("?").trim().to_string();
+    let path = tool_output(Command::new("sh").arg("-c").arg("command -v \"$0\"").arg(rustc())).unwrap_or_default();
+    println!("== rustc: {} (LLVM {}) {}", vv.lines().next().unwrap_or("?"), field("LLVM version"), path.trim());
+    let off: Vec<String> = PINNED_RUSTC.iter().filter(|(k, v)| field(k) != *v).map(|(k, v)| format!("{k} {} (pinned {v})", field(k))).collect();
+    if !off.is_empty() {
+        eprintln!(
+            "\nWARNING: this rustc is not the pinned one: {}.\n\
+             WARNING: the image will NOT be byte-identical to CI's (other inlining, other layout, other timing in the emulator).\n\
+             WARNING: build in the Nix shell: `nix develop`, then `cargo xtask build` (or `nix develop --command cargo xtask build`).\n",
+            off.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// The nixpkgs revision of flake.lock.
+fn locked_nixpkgs(root: &Path) -> Result<String> {
+    let lock: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join("flake.lock"))?)?;
+    lock["nodes"]["nixpkgs"]["locked"]["rev"].as_str().map(String::from).ok_or_else(|| anyhow!("no nixpkgs revision in flake.lock"))
+}
+
+fn rust_lib_src(root: &Path) -> Result<PathBuf> {
     if let Some(p) = std::env::var_os("RUST_LIB_SRC") {
         return Ok(p.into());
     }
-    let sysroot = tool_output(Command::new("rustc").args(["--print", "sysroot"]))?;
+    let sysroot = tool_output(Command::new(rustc()).args(["--print", "sysroot"]))?;
     let src = Path::new(sysroot.trim()).join("lib/rustlib/src/rust/library");
     if src.join("core").is_dir() {
         return Ok(src);
     }
-    // nixpkgs' rustc has no rust-src component
-    let p = tool_output(Command::new("nix").args(["build", "--no-link", "--print-out-paths", "nixpkgs#rustPlatform.rustLibSrc"]))
-        .context("no Rust standard library sources: install the rust-src component or set RUST_LIB_SRC")?;
+    // nixpkgs' rustc has no rust-src component: that of flake.lock's nixpkgs
+    // (`nix develop` sets RUST_LIB_SRC to it)
+    let flake = format!("github:NixOS/nixpkgs/{}#rustPlatform.rustLibSrc", locked_nixpkgs(root)?);
+    let p = tool_output(Command::new("nix").args(["build", "--no-link", "--print-out-paths", &flake]))
+        .context("no Rust standard library sources: run in `nix develop`, or set RUST_LIB_SRC")?;
     Ok(PathBuf::from(p.trim()))
+}
+
+/// Set for the firmware's cargo, whose RUSTC_WRAPPER is this program.
+const WRAPPER_ENV: &str = "OUTGLOW_RUSTC_WRAPPER";
+
+/// As the firmware cargo's RUSTC_WRAPPER (`<this> <rustc> <args>`): every
+/// crate compiled for the target gets `-C metadata=outglow-<crate name>`
+/// in place of cargo's, so that the symbol names (and the order of the
+/// constants in flash, which follows them) do not depend on the directory
+/// the repository is in or on the host (cargo hashes the absolute paths of
+/// path dependencies outside the workspace, and the host of build scripts,
+/// into it). Each crate is in the build once, so the name is unique. File
+/// names (`-C extra-filename`) stay cargo's. None when not the wrapper.
+pub fn rustc_wrapper() -> Option<i32> {
+    std::env::var_os(WRAPPER_ENV)?;
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    if args.is_empty() {
+        return Some(2);
+    }
+    let rustc = args.remove(0);
+    let s: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let target = s.windows(2).any(|w| w[0] == "--target" && w[1] == TARGET) || s.iter().any(|a| *a == format!("--target={TARGET}"));
+    let name = s.windows(2).find(|w| w[0] == "--crate-name").map(|w| w[1].clone());
+    if let (true, Some(name)) = (target, name) {
+        let mut i = 0;
+        while i < args.len() {
+            if s[i] == "-C" && s.get(i + 1).is_some_and(|n| n.starts_with("metadata=")) {
+                args[i + 1] = format!("metadata=outglow-{name}").into();
+                i += 1;
+            } else if s[i].starts_with("-Cmetadata=") {
+                args[i] = format!("-Cmetadata=outglow-{name}").into();
+            }
+            i += 1;
+        }
+    }
+    match Command::new(rustc).args(&args).status() {
+        Ok(st) => Some(st.code().unwrap_or(1)),
+        Err(e) => {
+            eprintln!("outglow rustc wrapper: {e}");
+            Some(1)
+        }
+    }
 }
 
 fn boards_tsv(root: &Path) -> Result<Vec<String>> {
@@ -173,7 +263,8 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         b => format!("tc32-{}", b.to_lowercase()),
     };
     let out = out_dir.unwrap_or_else(|| root.join("target").join(format!("{dir}{suffix}")));
-    let rust_src = rust_lib_src()?;
+    check_rustc()?;
+    let rust_src = rust_lib_src(root)?;
     std::fs::create_dir_all(&out)?;
     let bc_dir = out.join("bc");
     let _ = std::fs::remove_dir_all(&bc_dir);
@@ -198,6 +289,9 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         .env("BULB_BOARD", board_name)
         .env("RUSTFLAGS", rustflags)
         .env("CARGO_TARGET_DIR", &cargo_dir)
+        .env("RUSTC_WRAPPER", std::env::current_exe()?)
+        .env(WRAPPER_ENV, "1")
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
         .args(["build", "--release", "--target", TARGET, "--no-default-features"])
         .arg(format!("--features={}", features.join(",")))
@@ -216,9 +310,14 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     // those of compiler_builtins, which rustc always compiles to machine code
     // (Thumb here). For such a member take the crate's bitcode that
     // --emit=llvm-bc left beside the rlib (same name and hash).
+    // (in the order of their names without cargo's `-<hash>` file name
+    // suffix, which depends on the paths: `ble.<codegen unit>.rcgu.o`)
     let mut members: Vec<PathBuf> = std::fs::read_dir(&bc_dir)?.filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "o")).collect();
-    members.sort();
+    members.sort_by_key(|p| {
+        let n = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        n.split_once('.').map_or(n.clone(), |(_, rest)| rest.to_string())
+    });
     let mut modules: Vec<PathBuf> = Vec::new();
     for m in members {
         let head = std::fs::read(&m)?;
