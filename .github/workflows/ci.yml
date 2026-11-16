@@ -39,7 +39,7 @@ jobs:
       - name: Board tables up to date
         run: cargo xtask boards --check
       - name: Emulator unit tests
-        run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble && cargo test --manifest-path emulator/rs/Cargo.toml -p scenarios --lib
+        run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble -p zbnode && cargo test --manifest-path emulator/rs/Cargo.toml -p scenarios --lib
 
   site:
     name: Website and flasher
@@ -254,6 +254,41 @@ jobs:
           cargo run -q --release -p scenarios --example device_model -- rust=../../target/tc32/bulb-tc32.bin > "$RUNNER_TEMP/model.json"
           cd "$GITHUB_WORKSPACE"
           ZHC="$RUNNER_TEMP/zhc/node_modules/zigbee-herdsman-converters" node tools/z2m-converter-check.mjs "$RUNNER_TEMP/model.json"
+
+  # the BLE and mesh scenarios and the BLE conformance tests again over 8
+  # other starts of the bulbs' system timer (`--sweep 8`, TC32EMU_TICK_OFFSET):
+  # other random advertising delays and jitter, as another code layout gives.
+  # A test that holds only where the events happen to fall shows here, not
+  # first on the build of some later, unrelated change
+  firmware-nightly-sweep:
+    name: Timing sweep (${{ matrix.part.name }})
+    needs: nightly-build
+    if: github.event.schedule != '41 3 * * 0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part:
+          - { name: BLE and mesh scenarios, run: cargo sims-sweep }
+          - name: Bluetooth conformance, dimmable and tunable white
+            run: >
+              cargo ble-spec -- --sweep 8 &&
+              cargo ble-spec -- --image rust=target/tc32-tw/bulb-tc32.bin --expect ble-tw --sweep 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-every
+          path: target
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - uses: ./.github/actions/original-firmware
+        with:
+          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+      - run: ${{ matrix.part.run }}
 
   firmware-nightly-tw:
     name: Tunable white scenarios
