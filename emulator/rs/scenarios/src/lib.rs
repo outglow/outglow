@@ -16,6 +16,7 @@ pub mod coord;
 pub mod crypto;
 pub mod frames;
 pub mod image;
+mod par;
 pub mod pcap;
 pub mod peer;
 pub mod profile;
