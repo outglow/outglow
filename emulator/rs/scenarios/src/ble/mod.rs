@@ -62,30 +62,35 @@ impl BleTest {
     }
 }
 
+/// The BLE tests with the module each comes from (`att_read`, `ll_conn_setup`, ...), in alphabetical order.
+pub fn modules() -> Vec<(&'static str, Vec<BleTest>)> {
+    vec![
+        ("att_commands", spec::att_commands::tests()),
+        ("att_errors", spec::att_errors::tests()),
+        ("att_find", spec::att_find::tests()),
+        ("att_mtu", spec::att_mtu::tests()),
+        ("att_read", spec::att_read::tests()),
+        ("att_server_initiated", spec::att_server_initiated::tests()),
+        ("att_write", spec::att_write::tests()),
+        ("gap_advertising", spec::gap_advertising::tests()),
+        ("gap_conn_params", spec::gap_conn_params::tests()),
+        ("gatt_cccd", spec::gatt_cccd::tests()),
+        ("gatt_discovery", spec::gatt_discovery::tests()),
+        ("gatt_gap_service", spec::gatt_gap_service::tests()),
+        ("gatt_properties", spec::gatt_properties::tests()),
+        ("l2cap_frames", spec::l2cap_frames::tests()),
+        ("l2cap_signaling", spec::l2cap_signaling::tests()),
+        ("ll_adv_pdu", spec::ll_adv_pdu::tests()),
+        ("ll_adv_requests", spec::ll_adv_requests::tests()),
+        ("ll_conn_events", spec::ll_conn_events::tests()),
+        ("ll_conn_setup", spec::ll_conn_setup::tests()),
+        ("ll_ctrl_instant", spec::ll_ctrl_instant::tests()),
+        ("ll_ctrl_procedures", spec::ll_ctrl_procedures::tests()),
+        ("smp_pairing", spec::smp_pairing::tests()),
+    ]
+}
+
 /// All BLE tests, modules in alphabetical order (as ble_spec_suite.py loads them).
 pub fn tests() -> Vec<BleTest> {
-    let mut v = Vec::new();
-    v.extend(spec::att_commands::tests());
-    v.extend(spec::att_errors::tests());
-    v.extend(spec::att_find::tests());
-    v.extend(spec::att_mtu::tests());
-    v.extend(spec::att_read::tests());
-    v.extend(spec::att_server_initiated::tests());
-    v.extend(spec::att_write::tests());
-    v.extend(spec::gap_advertising::tests());
-    v.extend(spec::gap_conn_params::tests());
-    v.extend(spec::gatt_cccd::tests());
-    v.extend(spec::gatt_discovery::tests());
-    v.extend(spec::gatt_gap_service::tests());
-    v.extend(spec::gatt_properties::tests());
-    v.extend(spec::l2cap_frames::tests());
-    v.extend(spec::l2cap_signaling::tests());
-    v.extend(spec::ll_adv_pdu::tests());
-    v.extend(spec::ll_adv_requests::tests());
-    v.extend(spec::ll_conn_events::tests());
-    v.extend(spec::ll_conn_setup::tests());
-    v.extend(spec::ll_ctrl_instant::tests());
-    v.extend(spec::ll_ctrl_procedures::tests());
-    v.extend(spec::smp_pairing::tests());
-    v
+    modules().into_iter().flat_map(|(_, v)| v).collect()
 }
