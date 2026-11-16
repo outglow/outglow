@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Outglow vs the original firmware</title>
-<meta name="description" content="What changes when an EGLO connect.z or AwoX bulb switches from its original firmware to Outglow.">
+<meta name="description" content="What changes when an EGLO connect.z or AwoX bulb switches from its original firmware to Outglow: the Zigbee and Bluetooth conformance tests on both, the settings, the diagnostics and presence detection.">
 <link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/src/style.css">
 </head>
@@ -23,11 +23,26 @@
     <a href="https://github.com/outglow/outglow">Source</a>
   </nav>
 </header>
-<main>
+<main class="doc">
   <h1>Outglow and the original firmware</h1>
-  <p class="lead">What changes when you switch. Tap <span class="info static" aria-hidden="true">i</span>
-    on a row to see what it means.</p>
+  <p class="lead">What changes when you switch, measured: the same conformance tests, written from the text of the
+    Zigbee and Bluetooth standards, run on the original firmware and on Outglow.</p>
 
+  <nav class="toc" aria-label="On this page">
+    <a href="#glance">At a glance</a>
+    <a href="#numbers">The tests in numbers</a>
+    <a href="#gains">Gains and losses</a>
+    <a href="#settings">Settings</a>
+    <a href="#diagnostics">Diagnostics</a>
+    <a href="#presence">Presence detection</a>
+    <a href="#zigbee">Zigbee, behaviour by behaviour</a>
+    <a href="#bluetooth">Bluetooth, behaviour by behaviour</a>
+    <a href="#versions">Versions tested</a>
+    <a href="#standards">The standards</a>
+  </nav>
+
+  <h2 id="glance">At a glance</h2>
+  <p class="muted">Tap <span class="info static" aria-hidden="true">i</span> on a row to see what it means.</p>
   <div class="table-wrap compare">
     <table>
       <thead><tr><th></th><th>Original firmware</th><th>Outglow</th></tr></thead>
@@ -43,9 +58,9 @@
         <tr><td><span class="feature">Recovers when a router disappears<button type="button" class="info" aria-expanded="false" aria-controls="more-5" aria-label="About: Recovers when a router disappears">i</button></span></td><td class="n">Poorly</td><td class="y">Yes</td></tr>
         <tr class="more" id="more-5" hidden><td colspan="3"><p>Bulbs are the routers of your Zigbee network, so this matters for every device behind them. With both firmwares in one emulated network, an original bulb kept sending to a router that was gone for as long as we watched (four minutes), and after a short power cut it sometimes searched every channel and never came back. Outglow drops a router it no longer hears, finds a new route and rejoins after power cuts.</p></td></tr>
         <tr><td><span class="feature">Network diagnostics in your hub<button type="button" class="info" aria-expanded="false" aria-controls="more-6" aria-label="About: Network diagnostics in your hub">i</button></span></td><td class="n">No</td><td class="y">Yes</td></tr>
-        <tr class="more" id="more-6" hidden><td colspan="3"><p>Outglow shows how many frames it relayed, retried and lost, its neighbours and children, why it last restarted, and how much radio time Bluetooth took: all 32 counters of the Zigbee Diagnostics cluster, plus a few of its own.</p></td></tr>
+        <tr class="more" id="more-6" hidden><td colspan="3"><p>Outglow shows how many frames it relayed, retried and lost, its neighbours and children, why it last restarted, and how much radio time Bluetooth took: all 32 counters of the Zigbee Diagnostics cluster, plus a few of its own. <a href="#diagnostics">More below.</a></p></td></tr>
         <tr><td><span class="feature">Bluetooth can be switched off<button type="button" class="info" aria-expanded="false" aria-controls="more-7" aria-label="About: Bluetooth can be switched off">i</button></span></td><td class="n">No</td><td class="y">Yes, or only for minutes after power-on</td></tr>
-        <tr class="more" id="more-7" hidden><td colspan="3"><p>The bulb has one radio. Time spent on Bluetooth is time it can't hear Zigbee. Outglow lets you keep Bluetooth on, switch it off, or keep it only for a few minutes after the bulb is powered on, from your hub. A reset turns it back on.</p></td></tr>
+        <tr class="more" id="more-7" hidden><td colspan="3"><p>The bulb has one radio. Time spent on Bluetooth is time it can't hear Zigbee. Outglow lets you keep Bluetooth on, switch it off, or keep it only for a few minutes after the bulb is powered on, from your hub. A reset turns it back on. <a href="#settings">How to set it.</a></p></td></tr>
         <tr><td><span class="feature">Joins a new network<button type="button" class="info" aria-expanded="false" aria-controls="more-8" aria-label="About: Joins a new network">i</button></span></td><td>in about 5 s</td><td>in about 1.5 s</td></tr>
         <tr class="more" id="more-8" hidden><td colspan="3"><p>Time from the start of pairing until the bulb is in the network and answering, measured in the emulator with the same coordinator for both.</p></td></tr>
         <tr><td><span class="feature">Source code<button type="button" class="info" aria-expanded="false" aria-controls="more-9" aria-label="About: Source code">i</button></span></td><td class="n">Closed</td><td class="y">Open, GPL</td></tr>
@@ -55,9 +70,564 @@
       </tbody>
     </table>
   </div>
-  <p class="muted small">Network behaviour and join times were measured in the Outglow emulator, which runs
-    the real firmware images, the original ones included, through the same scenarios. Outglow itself runs on a few of its
-    developers' bulbs so far. <a href="install.html">How to install and how to go back →</a></p>
+
+  <h2 id="numbers">The tests in numbers</h2>
+  <p>Each test takes one requirement from the text of a standard and checks it on the running firmware: the real
+    firmware images, the original ones included, run in the Outglow emulator with a scripted coordinator or phone
+    on the other side. A test passes when the bulb does what the clause says. The tests and the emulator are in the
+    <a href="https://github.com/outglow/outglow/tree/main/emulator/rs/scenarios">source</a>; this page is built from
+    their results each time the website is built.</p>
+  <div class="bulb-pick" role="group" aria-label="Which bulb">
+    <span class="muted">Bulb:</span>
+    <div class="filters" id="targets"></div>
+  </div>
+  <div id="summary" class="summary" aria-live="polite"><p class="muted">Loading the test results…</p></div>
+  <p class="muted small" id="data-note"></p>
+  <div class="note">
+    <strong>Security results of the original firmware are not published</strong>
+    For tests about network and link keys, frame security, rejoining with keys, Bluetooth pairing and encryption,
+    and about who may make a bulb leave the network, reset it or change its bindings, this page shows only
+    Outglow's results. That holds for every such test, whether the original firmware passes it or not.
+  </div>
+
+  <h2 id="gains">What you gain, what you lose</h2>
+  <h3>Gains</h3>
+  <ul class="caveats">
+    <li><strong>Updates from your hub.</strong> Outglow is an OTA Upgrade client: Zigbee2MQTT offers new versions
+      like for any other device. The original firmware has no Zigbee OTA client and is updated only by the vendor
+      app, next to the bulb.</li>
+    <li><strong>A router that follows the network layer.</strong> It drops neighbours it no longer hears, reports
+      routes it cannot deliver on, repeats broadcasts its neighbours missed, notices address conflicts and handles a
+      PAN identifier change as R22 says. Details under <a href="#zigbee">Zigbee</a>.</li>
+    <li><strong>Diagnostics.</strong> The Diagnostics cluster with all 32 standard counters, its own counters, and
+      readable values for Zigbee2MQTT without any converter. <a href="#diagnostics">Below.</a></li>
+    <li><strong>Settings.</strong> Bluetooth on, off or only for a while after power-on, and whether end devices
+      may join through the bulb. <a href="#settings">Below.</a></li>
+    <li><strong>Faster joining.</strong> It scans the primary Zigbee channels first, as BDB 3.0.1 says, and is
+      in the network in about 1.5 s instead of about 5 s.</li>
+    <li><strong>Lights that do what the cluster library says.</strong> “With On/Off” fades end switched off,
+      colour temperature moves stop where asked, scenes keep what they were given and take their transition time,
+      groups and scenes answer the queries a hub broadcasts, unknown or broken commands are refused instead of
+      carried out.</li>
+    <li><strong>Standard Bluetooth answers.</strong> Error responses where the standard asks for them, so a phone
+      that probes the bulb gets an answer instead of waiting 30 s for a timeout; the vendor app works as before.</li>
+    <li><strong>Open source</strong>, under the GPL, with the emulator and the tests that produced this page.</li>
+  </ul>
+  <h3>Losses and trade-offs</h3>
+  <ul class="caveats">
+    <li><strong>One radio for two networks.</strong> Both firmwares share one radio between Zigbee and Bluetooth.
+      Outglow keeps Zigbee first: in a busy network it may skip a Bluetooth advertising event (at most three in a
+      row) and, while Zigbee neighbours were heard in the last 64 ms, advertise on one Bluetooth channel instead of
+      three. The app and the flasher may then take a little longer to find the bulb. A single Zigbee broadcast that
+      arrives during an advertising event can still be missed; hubs repeat broadcasts, and switching Bluetooth off
+      (<a href="#settings">Settings</a>) removes it.</li>
+    <li><strong>A short wait in the main loop.</strong> With nothing to do, Outglow's main loop waits up to 1 ms. A
+      received frame ends the wait at once; timers of the stack and of the light are taken up at most 1 ms later.</li>
+    <li><strong>A new model in your hub.</strong> Outglow reports its own model (ManufacturerName “Outglow”), so
+      Zigbee2MQTT must interview the bulb again after the switch, and entity names in Home Assistant may change.
+      Without the <a href="install.html#converter">converter</a>, the generated definition has no start-up
+      brightness setting.</li>
+    <li><strong>Bluetooth notifications ignore the descriptor.</strong> The vendor app switches notifications on with
+      its own command, as the original firmware expects, so Outglow sends them even while the standard descriptor
+      (CCCD) is off. One Bluetooth test fails on Outglow for that reason, as it does on the original firmware.</li>
+    <li><strong>Little hardware time.</strong> Outglow runs on a few of its developers' bulbs so far; most of what
+      this page shows was measured in the emulator.</li>
+  </ul>
+  <div id="losses"></div>
+
+  <h2 id="settings">Settings Outglow adds</h2>
+  <p>Both are written from your hub, kept in the bulb's flash, and come from the public code
+    (<a href="https://github.com/outglow/outglow/blob/main/crates/zigbee/src/stack/objects.rs">objects.rs</a>,
+    <a href="https://github.com/outglow/outglow/blob/main/z2m/outglow.mjs">outglow.mjs</a>). The original firmware
+    has neither.</p>
+
+  <h3>When Bluetooth runs</h3>
+  <p>The bulb's radio is shared: every moment it spends on Bluetooth (advertising for the app, a connection, an
+    update) is a moment it cannot hear Zigbee. If you use only your hub, switch Bluetooth off for the steadiest
+    Zigbee; if you want the vendor app or Bluetooth updates now and then, keep it on for a few minutes after each
+    power-on.</p>
+  <ul class="caveats">
+    <li><strong>Three modes</strong> in the manufacturer cluster <code>0xFC5F</code> (manufacturer code
+      <code>0x1141</code>, endpoint 1): attribute <code>0x0000</code> mode (0 always, 1 for a window after
+      power-on, 2 off), <code>0x0001</code> the window in minutes (up to 1440), <code>0x0002</code> whether Bluetooth
+      is running now.</li>
+    <li><strong>The same setting on endpoint 8</strong>, an Analog Output “BLE window after power-on” in minutes:
+      0 means always on, N means on for N minutes after power-on. (“Off” can only be set in <code>0xFC5F</code>;
+      endpoint 8 then reads 0 and says it is out of service.)</li>
+    <li><strong>Ways back:</strong> switching the power on opens the window again; leaving the network, the
+      power-cycle factory reset and the Zigbee Reset to Factory Defaults command turn Bluetooth back to always on, so
+      a bulb that is in no network can always be reached by the app or the flasher. A Bluetooth connection or update
+      in progress is finished first.</li>
+  </ul>
+  <p><strong>In Zigbee2MQTT without a converter:</strong> the entity <code>analog_output_8</code> (minutes, 0 =
+    always). <strong>With the <a href="install.html#converter">converter</a>:</strong> the device's specific settings
+    <code>bluetooth</code> (<code>always</code>, <code>window_after_power_on</code>, <code>off</code>) and
+    <code>bluetooth_window</code> (minutes); the converter writes them again whenever the bulb announces itself, so a
+    reset does not undo your choice for long.</p>
+
+  <h3>Whether end devices may join through the bulb</h3>
+  <p>End devices are the battery sensors, buttons and remotes that are not routers. Each one picks a parent router and
+    sends everything through it. A mains bulb that is switched off at the wall takes its children offline until they
+    notice and find another parent. If a bulb is often switched off, keep end devices away from it.</p>
+  <ul class="caveats">
+    <li><strong>Endpoint 7</strong>, a Binary Output “Allow end devices to join”, on by default. Off: the bulb's
+      beacon offers no room for end devices and a new end device's association or rejoin is refused; children it
+      already has stay; routers still join through it.</li>
+    <li>Kept in flash; back to on after the bulb leaves the network, like the rest of its configuration.</li>
+  </ul>
+  <p><strong>In Zigbee2MQTT</strong>, with or without the converter: the switch <code>binary_output_7</code>.</p>
+
+  <h2 id="diagnostics">Diagnostics</h2>
+  <p>Outglow counts what it does as a router while it works: frames sent, retried, relayed and lost, neighbours,
+    children, restarts, the radio time Bluetooth took. The counters live in RAM and only grow (wrapping, as the
+    standard expects). Every second they are copied to RAM that a watchdog or software restart leaves alone, so such
+    a restart loses at most a second of counting, and you can see what led to it; a snapshot goes to flash half an
+    hour after the start and then every hour. A power cut loses what was counted since the last snapshot;
+    NumberOfResets is always exact. A factory reset clears them, and so does a manufacturer command
+    (<code>0x00</code>, code <code>0x1141</code>, in the Diagnostics cluster).</p>
+  <ul class="caveats">
+    <li><strong>The Diagnostics cluster <code>0x0B05</code></strong> on endpoint 1, with all 32 attributes of ZCL 8
+      §3.15 (Tables 3-130 and 3-131), each reportable.</li>
+    <li><strong>Manufacturer attributes from <code>0x5000</code></strong> in the same cluster, read with manufacturer
+      code <code>0x1141</code>: uptime, the reason of the last start, relay losses by cause, queue peaks, Bluetooth
+      time; beyond <code>0x5014</code> also signal-strength histograms, the noise floor, the way to the coordinator,
+      the neighbour table and an event log.</li>
+    <li><strong>Endpoints 2–6</strong>, Analog Inputs that describe themselves (“Relayed frames lost”, “MAC retries per
+      APS message”, “Radio time lent to BLE”, “Router neighbours”, “End-device children”), so a hub shows them
+      without knowing anything about Outglow. Endpoints 7 and 8 are the <a href="#settings">settings</a>.</li>
+    <li><strong>Over Bluetooth</strong>, the <a href="console/">browser console</a> reads the same 32 + 21 counters
+      from the bulb itself, from the same values the cluster answers with.</li>
+  </ul>
+
+  <h3>How to read them</h3>
+  <ul class="caveats">
+    <li><strong>Zigbee2MQTT without a converter:</strong> the generated entities <code>analog_in_count_2</code>
+      (relayed frames lost), <code>analog_input_3</code> (MAC retries per message),
+      <code>analog_in_percentage_4</code> (radio time lent to Bluetooth), <code>analog_in_count_5</code> (router
+      neighbours) and <code>analog_in_count_6</code> (end-device children). They are reported on change; the
+      Refresh button next to an entity reads it at once.</li>
+    <li><strong>With the <a href="install.html#converter">converter</a>
+      (<a href="https://github.com/outglow/outglow/blob/main/z2m/outglow.mjs">z2m/outglow.mjs</a>):</strong> the
+      device option <code>diagnostics</code> picks <code>summary</code> (default: <code>link_health</code>,
+      <code>coordinator_route</code>, <code>neighbors</code>, <code>uptime</code>) or <code>full</code> (every counter,
+      in groups, and the neighbour table and event log), polled every <code>diagnostics_poll_interval</code> seconds
+      (600 by default); <code>diagnostics_refresh</code> reads everything now and <code>diagnostics_clear</code>
+      clears the counters.</li>
+    <li><strong>By hand, in Zigbee2MQTT's Dev console:</strong> endpoint 1, cluster <code>haDiagnostic</code>, an
+      attribute such as <code>macTxUcastRetry</code>; for a manufacturer attribute give its number
+      (<code>0x5007</code>) and manufacturer code <code>0x1141</code>.</li>
+    <li><strong>Without a hub:</strong> the <a href="console/">console</a> connects to a bulb over Bluetooth from
+      Chrome or Edge and explains every counter.</li>
+  </ul>
+
+  <details class="fields-wrap">
+    <summary>The fields, and what a healthy value looks like</summary>
+    <div id="fields"></div>
+  </details>
+
+  <h2 id="presence">Presence detection <span class="badge">experimental</span></h2>
+  <p>A person between two bulbs changes how strongly each hears the other. With presence detection built in, every
+    bulb sends a short probe frame a few times a second (5 by default) and measures the signal strength (RSSI) of
+    the probes of its neighbours. Each sender heard is a line; when a line's signal starts to swing more than its usual
+    noise, someone is crossing it, and the bulb reports occupancy. Philips Hue's MotionAware works on the same idea.</p>
+  <p><a href="sensing.html">How motion sensing works, step by step, with an animation →</a></p>
+  <ul class="caveats">
+    <li><strong>The probes</strong> go to a separate PAN identifier (<code>0x5E55</code>), without acknowledgement:
+      devices without the feature drop them in their radio filter, nobody relays them. About 1 ms of air time each,
+      roughly 0.5 % of the channel per bulb.</li>
+    <li><strong>In Zigbee:</strong> the Occupancy Sensing cluster <code>0x0406</code> (occupancy, and how long until it
+      goes back to unoccupied) and the manufacturer cluster <code>0xFC5E</code> (code <code>0x1141</code>): the
+      sensitivity, probes per second, calibration, self-tuning and automatic calibration. Reports go to the coordinator
+      on every change and every half hour.</li>
+    <li><strong>Sensitivity</strong> (0–100, 40 by default; 0 switches detection off) is kept per line. Out of the box
+      each line calibrates itself: during its first full day the bulb finds the quietest hour of every line and takes
+      the most sensitive setting that hour left quiet. A calibration by hand records an empty room for some seconds
+      instead; setting the sensitivity by hand switches the automatic calibration off. An optional daily self-tuning
+      follows slow changes of a line's noise.</li>
+    <li><strong>In Zigbee2MQTT</strong> with the <a href="install.html#converter">converter</a>:
+      <code>occupancy</code>, <code>occupancy_timeout</code>, <code>motion_sensitivity</code>,
+      <code>motion_probes</code>, <code>motion_auto_calibration</code>, <code>motion_self_tuning</code>,
+      <code>motion_calibrate</code> (start or stop a recording of the empty room) and
+      <code>motion_calibration_left</code>.</li>
+  </ul>
+  <div class="note">
+    <strong>Experimental, and not in the images you install</strong>
+    Presence detection is built only on request (<code>cargo xtask build --sense</code>) and has not run on a bulb.
+    It was measured in the emulator, on a channel model built from the link levels and spread the bulbs' own
+    neighbour tables reported; how much a person really changes those links, and whether a day is enough to
+    calibrate a real room, is not known yet. It needs at least three bulbs around a room, and a line through a wall
+    sees both rooms.
+  </div>
+
+  <h2 id="zigbee">Zigbee, behaviour by behaviour</h2>
+  <p>Each part says what the behaviour is for, where the standard defines it, and what each firmware did in the tests.
+    The line under it counts the tests; open the list to see each test, the clause it checks and, where a firmware
+    did something else, what it did. <span class="muted">On the tested original version: <span data-stock-version>…</span>.</span></p>
+
+  <section class="std" data-tests="NWK-LS">
+    <h3>Link status: who hears whom</h3>
+    <p>Every 15 s a router tells its neighbours how well it hears each of them. Routes are chosen from those link
+      costs, and a neighbour that falls silent for three periods must be dropped, or traffic keeps going to a router
+      that is gone.</p>
+    <p class="ref">Zigbee R22 §3.6.3.4</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="NWK-LS-03">Sends link status and sets the costs right,
+        but keeps reporting a neighbour that went silent more than six periods ago as reachable.</span></li>
+      <li><strong>Outglow</strong> Ages silent neighbours out after three periods.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="NWK-BCAST">
+    <h3>Broadcasts</h3>
+    <p>A broadcast (a group command, a route request, an announcement) travels by every router passing it on once.
+      A router repeats it while its neighbours have not been heard passing it on, and recognises copies so the
+      application sees each broadcast only once.</p>
+    <p class="ref">Zigbee R22 §3.6.5</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="NWK-BCAST-02">Passes a broadcast on once and never
+        repeats it, even when no neighbour relayed it.</span> <span data-claim="NWK-BCAST-03">A copy that arrives a
+        few seconds later reaches the application again, so a group command can run twice.</span></li>
+      <li><strong>Outglow</strong> Repeats as the standard says and drops copies.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="NWK-RREQ NWK-RREP NWK-ROUTE NWK-MTO NWK-SRC">
+    <h3>Routing</h3>
+    <p>Routers find routes by route requests and replies, relay frames hop by hop, keep routes to the coordinator
+      (many-to-one) and follow source routes the coordinator chooses.</p>
+    <p class="ref">Zigbee R22 §3.6.3</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Relays route discovery, many-to-one and source-routed frames correctly.
+        <span data-claim="NWK-RREQ-03">When it looks for a route itself it sends the request more often than the
+        standard allows.</span></li>
+      <li><strong>Outglow</strong> Does all of it as specified.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="NWK-FAIL NWK-UNK">
+    <h3>Telling the sender when delivery fails</h3>
+    <p>When a router cannot pass a frame on, it sends the source a Network Status, so the source can look for
+      another route instead of waiting in vain.</p>
+    <p class="ref">Zigbee R22 §3.6.3.3, §3.6.3.7, §3.6.13</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="NWK-FAIL-01">Says nothing when it has no route for a
+        frame it should relay.</span> <span data-claim="NWK-UNK-01">Does not answer unknown network commands (that came
+        with R22).</span></li>
+      <li><strong>Outglow</strong> Reports both.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="NWK-CONFLICT NWK-PANID ZDO-CHAN ZDO-NWKUPD">
+    <h3>Address conflicts, PAN and channel changes</h3>
+    <p>Two devices can end up with the same short address; routers must notice and report it so one of them moves.
+      A coordinator can also move the whole network to a new PAN identifier or channel, and ask a router to scan the
+      channels' energy.</p>
+    <p class="ref">Zigbee R22 §3.6.1.9, §3.6.9, §2.4.3.3.9</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="NWK-CONFLICT-01">Does not notice an address
+        conflict.</span> <span data-claim="NWK-PANID-01">On a PAN identifier change it switches at once and passes
+        the change on under the new identifier, which neighbours still on the old one do not hear.</span> Channel
+        changes and energy scans work.</li>
+      <li><strong>Outglow</strong> Reports conflicts, waits before switching the PAN identifier, changes channel and
+        scans.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-first data-tests="NWK-LEAVE ZDO-LEAVE PAR-REMOVE ZDO-BIND ZCL-BASIC-05">
+    <h3>Leaving, removal and binding</h3>
+    <p>Who may make a bulb leave the network, remove a device, reset the bulb or change its bindings, and which
+      requests a bulb must ignore.</p>
+    <p class="ref">Zigbee R22 §3.6.1.10, §2.4.3.3; ZCL 8 §3.2.2.3</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Results not published (see above).</li>
+      <li><strong>Outglow</strong> Leaves only when it should and ignores the requests it must ignore.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-first data-tests="security_keys NWK-SEC NWK-REJOIN PAR-JOIN PAR-REJOIN BDB-JOIN-02">
+    <h3>Security and keys</h3>
+    <p>The network key protects every frame; the Trust Center hands it out and replaces it; frame counters stop
+      replays; a device that missed a key change gets back by a Trust Center rejoin.</p>
+    <p class="ref">Zigbee R22 §4; BDB 3.0.1 §10</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Results not published (see above).</li>
+      <li><strong>Outglow</strong> Follows chapter 4 of R22 in every test here.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="PAR">
+    <h3>Parent role: sensors and remotes</h3>
+    <p>A router is the parent of the end devices that joined through it: it holds frames for them while they sleep,
+      answers for them, forgets them when they time out, and notices when one has moved to another parent.</p>
+    <p class="ref">Zigbee R22 §3.6.1, §3.6.10, §3.6.3</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Holds frames, answers for its children and ages them out correctly.
+        <span data-claim="PAR-MOVED-01">When a child moved to another router it keeps it, and frames for it keep coming
+        to the old parent.</span></li>
+      <li><strong>Outglow</strong> Does all of it; a child that moved is let go.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="APS">
+    <h3>Delivery between applications (APS)</h3>
+    <p>The application support layer acknowledges messages, retries the ones not acknowledged, drops duplicates,
+      delivers group messages, and splits long messages into fragments.</p>
+    <p class="ref">Zigbee R22 §2.2</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Acknowledges and delivers groups correctly. <span data-claim="APS-DUP-03">A
+        retry that arrives late is carried out a second time.</span> <span data-claim="APS-RETRY-01 APS-RETRY-02">Its own
+        retries are fewer and slower than the standard gives.</span> <span data-claim="APS-EXT-01 APS-FRAG-01">It does
+        not understand the extended header and has no fragmentation.</span></li>
+      <li><strong>Outglow</strong> Passes them. It asked for no acknowledgement in what the retry tests provoked, so
+        those two could not be judged.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZDO">
+    <h3>Discovery: descriptors, addresses, tables</h3>
+    <p>How a hub learns what a device is and what it knows: node and simple descriptors, endpoints, addresses, the
+      neighbour and routing tables (the network map in Zigbee2MQTT), permit joining.</p>
+    <p class="ref">Zigbee R22 §2.4</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Answers the descriptor and address requests correctly.
+        <span data-claim="ZDO-RTG-01">It does not answer a routing table request, so a network map shows no routes
+        through it.</span></li>
+      <li><strong>Outglow</strong> Answers all of them.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="BDB-JOIN">
+    <h3>Joining a network</h3>
+    <p>How a factory-new bulb finds a network and what it does after joining: announce itself, open the network for
+      the next device, take a new link key.</p>
+    <p class="ref">BDB 3.0.1 §8; Zigbee R22 §2.4.3.3.7</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="BDB-JOIN-07">Scans all sixteen channels in order instead
+        of the primary channels first.</span> <span data-claim="BDB-JOIN-03">It opens the network with a broadcast to
+        every device rather than to the routers.</span></li>
+      <li><strong>Outglow</strong> Joins as BDB says.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZCL-FND">
+    <h3>Reading, writing and reporting attributes</h3>
+    <p>The commands every cluster shares: read and write attributes, discover them, configure reports, and answer a
+      command that cannot be carried out with the right status.</p>
+    <p class="ref">ZCL 8 §2</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Reads, writes and reports correctly in most cases.
+        <span data-claim="ZCL-FND-DR-07 ZCL-FND-MALF-01">It carries out commands it should refuse: a command with an
+        unknown manufacturer code, a truncated one.</span> <span data-claim="ZCL-FND-WRITE-05">It accepts values
+        outside an attribute's range.</span> <span data-claim="ZCL-FND-DR-06 ZCL-FND-DR-08 ZCL-FND-REP-01 ZCL-FND-REP-04 ZCL-FND-WRITE-08 ZCL-FND-DISC-02 ZCL-FND-CLREV-01">Several
+        answers use the older format or status codes, or are missing.</span></li>
+      <li><strong>Outglow</strong> Follows revision 8.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZCL-BASIC ZCL-IDENT">
+    <h3>Basic information and Identify</h3>
+    <p>What the bulb says about itself (versions, names, dates), and blinking on request so you can find it.</p>
+    <p class="ref">ZCL 8 §3.2, §3.5; Lighting &amp; Occupancy 1.0 §7.2</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="ZCL-BASIC-02 ZCL-BASIC-03 ZCL-BASIC-04">Reports an older
+        cluster library version and lacks some attributes a light must have.</span>
+        <span data-claim="ZCL-IDENT-01">Its identify time does not count down.</span> It blinks and answers identify
+        queries.</li>
+      <li><strong>Outglow</strong> Has them all.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZCL-ONOFF ZCL-LEVEL">
+    <h3>On/Off and brightness</h3>
+    <p>Switching, timed switching, the global scene, and Level Control: moving, stepping, fading with or without
+      switching, what the bulb does at power-on.</p>
+    <p class="ref">ZCL 8 §3.8, §3.10, §3.19</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> On/Off passes every test. <span data-claim="ZCL-LEVEL-08">A fade “with
+        On/Off” to the minimum leaves it on, at its dimmest glow.</span> <span data-claim="ZCL-LEVEL-16">It accepts a
+        level the lighting profile does not allow.</span> <span data-claim="ZCL-LEVEL-19">On the dimmable bulb its
+        output after Off and On is not the one before, at the same level.</span></li>
+      <li><strong>Outglow</strong> Passes them.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZCL-COLOR">
+    <h3>Colour temperature</h3>
+    <p>On the tunable white bulb: moving to a colour temperature, moving and stepping, stopping, limits, coupling to
+      brightness, start-up colour temperature.</p>
+    <p class="ref">ZCL 8 §5.2</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="ZCL-COLOR-08">A continuous colour temperature move does
+        not stop when told to.</span> <span data-claim="ZCL-COLOR-11 ZCL-COLOR-15">Commands it should refuse are
+        answered with success.</span> <span data-claim="ZCL-COLOR-14">Coupling to brightness misses the limit.</span>
+        <span data-claim="ZCL-COLOR-01">On the dimmable bulb it lists a Color Control cluster without the attributes
+        that cluster must have.</span></li>
+      <li><strong>Outglow</strong> Passes them; the dimmable bulb has no Color Control cluster.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZCL-GROUP ZCL-SCENE">
+    <h3>Groups and scenes</h3>
+    <p>Groups let one command switch many bulbs; scenes store and recall a state, with a transition time.</p>
+    <p class="ref">ZCL 8 §3.6, §3.7</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Adds, views and removes groups and scenes. <span data-claim="ZCL-GROUP-13 ZCL-SCENE-14">It does
+        not answer the membership queries a hub sends by broadcast.</span> <span data-claim="ZCL-SCENE-10">Recalling a scene
+        without a brightness sets the light to its lowest level.</span> <span data-claim="ZCL-SCENE-12">A recalled scene
+        jumps instead of taking its transition time.</span> <span data-claim="ZCL-SCENE-13">Scenes stay after their
+        groups are removed.</span> <span data-claim="ZCL-GROUP-02 ZCL-GROUP-03 ZCL-GROUP-04 ZCL-GROUP-06 ZCL-SCENE-02 ZCL-SCENE-06">Several status codes are wrong or retired.</span></li>
+      <li><strong>Outglow</strong> Passes them.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ZCL-DIAG">
+    <h3>Diagnostics cluster</h3>
+    <p>The counters a router keeps for the hub to read. <a href="#diagnostics">Above.</a></p>
+    <p class="ref">ZCL 8 §3.15</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Does not have the cluster.</li>
+      <li><strong>Outglow</strong> Has all of it.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="GP OTA">
+    <h3>Green Power and updates</h3>
+    <p>A Zigbee 3.0 router passes on the frames of battery-free Green Power switches. An OTA Upgrade client asks the
+      hub for a new image when the hub says one is ready.</p>
+    <p class="ref">Green Power Basic 1.1.2; ZCL 8 §11</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Has the Green Power proxy. <span data-claim="OTA-NOTIFY-01">It has no OTA
+        Upgrade client.</span></li>
+      <li><strong>Outglow</strong> Has both.</li>
+    </ul>
+  </section>
+  <div id="zigbee-other"></div>
+  <p class="muted small">Touchlink has no tests in these suites; Outglow's touchlink target is checked in the
+    emulator against another implementation instead.</p>
+
+  <h2 id="bluetooth">Bluetooth, behaviour by behaviour</h2>
+  <p>Over Bluetooth Outglow keeps the original bulb's face (name, services, handles) so the vendor app works; below
+    it, it answers as Bluetooth Core 5.4 says.</p>
+
+  <section class="std" data-tests="ll_adv_pdu ll_adv_requests gap_advertising">
+    <h3>Advertising</h3>
+    <p>How the bulb makes itself known to phones: the format and timing of advertising packets, answers to scan and
+      connection requests.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 6 Part B §2.3, §4.4; Vol 3 Part C §9, §11</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Advertises correctly. <span data-claim="ll_adv_scan_req_other_addr_type ll_adv_connect_ind_other_addr_type">It
+        answers requests meant for another device with the same 48 bits but the other address type.</span></li>
+      <li><strong>Outglow</strong> Passes them. Both put the GAP service in the advertised list, which the supplement
+        advises against; the app expects it.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ll_conn_setup ll_conn_events ll_ctrl_instant gap_conn_params">
+    <h3>Connections</h3>
+    <p>Keeping a connection: channel hopping, acknowledgements, timing windows, timeouts, parameter and channel map
+      updates at the agreed instant.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 6 Part B §4.5, §5.1.1, §5.1.2</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Keeps connections well. <span data-claim="ll_conn_not_established_six_events">A
+        connection that never starts is given up only after seconds, not after six events.</span>
+        <span data-claim="ll_ctrl_conn_update_at_instant ll_ctrl_conn_update_instant_passed">A parameter update that
+        arrives at or after its instant is mishandled.</span></li>
+      <li><strong>Outglow</strong> Passes them.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="ll_ctrl_procedures">
+    <h3>Link layer control</h3>
+    <p>Version and feature exchange, unknown requests, ping, data length, PHY, timeouts.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 6 Part B §2.4.2, §5.1, §5.2</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="ll_ctrl_version_once">Sends its
+        version more than once.</span> <span data-claim="ll_ctrl_procedure_timeout">A
+        procedure it starts is not timed out.</span></li>
+      <li><strong>Outglow</strong> Passes them; it starts no procedure of its own.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="l2cap_frames l2cap_signaling">
+    <h3>L2CAP</h3>
+    <p>Putting frames together from packets, and the signalling channel's answers.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 3 Part A §3, §4, §7</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Reassembles frames. <span data-claim="l2cap_sig_reject_unknown_code l2cap_sig_reject_disallowed_code l2cap_sig_credit_based_requests l2cap_sig_mtu_exceeded l2cap_sig_identifier l2cap_sig_param_update_req_to_peripheral">It
+        leaves signalling commands it does not know unanswered.</span> <span data-claim="l2cap_length_mismatch">It
+        processes a frame whose length does not match.</span></li>
+      <li><strong>Outglow</strong> Passes them.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="att_commands att_errors att_find att_mtu att_read att_server_initiated att_write">
+    <h3>Attribute protocol (ATT)</h3>
+    <p>Reading and writing the bulb's attributes, and the error answers a phone relies on.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 3 Part F §3</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Reads and writes. <span data-claim="att_unsupported_request att_read_multiple att_read_multiple_variable">Some
+        requests get no answer at all, so the phone waits for its 30 s timeout.</span> <span data-claim="att_invalid_pdu_short att_invalid_pdu_long att_invalid_pdu_uuid_size att_read_invalid_handles att_error_rsp_format att_find_info_invalid_handles att_find_info_not_found att_find_by_type_value_invalid_handles att_read_by_type_invalid_handles att_read_blob_invalid_offset att_read_blob_invalid_handles att_read_by_group_type_unsupported att_read_by_group_type_errors att_write_invalid_handles att_prepare_write_errors">Malformed
+        requests and wrong handles get the wrong error or none.</span> <span data-claim="att_write_cmd_not_answered">It
+        answers write commands, which must not be answered.</span></li>
+      <li><strong>Outglow</strong> Passes every test that applies; it has no queued writes and asks for no MTU of its
+        own, so those tests do not apply.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-tests="gatt_cccd gatt_discovery gatt_gap_service gatt_properties">
+    <h3>Services and characteristics (GATT, GAP)</h3>
+    <p>How a phone discovers the bulb's services, what each characteristic allows, and how notifications are
+      switched on.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 3 Part G, Vol 3 Part C §12</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> <span data-claim="gatt_cccd_present">Its notifying characteristic has no
+        configuration descriptor.</span> <span data-claim="gatt_char_declaration_value">Characteristic declarations read
+        back wrong.</span> <span data-claim="gatt_gap_name_advertised">The advertised name is not the device
+        name.</span></li>
+      <li><strong>Outglow</strong> One test fails, <code>gatt_cccd_gates_notifications</code>: it notifies even with
+        the descriptor off, because the vendor app switches notifications on its own way (see losses). Two more end in
+        a note (a recommendation, or a clause that can be read two ways) and one could not be judged; the list shows
+        each.</li>
+    </ul>
+  </section>
+
+  <section class="std" data-first data-tests="smp_pairing ll_ctrl_enc_req ll_ctrl_feature_used ll_ctrl_peripheral_terminate ll_ctrl_peripheral_terminate_timer">
+    <h3>Pairing, encryption and ending a connection</h3>
+    <p>How a bulb without Bluetooth pairing must refuse pairing and encryption requests, what it says it supports, and
+      how it ends a connection itself.</p>
+    <p class="ref">Bluetooth Core 5.4 Vol 3 Part H §2, §3; Vol 6 Part B §5.1.3, §5.1.4, §5.1.6</p>
+    <ul class="sides">
+      <li><strong>Original firmware</strong> Results not published (see above).</li>
+      <li><strong>Outglow</strong> Refuses them as specified.</li>
+    </ul>
+  </section>
+  <div id="ble-other"></div>
+
+  <h2 id="versions">Versions tested</h2>
+  <div id="versions-table"><p class="muted">Loading…</p></div>
+
+  <h2 id="standards">The standards</h2>
+  <p>The tests quote these documents. The Zigbee ones are published by the Connectivity Standards Alliance
+    (<a href="https://csa-iot.org/developer-resource/specifications-download-request/">all Zigbee specifications</a>),
+    the Bluetooth ones by the Bluetooth SIG.</p>
+  <ul class="caveats">
+    <li><a href="https://csa-iot.org/wp-content/uploads/2022/01/docs-05-3474-22-0csg-zigbee-specification-1.pdf">Zigbee
+      Specification R22</a> (05-3474-22): network, APS, ZDO and security.</li>
+    <li><a href="https://csa-iot.org/wp-content/uploads/2022/01/07-5123-08-Zigbee-Cluster-Library-1.pdf">Zigbee Cluster
+      Library, revision 8</a> (07-5123-08): the clusters.</li>
+    <li><a href="https://csa-iot.org/wp-content/uploads/2022/12/16-02828-012-PRO-BDB-v3.0.1-Specification.pdf">Base
+      Device Behavior 3.0.1</a> (16-02828-012): joining and commissioning.</li>
+    <li><a href="https://csa-iot.org/wp-content/uploads/2022/01/docs-15-0014-05-0plo-LightingOccupancyDevice-Specification-V1.0-1.pdf">Lighting
+      &amp; Occupancy Device Specification 1.0</a> (15-0014-05): what a light must have.</li>
+    <li><a href="https://csa-iot.org/wp-content/uploads/2024/03/14-0563-19_Green-Power-Basic_specification_v1.1.2.pdf">Green
+      Power Basic 1.1.2</a> (14-0563-19).</li>
+    <li><a href="https://www.bluetooth.com/specifications/specs/core-specification-5-4/">Bluetooth Core Specification
+      5.4</a> (since withdrawn by the SIG in favour of later versions; the tests quote 5.4).</li>
+    <li><a href="https://www.bluetooth.com/specifications/specs/core-specification-supplement/">Core Specification
+      Supplement</a>: the advertising data types.</li>
+  </ul>
+  <p class="muted small">Outglow is not certified by the Connectivity Standards Alliance or the Bluetooth SIG; passing
+    these tests is not certification. <a href="install.html">How to install and how to go back →</a></p>
 </main>
 <footer class="site">
   Outglow is free software under the GNU GPL version 3 or later.

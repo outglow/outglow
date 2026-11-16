@@ -148,7 +148,24 @@ pub fn main_with(argv: &[String]) -> i32 {
             return 2;
         }
     };
-    let all = tests();
-    let meta: Vec<TestMeta> = all.iter().map(|t| TestMeta { id: t.id, doc: t.doc, clause: t.clause, req: t.req }).collect();
+    let meta: Vec<TestMeta> = super::modules()
+        .into_iter()
+        .flat_map(|(module, v)| {
+            v.into_iter().map(move |t| TestMeta {
+                id: t.id,
+                module,
+                doc: t.doc,
+                clause: t.clause,
+                req: t.req,
+                mandatory: t.mandatory,
+                level: match t.level {
+                    Level::Shall => "shall",
+                    Level::Should => "should",
+                    Level::Reading => "reading",
+                },
+                ambiguous: t.ambiguous,
+            })
+        })
+        .collect();
     drive(&a, &meta, &mut |on| run(&a, on))
 }

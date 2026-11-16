@@ -1,5 +1,5 @@
 # Shortcuts for the in-process conformance tests (emulator/rs/scenarios), run from the repository root:
-#   cargo spec [-- filters] [--cpi N] [--jobs N] [-v] [--image label=path] [--json out.json]
+#   cargo spec [-- filters] [--cpi N] [--jobs N] [-v] [--image label=path] [--json out.json] [--meta-json tests.json]
 #   cargo ble-spec [-- ...]
 #   cargo sims [-- scenario names] [--cpi N] [--image ROLE=path] [-v]
 #   cargo sims-quick [-- more names or options]  (a few scenarios for every change; the full set in CI)

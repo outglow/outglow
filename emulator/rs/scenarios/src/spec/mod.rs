@@ -88,22 +88,27 @@ impl Default for SessionDef {
     }
 }
 
+/// The tests with the module each comes from (the module names the area: `nwk_routing`, `zcl_level`, ...).
+pub fn modules() -> Vec<(&'static str, Vec<Test>)> {
+    vec![
+        ("aps_data", aps_data::tests()),
+        ("bdb_join", bdb_join::tests()),
+        ("misc_ota_gp", misc_ota_gp::tests()),
+        ("nwk_network", nwk_network::tests()),
+        ("nwk_routing", nwk_routing::tests()),
+        ("parent_role", parent_role::tests()),
+        ("security_keys", security_keys::tests()),
+        ("zcl_basic_identify", zcl_basic_identify::tests()),
+        ("zcl_color", zcl_color::tests()),
+        ("zcl_diagnostics", zcl_diagnostics::tests()),
+        ("zcl_foundation", zcl_foundation::tests()),
+        ("zcl_groups_scenes", zcl_groups_scenes::tests()),
+        ("zcl_level", zcl_level::tests()),
+        ("zcl_onoff", zcl_onoff::tests()),
+        ("zdo_services", zdo_services::tests()),
+    ]
+}
+
 pub fn tests() -> Vec<Test> {
-    let mut v = Vec::new();
-    v.extend(aps_data::tests());
-    v.extend(bdb_join::tests());
-    v.extend(misc_ota_gp::tests());
-    v.extend(nwk_network::tests());
-    v.extend(nwk_routing::tests());
-    v.extend(parent_role::tests());
-    v.extend(security_keys::tests());
-    v.extend(zcl_basic_identify::tests());
-    v.extend(zcl_color::tests());
-    v.extend(zcl_diagnostics::tests());
-    v.extend(zcl_foundation::tests());
-    v.extend(zcl_groups_scenes::tests());
-    v.extend(zcl_level::tests());
-    v.extend(zcl_onoff::tests());
-    v.extend(zdo_services::tests());
-    v
+    modules().into_iter().flat_map(|(_, v)| v).collect()
 }

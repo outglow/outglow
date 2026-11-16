@@ -117,6 +117,23 @@ pub fn run(a: Args) -> Result<()> {
     build(&root, &b, &a, a.out_dir.clone())
 }
 
+/// The default build of one board (Bluetooth, no options) into its default
+/// directory, for other tasks; returns that directory.
+pub fn board_default(board_name: &str) -> Result<PathBuf> {
+    let a = Args { board: Some(board_name.into()), all: false, no_ble: false, trace: false, sense: false, file_version: None, out_dir: None };
+    build(&crate::root(), board_name, &a, None)?;
+    Ok(default_dir(&crate::root(), board_name))
+}
+
+/// target/tc32, target/tc32-tw or target/tc32-<board in lower case>.
+pub fn default_dir(root: &Path, board_name: &str) -> PathBuf {
+    root.join("target").join(match board_name {
+        "ESMLFzm_w6_Dimm-4.63" => "tc32".to_string(),
+        "ESMLFzm_w6_TW-4.63" => "tc32-tw".to_string(),
+        b => format!("tc32-{}", b.to_lowercase()),
+    })
+}
+
 fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> Result<()> {
     let here = root.join("crates/bulb-tc32");
     let known = board::known(board_name).ok_or_else(|| {

@@ -5,6 +5,7 @@
 //!
 //! Arguments (after `--`): substring filters on `label::TEST-ID` (`a|b` = a or
 //! b), `--list`, `--exact`, `--image label=path[@0xOFFSET]` (repeatable),
+//! `--json out.json` (the verdicts), `--meta-json tests.json` (what each test checks),
 //! `--cpi N` (3 = full fidelity), `--jobs N` / `--test-threads N`, `-v`.
 //! Environment: SCENARIO_IMAGES=label=path,... SCENARIO_CPI, SCENARIO_JOBS (or RUST_TEST_THREADS), NO_COLOR.
 
@@ -61,6 +62,8 @@ pub struct Args {
     pub verbose: u8,
     /// write the outcomes as JSON here
     pub json: Option<PathBuf>,
+    /// write what every test checks (module, document, clause, requirement) as JSON here
+    pub meta_json: Option<PathBuf>,
     /// the conformance report over stock, C and Rust instead of the red/green run
     pub matrix: bool,
     /// libtest's --skip: names containing one of these are left out
@@ -100,6 +103,7 @@ pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<
         jobs: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
         verbose: 0,
         json: None,
+        meta_json: None,
         matrix: false,
         skip: Vec::new(),
         color: std::io::IsTerminal::is_terminal(&std::io::stdout()) && std::env::var_os("NO_COLOR").is_none(),
@@ -131,6 +135,7 @@ pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<
             "--cpi" => a.cpi = num(it.next(), "--cpi")?,
             "--jobs" | "--test-threads" => a.jobs = num(it.next(), x)?.max(1) as usize,
             "--json" => a.json = Some(PathBuf::from(it.next().ok_or("--json needs a value")?)),
+            "--meta-json" => a.meta_json = Some(PathBuf::from(it.next().ok_or("--meta-json needs a value")?)),
             "--matrix" => a.matrix = true,
             "--skip" => a.skip.push(it.next().ok_or("--skip needs a value")?.clone()),
             "--image" => cli_images.push(Image::parse(it.next().ok_or("--image needs a value")?)?),
@@ -304,17 +309,36 @@ pub fn main_with(argv: &[String]) -> i32 {
             return 2;
         }
     };
-    let all = spec::tests();
-    let meta: Vec<TestMeta> = all.iter().map(|t| TestMeta { id: t.id, doc: t.doc, clause: t.clause, req: t.req }).collect();
+    let meta: Vec<TestMeta> = spec::modules()
+        .into_iter()
+        .flat_map(|(module, v)| {
+            v.into_iter().map(move |t| TestMeta {
+                id: t.id,
+                module,
+                doc: t.doc,
+                clause: t.clause,
+                req: t.req,
+                mandatory: t.mandatory,
+                level: "shall",
+                ambiguous: t.ambiguous,
+            })
+        })
+        .collect();
     drive(&a, &meta, &mut |on| run(&a, on))
 }
 
 /// What the reports need of a test.
 pub struct TestMeta {
     pub id: &'static str,
+    /// the module the test is in (its area)
+    pub module: &'static str,
     pub doc: &'static str,
     pub clause: &'static str,
     pub req: &'static str,
+    pub mandatory: bool,
+    /// "shall", "should" (a failure is a NOTE) or "reading" (it depends on how the clause is read: NOTE too)
+    pub level: &'static str,
+    pub ambiguous: Option<&'static str>,
 }
 
 /// How a verdict counts in the red/green run: PASS is `ok`, FAIL and ERROR are
@@ -347,6 +371,12 @@ pub fn libtest_status(v: Verdict) -> &'static str {
 pub fn drive(a: &Args, meta: &[TestMeta], run: &mut dyn FnMut(&mut dyn FnMut(&Outcome)) -> Vec<Outcome>) -> i32 {
     let names: Vec<String> =
         a.images.iter().flat_map(|img| meta.iter().map(move |t| format!("{}::{}", img.label, t.id))).collect();
+    if let Some(p) = &a.meta_json {
+        if let Err(e) = std::fs::write(p, meta_json(meta)) {
+            eprintln!("scenarios: {}: {e}", p.display());
+            return 2;
+        }
+    }
     if a.list {
         for n in names.iter().filter(|n| selected(a, n)) {
             println!("{n}: test");
@@ -474,5 +504,26 @@ pub fn outcomes_json(labels: &[&str], out: &[Outcome]) -> String {
         s.push_str(&format!(" }}{}\n", if k + 1 < labels.len() { "," } else { "" }));
     }
     s.push_str("}\n");
+    s
+}
+
+/// `[{"id", "module", "doc", "clause", "req", "mandatory", "level", "ambiguous"}]`: what each test checks.
+pub fn meta_json(meta: &[TestMeta]) -> String {
+    let mut s = String::from("[\n");
+    for (k, t) in meta.iter().enumerate() {
+        s.push_str(&format!(
+            " {{\"id\": {}, \"module\": {}, \"doc\": {}, \"clause\": {}, \"req\": {}, \"mandatory\": {}, \"level\": {}, \"ambiguous\": {}}}{}\n",
+            json_str(t.id),
+            json_str(t.module),
+            json_str(t.doc),
+            json_str(t.clause),
+            json_str(t.req),
+            t.mandatory,
+            json_str(t.level),
+            t.ambiguous.map(json_str).unwrap_or_else(|| "null".into()),
+            if k + 1 < meta.len() { "," } else { "" }
+        ));
+    }
+    s.push_str("]\n");
     s
 }
