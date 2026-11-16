@@ -2,6 +2,11 @@
 //! (emulator/rust_staging_sim.py): an image intact over BLE but damaged in
 //! the flash is not marked bootable; a BLE transfer is refused during a
 //! Zigbee download; the Zigbee client does not download during a BLE transfer.
+//!
+//! The Zigbee update is the image's own update image (`bulb-tc32-ota.bin`
+//! next to it) in an OTA file of a later version, so that the scenario needs
+//! no second build; `--image ota=<file.ota>` takes another one, staged as the
+//! `-ota.bin` next to it.
 
 use super::ble_central::{data_packets, discover, end_packet, hx, ok, tel_get, Bench, Transport, OTA, PAIR};
 use super::{node_of, SimCtx, SimDef};
@@ -80,9 +85,27 @@ fn blocks(b: &Bench) -> usize {
     b.w.coord.ota_log.iter().filter(|(_, k, _)| k == "ota-block").count()
 }
 
+/// The Zigbee OTA file to offer and the image that must end up staged.
+fn zigbee_update(cx: &SimCtx, img: &crate::image::Image) -> R<(Vec<u8>, Vec<u8>)> {
+    let read = |p: &str| std::fs::read(p).map_err(|e| Stop::Error(format!("{p}: {e}")));
+    if let Some(o) = cx.images.iter().find(|i| i.label == "ota") {
+        let ota = o.bytes().map_err(Stop::Error)?;
+        return Ok((ota, read(&o.path.to_string_lossy().replace(".ota", "-ota.bin"))?));
+    }
+    let base = img.path.to_string_lossy().to_string();
+    let own = cx.image("own-ota", &base.replace(".bin", ".ota")).bytes().map_err(Stop::Error)?;
+    let payload = cx.image("own-update", &base.replace(".bin", "-ota.bin")).bytes().map_err(Stop::Error)?;
+    if own.len() < 18 {
+        return Err(Stop::Error(format!("{}: not an OTA file", base.replace(".bin", ".ota"))));
+    }
+    let (mfg, itype) = (u16::from_le_bytes([own[10], own[11]]), u16::from_le_bytes([own[12], own[13]]));
+    let version = u32::from_le_bytes(own[14..18].try_into().unwrap()).wrapping_add(1);
+    Ok((super::transfer::ota_file(mfg, itype, version, "rust_staging", &payload), payload))
+}
+
 fn run(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bin", "target/tc32/bulb-tc32.bin");
-    let ota_img = cx.image("ota", "target/tc32-v2/bulb-tc32.ota");
+    let (ota, expect) = zigbee_update(cx, &img)?;
     let node = node_of(&img, cx.cpi)?;
     let mut b = Bench::new(node, "dut", true, None);
     let mut results: Vec<bool> = Vec::new();
@@ -130,7 +153,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.run(D, 800.0)?;
 
     // --- 2. BLE transfer running: Zigbee does not download
-    let ota = ota_img.bytes().map_err(Stop::Error)?;
     b.w.coord.add_ota_file(ota).map_err(Stop::Error)?;
     let mut tr = connect(&mut b)?;
     let image = small_image(2);
@@ -180,8 +202,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     };
     check(cx, "the Zigbee download finishes: Upgrade End SUCCESS", done && end.last().is_some_and(|e| e.get("status") == Some("0x00")), &shown);
     until(&mut b, 20000.0, 100.0, |b| b.resets(D) > resets)?;
-    let exp_path = ota_img.path.to_string_lossy().replace(".ota", "-ota.bin");
-    let expect = std::fs::read(&exp_path).map_err(|e| Stop::Error(format!("{exp_path}: {e}")))?;
     let staged = b.flash(D, STAGING, expect.len());
     let ndiff = staged.iter().zip(expect.iter()).filter(|(x, y)| x != y).count();
     check(cx, "staged image is the Zigbee one, byte for byte, marked bootable, one restart",
