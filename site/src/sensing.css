@@ -1,0 +1,21 @@
+/* the motion sensing page: two drawn figures and the explanations */
+.sense-figure { margin: 1.25rem 0; background: var(--surface); border: 1px solid var(--line); border-radius: .75rem; padding: .9rem 1rem 1rem; }
+.sense-figure canvas { display: block; width: 100%; }
+.sense-figure figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; margin-top: .6rem; color: var(--muted); font-size: .92rem; }
+.sense-figure .state { display: inline-block; padding: .15rem .6rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-weight: 600; font-size: .85rem; }
+.sense-figure .state.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+.sense-figure .pause { margin-left: auto; padding: .3rem .8rem; font-size: .9rem; }
+.sense-figure .pause:focus-visible, .sensitivity input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.legend i { display: inline-block; width: 1.1rem; }
+.k-sample { height: 6px; width: 6px !important; border-radius: 50%; background: var(--text); }
+.k-median { border-top: 2px solid var(--accent); }
+.k-band { height: .7rem; background: var(--accent-soft); border-radius: 2px; }
+.k-motion { height: .55rem; background: var(--accent); border-radius: 2px; }
+.sensitivity { margin-top: .9rem; display: grid; gap: .35rem; }
+.sensitivity label { display: flex; justify-content: space-between; color: var(--muted); }
+.sensitivity output { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.sensitivity input { width: 100%; accent-color: var(--accent); }
+.sensitivity .params { margin: 0; font-variant-numeric: tabular-nums; color: var(--text); }
+.sense-steps > li, .sense-list > li { margin-bottom: .6rem; max-width: 46rem; }
+main p { max-width: 46rem; }
