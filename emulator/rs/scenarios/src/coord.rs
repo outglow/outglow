@@ -94,6 +94,9 @@ pub struct Coord {
     aps_fc_by_key: Vec<(Key, u32)>,
     tclk_gen: u8,
     pub aps_cmds: Vec<(f64, u16, Vec<u8>)>,
+    /// Every Confirm Key sent: (the device's short address, the NWK sequence
+    /// number of the frame), to tell it on the air (`util::key_confirmed`)
+    pub confirm_keys: Vec<(u16, u8)>,
     /// The plain `zigbee_coord.Coordinator` (the integration scripts) instead of
     /// the spec suite's `SpecTC`: its own MAC (fixed send times, retries per
     /// sequence number), no APS command acknowledgements, the TC link key with
@@ -172,6 +175,7 @@ impl Coord {
             aps_fc_by_key: Vec::new(),
             tclk_gen: 0,
             aps_cmds: Vec::new(),
+            confirm_keys: Vec::new(),
             plain: false,
             waiting_ack: HashMap::new(),
             ota_images: Vec::new(),
@@ -893,6 +897,7 @@ impl Coord {
                 body.extend_from_slice(&ext_bytes(sext));
                 let key = if ok { k.unwrap() } else { self.tclk };
                 let aps = self.aps_cmd_secured(&body, &key, 0);
+                self.confirm_keys.push((src, self.st.nwk_seq));
                 self.nwk_send_data(air, src, &aps);
             }
             0x06 => {

@@ -50,6 +50,35 @@ pub fn verified(s: &Sim) -> usize {
     s.events("verify-key").iter().filter(|e| e.get("ok") == Some("True")).count()
 }
 
+/// Whether a Confirm Key of the coordinator reached the device `short`: on
+/// the air, its last hop (MAC and NWK destination `short`, NWK source the
+/// Trust Center, the NWK sequence number the coordinator gave it) and the
+/// device's MAC acknowledgement of it. The Trust Center's `verified` is
+/// its own half of the exchange; the joining node is done with it only on
+/// the Confirm Key (BDB 3.0.1 10.2.5 steps 11 to 13), and until then it
+/// retries and, when that fails, leaves the network (8.2, step 12).
+pub fn key_confirmed(s: &Sim, short: u16) -> bool {
+    let seqs: Vec<u8> = s.w.coord.confirm_keys.iter().filter(|c| c.0 == short).map(|c| c.1).collect();
+    if seqs.is_empty() {
+        return false;
+    }
+    let frames = &s.w.air.frames;
+    frames.iter().enumerate().any(|(i, f)| {
+        let Some(m) = crate::frames::mac_parse(&f.psdu) else { return false };
+        let p = &m.payload;
+        let last_hop = m.ty == 1
+            && m.dst == Some(short as u64)
+            && p.len() >= 8
+            && u16::from_le_bytes([p[2], p[3]]) == short
+            && u16::from_le_bytes([p[4], p[5]]) == 0x0000
+            && seqs.contains(&p[7]);
+        last_hop
+            && frames[i + 1..].iter().take_while(|a| a.t0 < f.t1 + 1.0).any(|a| {
+                a.who != f.who && a.psdu.len() == 5 && a.psdu[0] & 7 == 2 && a.psdu[2] == m.seq
+            })
+    })
+}
+
 /// `f"after {dt:.0f} ms" if dt is not None else otherwise`.
 pub fn after(dt: Option<f64>, otherwise: &str) -> String {
     dt.map(|d| format!("after {d:.0} ms")).unwrap_or_else(|| otherwise.into())
