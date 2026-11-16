@@ -749,7 +749,7 @@ fn the_link_cost_comes_from_the_measured_delivery_once_there_is_enough() {
     // before any traffic of note: the LQI estimate
     let (cost_b, measured_b, _, lqi_b) = entry(&mut net, sb, 0x0000).expect("the coordinator in b's table");
     assert!(!measured_b);
-    assert!(cost_b == nwk::cost_from_lqi(lqi_b) && cost_b > 1, "by the LQI ({lqi_b}): cost {cost_b}");
+    assert!(cost_b == cost_by_lqi(lqi_b) && cost_b > 1, "by the LQI ({lqi_b}): cost {cost_b}");
     // traffic to the coordinator: answers to reads
     for _ in 0..40 {
         net.coord.zcl(sa, DIAG, 0x00, 0x00, &ids(&[RESETS]));
@@ -764,6 +764,29 @@ fn the_link_cost_comes_from_the_measured_delivery_once_there_is_enough() {
     assert!(measured_b && p_b >= 231 && cost_b == 1, "nothing lost: p {p_b}/255, cost {cost_b}");
     // and that is the cost of the way to the coordinator
     assert_eq!(mfr1(&mut net, sb, 0x5021), 1);
+}
+
+/// The initial link cost by the average LQI, written out apart from the
+/// stack: R22 3.6.3.1 leaves the table to the implementation ("a
+/// table-driven function may be used"); this is Telink's for the TLSR8258 in
+/// dBm (-60 and up 1, -68 2, -76 3, -84 5, weaker 7) on the hardware layer's
+/// LQI scale, -99 dBm = 0 .. -15 dBm = 255.
+fn cost_by_lqi(lqi: u8) -> u8 {
+    let dbm = lqi as f64 * 84.0 / 255.0 - 99.0;
+    match dbm {
+        d if d >= -60.0 => 1,
+        d if d >= -68.0 => 2,
+        d if d >= -76.0 => 3,
+        d if d >= -84.0 => 5,
+        _ => 7,
+    }
+}
+
+#[test]
+fn the_initial_link_cost_follows_the_lqi_table() {
+    for lqi in 0..=255u8 {
+        assert_eq!(nwk::cost_from_lqi(lqi), cost_by_lqi(lqi), "LQI {lqi}");
+    }
 }
 
 /// The neighbors that went stale according to the event log.
@@ -889,10 +912,13 @@ fn the_black_box_keeps_the_unicasts_per_neighbor_the_frames_sent_and_rows() {
     let last = rows.last().unwrap();
     assert!(last[8] & 0x10 != 0 && last[8] & 7 >= 1, "straight to the coordinator, with a cost: {:#04x}", last[8]);
     assert_eq!(last[11] as i8, -97, "the noise floor");
-    // past the end: an empty page; past the pages: not an attribute
-    let pages = total.div_ceil(64) as u16;
-    let r = mfr(&mut net, short, &[0x6000 + pages]);
-    assert!(!r.contains_key(&(0x6000 + pages)) || r[&(0x6000 + pages)].1 == vec![0]);
+    // past the pages: not an attribute (ZCL status UNSUPPORTED_ATTRIBUTE)
+    let past = 0x6000 + total.div_ceil(64) as u16;
+    let seq = net.coord.zcl_mfr(short, DIAG, 0x00, MFR, 0x00, &ids(&[past]));
+    net.run(60);
+    let rsp = net.coord.last_zcl_mfr(short, DIAG, 0x01).unwrap();
+    assert_eq!(rsp[3], seq);
+    assert_eq!(&rsp[5..], &[past as u8, (past >> 8) as u8, 0x86]);
 }
 
 /// (id, type, value) of `Stack::diag_counters`.

@@ -22,7 +22,7 @@ use model::{Channel, Crossing, Rng};
 use sim::*;
 use zigbee::mac;
 use zigbee::stack::Identity;
-use zigbee::stack::{SENSE_DEFAULT_OFF_S, SENSE_DEFAULT_RATE, SENSE_DEFAULT_S, SENSE_ON_RATE};
+use zigbee::stack::{SENSE_DEFAULT_OFF_S, SENSE_DEFAULT_S, SENSE_ON_RATE};
 
 const OCC: u16 = 0x0406;
 const SENSE: u16 = 0xFC5E;
@@ -201,8 +201,7 @@ fn the_clusters_are_on_the_endpoint_with_their_defaults() {
     assert_eq!(read(&mut net, sa, OCC, 0x0010), Some(SENSE_DEFAULT_OFF_S.to_le_bytes().to_vec()), "OFF delay 30 s");
     assert_eq!(read(&mut net, sa, OCC, 0xFFFD), Some(vec![2, 0]));
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "sensitivity 40");
-    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![SENSE_DEFAULT_RATE]), "no probes: the sensing is off");
-    assert_eq!(SENSE_DEFAULT_RATE, 0);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![0]), "no probes: the sensing is off");
     assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![1]), "the automatic calibration ready for when it is on");
     assert_eq!(read(&mut net, sa, SENSE, 0x0003), Some(vec![0]), "no calibration running");
     assert_eq!(read(&mut net, sa, SENSE, 0x0004), Some(vec![0]), "self-tuning off");

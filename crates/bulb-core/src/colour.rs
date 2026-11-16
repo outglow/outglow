@@ -299,13 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn the_matrix_constants_are_the_stock_firmware_s() {
-        assert_eq!((3.2406f64).to_bits(), 0x4009_ecbf_b15b_573f);
-        assert_eq!((-1.5372f64).to_bits(), 0xbff8_985f_06f6_9446);
-        assert_eq!((1.057f64).to_bits(), 0x3ff0_e978_d4fd_f3b6);
-    }
-
-    #[test]
     fn hue_directions() {
         assert_eq!(HueDirection::Shortest.delta(0, 170), -85);
         assert_eq!(HueDirection::Shortest.delta(0, 80), 80);

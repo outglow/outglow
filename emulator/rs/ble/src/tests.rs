@@ -1180,7 +1180,6 @@ fn air_rules() {
 }
 
 #[test]
-fn fmt_and_script_value() {
+fn fmt_pdu_of_an_empty_pdu() {
     assert_eq!(fmt_pdu(&[0x01, 0]), "[NESN0 SN0 MD0 len  0] empty");
-    assert_eq!(ScriptValue::Nil, ScriptValue::Nil);
 }

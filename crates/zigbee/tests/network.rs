@@ -457,9 +457,21 @@ fn nwk_leave_request_is_obeyed() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
+    net.coord.permit_join = false;
+    let before = net.coord.nwk_cmd_rx.len();
+    // a Leave request (options 0x40: request, no rejoin)
     net.coord.nwk_command(short, 1, &[zigbee::nwk::CMD_LEAVE, 0x40]);
     net.run(1_000);
     assert_ne!(net.nodes[n].stack.state(), State::Up);
+    // it said so: a Leave indication from its address, not a request (R22 3.4.4)
+    assert!(
+        net.coord.nwk_cmd_rx[before..].iter().any(|(s, c)| *s == short && c[0] == zigbee::nwk::CMD_LEAVE && c[1] & 0x40 == 0),
+        "{:?}",
+        &net.coord.nwk_cmd_rx[before..]
+    );
+    // and it forgot the network: a power cycle finds none
+    net.power_cycle(n);
+    assert_eq!(net.nodes[n].stack.state(), State::Down);
 }
 
 #[test]

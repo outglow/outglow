@@ -164,12 +164,15 @@ fn scenes_keep_the_colour_and_its_mode() {
     net.run(50);
     net.coord.zcl(short, COLOR, 0x11, 0x0A, &[250, 0, 0, 0]);
     net.run(50);
+    // (the history holds the commands that set the colours: only what the recalls add counts)
+    let before = net.nodes[n].commands.len();
     net.coord.zcl(short, SCENES, 0x01, 0x05, &[0x34, 0x12, 1]);
     net.run(50);
-    assert!(net.nodes[n].commands.contains(&Command::MoveToHueSaturation { hue: 40, sat: 200, direction: HueDirection::Shortest, transition_ms: 0 }));
+    assert!(net.nodes[n].commands[before..].contains(&Command::MoveToHueSaturation { hue: 40, sat: 200, direction: HueDirection::Shortest, transition_ms: 0 }));
+    let before = net.nodes[n].commands.len();
     net.coord.zcl(short, SCENES, 0x01, 0x05, &[0x34, 0x12, 2]);
     net.run(50);
-    assert!(net.nodes[n].commands.contains(&Command::MoveToXy { x: 0x4CCD, y: 0x9999, transition_ms: 0 }));
+    assert!(net.nodes[n].commands[before..].contains(&Command::MoveToXy { x: 0x4CCD, y: 0x9999, transition_ms: 0 }));
     // View Scene: the colour extension with x, y, hue, saturation, the colour temperature and the mode
     let seq = net.coord.zcl(short, SCENES, 0x01, 0x01, &[0x34, 0x12, 2]);
     net.run(50);
