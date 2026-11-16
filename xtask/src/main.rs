@@ -1,9 +1,8 @@
-//! `cargo xtask <task>`: the repository's tasks.
-
 use clap::{Parser, Subcommand};
 
 mod boards;
 mod build;
+mod comments;
 mod compare;
 mod index;
 mod mutants;
@@ -19,20 +18,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Task {
-    /// Build the firmware of a board (crates/bulb-tc32); in `nix develop` (its pinned rustc) the image is the one CI builds
+    #[doc = " Build the firmware of a board (crates/bulb-tc32); in `nix develop` (its pinned rustc) the image is the one CI builds"]
     Build(build::Args),
-    /// The board table from the stock profiles (analysis/profiles/)
+    #[doc = " The board table from the stock profiles (analysis/profiles/)"]
     Boards(boards::Args),
-    /// The website's comparison data: the conformance tests on the original firmware and on Outglow
+    #[doc = " The website's comparison data: the conformance tests on the original firmware and on Outglow"]
     Compare(compare::Args),
-    /// The Zigbee2MQTT OTA index and the web flasher's release list from built images
+    #[doc = " The Zigbee2MQTT OTA index and the web flasher's release list from built images"]
     Index(index::Args),
-    /// Mutation tests: break the code on purpose, the tests must notice
+    #[doc = " Mutation tests: break the code on purpose, the tests must notice"]
     Mutants(mutants::Args),
-    /// The top of a release's notes: how to install, the files of every board
+    #[doc = " The top of a release's notes: how to install, the files of every board"]
     ReleaseNotes(notes::Args),
-    /// Download the prebuilt llvm-tc32 compiler (or say how to build it)
+    #[doc = " Download the prebuilt llvm-tc32 compiler (or say how to build it)"]
     Toolchain(toolchain::Args),
+    #[doc = " Rust sources carry no comments: list them, or remove them with --fix"]
+    Comments(comments::Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -47,10 +48,10 @@ fn main() -> anyhow::Result<()> {
         Task::Mutants(a) => mutants::run(a),
         Task::ReleaseNotes(a) => notes::run(a),
         Task::Toolchain(a) => toolchain::run(a),
+        Task::Comments(a) => comments::run(&a),
     }
 }
 
-/// The repository root.
 pub fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
