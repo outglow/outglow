@@ -1,7 +1,3 @@
-//! Link Layer, advertising: scan requests and connection requests heard by the
-//! advertiser (Core 5.4 Vol 6 Part B 4.4.2.3, 2.3.2, 2.3.3, 1.3);
-//! emulator/spec_ble/ll_adv_requests.py.
-
 use crate::ble::harness::{hx, AdvPkt, BleSession, ConnInd, LinkOpts};
 use crate::ble::BleTest;
 use crate::py;
@@ -74,10 +70,8 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// (time of the ADV_IND, channel, packets sent in the 2.5 ms after it, of those the stopped ones).
 type Answer = (f64, i64, Vec<AdvPkt>, Vec<AdvPkt>);
 
-/// Answers the next n ADV_IND on channel ch with pdu.
 fn answers(s: &mut BleSession, pdu: &[u8], ch: i64, n: usize, wait_ms: f64) -> R<Vec<Answer>> {
     s.address()?;
     s.run(50.0)?;
@@ -107,7 +101,6 @@ fn answers(s: &mut BleSession, pdu: &[u8], ch: i64, n: usize, wait_ms: f64) -> R
     Ok(out)
 }
 
-/// Scan responses the firmware launched and stopped again: how long before their start.
 fn cut_note(res: &[Answer]) -> String {
     let cut: Vec<f64> = res.iter().flat_map(|(_, _, _, c)| c.iter().filter(|p| p.ty() == 4).map(|p| p.cut.unwrap())).collect();
     if cut.is_empty() {
@@ -132,8 +125,6 @@ fn rev_colon(a: &[u8]) -> String {
 const SCANA: [u8; 6] = [0x66, 0x55, 0x44, 0x33, 0x22, 0x11];
 
 fn scan_rsp(s: &mut BleSession) -> R<String> {
-    // 4.4.2.3: a SCAN_REQ with the advertiser's address gets a SCAN_RSP on the same primary channel index;
-    // 2.3.2.2: payload AdvA + 0-31 octets.
     let (adva, txadd) = s.address()?;
     let mut seen37: Option<AdvPkt> = None;
     for ch in [37i64, 38, 39] {
@@ -172,8 +163,6 @@ fn scan_rsp(s: &mut BleSession) -> R<String> {
 }
 
 fn scan_req_other(s: &mut BleSession) -> R<String> {
-    // 4.4.2.3: a reply only for a SCAN_REQ "that contains its device address"; 2.3.2.1: AdvA is the
-    // address of the device the PDU is addressed to.
     let (adva, _) = s.address()?;
     let mut other = adva.clone();
     other[0] ^= 0x01;
@@ -197,7 +186,6 @@ fn scan_req_other(s: &mut BleSession) -> R<String> {
         )?;
         notes.push(format!("{name}: 0/{}{}", res.len(), cut_note(&res)));
     }
-    // negative control: the same request with the right address is answered
     let q = s.scan_req_default()?;
     let res = answers(s, &q, 37, 2, 1500.0)?;
     if !res.iter().any(|(_, _, after, _)| after.iter().any(|p| p.ty() == 4)) {
@@ -207,7 +195,6 @@ fn scan_req_other(s: &mut BleSession) -> R<String> {
 }
 
 fn scan_req_other_type(s: &mut BleSession) -> R<String> {
-    // 1.3: an address comparison includes the device address type; 2.3.2.1: RxAdd is the type of AdvA.
     let (_, txadd) = s.address()?;
     let q = s.scan_req(None, Some(txadd ^ 1), &SCANA, 0)?;
     let res = answers(s, &q, 37, 3, 1500.0)?;
@@ -231,7 +218,6 @@ fn scan_req_other_type(s: &mut BleSession) -> R<String> {
     Ok(format!("not answered; control answered{}", cut_note(&res)))
 }
 
-/// Receive windows of a connection (radio command 0x82) opened after t0, and ADV_IND sent.
 fn in_connection(s: &mut BleSession, t0: f64, wait_ms: f64) -> R<(Vec<(f64, u8)>, Vec<AdvPkt>)> {
     s.run(wait_ms)?;
     let rx = s.rx_windows(t0);
@@ -247,7 +233,6 @@ fn wait_sent(s: &mut BleSession, more_than: usize, at_least: bool) -> R<Option<(
 }
 
 fn connect_other(s: &mut BleSession) -> R<String> {
-    // 4.4.2.3: the Connection state is entered for "a CONNECT_IND PDU that contains its device address".
     let (adva, _) = s.address()?;
     let mut other = adva.clone();
     other[0] ^= 0x01;
@@ -267,7 +252,6 @@ fn connect_other(s: &mut BleSession) -> R<String> {
         ),
     )?;
     expect(adv.len() >= 6, format!("only {} ADV_IND in the 1.5 s after a CONNECT_IND for another device", adv.len()))?;
-    // negative control: the same PDU with the right address does start a connection
     let ci = s.connect_ind(&ConnInd::default())?;
     s.adv_reply(&ci, 1, 37)?;
     let n = s.adv_sent(0)?.len();
@@ -287,7 +271,6 @@ fn connect_other(s: &mut BleSession) -> R<String> {
 }
 
 fn connect_other_type(s: &mut BleSession) -> R<String> {
-    // 1.3 (address comparison includes the type) with 2.3.3.1 (RxAdd = type of AdvA) and 4.4.2.3.
     let (_, txadd) = s.address()?;
     s.run(50.0)?;
     let ci = s.connect_ind(&ConnInd { rxadd: Some(txadd ^ 1), ..ConnInd::default() })?;
@@ -320,8 +303,6 @@ fn connect_other_type(s: &mut BleSession) -> R<String> {
 }
 
 fn connect_invalid(s: &mut BleSession) -> R<String> {
-    // 4.5.1: connInterval 7.5 ms..4 s; 4.5.2: timeout 100 ms..32 s and > (1+latency)*interval*2; 4.5.3:
-    // WinSize 1.25 ms..min(10 ms, interval-1.25 ms); 2.3.3.1: Hop 5..16, ChM with used channels.
     s.address()?;
     let d = ConnInd::default;
     let cases: Vec<(&str, ConnInd)> = vec![

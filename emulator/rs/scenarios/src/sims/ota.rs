@@ -1,17 +1,3 @@
-//! The Zigbee OTA update (emulator/ota_sim.py): image A joins, the OTA server
-//! gets the .ota of image B, Image Notify, the download in blocks, Upgrade End,
-//! the restart; then the flash is checked (which bank, image B byte for byte)
-//! and the bulb must come back to the network and work.
-//!
-//! Layout awox (the AwoX bootloader, which we do not have): after Upgrade End
-//! and the reset the flash must look as stock leaves it after BLE OTA (image B
-//! @0x6000 with 0x4B @+8, nothing outside staging and NV touched). Then either
-//! the old image must keep working (`Layout::Awox`: the emulator starts it
-//! again), or the bootloader's install as inferred (`transfer::install_staged`)
-//! puts image B in place and image B must come back with its network and
-//! report its version (`Layout::AwoxInstalled`). Layout ownbl: our bootloader
-//! installs image B.
-
 use super::zigbee::{decode_attrs, finish, fmt_light, sector_ranges, Z};
 use super::{SimCtx, SimDef};
 use crate::coord::{CoordEvent, EP};
@@ -23,11 +9,6 @@ pub fn defs() -> Vec<SimDef> {
     ]
 }
 
-/// ota_sim.py --layout awox --from target/tc32/bulb-tc32.bin --ota target/tc32-v2/bulb-tc32.ota
-///   --expect-bin target/tc32-v2/bulb-tc32-ota.bin (docs/rust-radio.md), then
-/// the staged image installed and started: version 2 (file version
-/// 0x01000001, `cargo xtask build --file-version 01000001 --out-dir
-/// target/tc32-v2`) back on the network from the NV of version 1.
 fn ota_rust(cx: &mut SimCtx) -> R<()> {
     let from = cx.image("from", "target/tc32/bulb-tc32.bin");
     let ota = cx.image("ota", "target/tc32-v2/bulb-tc32.ota");
@@ -38,10 +19,7 @@ fn ota_rust(cx: &mut SimCtx) -> R<()> {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Layout {
     Ownbl,
-    /// staged at 0x6000 for the AwoX bootloader; the old image starts again
     Awox,
-    /// as `Awox`, then installed as the AwoX bootloader is taken to install it
-    /// (`transfer::install_staged`) and started
     AwoxInstalled,
 }
 
@@ -51,7 +29,6 @@ impl Layout {
     }
 }
 
-/// Python's `str(d)` of an event's details, every value a string except `none` keys.
 fn py_dict(e: &CoordEvent, keys: &[&str]) -> String {
     let parts: Vec<String> = keys
         .iter()
@@ -79,8 +56,6 @@ pub fn run(cx: &mut SimCtx, from: &crate::image::Image, ota_img: &crate::image::
            layout: Layout) -> R<()> {
     let mut z = Z::new(cx, from)?;
     let r = body(&mut z, from, ota_img, expect, layout);
-    // one pcap per image updated: ota_rust and the lab's ota_awox (the C
-    // firmware) run side by side through this function
     let stem = from.path.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     finish(&mut z, cx, &format!("ota-sim-{stem}.pcap"));
     if let Some(l) = super::util::stack_report(z.w.node(crate::air::NodeId::Dut), from) {
@@ -172,7 +147,6 @@ pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image
         return Ok(());
     }
 
-    // restart into the new bank
     z.run_until(20000.0, 20.0, move |z| z.w.resets > resets0)?;
     let r = z.w.resets;
     z.check("restart after the update", r > resets0, &format!("resets={r}"));
@@ -220,7 +194,6 @@ pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image
             z.check("[awox] KNLT flag 0x4B @0x6008 (the AwoX bootloader sees a valid image)", staged[8] == 0x4B, "");
             let a_len = from.bytes().map_err(crate::session::Stop::Error)?.len();
             let app_end = (0x6A000 + a_len + 0xFFF) & !0xFFF;
-            // 0xCF000: power-on counter (factory reset by sequence), as in stock
             let allowed = |i: usize| {
                 (0x6000..0x6A000).contains(&i) || (0xE6000..0xFE000).contains(&i) || i < 0x6000 || (0x6A000..app_end).contains(&i)
                     || i >= 0xFE000 || i == 0xCF000
@@ -258,7 +231,6 @@ pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image
         }
     }
 
-    // the new firmware returns to the network and works
     z.idle(8000.0)?;
     let n_assoc2 = events(z, "association-request").count();
     z.check("no re-association (network from NV)", n_assoc2 == n_assoc,
@@ -277,14 +249,12 @@ pub fn body(z: &mut Z, from: &crate::image::Image, ota_img: &crate::image::Image
         let st = light_of(&z.w.air.dut);
         z.check(&format!("after the update: {name}"), !rsp.is_empty() && exp(&st), &fmt_light(&st));
     }
-    // the firmware after the update reports its version (Query Next Image)
     let n0 = z.w.coord.events.len();
     z.w.coord.image_notify(&mut z.w.air, short, EP);
     wait_event(z, "ota-query", 15000.0, Some(n0))?;
     let q2: Vec<CoordEvent> = z.w.coord.events[n0..].iter().filter(|e| e.kind == "ota-query").cloned().collect();
     let cur = |e: &CoordEvent| u32::from_str_radix(e.get("current").unwrap_or("0x0").trim_start_matches("0x"), 16).unwrap_or(0);
     if layout == Layout::Awox {
-        // without the AwoX bootloader in the simulation the new image was not installed: the OLD version answers
         let ok = q2.last().is_some_and(|e| cur(e) != ver);
         let d = q2.last().map(|e| py_dict(e, &qkeys)).unwrap_or_default();
         z.check("[awox] the old image still responds (the new one will only be installed by the AwoX bootloader)", ok, &d);

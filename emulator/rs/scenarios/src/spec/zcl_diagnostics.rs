@@ -1,9 +1,3 @@
-//! Diagnostics cluster (ZCL rev 8 clause 3.15). The cluster is optional:
-//! an image without it in the light's simple descriptor is N/A. The
-//! attributes are all optional too, so each test judges the attributes the
-//! image implements (found with Discover Attributes) and is N/A when it has
-//! none of those it is about.
-
 use super::zcl_foundation::{int, records, retry, Records};
 use super::Test;
 use crate::air::NodeId;
@@ -15,7 +9,6 @@ const DIAG: u16 = 0x0B05;
 const ON_OFF: u16 = 0x0006;
 const UNSUP_COMMAND: u8 = 0x81;
 
-/// Tables 3-130 and 3-131: identifier, name, type.
 const TABLE: [(u16, &str, u8); 32] = [
     (0x0000, "NumberOfResets", 0x21),
     (0x0001, "PersistentMemoryWrites", 0x21),
@@ -96,7 +89,6 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-/// The attribute identifiers (and types) the Diagnostics server reports in Discover Attributes.
 fn discovered(s: &mut Session) -> R<Vec<(u16, u8)>> {
     let mut out = Vec::new();
     let mut start = 0u16;
@@ -151,7 +143,6 @@ fn types(s: &mut Session) -> R<String> {
             _ => {}
         }
     }
-    // and each reads with its type
     for chunk in inside.chunks(8) {
         let ids: Vec<u16> = chunk.iter().map(|a| a.0).collect();
         let r = read(s, &ids)?;
@@ -166,7 +157,6 @@ fn types(s: &mut Session) -> R<String> {
     Ok(format!("{} attributes: {}", inside.len(), inside.iter().map(|a| format!("{:#06x}", a.0)).collect::<Vec<_>>().join(" ")))
 }
 
-/// Reads LastMessageLQI and LastMessageRSSI with the coordinator's frames arriving at `rssi`.
 fn read_at(s: &mut Session, rssi: i64) -> R<(Option<i64>, Option<i64>)> {
     s.w.air.rssi_fn = Some(Box::new(move |snd, rcv, _| if snd == NodeId::Coord && rcv == NodeId::Dut { rssi } else { -40 }));
     let r = read(s, &[0x011C, 0x011D]);
@@ -223,7 +213,6 @@ fn rx_counters(s: &mut Session) -> R<String> {
     let before = read(s, &attrs)?;
     const N: i64 = 5;
     for _ in 0..N {
-        // Toggle twice per round would leave the light as it was; a read changes nothing
         s.read(ON_OFF, &[0x0000], 1500.0)?;
     }
     let after = read(s, &attrs)?;
@@ -235,7 +224,6 @@ fn rx_counters(s: &mut Session) -> R<String> {
             (Some(b), Some(c)) => c - b,
             _ => return Err(Stop::Inconclusive(format!("{a:#06x} did not read"))),
         };
-        // the N reads and the second read of the counters itself
         ok &= d >= N + 1;
         parts.push(format!("{a:#06x}: +{d}"));
     }

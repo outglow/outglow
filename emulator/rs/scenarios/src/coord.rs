@@ -1,12 +1,3 @@
-//! The coordinator and Trust Center of the scenarios: a port of
-//! emulator/zigbee_coord.py `Coordinator` with the `SpecTC` behaviour of
-//! emulator/spec/harness.py (its ordered MAC queue with carrier sense and
-//! retries from `NodeMixin`, key sequence numbers, APS command
-//! acknowledgements, the TC link key secured with the key-load key).
-//!
-//! Its own implementation of every layer, independent of `crates/zigbee`, so
-//! that it judges an image instead of agreeing with it.
-
 use std::collections::{HashMap, HashSet};
 
 use crate::air::{Air, Ev, NodeId};
@@ -19,11 +10,9 @@ pub const TCLK_DEFAULT: Key = *b"ZigBeeAlliance09";
 pub const NWK_KEY: Key = [0x01, 0x03, 0x05, 0x07, 0x09, 0x0b, 0x0d, 0x0f, 0x00, 0x02, 0x04, 0x06, 0x08, 0x0a, 0x0c, 0x0d];
 const UPPER_RETRIES: u32 = 2;
 
-/// What the coordinator scheduled for itself.
 pub enum CoordEv {
     LinkStatusTick,
     TransportKey { ext: u64 },
-    /// `Coordinator._ack_timeout` of the plain coordinator
     AckTimeout(u8),
 }
 
@@ -49,7 +38,6 @@ pub struct CoordEvent {
     pub details: String,
 }
 
-/// A ZCL (or ZDO response) frame the coordinator received.
 #[derive(Clone, Debug)]
 pub struct ZclRsp {
     pub ms: f64,
@@ -61,19 +49,16 @@ pub struct ZclRsp {
 }
 
 pub struct Coord {
-    /// MAC, addresses, network key, sequence numbers and counters
     pub st: Station,
     pub ext: u64,
     pub ext_pan: u64,
     pub tclk: Key,
     key_transport: Key,
-    /// None: the coordinator ignores Beacon Requests.
     pub permit_join: Option<bool>,
     pub stack_revision: u16,
     pub short: u16,
     pub aps_fc_out: u32,
     next_short: u16,
-    /// Devices in the order they first associated.
     pub devices: Vec<Device>,
     pub by_short: HashMap<u16, u64>,
     pending: HashSet<u64>,
@@ -84,31 +69,19 @@ pub struct Coord {
     pub source_routes: HashMap<u16, Vec<u16>>,
     fc_in_ext: HashMap<u64, i64>,
     pub route_records: Vec<(f64, u16, Vec<u16>)>,
-    // SpecTC
     pub mute_aps_ack: bool,
     pub mute_route_reply: bool,
     pub mute_tclk: bool,
     pub tclk_key_load: bool,
-    /// a fresh outgoing APS frame counter for every new link key
     pub aps_fc_per_key: bool,
     aps_fc_by_key: Vec<(Key, u32)>,
     tclk_gen: u8,
     pub aps_cmds: Vec<(f64, u16, Vec<u8>)>,
-    /// Every Confirm Key sent: (the device's short address, the NWK sequence
-    /// number of the frame), to tell it on the air (`util::key_confirmed`)
     pub confirm_keys: Vec<(u16, u8)>,
-    /// The plain `zigbee_coord.Coordinator` (the integration scripts) instead of
-    /// the spec suite's `SpecTC`: its own MAC (fixed send times, retries per
-    /// sequence number), no APS command acknowledgements, the TC link key with
-    /// the key-transport key.
     pub plain: bool,
     waiting_ack: HashMap<u8, (Vec<u8>, u32, u32)>,
-    /// OTA images by (manufacturer, image type): (version, file)
     pub ota_images: Vec<((u16, u16), (u32, Vec<u8>))>,
-    /// (ms, event, details) of the OTA server
     pub ota_log: Vec<(f64, String, String)>,
-    /// the discover-route field of the data frames it sends (0: suppress, as the
-    /// Python coordinator; 1: enable, as a real coordinator does)
     pub nwk_discover: u8,
 }
 
@@ -126,14 +99,12 @@ fn hex(b: &[u8]) -> String {
 }
 
 impl CoordEvent {
-    /// A field of the details (`d["k"]` in Python), as text.
     pub fn get(&self, k: &str) -> Option<&str> {
         self.details.split(", ").find_map(|kv| kv.strip_prefix(k).and_then(|r| r.strip_prefix('=')))
     }
 }
 
 impl Coord {
-    /// The plain `zigbee_coord.Coordinator` of the integration scripts.
     pub fn new_plain(channel: i64, nwk_key: Key) -> Coord {
         let mut c = Coord::new(channel, nwk_key);
         c.plain = true;
@@ -141,7 +112,6 @@ impl Coord {
         c
     }
 
-    /// The Trust Center of a spec session: channel 11, PAN 0x1A62, the session network key.
     pub fn new(channel: i64, nwk_key: Key) -> Coord {
         let tclk = TCLK_DEFAULT;
         let ext = 0x00124B0000000001;
@@ -187,9 +157,6 @@ impl Coord {
     fn dev_mut(&mut self, ext: u64) -> Option<&mut Device> {
         self.devices.iter_mut().find(|d| d.ext == ext)
     }
-    /// The address the next device that associates directly gets (the
-    /// coordinator hands them out in a fixed sequence otherwise); a scenario
-    /// makes an address conflict with it.
     pub fn set_next_short(&mut self, short: u16) {
         self.next_short = short;
     }
@@ -213,7 +180,6 @@ impl Coord {
         self.events.push(CoordEvent { ms: t, kind: kind.to_string(), details });
     }
 
-    /// Starts the periodic Link Status.
     pub fn start(&mut self, air: &mut Air) {
         let t = air.now() + self.ls_period_ms;
         air.at(t, self.cev(CoordEv::LinkStatusTick));
@@ -227,13 +193,10 @@ impl Coord {
         }
     }
 
-    // ---------------------------------------------------------- MAC (NodeMixin, in `st`)
     pub fn send_psdu(&mut self, air: &mut Air, mpdu: Vec<u8>, delay_ms: f64, ack_wait: Option<u32>, upper: Option<u32>) {
         if !self.plain {
             return self.st.send_psdu(air, mpdu, delay_ms, ack_wait, upper);
         }
-        // Coordinator.send_psdu: at the earliest once our own last frame is out; MAC
-        // retries every ~2.5 ms, then the upper layer's attempts 100 ms later
         let psdu = with_fcs(&mpdu);
         let now = air.now();
         let t0 = (now + delay_ms).max(self.st.busy_until + 0.2);
@@ -266,7 +229,6 @@ impl Coord {
         self.st.send_ack(air, seq, t_end, pending);
     }
 
-    // ---------------------------------------------------------- reception
     pub fn on_frame(&mut self, air: &mut Air, psdu: &[u8], ch: i64, _t0: f64, t1: f64, rssi: i64) {
         if ch == self.st.channel && psdu.len() == 5 && psdu[0] & 7 == 2 {
             if self.plain {
@@ -327,7 +289,6 @@ impl Coord {
                 });
                 self.by_short.insert(short, ext);
             }
-            // a new association: the device starts over (default TC link key, counters from zero)
             let d = self.dev_mut(ext).unwrap();
             d.tclk = None;
             d.tclk_new = None;
@@ -354,7 +315,6 @@ impl Coord {
         }
     }
 
-    // ---------------------------------------------------------- MAC TX
     fn send_beacon(&mut self, air: &mut Air) {
         let sf: u16 = 0x0FFF | 0x4000 | if self.permit_join == Some(true) { 0x8000 } else { 0 };
         let mut payload = sf.to_le_bytes().to_vec();
@@ -363,8 +323,6 @@ impl Coord {
         payload.extend_from_slice(&[0xff, 0xff, 0xff, 0x00]);
         let seq = nx(&mut self.st.mac_seq);
         let mpdu = mac_build(0, seq, &payload, 0, 0, 0, self.short as u64, 2, Some(self.st.pan), false, false);
-        // a real coordinator jitters its beacon reply; the spread comes from the
-        // (deterministic) MAC sequence number, as in zigbee_coord.py
         self.send_psdu(air, mpdu, 1.0 + (seq % 4) as f64 * 0.32, None, None);
     }
 
@@ -388,7 +346,6 @@ impl Coord {
         self.send_psdu(air, mpdu, 0.4, if ar { Some(3) } else { None }, None);
     }
 
-    // ---------------------------------------------------------- NWK
     #[allow(clippy::too_many_arguments)]
     fn nwk_header(&mut self, ftype: u8, dst: u16, radius: u8, secure: bool, src_ieee: bool, dst_ieee: Option<u64>,
                   discover: u8, relays: Option<&Vec<u16>>) -> Vec<u8> {
@@ -432,7 +389,6 @@ impl Coord {
         secure(header, payload, &self.st.nwk_key, self.ext, fc, 1, Some(self.st.key_seq), true)
     }
 
-    /// An NWK frame from the coordinator itself (`Coordinator.nwk_send`).
     #[allow(clippy::too_many_arguments)]
     pub fn nwk_send(&mut self, air: &mut Air, dst: u16, aps: &[u8], ftype: u8, secure: bool, radius: u8,
                     mac_dst: Option<u16>, src_ieee: bool) {
@@ -454,7 +410,6 @@ impl Coord {
         self.mac_data(air, mac_dst, frame, true);
     }
 
-    /// `nwk_send` with the defaults: data, secured, radius 30, source IEEE.
     pub fn nwk_send_data(&mut self, air: &mut Air, dst: u16, aps: &[u8]) {
         self.nwk_send(air, dst, aps, 0, true, 30, None, true);
     }
@@ -468,7 +423,6 @@ impl Coord {
         let ftype = (fcf & 3) as u8;
         let mut i = 8;
         let mut src_ieee = None;
-        // this coordinator's own reading order (multicast control first), as in zigbee_coord.py
         if fcf & 0x0100 != 0 {
             i += 1;
         }
@@ -487,7 +441,6 @@ impl Coord {
         let Some(header) = p.get(..i) else { return };
         let header = header.to_vec();
         if dst >= 0xFFF8 {
-            // remembered for the broadcast delivery time only: sequence numbers wrap
             let now = air.now();
             if now - self.seen_bcast.get(&(src, seq)).copied().unwrap_or(-1e9) < 9000.0 {
                 return;
@@ -529,7 +482,6 @@ impl Coord {
                     return;
                 }
             }
-            // the counter belongs to whoever secured the frame: the previous hop, not the NWK source
             if fc as i64 <= self.fc_in_ext.get(&sext).copied().unwrap_or(-1) {
                 return;
             }
@@ -568,7 +520,6 @@ impl Coord {
                 self.ev(air, "leave", format!("src={src:#06x}, options={o:#04x}"));
             }
             0x01 => {
-                // Route Request: reply if they are looking for us
                 let (Some(&rid), Some(target)) = (p.get(2), u16_at(p, 3)) else { return };
                 if target == self.short {
                     let mut rep = vec![0x02, 0x00, rid];
@@ -594,14 +545,12 @@ impl Coord {
         }
     }
 
-    // ---------------------------------------------------------- APS
     fn on_aps(&mut self, air: &mut Air, src: u16, nwk_dst: u16, p: &[u8]) {
         let mut p = p.to_vec();
         if self.mute_aps_ack && p.first().is_some_and(|f| f & 0x40 != 0) {
             p[0] &= !0x40;
         }
         if !self.plain && p.len() >= 2 && p[0] & 0x43 == 0x41 && nwk_dst == self.short {
-            // R22 2.2.8.4.3: an APS command with the acknowledgement request bit is acknowledged too
             let ack = [0x12, p[1]];
             self.nwk_send_data(air, src, &ack);
         }
@@ -693,10 +642,6 @@ impl Coord {
         r
     }
 
-    /// An APS command secured with a link-derived key (`Coordinator.aps_cmd_secured`).
-    /// With `aps_fc_per_key` the frame counter belongs to the link key: the
-    /// first frame under a unique link key the Trust Center has just handed out
-    /// carries counter 0 (R22 4.4.1.1 step 2, `SpecTC.aps_cmd_secured`).
     pub fn aps_cmd_secured(&mut self, cmd_payload: &[u8], key: &Key, keyid: u8) -> Vec<u8> {
         let owner = self.link_key_owner(key);
         if self.aps_fc_per_key && owner != self.tclk {
@@ -735,7 +680,6 @@ impl Coord {
         out
     }
 
-    /// The link key a (possibly derived) key belongs to.
     pub fn link_key_owner(&self, key: &Key) -> Key {
         let mut cands = vec![self.tclk];
         for d in &self.devices {
@@ -749,10 +693,6 @@ impl Coord {
         *key
     }
 
-    // ---- network key update (R22 4.6.3.4.1), used by the security tests
-    /// Transport Key with a network key. Unicast: secured with the key-transport
-    /// key of the device's link key. Broadcast: NWK security only, destination
-    /// address field all zero.
     #[allow(clippy::too_many_arguments)]
     pub fn send_network_key(&mut self, air: &mut Air, dev_short: u16, dev_ext: u64, key: &Key, seq: u8,
                             link_key: Option<Key>, broadcast: bool, src_field: Option<u64>) {
@@ -775,15 +715,12 @@ impl Coord {
         self.nwk_send_data(air, dev_short, &a);
     }
 
-    /// Switch Key: never unicast, no APS security, broadcast to 0xFFFD (R22 4.4.6.1.3).
     pub fn send_switch_key(&mut self, air: &mut Air, seq: u8) {
         let ctr = nx(&mut self.st.aps_ctr);
         let a = aps_cmd(ctr, &[0x09, seq], false, None, 2);
         self.tx_nwk(air, BCAST_RXON, &a, &Tx::new());
     }
 
-    /// The Trust Center itself moves to the new key; its outgoing frame counter
-    /// for the new key starts at 0 (R22 4.6.3.4.2).
     pub fn use_network_key(&mut self, air: &mut Air, key: Key, seq: u8, restart_counter: bool) {
         self.st.nwk_key = key;
         self.st.key_seq = seq;
@@ -793,7 +730,6 @@ impl Coord {
         }
     }
 
-    /// Opens (or with 0 closes) the network, also at the routers (Mgmt_Permit_Joining_req).
     pub fn permit_joining(&mut self, air: &mut Air, seconds: u8) {
         self.permit_join = Some(seconds != 0);
         let seq = nx(&mut self.st.zdo_seq);
@@ -807,7 +743,6 @@ impl Coord {
         self.ev(air, "permit-joining", format!("seconds={seconds}"));
     }
 
-    /// Announces the coordinator as a concentrator (routers then send route records).
     pub fn many_to_one_route_request(&mut self, air: &mut Air, no_cache: bool) {
         let opts = (if no_cache { 2 } else { 1 }) << 3;
         let mut cmd = vec![0x01, opts, nx(&mut self.st.zdo_seq)];
@@ -837,8 +772,6 @@ impl Coord {
         }
         let dev = self.dev_by_short(src).cloned();
         if cmd == 0x08 && b.get(1) == Some(&0x04) && dev.is_some() && self.tclk_key_load {
-            // Request Key for a TC link key; R22 4.4.1.1: a transported link key is secured
-            // with the key-load key (key identifier 3) of the link key in use
             let dev = dev.unwrap();
             self.ev(air, "request-key", format!("src={src:#06x}, key_type=4"));
             self.tclk_gen = self.tclk_gen.wrapping_add(1);
@@ -881,7 +814,6 @@ impl Coord {
                 }
             }
             0x0F => {
-                // Verify Key -> Confirm Key
                 let ktype = b.get(1).copied().unwrap_or(0);
                 let sext = u64_at(b, 2).unwrap_or(0);
                 let h = b.get(10..26).unwrap_or(&[]);
@@ -901,7 +833,6 @@ impl Coord {
                 self.nwk_send_data(air, src, &aps);
             }
             0x06 => {
-                // Update Device: a router reports a device that joined through it
                 let (Some(ext), Some(short), Some(&status)) = (u64_at(b, 1), u16_at(b, 9), b.get(11)) else { return };
                 self.ev(air, "update-device", format!("router={src:#06x}, ext={}, short={short:#06x}, status={status}", fmt_ext(ext)));
                 if status == 0x01 || status == 0x03 {
@@ -925,7 +856,6 @@ impl Coord {
                     self.by_short.insert(short, ext);
                     self.fc_in_ext.remove(&ext);
                     self.st.via.insert(short, src);
-                    // the Transport Key, encrypted for the newcomer, inside a Tunnel command to its parent
                     let mut body = vec![0x05, 0x01];
                     body.extend_from_slice(&self.st.nwk_key);
                     body.push(0x00);
@@ -946,7 +876,6 @@ impl Coord {
         }
     }
 
-    // ---------------------------------------------------------- ZDO
     fn zdo_rsp_aps(&mut self, cluster: u16) -> Vec<u8> {
         let mut aps = vec![0x00, 0x00];
         aps.extend_from_slice(&cluster.to_le_bytes());
@@ -960,7 +889,6 @@ impl Coord {
         let seq = p.first().copied().unwrap_or(0);
         match cluster {
             0x0013 => {
-                // Device Announce
                 let (Some(short), Some(ext), Some(&cap)) = (u16_at(p, 1), u64_at(p, 3), p.get(11)) else { return };
                 if let Some(d) = self.dev_mut(ext) {
                     d.announced = true;
@@ -970,7 +898,6 @@ impl Coord {
                 self.ev(air, "device-announce", format!("short={short:#06x}, ext={}, cap={cap:#04x}", fmt_ext(ext)));
             }
             0x0002 => {
-                // Node Descriptor Request -> ours: primary TC + stack compliance revision
                 let server_mask: u16 = 0x0001 | (self.stack_revision << 9);
                 let mut nd = vec![0x00, 0x40, 0x8F];
                 nd.extend_from_slice(&0x1141u16.to_le_bytes());
@@ -986,7 +913,6 @@ impl Coord {
                 self.nwk_send_data(air, src, &aps);
             }
             0x0000 | 0x0001 => {
-                // NWK_addr_req / IEEE_addr_req about us
                 let mine = if cluster == 0x0001 { u16_at(p, 1) == Some(0x0000) } else { u64_at(p, 1) == Some(self.ext) };
                 self.ev(air, "zdo-addr-request", format!("src={src:#06x}, cluster={cluster:#06x}, ours={}", if mine { "True" } else { "False" }));
                 let mut aps = self.zdo_rsp_aps(cluster | 0x8000);
@@ -997,7 +923,6 @@ impl Coord {
                 self.nwk_send_data(air, src, &aps);
             }
             0x0006 => {
-                // Match_Desc_req: an OTA server (0x0019) on endpoint 1
                 let Some(&n_in) = p.get(5) else { return };
                 let ins: Vec<u16> = (0..n_in as usize).filter_map(|k| u16_at(p, 6 + 2 * k)).collect();
                 let n_out = p.get(6 + 2 * n_in as usize).copied().unwrap_or(0);
@@ -1022,7 +947,6 @@ impl Coord {
         }
     }
 
-    // ---------------------------------------------------------- ZCL
     fn on_zcl(&mut self, air: &mut Air, src: u16, ep: u8, cluster: u16, p: &[u8]) {
         if p.len() < 3 {
             return;
@@ -1055,8 +979,6 @@ impl Coord {
         self.ev(air, "zcl", format!("src={src:#06x}, ep={ep}, cluster={cluster:#06x}, kind={kind}, data={}", hex(&body)));
     }
 
-    /// A ZCL frame from the coordinator (`Coordinator.zcl_send` with all its
-    /// options); returns the ZCL sequence number.
     #[allow(clippy::too_many_arguments)]
     pub fn zcl_send_with(&mut self, air: &mut Air, dst: u16, ep: u8, cluster: u16, cmd: u8, payload: &[u8], profile: u16,
                          specific: bool, ddr: bool, seq: Option<u8>, server_to_client: bool) -> u8 {
@@ -1073,12 +995,10 @@ impl Coord {
         seq
     }
 
-    /// `Coordinator.zcl_send(dst, ep, cluster, cmd, payload)`: cluster-specific, default response wanted.
     pub fn zcl_cmd(&mut self, air: &mut Air, dst: u16, ep: u8, cluster: u16, cmd: u8, payload: &[u8]) -> u8 {
         self.zcl_send_with(air, dst, ep, cluster, cmd, payload, HA, true, false, None, false)
     }
 
-    /// Read Attributes of manufacturer-specific attributes (the frame carries `code`).
     pub fn read_attrs_mfr(&mut self, air: &mut Air, dst: u16, ep: u8, cluster: u16, code: u16, attrs: &[u16]) -> u8 {
         let seq = nx(&mut self.st.zcl_seq);
         let mut aps = vec![0x40, ep];
@@ -1094,13 +1014,11 @@ impl Coord {
         seq
     }
 
-    /// `Coordinator.read_attrs`.
     pub fn read_attrs(&mut self, air: &mut Air, dst: u16, ep: u8, cluster: u16, attrs: &[u16]) -> u8 {
         let pl: Vec<u8> = attrs.iter().flat_map(|a| a.to_le_bytes()).collect();
         self.zcl_send_with(air, dst, ep, cluster, 0x00, &pl, HA, false, false, None, false)
     }
 
-    /// `Coordinator.zdo_send`; returns the ZDO sequence number.
     pub fn zdo_send(&mut self, air: &mut Air, dst: u16, cluster: u16, payload: &[u8]) -> u8 {
         let seq = nx(&mut self.st.zdo_seq);
         let mut aps = vec![0x40, 0x00];
@@ -1114,8 +1032,6 @@ impl Coord {
         seq
     }
 
-    // ---------------------------------------------------------- Zigbee OTA server (cluster 0x0019)
-    /// An .ota file (Zigbee OTA Upgrade header, 0x0BEEF11E): (manufacturer, image type, version).
     pub fn add_ota_file(&mut self, data: Vec<u8>) -> Result<(u16, u16, u32), String> {
         if u32_at(&data, 0) != Some(0x0BEEF11E) {
             return Err("this is not a Zigbee OTA file".into());
@@ -1126,7 +1042,6 @@ impl Coord {
         Ok((mfg, itype, ver))
     }
 
-    /// Image Notify, payload type 0 (jitter only), query jitter 100.
     pub fn image_notify(&mut self, air: &mut Air, dst: u16, ep: u8) {
         self.zcl_send_with(air, dst, ep, 0x0019, 0x00, &[0x00, 100], HA, true, true, None, true);
         self.ev(air, "ota-image-notify", format!("dst={dst:#06x}"));
@@ -1143,7 +1058,6 @@ impl Coord {
         let img = |s: &Coord, mfg: u16, itype: u16| s.ota_images.iter().find(|(k, _)| *k == (mfg, itype)).map(|(_, v)| v.clone());
         match cmd {
             0x01 => {
-                // Query Next Image Request
                 let (mfg, itype, cur) = (u16_at(b, 1).unwrap_or(0), u16_at(b, 3).unwrap_or(0), u32_at(b, 5).unwrap_or(0));
                 let im = img(self, mfg, itype);
                 let offer = im.as_ref().map(|(v, _)| format!("{v:#010x}")).unwrap_or_else(|| "None".into());
@@ -1163,7 +1077,6 @@ impl Coord {
                 }
             }
             0x03 => {
-                // Image Block Request
                 let (mfg, itype) = (u16_at(b, 1).unwrap_or(0), u16_at(b, 3).unwrap_or(0));
                 let (ver, off, maxlen) = (u32_at(b, 5).unwrap_or(0), u32_at(b, 9).unwrap_or(0) as usize, b.get(13).copied().unwrap_or(0) as usize);
                 let Some((iv, data)) = img(self, mfg, itype).filter(|(v, _)| *v == ver) else {
@@ -1186,7 +1099,6 @@ impl Coord {
                 self.zcl_send_with(air, src, ep, 0x0019, 0x05, &pl, HA, true, true, Some(seq), true);
             }
             0x06 => {
-                // Upgrade End Request
                 let status = b.first().copied().unwrap_or(0xFF);
                 let ver = u32_at(b, 5).unwrap_or(0);
                 self.ota_ev(air, "ota-upgrade-end", format!("src={src:#06x}, status={status:#04x}, version={ver:#010x}"));
@@ -1200,7 +1112,6 @@ impl Coord {
         }
     }
 
-    // ---------------------------------------------------------- NWK maintenance
     fn link_status_tick(&mut self, air: &mut Air) {
         let mut routers: Vec<u16> = self.devices.iter().filter(|d| d.joined && d.cap & 0x02 != 0).map(|d| d.short).collect();
         routers.sort();
@@ -1214,7 +1125,6 @@ impl Coord {
         air.at(t, self.cev(CoordEv::LinkStatusTick));
     }
 
-    // ---------------------------------------------------------- frames sent by the scenario (NodeMixin, in `st`)
     pub fn tx_nwk(&mut self, air: &mut Air, dst: u16, payload: &[u8], o: &Tx) -> Sent {
         self.st.tx_nwk(air, crate::frames::NWK_DATA, dst, payload, o)
     }
@@ -1233,8 +1143,6 @@ impl Coord {
 }
 
 impl Coord {
-    /// A scheduled event of this coordinator: the main one's, or an extra one's
-    /// (`World::add_coord`, a second `Coordinator` on the same Medium).
     fn cev(&self, e: CoordEv) -> Ev {
         match self.st.id {
             NodeId::Coord2(i) => Ev::Coord2(i, e),
@@ -1242,8 +1150,6 @@ impl Coord {
         }
     }
 
-    /// Moves the coordinator to another network (`Coordinator(medium, channel=,
-    /// pan=, ext=, ext_pan=, nwk_key=, permit_join=)` and `.short =`).
     pub fn set_network(&mut self, channel: i64, pan: u16, ext: u64, ext_pan: u64, nwk_key: Key, permit_join: Option<bool>,
                        short: u16) {
         self.st.channel = channel;

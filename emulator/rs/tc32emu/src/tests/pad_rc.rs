@@ -1,4 +1,3 @@
-// pad_rc_test.go
 use std::cell::Cell;
 use std::rc::Rc;
 

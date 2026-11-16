@@ -1,13 +1,3 @@
-//! Audit of the Zigbee behaviour of one bulb image (emulator/zcl_audit.py):
-//! joins it and runs ~70 steps (descriptors, attributes, level transitions,
-//! commands while off, On/Off with effects, Identify, groups, scenes,
-//! reporting, ZDO Mgmt, colour temperature on TW, power losses) and prints
-//! every result as `key: value`, the value in Python's text form, so the
-//! output compares line for line with the Python script's.
-//!
-//! Image: `--image bin=...` (default target/tc32/bulb-tc32.bin). The Python
-//! script also writes the results as JSON (`--out`); this port prints them only.
-
 use super::zbase::{Out, ZSim, EP};
 use super::{SimCtx, SimDef};
 use crate::air::NodeId;
@@ -20,7 +10,6 @@ pub fn def() -> SimDef {
     SimDef { name: "zcl_audit", doc: "~70 Zigbee behaviour steps of one image, printed as zcl_audit.py prints them", run }
 }
 
-/// A Python value, for printing results exactly as `print(f"{k}: {v}")` does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum V {
     None,
@@ -37,14 +26,12 @@ impl V {
     pub fn s(x: impl Into<String>) -> V {
         V::S(x.into())
     }
-    /// repr()
     pub fn repr(&self) -> String {
         match self {
             V::S(s) => py::str_repr(s),
             _ => self.str(),
         }
     }
-    /// str()
     pub fn str(&self) -> String {
         match self {
             V::None => "None".into(),
@@ -65,7 +52,6 @@ impl V {
     }
 }
 
-/// `{"a": x, "b": y}`
 fn d(items: Vec<(&str, V)>) -> V {
     V::D(items.into_iter().map(|(k, v)| (V::s(k), v)).collect())
 }
@@ -227,7 +213,6 @@ impl A {
         }
         Ok(V::L(attrs.iter().map(|x| V::S(format!("{x:#06x}"))).collect()))
     }
-    /// status from the default response, or the cluster response bytes
     fn cmd(&mut self, cluster: u16, cid: u8, payload: &[u8], kinds: &[u8]) -> R<String> {
         let pl = payload.to_vec();
         let b = self.wait(&move |s, short| {
@@ -238,7 +223,6 @@ impl A {
     fn c(&mut self, cluster: u16, cid: u8, payload: &[u8]) -> R<String> {
         self.cmd(cluster, cid, payload, &[0x0B])
     }
-    /// default-rsp 'CCSS' -> status
     fn dstat(h: String) -> V {
         if h.len() != 4 {
             V::S(h)
@@ -332,17 +316,15 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bin", "target/tc32/bulb-tc32.bin");
     let out = Out::new(cx.verbose > 0);
     let mut s = ZSim::new(&img, cx.cpi, out.clone())?;
-    s.w.air.log = None; // silence from the simulator
+    s.w.air.log = None;
     let mut a = A { s, out: out.clone(), short: 0 };
     let r = body(&mut a);
     out.into_ctx(cx);
-    // the Python script has no pass/fail: it ran when it got through the join
     cx.results.push(("zcl_audit".into(), r.is_ok() && a.short != 0, String::new()));
     r
 }
 
 fn body(a: &mut A) -> R<()> {
-    // ---------------------------------------------------------------- start + join
     a.run(1000.0)?;
     let l = a.light();
     a.out("power_on_light", l);
@@ -357,7 +339,6 @@ fn body(a: &mut A) -> R<()> {
     a.run(6000.0)?;
     let n_start = a.s.w.coord.zcl_rsp.len();
 
-    // ---------------------------------------------------------------- descriptors
     if let Some(p) = a.zdo(0x0002, &short.to_le_bytes(), 2500.0)? {
         if p.get(1) == Some(&0) {
             let nd = &p[4..];
@@ -404,7 +385,6 @@ fn body(a: &mut A) -> R<()> {
     a.out("simple_desc", V::D(sd));
     let has_color = ins1.contains(&0x0300);
 
-    // ---------------------------------------------------------------- attributes
     let mut disc = Vec::new();
     for cl in ins1.clone() {
         if cl < 0x8000 {
@@ -432,7 +412,6 @@ fn body(a: &mut A) -> R<()> {
     let v = a.read(0x000A, &[0x0000, 0x0001])?;
     a.out("time_attrs", v);
 
-    // ---------------------------------------------------------------- level transitions
     let v = a.dc(0x0006, 0x01, &[])?;
     a.out("on", v);
     a.run(1500.0)?;
@@ -440,37 +419,36 @@ fn body(a: &mut A) -> R<()> {
     a.out("mtl_254_instant", v);
     a.run(1500.0)?;
     let l0 = a.duty();
-    let r = a.dc(0x0008, 0x04, &mtl(20, 30))?; // 3 s
+    let r = a.dc(0x0008, 0x04, &mtl(20, 30))?;
     let tr = a.trace(8, 500.0)?;
     let la = a.rd1(0x0008, 0)?;
     a.out("transition_3s_254_to_20", d(vec![("rsp", r), ("start", V::F(l0)), ("duty_every_500ms", fl(&tr)), ("level_after", la)]));
     let v = a.dc(0x0008, 0x04, &mtl(254, 0))?;
     a.out("mtl_254_again", v);
     a.run(1200.0)?;
-    let r = a.dc(0x0008, 0x01, &[1, 50])?; // Move down 50/s
+    let r = a.dc(0x0008, 0x01, &[1, 50])?;
     a.run(1000.0)?;
-    let r2 = a.dc(0x0008, 0x03, &[])?; // Stop
+    let r2 = a.dc(0x0008, 0x03, &[])?;
     a.run(500.0)?;
     let lv = a.rd1(0x0008, 0)?;
     let l = a.light();
     a.out("move_down_then_stop", d(vec![("move", r), ("stop", r2), ("level", lv), ("light", l)]));
-    let r = a.dc(0x0008, 0x02, &[0, 40, 0, 0])?; // Step up 40
+    let r = a.dc(0x0008, 0x02, &[0, 40, 0, 0])?;
     a.run(800.0)?;
     let lv = a.rd1(0x0008, 0)?;
     a.out("step_up_40", d(vec![("rsp", r), ("level", lv)]));
 
-    // ---------------------------------------------------------------- execution while off
     a.c(0x0008, 0x04, &mtl(200, 0))?;
     a.run(1000.0)?;
     let v = a.dc(0x0006, 0x00, &[])?;
     a.out("off", v);
     a.run(1500.0)?;
-    let r = a.dc(0x0008, 0x00, &mtl(60, 0))?; // MoveToLevel without on/off, without options
+    let r = a.dc(0x0008, 0x00, &mtl(60, 0))?;
     a.run(800.0)?;
     let a1 = d(vec![("rsp", r), ("level", a.rd1(0x0008, 0)?), ("light", a.light())]);
     let mut p = mtl(90, 0);
     p.extend_from_slice(&[1, 1]);
-    let r = a.dc(0x0008, 0x00, &p)?; // with OptionsMask/Override = ExecuteIfOff
+    let r = a.dc(0x0008, 0x00, &p)?;
     a.run(800.0)?;
     let a2 = d(vec![("rsp", r), ("level", a.rd1(0x0008, 0)?), ("light", a.light())]);
     let w = a.write(0x0008, 0x000F, 0x18, 0x01, 1)?;
@@ -483,10 +461,9 @@ fn body(a: &mut A) -> R<()> {
     let ao = d(vec![("level", a.rd1(0x0008, 0)?), ("light", a.light())]);
     a.out("execute_if_off", d(vec![("plain", a1), ("override_in_cmd", a2), ("options_attr", a3), ("after_on", ao)]));
 
-    // ---------------------------------------------------------------- On/Off commands with effects
     a.c(0x0008, 0x04, &mtl(254, 0))?;
     a.run(1000.0)?;
-    let r = a.dc(0x0006, 0x40, &[0, 0])?; // Off with effect: fade 0.8 s
+    let r = a.dc(0x0006, 0x40, &[0, 0])?;
     let tr = a.trace(5, 300.0)?;
     let oo = a.rd1(0x0006, 0)?;
     a.out("off_with_effect", d(vec![("rsp", r), ("duty_every_300ms", fl(&tr)), ("onoff", oo)]));
@@ -499,7 +476,7 @@ fn body(a: &mut A) -> R<()> {
     let mut p = vec![0];
     p.extend_from_slice(&20u16.to_le_bytes());
     p.extend_from_slice(&0u16.to_le_bytes());
-    let r = a.dc(0x0006, 0x42, &p)?; // On for 2 s
+    let r = a.dc(0x0006, 0x42, &p)?;
     a.run(800.0)?;
     let x1 = a.light();
     a.run(3000.0)?;
@@ -509,7 +486,6 @@ fn body(a: &mut A) -> R<()> {
     a.c(0x0006, 0x01, &[])?;
     a.run(1200.0)?;
 
-    // ---------------------------------------------------------------- Identify
     a.c(0x0008, 0x04, &mtl(254, 0))?;
     a.run(1000.0)?;
     let r = a.dc(0x0003, 0x00, &4u16.to_le_bytes())?;
@@ -517,16 +493,15 @@ fn body(a: &mut A) -> R<()> {
     let changes = (1..tr.len()).filter(|i| tr[*i] != tr[i - 1]).count() as i128;
     a.out("identify_4s", d(vec![("rsp", r), ("duty_min", V::F(minf(&tr))), ("duty_max", V::F(maxf(&tr))), ("changes", V::I(changes))]));
     a.run(1500.0)?;
-    let r = a.dc(0x0003, 0x40, &[0, 0])?; // Trigger effect: blink
+    let r = a.dc(0x0003, 0x40, &[0, 0])?;
     let tr = a.trace(15, 200.0)?;
     a.out("identify_trigger_effect_blink", d(vec![("rsp", r), ("duty_min", V::F(minf(&tr))), ("duty_max", V::F(maxf(&tr)))]));
-    let r = a.dc(0x0003, 0x40, &[1, 0])?; // breathe
+    let r = a.dc(0x0003, 0x40, &[1, 0])?;
     let tr = a.trace(25, 200.0)?;
     a.out("identify_trigger_effect_breathe", d(vec![("rsp", r), ("duty_min", V::F(minf(&tr))), ("duty_max", V::F(maxf(&tr)))]));
     a.c(0x0003, 0x40, &[0xFF, 0])?;
     a.run(1500.0)?;
 
-    // ---------------------------------------------------------------- groups and scenes
     const G: u16 = 0x1234;
     let mut p = G.to_le_bytes().to_vec();
     p.push(0);
@@ -550,7 +525,6 @@ fn body(a: &mut A) -> R<()> {
     a.out("scene_recall", d(vec![("rsp", r), ("level_before", lv_before), ("level_after", la), ("light", l)]));
     let v = a.cmd(0x0005, 0x06, &G.to_le_bytes(), &[0x06, 0x0B])?;
     a.out("scene_membership", V::S(v));
-    // group command: APS group addressing in an NWK broadcast
     a.c(0x0006, 0x01, &[])?;
     a.run(1000.0)?;
     {
@@ -561,7 +535,7 @@ fn body(a: &mut A) -> R<()> {
         aps.extend_from_slice(&0x0104u16.to_le_bytes());
         aps.push(0x01);
         aps.push(nx(&mut w.coord.st.aps_ctr));
-        aps.extend_from_slice(&[0x11, 0x77, 0x00]); // OnOff Off, without default rsp
+        aps.extend_from_slice(&[0x11, 0x77, 0x00]);
         w.coord.nwk_send(&mut w.air, 0xFFFD, &aps, 0, true, 30, Some(0xFFFF), true);
     }
     a.run(2000.0)?;
@@ -571,7 +545,6 @@ fn body(a: &mut A) -> R<()> {
     a.c(0x0006, 0x01, &[])?;
     a.run(1200.0)?;
 
-    // ---------------------------------------------------------------- reporting
     let v = d(vec![("onoff", V::I(a.n_reports(n_start, 0x0006))), ("level", V::I(a.n_reports(n_start, 0x0008)))]);
     a.out("reports_seen_without_config", v);
     let coord_ext = a.s.w.coord.ext;
@@ -614,7 +587,6 @@ fn body(a: &mut A) -> R<()> {
     let v = d(vec![("onoff_after_off", ra), ("level_after_move", a.reports(n0, 0x0008)), ("onoff_after_move_with_onoff", a.reports(n0, 0x0006))]);
     a.out("reports_after_change", v);
 
-    // ---------------------------------------------------------------- ZDO management
     let mut mg = Vec::new();
     for (name, cl, pl) in [("lqi", 0x0031u16, vec![0u8]), ("rtg", 0x0032, vec![0]), ("bind_table", 0x0033, vec![0]),
                            ("permit_join", 0x0036, vec![10, 1])] {
@@ -628,7 +600,6 @@ fn body(a: &mut A) -> R<()> {
     }
     a.out("zdo_mgmt", V::D(mg));
 
-    // ---------------------------------------------------------------- colour temperature (TW)
     if has_color {
         let ct16 = |m: u16, t: u16| {
             let mut p = m.to_le_bytes().to_vec();
@@ -669,7 +640,6 @@ fn body(a: &mut A) -> R<()> {
         a.out("color_temp", d(ct));
     }
 
-    // ---------------------------------------------------------------- behaviour after power loss
     let mut pc = Vec::new();
     a.c(0x0006, 0x01, &[])?;
     a.c(0x0008, 0x04, &mtl(77, 0))?;
@@ -707,8 +677,6 @@ fn body(a: &mut A) -> R<()> {
     pc.push(("rejoin_events", V::I(n_ann)));
     a.out("power_cycle", d(pc));
 
-    // ---------------------------------------------------------------- additions
-    // a. OnOff report after MoveToLevelWithOnOff from off
     for cl in [0x0006u16, 0x0008] {
         a.zdo(0x0021, &bind_req(cl), 2500.0)?;
     }
@@ -723,7 +691,6 @@ fn body(a: &mut A) -> R<()> {
     a.run(4000.0)?;
     let v = d(vec![("rsp", r), ("onoff_reports", a.reports(n0, 0x0006)), ("onoff", a.rd1(0x0006, 0)?), ("light", a.light())]);
     a.out("mtl_with_onoff_from_off", v);
-    // b. OffWithEffect / OnWithRecallGlobalScene
     a.c(0x0008, 0x04, &mtl(254, 0))?;
     a.run(1500.0)?;
     let g0 = a.rd1(0x0006, 0x4000)?;
@@ -739,7 +706,6 @@ fn body(a: &mut A) -> R<()> {
         ("gsc_after_off", g1), ("recall", r2), ("onoff", oo), ("light", l), ("gsc_after_on", ga)]));
     a.c(0x0006, 0x01, &[])?;
     a.run(1500.0)?;
-    // c. brightness after On vs after MoveToLevel
     a.c(0x0008, 0x04, &mtl(120, 0))?;
     a.run(1500.0)?;
     let d_move = a.light();
@@ -751,7 +717,6 @@ fn body(a: &mut A) -> R<()> {
     a.run(1500.0)?;
     let l = a.light();
     a.out("level120_after_move_vs_on", d(vec![("after_move", d_move), ("after_on_500ms(on,duty)", d_on), ("after_move_again", l)]));
-    // e. identify: on/duty every 100 ms
     a.c(0x0008, 0x04, &mtl(254, 0))?;
     a.run(1200.0)?;
     let r = a.dc(0x0003, 0x00, &3u16.to_le_bytes())?;

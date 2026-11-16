@@ -1,21 +1,3 @@
-//! `cargo xtask mutants`: mutation check of the host tests of the portable
-//! stacks (`crates/zigbee`, `crates/ble`).
-//!
-//! Each entry breaks a crate in one place (a check removed, a rule ignored, a
-//! value wrong). With the change in, `cargo test -p <crate>` must fail: a
-//! mutation that passes shows a rule no test holds the code to.
-//!
-//! The working tree is never touched: the crates the tests need are mirrored
-//! into a scratch workspace under `target/mutants/` (only changed files are
-//! rewritten, so the build there stays incremental between runs), each
-//! mutation is applied to that copy and undone after its test run.
-//!
-//!   cargo xtask mutants                       # both lists
-//!   cargo xtask mutants zigbee --filter "GP|touchlink" --jobs 4
-//!   cargo xtask mutants ble --list
-//!
-//! Exit code 0 = every mutation was caught and none is stale.
-
 mod ble;
 mod zigbee;
 
@@ -29,8 +11,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// One deliberate break: `old` (which must occur exactly once in `file`,
-/// relative to the crate's `src/`) is replaced by `new`.
 pub struct Mutation {
     pub name: &'static str,
     pub file: &'static str,
@@ -47,29 +27,28 @@ pub enum Suite {
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Which list to run
+    #[doc = " Which list to run"]
     #[arg(value_enum, default_value = "all")]
     suite: Suite,
-    /// Only the mutations whose names contain one of these words, separated by
-    /// `|` (e.g. "GP|touchlink"); the `ONLY` variable of the old scripts works too
+    #[doc = " Only the mutations whose names contain one of these words, separated by"]
+    #[doc = " `|` (e.g. \"GP|touchlink\"); the `ONLY` variable of the old scripts works too"]
     #[arg(long, short)]
     filter: Option<String>,
-    /// Print the mutations that would run and stop
+    #[doc = " Print the mutations that would run and stop"]
     #[arg(long)]
     list: bool,
-    /// Mutations tested at once, each in its own scratch copy and target directory
+    #[doc = " Mutations tested at once, each in its own scratch copy and target directory"]
     #[arg(long, short, default_value_t = 1)]
     jobs: usize,
-    /// Stop at the first mutation that is missed or stale
+    #[doc = " Stop at the first mutation that is missed or stale"]
     #[arg(long)]
     fail_fast: bool,
-    /// Seconds one test run may take; a run that takes longer is killed and
-    /// counted as caught (the suite did not pass). 0 = no limit
+    #[doc = " Seconds one test run may take; a run that takes longer is killed and"]
+    #[doc = " counted as caught (the suite did not pass). 0 = no limit"]
     #[arg(long, default_value_t = 900)]
     timeout: u64,
 }
 
-/// The crates `cargo test -p zigbee` and `cargo test -p ble` build.
 const CRATES: &[&str] = &["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble"];
 
 struct List {
@@ -145,7 +124,6 @@ pub fn run(a: Args) -> Result<()> {
 #[derive(Default)]
 struct Outcome {
     ran: usize,
-    /// In list order.
     missed: Vec<&'static str>,
     stale: Vec<&'static str>,
 }
@@ -153,7 +131,6 @@ struct Outcome {
 enum Verdict {
     Caught(String),
     Missed,
-    /// The text is not there exactly once, or the mutant does not compile.
     Stale(String),
 }
 
@@ -218,8 +195,6 @@ fn run_list(
                 r.missed.push(m.name);
             }
             Some(Verdict::Stale(why)) => {
-                // A mutant that does not compile was run (as in the scripts);
-                // a text that is not there was not.
                 if why.starts_with("BROKEN") {
                     r.ran += 1;
                 }
@@ -230,7 +205,6 @@ fn run_list(
     Ok(r)
 }
 
-/// Apply `m` in the scratch workspace `ws`, run the crate's tests, undo it.
 fn run_one(krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Duration>) -> Result<Verdict> {
     let file = ws.join("crates").join(krate).join("src").join(m.file);
     let Ok(source) = fs::read_to_string(&file) else {
@@ -242,7 +216,6 @@ fn run_one(krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Dur
     }
     write_whole(&file, source.replacen(m.old, m.new, 1).as_bytes())?;
     let result = cargo_test(krate, ws, dir, timeout);
-    // Undo before looking at the result, also when the run itself failed.
     write_whole(&file, source.as_bytes()).with_context(|| format!("restoring {}", file.display()))?;
     let (out, success, timed_out) = result?;
 
@@ -258,15 +231,12 @@ fn run_one(krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Dur
     } else if timed_out {
         Verdict::Caught("the tests did not finish in time".into())
     } else if !success {
-        // A test process that aborted (a stack overflow, a double panic)
-        // prints no FAILED line; the suite still did not pass.
         Verdict::Caught("a test process failed without a test result".into())
     } else {
         Verdict::Missed
     })
 }
 
-/// `cargo test -p <krate>` in `ws`: (stdout + stderr, success, timed out).
 fn cargo_test(krate: &str, ws: &Path, dir: &Path, timeout: Option<Duration>) -> Result<(String, bool, bool)> {
     let (out_path, err_path) = (dir.join("stdout.txt"), dir.join("stderr.txt"));
     let mut child = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -296,7 +266,6 @@ fn cargo_test(krate: &str, ws: &Path, dir: &Path, timeout: Option<Duration>) -> 
     Ok((out, status.is_some_and(|s| s.success()), timed_out))
 }
 
-/// Kill a process and everything it started (cargo, then the test binary).
 fn kill_tree(pid: u32) {
     if let Ok(o) = Command::new("pgrep").args(["-P", &pid.to_string()]).output() {
         for child in String::from_utf8_lossy(&o.stdout).split_whitespace() {
@@ -308,10 +277,6 @@ fn kill_tree(pid: u32) {
     let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
 }
 
-/// Make `ws` a workspace of just [`CRATES`] with the repository's lock file
-/// and toolchain, equal to the working tree. Files whose content is already
-/// equal are left alone (their modification times keep the build incremental),
-/// files no longer in the tree are removed.
 fn mirror_workspace(ws: &Path) -> Result<()> {
     let root = crate::root();
     fs::create_dir_all(ws)?;
@@ -371,7 +336,6 @@ fn mirror_dir(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Write `data` to `path` unless it already holds exactly that.
 fn put(path: &Path, data: &[u8]) -> Result<()> {
     if fs::read(path).ok().as_deref() == Some(data) {
         return Ok(());
@@ -382,8 +346,6 @@ fn put(path: &Path, data: &[u8]) -> Result<()> {
     write_whole(path, data)
 }
 
-/// Replace `path` by `data` through a temporary file and a rename, so that a
-/// failed write (a full disk) leaves the old content, never a truncated file.
 fn write_whole(path: &Path, data: &[u8]) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".mutants-tmp");

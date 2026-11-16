@@ -1,7 +1,3 @@
-//! Link Layer control procedures with an instant: Connection Update and
-//! Channel Map Update (Core 5.4 Vol 6 Part B 5.1.1, 5.1.2, 5.5);
-//! emulator/spec_ble/ll_ctrl_instant.py.
-
 use std::collections::HashMap;
 
 use crate::ble::harness::{csa1, hx, BleSession, LinkOpts, ALL_CHANNELS};
@@ -88,7 +84,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// `f"{x:g}"` for the interval values of these tests.
 fn g(x: f64) -> String {
     let s = py::float(x);
     s.strip_suffix(".0").map(String::from).unwrap_or(s)
@@ -98,7 +93,6 @@ fn ints(v: &[i64]) -> String {
     py::ints(v.iter().copied())
 }
 
-/// Events in lo..=hi the bulb answered in.
 fn answered(s: &BleSession, lo: i64, hi: i64) -> Vec<i64> {
     let mut v: Vec<i64> = s.lk().pdus.iter().map(|p| p.event).filter(|e| lo <= *e && *e <= hi).collect();
     v.sort();
@@ -122,9 +116,6 @@ fn state(s: &BleSession) -> String {
     s.lk().st.state().to_string()
 }
 
-/// Connects at `old`, sends LL_CONNECTION_UPDATE_IND `lead` events before its
-/// instant and runs 12 events past it. (instant, gap between the central's
-/// packets around the instant).
 #[allow(clippy::too_many_arguments)]
 fn update(s: &mut BleSession, old: i64, new: i64, off: i64, size: i64, pos: f64, lead: i64, timeout: i64,
           new_timeout: Option<i64>) -> R<(i64, Option<f64>)> {
@@ -150,10 +141,6 @@ fn update(s: &mut BleSession, old: i64, new: i64, off: i64, size: i64, pos: f64,
 }
 
 fn conn_update(s: &mut BleSession) -> R<String> {
-    // 5.1.1: "The transmit window starts at connIntervalOLD + transmitWindowOffset after the anchor point of
-    // the connection event before the instant"; the central's first packet starts within it and "determines
-    // the new anchor point". The peripheral "shall listen to the connection event where connEventCount equals
-    // Instant".
     let cases: [(i64, i64, i64, i64, f64); 5] =
         [(24, 80, 0, 1, 0.03), (24, 6, 5, 4, 4.9), (40, 40, 17, 2, 1.2), (12, 320, 100, 8, 9.9), (80, 12, 0, 2, 2.45)];
     let (mut notes, mut bad) = (Vec::new(), Vec::new());
@@ -199,7 +186,6 @@ fn update_tx_events(s: &mut BleSession, what: &str) -> R<Vec<crate::ble::harness
 }
 
 fn conn_update_minus_one(s: &mut BleSession) -> R<String> {
-    // 5.5.1 / 5.1.1: the PDU goes out in the event Instant - 1.
     let (inst, _gap) = update(s, 24, 60, 4, 2, 1.0, 2, 300, None)?;
     let tx = update_tx_events(s, "LL_CONNECTION_UPDATE_IND")?;
     if tx.is_empty() || tx[0].event != inst - 1 || tx[0].missed {
@@ -222,8 +208,6 @@ fn conn_update_minus_one(s: &mut BleSession) -> R<String> {
 }
 
 fn conn_update_at_instant(s: &mut BleSession) -> R<String> {
-    // 5.5.1 treats the instant as passed only when (Instant - connEventCount) mod 65536 >= 32767; a
-    // difference of 0 is not. 5.1.1 Note: the packet received on the instant can be the new anchor.
     let (old, new) = (24i64, 60i64);
     s.connect(LinkOpts::new().set("interval", old).set("timeout", 500).set("winsize", 2).set("anchor", "0.0"))?;
     s.wait_event(8, None)?;
@@ -268,8 +252,6 @@ fn conn_update_at_instant(s: &mut BleSession) -> R<String> {
 }
 
 fn conn_update_passed(s: &mut BleSession) -> R<String> {
-    // 5.5.1: an LL_CONNECTION_UPDATE_IND with the instant in the past: the peripheral shall consider the
-    // connection to be lost.
     s.connect(LinkOpts::new().set("interval", 24).set("timeout", 400))?;
     s.wait_event(20, None)?;
     let k = s.event()?;
@@ -300,8 +282,6 @@ fn conn_update_passed(s: &mut BleSession) -> R<String> {
 }
 
 fn conn_update_supervision(s: &mut BleSession) -> R<String> {
-    // 5.1.1: "The connection supervision timer shall be reset at the instant". Old interval 1 s (timeout
-    // 8 s), new interval 50 ms with a timeout of 500 ms: at the instant the last packet is 1 s old.
     let (inst, _gap) = update(s, 800, 40, 0, 2, 1.0, 6, 800, Some(50))?;
     let got = answered(s, inst, inst + 12);
     let st = state(s);
@@ -317,7 +297,6 @@ fn conn_update_supervision(s: &mut BleSession) -> R<String> {
     Ok("connection kept through the instant".into())
 }
 
-/// (event, channel, expected channel) of the PDUs on a wrong channel.
 fn wrong_channels(s: &BleSession, want: &HashMap<i64, i64>) -> Vec<(i64, i64, i64)> {
     s.lk()
         .pdus
@@ -338,8 +317,6 @@ fn map_check(s: &BleSession, hop: i64, old: &[u8], new: &[u8], inst: i64, upto: 
 }
 
 fn channel_map_update(s: &mut BleSession) -> R<String> {
-    // 5.1.2: "When connEventCount is equal to the Instant field, the channelMapNEW shall be the current
-    // channelMap. The lastUnmappedChannel shall not be reset." Three maps follow in the same connection.
     let hop = 10;
     s.connect(LinkOpts::new().set("interval", 6).set("timeout", 200).set("hop", hop))?;
     let mut k0 = 0;
@@ -351,7 +328,6 @@ fn channel_map_update(s: &mut BleSession) -> R<String> {
         s.channel_map(&new, inst)?;
         s.wait_event(inst + 40, None)?;
         s.link_run(3.0)?;
-        // channels by the definition, from the start of the connection, with every map applied so far
         notes.push((inst, new.to_vec()));
         let (mut last, mut want, mut pos) = (0i64, HashMap::new(), 0i64);
         let mut m: Vec<u8> = ALL_CHANNELS.to_vec();
@@ -387,8 +363,6 @@ fn channel_map_update(s: &mut BleSession) -> R<String> {
 }
 
 fn channel_map_minus_one(s: &mut BleSession) -> R<String> {
-    // 5.1.2 / 5.5.1 as above; the PDU goes out in the event Instant - 1. Up to three connections: one
-    // whose instant the bulb lost to its Zigbee side (`lost_to_154`) shows nothing of the map.
     let hop = 7;
     let new = [0x00u8, 0xff, 0x00, 0xff, 0x00];
     let mut tries = 0;
@@ -431,9 +405,6 @@ fn channel_map_minus_one(s: &mut BleSession) -> R<String> {
 }
 
 fn channel_map_at_instant(s: &mut BleSession) -> R<String> {
-    // 5.5.1: only (Instant - connEventCount) mod 65536 >= 32767 is the past. The PDU is sent six events
-    // ahead and nothing passes the air until the instant. The new map keeps the channel of the instant's
-    // event under the old map and drops the channels the old map would give the following events.
     let hop = 7;
     s.connect(LinkOpts::new().set("interval", 12).set("timeout", 400).set("hop", hop).set("anchor", "0.0"))?;
     s.wait_event(8, None)?;

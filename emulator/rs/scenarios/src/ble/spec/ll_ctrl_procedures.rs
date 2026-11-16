@@ -1,7 +1,3 @@
-//! Link Layer control procedures without an instant: version, features,
-//! unknown and unsupported PDUs, encryption request, termination (Core 5.4 Vol
-//! 6 Part B 2.4.2, 4.6, 5.1.3-5.1.6, 5.2); emulator/spec_ble/ll_ctrl_procedures.py.
-
 use crate::ble::harness::{hx, ll_name, BleSession, LinkOpts, Pdu};
 use crate::ble::mesh::MeshApp;
 use crate::ble::BleTest;
@@ -177,7 +173,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-// ---- helpers
 fn pl(p: &Pdu) -> &[u8] {
     p.payload()
 }
@@ -208,7 +203,6 @@ fn op(p: &Pdu) -> u8 {
     p.opcode().unwrap_or(0)
 }
 
-/// FeatureSet of the peripheral, asked with every bit of the central set.
 fn features(s: &mut BleSession) -> R<u64> {
     let mut q = vec![0x08];
     q.extend_from_slice(&[0xff; 8]);
@@ -232,12 +226,10 @@ fn names(pdus: &[Pdu]) -> Vec<String> {
         .collect()
 }
 
-/// `str(list of str)`.
 fn strlist(v: &[String]) -> String {
     format!("[{}]", v.iter().map(|x| format!("'{x}'")).collect::<Vec<_>>().join(", "))
 }
 
-/// `names(pdus) or alt`.
 fn names_or(pdus: &[Pdu], alt: &str) -> String {
     let n = names(pdus);
     if n.is_empty() {
@@ -248,9 +240,6 @@ fn names_or(pdus: &[Pdu], alt: &str) -> String {
 }
 
 fn version_exchange(s: &mut BleSession) -> R<String> {
-    // 5.1.5: "If the Link Layer receives an LL_VERSION_IND PDU and has not already sent an LL_VERSION_IND
-    // then the Link Layer shall send an LL_VERSION_IND PDU to the peer device." 2.4.2.13: CtrData = VersNr
-    // (1), CompId (2), SubVersNr (2).
     s.connect(LinkOpts::new())?;
     s.link_run(100.0)?;
     let mine: Vec<Pdu> = s.lk().ctrl.iter().filter(|p| p.opcode() == Some(0x0C)).cloned().collect();
@@ -273,7 +262,6 @@ fn version_exchange(s: &mut BleSession) -> R<String> {
 }
 
 fn version_once(s: &mut BleSession) -> R<String> {
-    // 5.1.5: at most one LL_VERSION_IND per connection, and none in answer when one was sent already.
     s.connect(LinkOpts::new())?;
     let ver = [0x0c, 0x0d, 0x0f, 0x00, 0x34, 0x12];
     let (rsp, _) = s.ll_req(&ver, &[0x0C], 3000.0)?;
@@ -294,8 +282,6 @@ fn version_once(s: &mut BleSession) -> R<String> {
 }
 
 fn feature_rsp(s: &mut BleSession) -> R<String> {
-    // 5.1.4.1: "When the Link Layer of the Peripheral receives this, it shall respond by sending an
-    // LL_FEATURE_RSP PDU."
     s.connect(LinkOpts::new())?;
     let mut q = vec![0x08];
     q.extend_from_slice(&[0xff; 8]);
@@ -310,8 +296,6 @@ fn feature_rsp(s: &mut BleSession) -> R<String> {
 }
 
 fn feature_used(s: &mut BleSession) -> R<String> {
-    // 5.1.4: FeatureSet_USED is the AND of the least significant octets of FeatureSet_C and FeatureSet_P;
-    // 5.1.4.1: octet 0 of the response is FeatureSet_USED, the others those of FeatureSet_P.
     let mut seen: Vec<(u8, Vec<u8>)> = Vec::new();
     for c0 in [0xFFu8, 0x00, 0x01, 0x24] {
         s.connect(LinkOpts::new())?;
@@ -352,8 +336,6 @@ fn feature_used(s: &mut BleSession) -> R<String> {
 }
 
 fn unknown_opcode(s: &mut BleSession) -> R<String> {
-    // 2.4.2: an LL control PDU that is not supported or reserved is answered with LL_UNKNOWN_RSP whose
-    // UnknownType is the received opcode. Table 2.20 of 5.4 ends at 0x2A.
     s.connect(LinkOpts::new())?;
     let mut bad = Vec::new();
     let cases: [(u8, Vec<u8>); 5] =
@@ -376,8 +358,6 @@ fn unknown_opcode(s: &mut BleSession) -> R<String> {
     Ok("0x2b, 0x40, 0x7f, 0xff, 0xf0 each answered with LL_UNKNOWN_RSP".into())
 }
 
-/// A request of an optional procedure: with the feature claimed the procedure's
-/// own answer is required, without it LL_UNKNOWN_RSP naming the opcode (2.4.2, 4.6).
 fn optional(s: &mut BleSession, name: &str, opcode: u8, ctr: &[u8], bits: &[u32], ok_ops: &[u8], feat_note: &str)
             -> R<String> {
     s.connect(LinkOpts::new())?;
@@ -443,14 +423,10 @@ fn optional(s: &mut BleSession, name: &str, opcode: u8, ctr: &[u8], bits: &[u32]
 }
 
 fn ping(s: &mut BleSession) -> R<String> {
-    // 5.1.8: the responding Link Layer answers LL_PING_RSP. LE Ping is bit 4, "O" in the Send to Peer
-    // column: an LL_PING_RSP from a device that does not claim it is still consistent.
     optional(s, "LL_PING_REQ", 0x12, &[], &[4], &[0x13], "bit 4 may be sent as zero by a device that has the feature")
 }
 
 fn length_req(s: &mut BleSession) -> R<String> {
-    // 5.1.9: LL_LENGTH_REQ is answered with LL_LENGTH_RSP; 2.4.2.21: minimums 27 octets / 328 us; 4.6: the PDU
-    // only with the feature (bit 5, "Y").
     let ctr = [0x1b, 0x00, 0x48, 0x01, 0x1b, 0x00, 0x48, 0x01];
     let mut note = optional(s, "LL_LENGTH_REQ", 0x14, &ctr, &[5], &[0x15], "")?;
     let rsp = s.lk().ctrl.iter().find(|p| p.opcode() == Some(0x15)).cloned();
@@ -471,7 +447,6 @@ fn length_req(s: &mut BleSession) -> R<String> {
 }
 
 fn own_length_req(s: &mut BleSession) -> R<String> {
-    // 4.6 (PDU only with the feature) and 2.4.2.21 (minimums), for an LL_LENGTH_REQ the peripheral sends.
     s.connect(LinkOpts::new())?;
     s.link_run(1500.0)?;
     let Some(req) = s.lk().ctrl.iter().find(|p| p.opcode() == Some(0x14)).cloned() else {
@@ -488,21 +463,16 @@ fn own_length_req(s: &mut BleSession) -> R<String> {
 }
 
 fn phy_req(s: &mut BleSession) -> R<String> {
-    // 4.6.9: LL_PHY_REQ/RSP belong to controllers that support a PHY other than LE 1M (bits 8, 11).
     optional(s, "LL_PHY_REQ", 0x16, &[0x03, 0x03], &[8, 11], &[0x17], "")
 }
 
 fn conn_param_req(s: &mut BleSession) -> R<String> {
-    // 4.6.2 (bit 1). CtrData: Interval_Min, Interval_Max, Latency, Timeout, PreferredPeriodicity,
-    // ReferenceConnEventCount, Offset0..5 (0xFFFF = none): 23 octets.
     let mut ctr = vec![0x18, 0x00, 0x28, 0x00, 0x00, 0x00, 0x90, 0x01, 0x00, 0x00, 0x00];
     ctr.extend_from_slice(&[0xff; 12]);
     optional(s, "LL_CONNECTION_PARAM_REQ", 0x0F, &ctr, &[1], &[0x10], "")
 }
 
 fn other_optional(s: &mut BleSession) -> R<String> {
-    // 2.4.2 with Table 4.7 and Table 2.20: bit 18 Connection CTE Response (LL_CTE_REQ 0x1A), 26 Sleep Clock
-    // Accuracy Updates (LL_CLOCK_ACCURACY_REQ 0x1D), 33 LE Power Control Request (LL_POWER_CONTROL_REQ 0x23).
     let mut notes = Vec::new();
     let cases: [(&str, u8, Vec<u8>, u32, u8); 3] = [
         ("LL_CTE_REQ", 0x1A, vec![0x14], 18, 0x1B),
@@ -518,8 +488,6 @@ fn other_optional(s: &mut BleSession) -> R<String> {
 }
 
 fn wrong_length(s: &mut BleSession) -> R<String> {
-    // 2.4.2: with a wrong length the Link Layer may continue the procedure, else answers LL_UNKNOWN_RSP (or
-    // a reject where the procedure allows it). LL_FEATURE_REQ with two octets of FeatureSet, and with twelve.
     let mut notes = Vec::new();
     let mut long = vec![0xff];
     long.extend_from_slice(&[0; 11]);
@@ -546,8 +514,6 @@ fn wrong_length(s: &mut BleSession) -> R<String> {
 }
 
 fn enc_req(s: &mut BleSession) -> R<String> {
-    // 5.1.3.1: without LE Encryption, reject with Unsupported Remote Feature (0x1A); with it, LL_ENC_RSP and,
-    // without a Long Term Key, a reject with PIN or Key Missing (0x06).
     s.connect(LinkOpts::new())?;
     let f = features(s)?;
     let mut req = vec![0x03];
@@ -610,8 +576,6 @@ fn enc_req(s: &mut BleSession) -> R<String> {
 }
 
 fn terminate(s: &mut BleSession) -> R<String> {
-    // 5.1.6: "When the Link Layer receives an LL_TERMINATE_IND PDU it shall send the acknowledgment, exit
-    // the Connection State and shall transition to the Standby State."
     s.connect(LinkOpts::new().set("interval", 24).set("timeout", 300))?;
     s.wait_event(8, None)?;
     s.terminate(0x13)?;
@@ -660,8 +624,6 @@ fn terminate(s: &mut BleSession) -> R<String> {
     Ok(out)
 }
 
-/// Logs in to the mesh application and sends its reset command, which makes the
-/// three firmwares end the connection themselves. The index of the first control PDU afterwards.
 fn make_it_leave(s: &mut BleSession) -> R<usize> {
     s.connect(LinkOpts::new().set("interval", 24).set("timeout", 300))?;
     let mut app = MeshApp::new(s)?.login(s)?;
@@ -674,7 +636,6 @@ fn make_it_leave(s: &mut BleSession) -> R<usize> {
 }
 
 fn peripheral_terminate(s: &mut BleSession) -> R<String> {
-    // 5.1.6: the initiating Link Layer sends LL_TERMINATE_IND until it is acknowledged, then exits.
     let n0 = make_it_leave(s)?;
     let term = s.ll_wait(&[0x02], 5000.0, Some(n0))?;
     let Some(term) = term else {
@@ -703,15 +664,13 @@ fn peripheral_terminate(s: &mut BleSession) -> R<String> {
 }
 
 fn peripheral_terminate_timer(s: &mut BleSession) -> R<String> {
-    // 5.1.6: LL_TERMINATE_IND is sent until acknowledged or until T_terminate (= connSupervisionTimeout)
-    // expires. The central loses every PDU of the bulb from the moment the command is in.
     let n0 = make_it_leave(s)?;
     let to = 3000.0;
     let t0 = s.now();
     let ev = s.event()?;
     let iv = s.interval_ms();
     for e in ev + 1..ev + ((to + 2500.0) / iv) as i64 {
-        s.drop_event(e)?; // the central hears empty PDUs and loses every other one
+        s.drop_event(e)?;
     }
     s.run(to + 2000.0)?;
     s.poll()?;
@@ -751,8 +710,6 @@ fn peripheral_terminate_timer(s: &mut BleSession) -> R<String> {
 }
 
 fn procedure_timeout(s: &mut BleSession) -> R<String> {
-    // 5.2: "If the procedure response timeout timer reaches 40 seconds, the ACL connection is considered
-    // lost". The central answers nothing (it still acknowledges at link level).
     s.connect(LinkOpts::new().set("interval", 80).set("timeout", 600).set("llauto", 0))?;
     s.link_run(3000.0)?;
     let reqs: Vec<Pdu> = s

@@ -1,20 +1,3 @@
-//! Zigbee frame codec for the scenarios, a port of emulator/spec/frames.py
-//! (and the MAC helpers of emulator/zigbee_coord.py and emulator/radio154.py),
-//! written from the specification text:
-//!
-//! - NWK header (R22 3.3.1): frame control, destination, source, radius,
-//!   sequence number, then destination IEEE, source IEEE, multicast control and
-//!   the source route subframe, in that order.
-//! - Auxiliary security header (4.5.1): security control, frame counter,
-//!   source address with the extended nonce bit, key sequence number with key
-//!   identifier 1. The level bits are 0 on the air and 5 for the computation;
-//!   nonce = source address || frame counter || security control.
-//! - APS header (2.2.5.1): frame control, destination endpoint, group, cluster,
-//!   profile, source endpoint, counter, extended header.
-//!
-//! Every parser returns None where the Python one would raise (truncated
-//! input), so a malformed frame is simply not decoded.
-
 use crate::crypto::{ccm_decrypt, ccm_encrypt, hmac_mmo};
 
 pub const NWK_DATA: u8 = 0;
@@ -28,8 +11,6 @@ pub const BCAST_ROUTERS: u16 = 0xFFFC;
 
 pub type Key = [u8; 16];
 
-// ------------------------------------------------------------------ PHY / MAC
-/// CRC-16/KERMIT, the 802.15.4 FCS.
 pub fn crc16_kermit(data: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for &b in data {
@@ -41,14 +22,12 @@ pub fn crc16_kermit(data: &[u8]) -> u16 {
     crc
 }
 
-/// MPDU || FCS.
 pub fn with_fcs(mpdu: &[u8]) -> Vec<u8> {
     let mut v = mpdu.to_vec();
     v.extend_from_slice(&crc16_kermit(mpdu).to_le_bytes());
     v
 }
 
-/// Time on the air of a PSDU (preamble, SFD and PHR included) at 250 kb/s, in µs.
 pub fn airtime_us(psdu_len: usize) -> f64 {
     ((6 + psdu_len) * 32) as f64
 }
@@ -57,7 +36,6 @@ pub fn ext_bytes(x: u64) -> [u8; 8] {
     x.to_le_bytes()
 }
 
-/// An extended address as on a label: big endian, colon separated.
 pub fn fmt_ext(x: u64) -> String {
     x.to_be_bytes().iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
 }
@@ -89,7 +67,6 @@ pub struct Mac {
     pub payload: Vec<u8>,
 }
 
-/// MAC header of a PSDU (with FCS).
 pub fn mac_parse(psdu: &[u8]) -> Option<Mac> {
     if psdu.len() < 2 {
         return None;
@@ -139,8 +116,6 @@ pub fn mac_parse(psdu: &[u8]) -> Option<Mac> {
     Some(f)
 }
 
-/// A MAC frame without FCS. `dst`/`src` are short addresses for mode 2 and
-/// extended ones for mode 3.
 #[allow(clippy::too_many_arguments)]
 pub fn mac_build(ftype: u8, seq: u8, payload: &[u8], dpan: u16, dst: u64, dmode: u8, src: u64, smode: u8,
                  span: Option<u16>, ar: bool, pending: bool) -> Vec<u8> {
@@ -171,16 +146,10 @@ pub fn mac_build(ftype: u8, seq: u8, payload: &[u8], dpan: u16, dst: u64, dmode:
     b
 }
 
-// ------------------------------------------------------------------ key material
-/// Key material the sniffer may use, kept in insertion order as in Python
-/// (the order decides which key or address is tried first).
 #[derive(Clone, Debug, Default)]
 pub struct Keys {
-    /// key sequence number -> network key
     pub nwk: Vec<(u8, Key)>,
-    /// link keys (the default TC link key, unique keys handed out, ...)
     pub link: Vec<Key>,
-    /// short address -> extended address
     pub ext: Vec<(u16, u64)>,
 }
 
@@ -214,7 +183,6 @@ impl Keys {
     }
 }
 
-// ------------------------------------------------------------------ security
 #[derive(Clone, Debug)]
 pub struct Aux {
     pub sc: u8,
@@ -263,7 +231,6 @@ fn unsecure(header: &[u8], body: &[u8], key: &Key, src_ext: u64, aux: &Aux) -> O
     ccm_decrypt(key, &nonce(src_ext, aux.fc, sc5), &aad, &body[aux.len..])
 }
 
-/// header || auxiliary header || ciphertext || MIC-32 (security level 5).
 pub fn secure(header: &[u8], payload: &[u8], key: &Key, src_ext: u64, fc: u32, key_id: u8, key_seq: Option<u8>,
               ext_nonce: bool) -> Vec<u8> {
     let sc_air = (key_id << 3) | if ext_nonce { 0x20 } else { 0 };
@@ -284,7 +251,6 @@ pub fn secure(header: &[u8], payload: &[u8], key: &Key, src_ext: u64, fc: u32, k
     out
 }
 
-// ------------------------------------------------------------------ NWK
 #[derive(Clone, Debug, Default)]
 pub struct Nwk {
     pub fcf: u16,
@@ -309,7 +275,6 @@ pub struct Nwk {
     pub fc: Option<u32>,
     pub key_seq: Option<u8>,
     pub sec_src: Option<u64>,
-    /// None: secured and no known key opened it
     pub payload: Option<Vec<u8>>,
     pub key: Option<Key>,
     pub cmd: Option<u8>,
@@ -396,7 +361,6 @@ pub fn nwk_parse(p: &[u8], keys: &mut Keys) -> Option<Nwk> {
     Some(n)
 }
 
-/// Options of an NWK frame (defaults as in frames.py nwk_build).
 #[derive(Clone, Debug)]
 pub struct NwkOpts {
     pub radius: u8,
@@ -408,7 +372,6 @@ pub struct NwkOpts {
     pub multicast: Option<u8>,
     pub ed_initiator: bool,
     pub version: u8,
-    /// (key, key sequence number, frame counter, source extended address)
     pub sec: Option<(Key, u8, u32, u64)>,
 }
 
@@ -470,7 +433,6 @@ pub fn nwk_build(ftype: u8, dst: u16, src: u16, seq: u8, payload: &[u8], o: &Nwk
     }
 }
 
-// ------------------------------------------------------------------ APS
 #[derive(Clone, Debug, Default)]
 pub struct Aps {
     pub fc: u8,
@@ -586,7 +548,6 @@ pub fn aps_parse(p: &[u8], keys: &Keys, nwk_src: Option<u16>) -> Option<Aps> {
     Some(a)
 }
 
-/// An APS data frame; `frag` = (extended frame control, block number).
 #[allow(clippy::too_many_arguments)]
 pub fn aps_data(dst_ep: u8, cluster: u16, profile: u16, src_ep: u8, counter: u8, payload: &[u8], delivery: u8,
                 ack_req: bool, group: Option<u16>, frag: Option<(u8, u8)>, security: bool) -> Vec<u8> {
@@ -611,7 +572,6 @@ pub fn aps_data(dst_ep: u8, cluster: u16, profile: u16, src_ep: u8, counter: u8,
     h
 }
 
-/// An APS command; `sec` = (key, key id, frame counter, source extended address).
 pub fn aps_cmd(counter: u8, payload: &[u8], ack_req: bool, sec: Option<(Key, u8, u32, u64)>, delivery: u8) -> Vec<u8> {
     let fc = APS_CMD | (delivery << 2) | if ack_req { 0x40 } else { 0 } | if sec.is_some() { 0x20 } else { 0 };
     let h = [fc, counter];
@@ -625,7 +585,6 @@ pub fn aps_cmd(counter: u8, payload: &[u8], ack_req: bool, sec: Option<(Key, u8,
     }
 }
 
-// ------------------------------------------------------------------ ZCL
 #[derive(Clone, Debug, Default)]
 pub struct Zcl {
     pub fc: u8,
@@ -673,12 +632,10 @@ pub fn zcl_build(seq: u8, cmd: u8, payload: &[u8], specific: bool, ddr: bool, to
     h
 }
 
-/// A ZCL attribute value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ZclValue {
     Int(i64),
     Bytes(Vec<u8>),
-    /// an invalid (0xFF length) string
     None,
 }
 
@@ -697,9 +654,7 @@ fn zcl_size(t: u8) -> Option<usize> {
     })
 }
 
-/// (value, next index) of a ZCL value of type `t` at `b[i..]`.
 impl ZclValue {
-    /// The integer, if it is one.
     pub fn int(&self) -> Option<i64> {
         match self {
             ZclValue::Int(v) => Some(*v),
@@ -714,8 +669,6 @@ impl ZclValue {
     }
 }
 
-/// Python's `str()` of a value as emulator/spec/frames.py decodes it (for
-/// observation texts identical to the Python suite's).
 pub fn py_value(v: &Option<ZclValue>) -> String {
     match v {
         None | Some(ZclValue::None) => "None".into(),
@@ -724,7 +677,6 @@ pub fn py_value(v: &Option<ZclValue>) -> String {
     }
 }
 
-/// Python's `repr()` of a bytes object.
 pub fn py_bytes(b: &[u8]) -> String {
     let q = if b.contains(&b'\'') && !b.contains(&b'"') { '"' } else { '\'' };
     let mut s = String::from("b");
@@ -771,7 +723,6 @@ pub fn zcl_value(t: u8, b: &[u8], i: usize) -> Result<(ZclValue, usize), String>
     Ok((ZclValue::Int(v), i + n))
 }
 
-/// Read Attributes Response -> [(attribute, status, type, value)], in order.
 pub fn read_attr_records(b: &[u8]) -> Result<Vec<(u16, u8, Option<u8>, Option<ZclValue>)>, String> {
     let mut out = Vec::new();
     let mut i = 0;

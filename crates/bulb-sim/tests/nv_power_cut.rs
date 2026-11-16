@@ -1,22 +1,3 @@
-//! Power cuts at every point of the Zigbee stack's store
-//! (`bulb_core::nv::NvLog`, the firmware's 0xF1000 and 0xF2000: network
-//! keys, frame counters, child table, ...), with the NOR flash and cut models
-//! of `power_cut.rs` (`bulb_sim::cut`).
-//!
-//! A workload like the stack's (the frame counters and the reset counters
-//! together at every start, the frame counters alone, every other item now
-//! and then, the three parts of the child table) runs through many sector
-//! switches. Every flash operation of every store is cut in every way the
-//! model knows; after each cut the store is opened again on that flash and
-//! every item must be as it was before the store, or (only the items being
-//! stored) as stored. The frame counters must never go back, and must never
-//! be lost once stored. From many of the cut states the store then carries
-//! on and must come back with what it stored after the cut.
-//!
-//! A record torn part way through can pass its CRC-8 (one in 256): the
-//! format has nothing stronger. Such cuts are counted on their own and only
-//! allowed for the item whose record was being written, at about that rate.
-
 use std::collections::BTreeMap;
 
 use bulb_core::nv::NvLog;
@@ -40,8 +21,6 @@ fn open(f: &NorFlash) -> Nv {
     NvLog::new(f.clone(), SECTORS, SIZE, || {})
 }
 
-/// Every item, as `load` finds it (one pass: `each`; `each_is_load` checks
-/// that the two agree).
 fn all(nv: &Nv) -> Items {
     let mut out = Items::new();
     nv.each(|id, d| {
@@ -61,11 +40,9 @@ fn all_by_load(nv: &Nv) -> Items {
     out
 }
 
-/// The longest record of each item, about as the stack writes them.
 fn max_len(id: u8) -> usize {
     match id {
         COUNTERS | BOOT => 8,
-        // network, tables, the child table's three parts, scenes
         1 | 3 | 4 | 13 | 14 | 5 => 160,
         7 => 16,
         _ => 48,
@@ -76,7 +53,6 @@ fn max_len(id: u8) -> usize {
 enum Op {
     Store(u8, Vec<u8>),
     Pair((u8, Vec<u8>), (u8, Vec<u8>)),
-    /// Forget everything but this item (a Leave, a factory reset).
     Forget(u8),
 }
 
@@ -88,7 +64,6 @@ impl Op {
             Op::Forget(keep) => nv.forget_all_but(*keep),
         }
     }
-    /// The items as they are once the operation is complete.
     fn after(&self, before: &Items) -> Items {
         let mut m = before.clone();
         match self {
@@ -112,7 +87,6 @@ struct Work {
 
 impl Work {
     fn counters(&mut self) -> Vec<u8> {
-        // stored ahead of use, a step at a time
         self.counter += 1 + (self.rng.next() % 1000) as u32;
         let mut d = self.counter.to_le_bytes().to_vec();
         d.extend_from_slice(&(self.counter / 3).to_le_bytes());
@@ -132,7 +106,6 @@ impl Work {
             }
             2 => Op::Store(COUNTERS, self.counters()),
             3 => {
-                // a child joined: one part of the child table
                 let id = NvItem::children((self.rng.next() % 3) as usize) as u8;
                 Op::Store(id, self.item(id))
             }
@@ -152,20 +125,16 @@ fn counter(items: &Items) -> Option<u32> {
 #[derive(Default)]
 struct Report {
     cuts: usize,
-    /// cuts in the middle of a program
     torn_cuts: usize,
     recoveries: usize,
     switches: usize,
-    /// a torn record of the item being written passed its CRC
     crc_passes: Vec<String>,
     lost: Vec<String>,
 }
 
-/// What may be found after a cut during `op` on `before`: `None` when it is.
 fn judge(op: &Op, before: &Items, got: &Items) -> Option<String> {
     let after = op.after(before);
     if let Op::Forget(keep) = op {
-        // all or nothing, and the kept item as it was
         if *got == *before || *got == after {
             return None;
         }
@@ -180,9 +149,6 @@ fn judge(op: &Op, before: &Items, got: &Items) -> Option<String> {
     None
 }
 
-/// Runs `ops` on `f`, cutting every operation of every `cut_every`-th one
-/// and of every one that switches sectors or forgets. From every
-/// `recover_every`-th cut the store carries on with `recover` more operations.
 fn run(f: &NorFlash, ops: &[Op], cut_every: usize, recover_every: usize, recover: usize) -> Report {
     let mut rng = Rng(0xA076_1D64_78BD_642F);
     let mut work = Work { rng: Rng(99), counter: 1 << 30 };
@@ -202,15 +168,12 @@ fn run(f: &NorFlash, ops: &[Op], cut_every: usize, recover_every: usize, recover
             let replay = pre.snapshot();
             let last = fops.len() - 1;
             for (j, fop) in fops.iter().enumerate() {
-                // the programs of a switch before its last record and header
-                // leave a sector that is not active yet: a sample of their cuts
                 let thin = header && j + 2 < last && matches!(fop, FlashOp::Program { .. });
                 for (k, (label, cut)) in cuts(&replay, fop, &mut rng).into_iter().enumerate() {
                     if thin && k > 1 && k % 8 != 0 {
                         continue;
                     }
                     rep.cuts += 1;
-                    // the item's record (of one or more programs) part way written
                     let torn = !(j == 0 && label == "before") && !(j == last && label == "after");
                     rep.torn_cuts += torn as usize;
                     let got = all(&open(&cut));
@@ -285,7 +248,6 @@ fn assert_safe(rep: &Report, min_cuts: usize) {
     }
     assert!(rep.lost.is_empty(), "{} of {} cuts lost the state, e.g.:\n{}", rep.lost.len(), rep.cuts, rep.lost[..rep.lost.len().min(10)].join("\n"));
     assert!(rep.cuts >= min_cuts, "only {} cuts", rep.cuts);
-    // CRC-8: about one torn record in 256 passes
     assert!(rep.crc_passes.len() * 128 <= rep.torn_cuts.max(128), "{} of {} torn records passed", rep.crc_passes.len(), rep.torn_cuts);
 }
 
@@ -304,8 +266,6 @@ fn every_cut_during_stores_and_switches() {
 
 #[test]
 fn every_cut_while_forgetting_keeps_the_frame_counters() {
-    // Leave and factory reset: everything goes but the frame counters,
-    // with the store fresh, part full and just switched
     for (n, seed) in [(5, 1), (40, 2), (120, 3), (333, 4)] {
         let f = medium();
         let mut ops = workload(n, seed);
@@ -341,8 +301,6 @@ fn the_child_table_and_every_item_survive_many_switches() {
 
 #[test]
 fn each_is_load() {
-    // the one-pass reader the cut tests use finds what `load` finds, torn
-    // records and all
     let f = medium();
     let mut nv = open(&f);
     let mut rng = Rng(3);

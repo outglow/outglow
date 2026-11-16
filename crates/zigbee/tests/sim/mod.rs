@@ -1,7 +1,3 @@
-//! A simulated 802.15.4 network for the host tests: a shared medium with a
-//! link matrix, a `Hal` for stack instances, and a small Zigbee coordinator
-//! and Trust Center written against the crate's own frame codecs.
-
 #![allow(dead_code)]
 
 use std::cell::RefCell;
@@ -24,11 +20,8 @@ pub const NWK_KEY: [u8; 16] = [1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12,
 pub const TCLK: [u8; 16] = *b"ZigBeeAlliance09";
 pub const DISTRIBUTED_LINK_KEY: [u8; 16] = [0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF];
 
-/// Size of the simulated OTA staging area.
 pub const STAGING_MAX: usize = 0x4000;
 
-/// A Telink firmware image of `len` bytes: "KNLT" at 8, its size at 0x18,
-/// the CRC-32 register (not inverted) over all but the last four bytes at the end.
 pub fn make_image(len: usize, seed: u8) -> Vec<u8> {
     let mut image: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect();
     image[8..12].copy_from_slice(b"KNLT");
@@ -37,7 +30,6 @@ pub fn make_image(len: usize, seed: u8) -> Vec<u8> {
     image
 }
 
-/// Recomputes the CRC in the last four bytes of an image.
 pub fn seal_image(image: &mut [u8]) {
     let n = image.len() - 4;
     let mut crc = 0xFFFF_FFFFu32;
@@ -50,8 +42,6 @@ pub fn seal_image(image: &mut [u8]) {
     image[n..].copy_from_slice(&crc.to_le_bytes());
 }
 
-/// A Zigbee OTA file around an image, optionally with `extra` header bytes
-/// and an element of another kind before the image.
 pub fn make_ota_file(image: &[u8], manufacturer: u16, image_type: u16, version: u32, extra: usize, other_element: bool) -> Vec<u8> {
     let header_len = 56 + extra;
     let mut body = vec![];
@@ -77,7 +67,6 @@ pub fn make_ota_file(image: &[u8], manufacturer: u16, image_type: u16, version: 
     f
 }
 
-/// An OTA file the coordinator serves.
 pub struct OtaFile {
     pub manufacturer: u16,
     pub image_type: u16,
@@ -104,24 +93,17 @@ pub const IDENTITY: Identity = Identity {
     sense: false,
 };
 
-/// The tunable-white bulb.
 pub const IDENTITY_TW: Identity = Identity { model: "ESMLFzm_w6_TW", color_temperature: true, ..IDENTITY };
 
-/// A colour bulb (EGLO RGB+TW): an Extended Color Light, colour temperature 153..370.
 pub const IDENTITY_COLOR: Identity =
     Identity { model: "outglow-rgbtw", color_temperature: true, color: true, ct_min: 153, ct_max: 370, image_type: 0x0399, ..IDENTITY };
 
-/// A bulb whose firmware has BLE: with the settings cluster 0xFC5F.
 pub const IDENTITY_BLE: Identity = Identity { ble: true, ..IDENTITY };
 
-/// A bulb with motion sensing from RSSI (Occupancy Sensing, 0xFC5E, probes).
 pub const IDENTITY_SENSE: Identity = Identity { sense: true, ..IDENTITY };
 
-/// The signal strength of a frame at a port (`Air::rssi_model`): receiving
-/// port, MPDU, time; `None` drops the frame there.
 pub type RssiModel = Box<dyn FnMut(usize, &[u8], u32) -> Option<i8>>;
 
-/// One radio on the medium.
 pub struct Port {
     pub channel: u8,
     pub pan: u16,
@@ -131,60 +113,35 @@ pub struct Port {
     pub queue: VecDeque<(Vec<u8>, u8)>,
     pub nv: HashMap<u8, Vec<u8>>,
     pub nv_writes: u32,
-    /// OTA staging area (erased = 0xFF) and whether the image in it was activated.
     pub staging: Vec<u8>,
     pub activated: bool,
-    /// What the stack last told the radio about its end-device children.
     pub poll_children: Option<Vec<u16>>,
-    /// The addresses the stack last told the radio have frames waiting (short, extended).
     pub pending: (Vec<u16>, Vec<u64>),
-    /// How often the last transmission went on the air (the radio retries a
-    /// unicast without an acknowledgement three times).
     pub last_attempts: u8,
-    /// The next acknowledged unicast takes this many attempts (0: one).
     pub next_attempts: u8,
-    /// What the hardware layer counts (`Hal::counters`), for tests to set.
     pub hal_counters: HalCounters,
-    /// Why the next stack built on this port starts, and what the RAM kept over a warm restart.
     pub reset_cause: ResetCause,
     pub retained: Option<Vec<u8>>,
-    /// The ZCL frames for the light's endpoint the stack took (`Hal::zcl_received`):
-    /// sender, cluster, command, frame control, LQI, RSSI.
     pub zcl_received: Vec<(u16, u16, u8, u8, u8, i8)>,
-    /// The receiver also takes broadcasts to this PAN (`Hal::sense_listen`); 0xFFFF none.
     pub probe_pan: u16,
 }
 
 pub struct Air {
     pub now: u32,
     pub ports: Vec<Port>,
-    /// `lqi[a][b]`: link quality of a's frames at b; 0 = out of range.
     pub lqi: Vec<Vec<u8>>,
-    /// `loss[a][b]`: percent of a's frames that b does not receive (each
-    /// transmission attempt, and each acknowledgement on the way back).
     pub loss: Vec<Vec<u8>>,
-    /// Everything transmitted: time, sender, MPDU.
     pub log: Vec<(u32, usize, Vec<u8>)>,
-    /// Transmissions asked for at an exact time: sender, time in microseconds, channel, MPDU.
     pub timed: Vec<(usize, u32, u8, Vec<u8>)>,
-    /// Energy an energy detection finds on channel 11 + index.
     pub energy: [u8; 16],
-    /// Signal strength of every frame a stack receives, instead of the one
-    /// that follows from the link quality; may drop frames.
     pub rssi_model: Option<RssiModel>,
     rng: u32,
 }
 
 pub type Shared = Rc<RefCell<Air>>;
 
-/// The first three bytes of every bulb's extended address.
 const BULB_OUI: u64 = 0xA4_C138;
 
-/// With `ZIGBEE_PCAP_DIR` set every test leaves a capture of its air there
-/// (`<test name>.pcap`, link type 230: IEEE 802.15.4 without FCS), for a
-/// look in Wireshark and for `emulator/wireshark_check.py`. Next to it
-/// `<test name>.senders`: one line per frame, `B` when a bulb (the stack
-/// under test) sent it and `T` when a device written for the tests did.
 impl Drop for Air {
     fn drop(&mut self) {
         let Ok(dir) = std::env::var("ZIGBEE_PCAP_DIR") else {
@@ -269,13 +226,11 @@ impl Air {
         n - 1
     }
 
-    /// Sets the link quality between two ports, both ways (0 cuts the link).
     pub fn link(&mut self, a: usize, b: usize, lqi: u8) {
         self.lqi[a][b] = lqi;
         self.lqi[b][a] = lqi;
     }
 
-    /// Makes a link lose `percent` of the frames, both ways.
     pub fn lossy(&mut self, a: usize, b: usize, percent: u8) {
         self.loss[a][b] = percent;
         self.loss[b][a] = percent;
@@ -293,8 +248,6 @@ impl Air {
         self.rng
     }
 
-    /// Puts an MPDU on the air from port `from`; models the receivers'
-    /// address filter and their acknowledgement.
     pub fn transmit(&mut self, from: usize, mpdu: &[u8]) -> TxStatus {
         self.log.push((self.now, from, mpdu.to_vec()));
         let Some((h, _)) = mac::Header::parse(mpdu) else {
@@ -302,7 +255,6 @@ impl Air {
         };
         let channel = self.ports[from].channel;
         let mut acked = false;
-        // attempts a lossy link needed for the frame and its acknowledgement (1 + 3 retries)
         let mut lossy_attempts = 0u8;
         for j in 0..self.ports.len() {
             let lqi = self.lqi[from][j];
@@ -334,7 +286,6 @@ impl Air {
                 }
                 continue;
             }
-            // up to four attempts: the frame may be lost, and so may its acknowledgement
             let mut received = false;
             for attempt in 1..=4u8 {
                 lossy_attempts = attempt;
@@ -405,7 +356,6 @@ impl Hal for SimHal {
         if staging.len() != STAGING_MAX {
             return false;
         }
-        // as the flash driver does: everything from the next sector on is erased again when reached
         let from = (image_len as usize + 0xFFF) & !0xFFF;
         staging[from.min(STAGING_MAX)..].iter_mut().for_each(|b| *b = 0xFF);
         true
@@ -414,7 +364,6 @@ impl Hal for SimHal {
         let mut air = self.air.borrow_mut();
         let staging = &mut air.ports[self.id].staging;
         for (i, b) in data.iter().enumerate() {
-            // flash: bits only go from 1 to 0
             staging[offset as usize + i] &= *b;
         }
     }
@@ -446,7 +395,6 @@ impl Hal for SimHal {
         let now = air.now;
         loop {
             let (frame, lqi) = air.ports[self.id].queue.pop_front()?;
-            // (the scale of the firmware's radio: -99 dBm..-15 dBm over the whole range)
             let rssi = match air.rssi_model.as_mut() {
                 None => (lqi as i32 * 84 / 255 - 99) as i8,
                 Some(model) => match model(self.id, &frame, now) {
@@ -479,7 +427,6 @@ impl Hal for SimHal {
         self.air.borrow_mut().ports[self.id].nv.clear();
     }
     fn nv_store_pair(&mut self, a: NvItem, a_data: &[u8], b: NvItem, b_data: &[u8]) {
-        // one write, as the firmware's store does it
         let mut air = self.air.borrow_mut();
         let p = &mut air.ports[self.id];
         p.nv.insert(a as u8, a_data.to_vec());
@@ -515,21 +462,18 @@ impl Hal for SimHal {
     }
 }
 
-/// A bulb: the stack plus the light it controls.
 pub struct Node {
     pub id: usize,
     pub stack: Stack<SimHal>,
     pub on: bool,
     pub level: u8,
     pub color_temp: u16,
-    /// Colour bulbs: the colour mode and colour the light took.
     pub color_mode: bulb_core::colour::ColorMode,
     pub hue: u8,
     pub sat: u8,
     pub x: u16,
     pub y: u16,
     pub commands: Vec<Command>,
-    /// For each command, how many frames had been on the air when the light took it.
     pub command_frames: Vec<usize>,
 }
 
@@ -567,7 +511,6 @@ impl Node {
         self.report();
     }
 
-    /// Tells the stack the light's state, as the firmware does after every change.
     pub fn report(&mut self) {
         self.stack.set_light(&StateReport {
             on: self.on,
@@ -600,17 +543,13 @@ pub struct Device {
     pub tclk: [u8; 16],
     pub tclk_new: Option<[u8; 16]>,
     pub verified: bool,
-    /// Router the device joined through (None: directly).
     pub parent: Option<u16>,
-    /// The parent reported that the device left.
     pub left: bool,
 }
 
-/// Coordinator and Trust Center, as much of one as the tests need.
 pub struct Coord {
     pub air: Shared,
     pub id: usize,
-    /// PAN identifier in use (see `set_pan`).
     pub pan: u16,
     pub key: [u8; 16],
     pub key_seq: u8,
@@ -618,15 +557,9 @@ pub struct Coord {
     pub aps_fc: u32,
     seq: u8,
     pub permit_join: bool,
-    /// Stack revision in the node descriptor; below 21 means no key exchange.
     pub stack_revision: u16,
-    /// Key identifier for transporting a new link key (3 = key-load, as the
-    /// spec says; 2 = key-transport, as some stacks do).
     pub link_key_transport_id: u8,
-    /// Misbehave: transport the network key without APS encryption.
     pub send_key_in_the_clear: bool,
-    /// Start the APS frame counter at 0 again when a device's new link key
-    /// comes into use, as a Trust Center may (BDB 10.3.2 step 9).
     pub restart_link_key_counter: bool,
     pub devices: Vec<Device>,
     pending: Vec<u64>,
@@ -634,85 +567,47 @@ pub struct Coord {
     next_short: u16,
     fc_in: HashMap<u64, u32>,
     seen: HashSet<(u16, u8)>,
-    /// Static next hops for tests that put a node out of direct range.
     pub via: HashMap<u16, u16>,
-    /// Source routes to use (relay list, nearest to the destination first).
     pub source_route: HashMap<u16, Vec<u16>>,
-    /// The link key new devices are given the network key under: the
-    /// well-known one, or the key of an install code.
     pub join_key: [u8; 16],
-    /// Misbehave: turn away devices that ask to rejoin without the network key.
     pub refuse_rejoin: bool,
-    /// Extended PAN identifier in the beacons (a second coordinator stands for another network).
     pub ext_pan: u64,
-    /// What the network key names as its source: the Trust Center's
-    /// address, or all ones when this is a router of a network without one.
     pub tc_ext: u64,
-    /// The address that secures APS commands (the Trust Center's own, unless a test forges).
     pub aps_ext: u64,
-    /// Depth in the beacons.
     pub depth: u8,
-    /// Misbehave: beacons invite, association requests get no answer.
     pub ignore_associations: bool,
-    /// Rejoin requests are noted and get no answer.
     pub ignore_rejoin: bool,
-    /// A Trust Center from before revision 21: it takes the Update Device
-    /// that has no APS encryption, and no other.
     pub legacy_update_device: bool,
-    /// Do not answer Request Key and Verify Key (a Trust Center that never
-    /// completes the link key exchange).
     pub mute_key_exchange: bool,
-    /// Answer a Request Key with the link key the device already has.
     pub same_link_key: bool,
-    /// Update Device commands received: (router, device, status, APS-encrypted?).
     pub update_copies: Vec<(u16, u64, u8, bool)>,
-    /// Network Status commands received: (NWK source, status code, the rest of the payload).
     pub statuses: Vec<(u16, u8, Vec<u8>)>,
-    /// Leave commands heard that were not for the coordinator: (NWK source, NWK destination, options).
     pub leaves: Vec<(u16, u16, u8)>,
-    /// The last APS frame sent encrypted with a link key, as it went into the NWK frame.
     pub last_encrypted: Vec<u8>,
     pub zcl_rx: Vec<(u16, u16, Vec<u8>)>,
-    /// The source endpoint of each frame of `zcl_rx`.
     pub zcl_rx_ep: Vec<u8>,
-    /// Group-addressed frames received: (NWK source, group).
     pub group_rx: Vec<(u16, u16)>,
     pub zdo_rx: Vec<(u16, u16, Vec<u8>)>,
     pub nwk_cmd_rx: Vec<(u16, Vec<u8>)>,
     pub route_records: Vec<(u16, Vec<u16>)>,
-    /// Rejoin requests answered: (device, secured with the network key?).
     pub rejoins: Vec<(u16, bool)>,
-    /// Update-Device reports from routers: (router, device, status).
     pub updates: Vec<(u16, u64, u8)>,
-    /// OTA server: the file on offer, and what the clients did.
     pub ota_file: Option<OtaFile>,
-    /// Misbehave: offer the file whatever image type the client asks for.
     pub ota_offer_anyway: bool,
-    /// Block requests to leave unanswered (as if lost).
     pub ota_drop_blocks: u32,
     pub ota_queries: u32,
     pub ota_blocks: u32,
-    /// Status of the last Upgrade End Request.
     pub ota_end: Option<u8>,
-    /// Upgrade End Requests with status SUCCESS received.
     pub ota_ends: u32,
-    /// Endpoint the server says it is on (Match Descriptor response), whether it
-    /// says so at all, and the endpoint the client's last request was sent to.
     pub ota_endpoint: u8,
     pub ota_hidden: bool,
     pub ota_asked_on: Option<u8>,
-    /// Match Descriptor requests received.
     pub match_requests: u32,
-    /// Block requests to answer with WAIT_FOR_DATA, and for how many seconds each.
     pub ota_wait: (u32, u32),
-    /// Upgrade time in the Upgrade End Response (current time 0); `None`: no response.
     pub ota_upgrade_time: Option<u32>,
     pub aps_acks: u32,
-    /// APS-encrypted data frames and acknowledgements received and decrypted.
     pub aps_encrypted_rx: u32,
-    /// Acknowledgements of blocks of fragmented transfers received.
     pub fragment_acks: u32,
-    /// Incoming fragments to ignore (as if lost), for retry tests.
     pub drop_fragments: u32,
     fragments: HashMap<(u16, u8), Vec<Option<Vec<u8>>>>,
     last_fragmented: Option<(u16, u16, Vec<u8>, u8, usize)>,
@@ -832,16 +727,11 @@ impl Coord {
         f
     }
 
-    /// Moves the coordinator to another PAN identifier.
     pub fn set_pan(&mut self, pan: u16) {
         self.pan = pan;
         self.air.borrow_mut().ports[self.id].pan = pan;
     }
 
-    // ---------------------------------------------------------------- NWK
-
-    /// Sends a NWK frame; `mac_dst` defaults to the static route or the
-    /// destination itself.
     pub fn nwk_send(&mut self, mut h: nwk::Header, payload: &[u8], mac_dst: Option<u16>) -> TxStatus {
         if h.relays.is_none() {
             if let Some(list) = self.source_route.get(&h.dst) {
@@ -889,7 +779,6 @@ impl Coord {
         self.nwk_send(h, payload, None)
     }
 
-    /// Many-to-one route request: the coordinator is a concentrator.
     pub fn many_to_one_route_request(&mut self, no_cache: bool) {
         let options = if no_cache { 2 << 3 } else { 1 << 3 };
         let id = self.next_seq();
@@ -907,8 +796,6 @@ impl Coord {
         self.nwk_command(0xFFFC, 1, &p);
     }
 
-    // ---------------------------------------------------------------- APS
-
     pub fn aps_frame(&mut self, fc: u8, dst_ep: u8, cluster: u16, profile: u16, src_ep: u8, payload: &[u8]) -> Vec<u8> {
         let mut f = vec![fc, dst_ep];
         f.extend_from_slice(&cluster.to_le_bytes());
@@ -919,7 +806,6 @@ impl Coord {
         f
     }
 
-    /// APS command secured with a key derived from a link key.
     fn aps_command(&mut self, link: &[u8; 16], key_id: u8, payload: &[u8]) -> Vec<u8> {
         let key = match key_id {
             0 => *link,
@@ -967,9 +853,6 @@ impl Coord {
         self.nwk_data(0xFFFF, &aps);
     }
 
-    /// Network key update without APS encryption, as a Trust Center
-    /// broadcasts it (`dst` 0xFFFF): the key for everyone (destination
-    /// field zero), from `source`.
     pub fn network_key_update(&mut self, dst: u16, key: &[u8; 16], seq: u8, source: u64) {
         let mut aps = vec![if nwk::is_broadcast(dst) { 0x09 } else { 0x01 }, self.next_seq(), 0x05, 0x01];
         aps.extend_from_slice(key);
@@ -979,8 +862,6 @@ impl Coord {
         self.nwk_data(dst, &aps);
     }
 
-    /// Takes a network key into use. With `restart` its outgoing frame
-    /// counter starts at 0, as the counters of a new key do (R22 4.6.3.4.2).
     pub fn use_key(&mut self, key: &[u8; 16], seq: u8, restart: bool) {
         self.key = *key;
         self.key_seq = seq;
@@ -988,8 +869,6 @@ impl Coord {
             self.fc = 0;
         }
     }
-
-    // ---------------------------------------------------------------- ZDO, ZCL
 
     pub fn zdo(&mut self, dst: u16, cluster: u16, payload: &[u8]) -> u8 {
         let seq = self.next_seq();
@@ -1001,7 +880,6 @@ impl Coord {
         seq
     }
 
-    /// Sends a ZCL frame to endpoint 1; returns the ZCL sequence number.
     pub fn zcl(&mut self, dst: u16, cluster: u16, frame_control: u8, cmd: u8, payload: &[u8]) -> u8 {
         let seq = self.next_seq();
         let mut p = vec![frame_control, seq, cmd];
@@ -1012,7 +890,6 @@ impl Coord {
         seq
     }
 
-    /// Sends a ZCL frame to another endpoint; returns the ZCL sequence number.
     pub fn zcl_ep(&mut self, dst: u16, ep: u8, cluster: u16, frame_control: u8, cmd: u8, payload: &[u8]) -> u8 {
         let seq = self.next_seq();
         let mut p = vec![frame_control, seq, cmd];
@@ -1023,8 +900,6 @@ impl Coord {
         seq
     }
 
-    /// Sends a manufacturer-specific ZCL frame to endpoint 1 (the frame
-    /// control gets the manufacturer-specific bit); returns the sequence number.
     pub fn zcl_mfr(&mut self, dst: u16, cluster: u16, frame_control: u8, code: u16, cmd: u8, payload: &[u8]) -> u8 {
         let seq = self.next_seq();
         let mut p = vec![frame_control | 0x04];
@@ -1036,7 +911,6 @@ impl Coord {
         seq
     }
 
-    /// The last manufacturer-specific ZCL frame received from `src` on `cluster` with command `cmd`.
     pub fn last_zcl_mfr(&self, src: u16, cluster: u16, cmd: u8) -> Option<Vec<u8>> {
         self.zcl_rx
             .iter()
@@ -1045,7 +919,6 @@ impl Coord {
             .map(|e| e.2.clone())
     }
 
-    /// The last ZCL frame received from endpoint `ep` of `src` on `cluster` with command `cmd`.
     pub fn last_zcl_ep(&self, src: u16, ep: u8, cluster: u16, cmd: u8) -> Option<Vec<u8>> {
         self.zcl_rx
             .iter()
@@ -1055,8 +928,6 @@ impl Coord {
             .map(|e| e.0 .2.clone())
     }
 
-    /// Sends a ZCL frame to endpoint 1 encrypted at the APS level with the
-    /// device's link key; returns the ZCL sequence number.
     pub fn zcl_encrypted(&mut self, dst: u16, cluster: u16, frame_control: u8, cmd: u8, payload: &[u8]) -> u8 {
         let seq = self.next_seq();
         let mut zcl = vec![frame_control, seq, cmd];
@@ -1064,7 +935,6 @@ impl Coord {
         let link = self.device(dst).map_or(self.join_key, |d| d.tclk);
         let counter = self.aps_fc;
         self.aps_fc += 1;
-        // data frame, security, acknowledgement requested; then the auxiliary header
         let mut f = vec![0x60, 1];
         f.extend_from_slice(&cluster.to_le_bytes());
         f.extend_from_slice(&0x0104u16.to_le_bytes());
@@ -1085,8 +955,6 @@ impl Coord {
         seq
     }
 
-    /// Sends a ZCL frame to endpoint 1 in fragments of `block` bytes, all at
-    /// once (the receiver acknowledges each); returns the ZCL sequence number.
     pub fn zcl_fragmented(&mut self, dst: u16, cluster: u16, frame_control: u8, cmd: u8, payload: &[u8], block: usize) -> u8 {
         let seq = self.next_seq();
         let mut zcl = vec![frame_control, seq, cmd];
@@ -1097,9 +965,6 @@ impl Coord {
         seq
     }
 
-    /// Sends the blocks of the last fragmented transfer (again): the same
-    /// APS counter, freshly secured frames, as a sender does that missed the
-    /// acknowledgements.
     pub fn repeat_fragments(&mut self) {
         let (dst, cluster, zcl, counter, block) = self.last_fragmented.clone().expect("a fragmented transfer");
         let chunks: Vec<&[u8]> = zcl.chunks(block).collect();
@@ -1128,7 +993,6 @@ impl Coord {
         self.nwk_data(0xFFFD, &aps);
     }
 
-    /// The last ZCL frame received from `src` on `cluster` with command `cmd`.
     pub fn last_zcl(&self, src: u16, cluster: u16, cmd: u8) -> Option<Vec<u8>> {
         self.zcl_rx.iter().rev().find(|(s, c, f)| *s == src && *c == cluster && f.get(2) == Some(&cmd)).map(|e| e.2.clone())
     }
@@ -1136,8 +1000,6 @@ impl Coord {
     pub fn last_zdo(&self, src: u16, cluster: u16) -> Option<Vec<u8>> {
         self.zdo_rx.iter().rev().find(|(s, c, _)| *s == src && *c == cluster).map(|e| e.2.clone())
     }
-
-    // ---------------------------------------------------------------- receive
 
     pub fn poll(&mut self) {
         loop {
@@ -1214,7 +1076,6 @@ impl Coord {
                         f.u16(short);
                         f.u8(0);
                         self.tx(f.as_slice());
-                        // the key follows once the device has taken its address
                         let now = self.air.borrow().now;
                         self.key_due.push((now + 30, short, ext));
                     }
@@ -1234,7 +1095,6 @@ impl Coord {
             return;
         };
         if !h.security {
-            // a device that lost the network key asks to come back: readmit it and send the key
             if h.frame_type == nwk::FRAME_CMD && h.dst == 0 && p.get(hl) == Some(&nwk::CMD_REJOIN_REQUEST) {
                 if let Some(d) = h.src_ext.and_then(|e| self.devices.iter().find(|d| d.ext == e)) {
                     let (short, ext) = (d.short, d.ext);
@@ -1246,7 +1106,6 @@ impl Coord {
                     rh.security = false;
                     rh.dst_ext = Some(ext);
                     if self.refuse_rejoin {
-                        // "PAN access denied", with an address nobody should take
                         self.nwk_send(rh, &[nwk::CMD_REJOIN_RESPONSE, 0x34, 0x12, 0x02], Some(mac_src));
                         return;
                     }
@@ -1291,7 +1150,6 @@ impl Coord {
                 nwk::CMD_ROUTE_REQUEST => {
                     let target = u16::from_le_bytes([payload[3], payload[4]]);
                     if target == 0 {
-                        // the reply starts with the cost of the link it leaves on (R22 3.6.3.5.2)
                         let o = h.src.to_le_bytes();
                         let rh = self.header(nwk::FRAME_CMD, mac_src, 30);
                         self.nwk_send(rh, &[nwk::CMD_ROUTE_REPLY, 0, payload[2], o[0], o[1], 0, 0, 1], Some(mac_src));
@@ -1303,7 +1161,6 @@ impl Coord {
                     let mut rh = self.header(nwk::FRAME_CMD, h.src, 1);
                     rh.dst_ext = h.src_ext;
                     let s = h.src.to_le_bytes();
-                    // (turned away, if the test says so: "PAN at capacity")
                     let status = if self.refuse_rejoin { 0x01 } else { 0x00 };
                     self.nwk_send(rh, &[nwk::CMD_REJOIN_RESPONSE, s[0], s[1], status], Some(mac_src));
                 }
@@ -1322,7 +1179,6 @@ impl Coord {
 
     fn on_aps(&mut self, src: u16, p: &[u8]) {
         let fc = p[0];
-        // data and acknowledgements encrypted with the sender's link key
         let decrypted;
         let p = if fc & 3 != 1 && fc & 0x20 != 0 {
             let header_len = if fc & 3 == 2 && fc & 0x10 != 0 { 2 } else if fc & 3 == 0 && fc & 0x80 != 0 { 10 } else { 8 };
@@ -1377,7 +1233,6 @@ impl Coord {
                 self.on_aps_command(src, fc & 0x20 != 0, &body);
             }
             _ => {
-                // group-addressed frames have a 2-byte group where the others have the endpoint
                 let shifted;
                 let p = if (fc >> 2) & 3 == 3 {
                     self.group_rx.push((src, u16::from_le_bytes([p[1], p[2]])));
@@ -1389,7 +1244,6 @@ impl Coord {
                 let cluster = u16::from_le_bytes([p[2], p[3]]);
                 let profile = u16::from_le_bytes([p[4], p[5]]);
                 let payload = if fc & 0x80 != 0 && p[8] & 3 != 0 {
-                    // a block of a fragmented transfer: acknowledge it, deliver when complete
                     if self.drop_fragments > 0 {
                         self.drop_fragments -= 1;
                         return;
@@ -1407,7 +1261,6 @@ impl Coord {
                     }
                     blocks[index] = Some(p[10..].to_vec());
                     let whole = blocks.iter().all(|b| b.is_some()).then(|| blocks.iter().flatten().flatten().copied().collect::<Vec<u8>>());
-                    // (the fragmentation value of the acknowledged block: R22 2.2.5.2.3)
                     let mut ack = vec![0x82, p[6], p[2], p[3], p[4], p[5], p[1], counter, kind, index as u8, 0xFF];
                     ack.truncate(11);
                     self.nwk_data(src, &ack);
@@ -1435,8 +1288,6 @@ impl Coord {
         }
     }
 
-    /// Remove Device: tells `router` to make the device `ext` leave (or to
-    /// leave itself), under the link key shared with the router.
     pub fn remove_device(&mut self, router: u16, ext: u64) {
         let link = self.device(router).map_or(self.join_key, |d| d.tclk);
         let mut body = vec![0x07];
@@ -1445,14 +1296,11 @@ impl Coord {
         self.nwk_data(router, &aps);
     }
 
-    /// Opens the network for joining through the routers too.
     pub fn permit(&mut self, seconds: u8) {
         self.permit_join = seconds != 0;
         self.zdo(0xFFFC, 0x0036, &[seconds, 1]);
     }
 
-    /// A router reports a device that joined through it (or left it): the
-    /// network key goes back inside a Tunnel command.
     fn on_update_device(&mut self, router: u16, b: &[u8]) {
         let ext = u64::from_le_bytes(b[1..9].try_into().unwrap());
         let short = u16::from_le_bytes([b[9], b[10]]);
@@ -1463,7 +1311,6 @@ impl Coord {
             }
             return;
         }
-        // a device we know keeps its link key; a new one starts with the default
         let known = self.devices.iter().find(|d| d.ext == ext).map(|d| (d.tclk, d.verified));
         self.devices.retain(|d| d.ext != ext);
         let (link, verified) = known.unwrap_or((self.join_key, false));
@@ -1481,7 +1328,6 @@ impl Coord {
         self.fc_in.remove(&ext);
         self.via.insert(short, router);
         if b[11] == 0x00 {
-            // rejoined with the network key: nothing to send
             return;
         }
         let mut body = vec![0x05, 0x01];
@@ -1499,7 +1345,6 @@ impl Coord {
     fn on_aps_command(&mut self, src: u16, secured: bool, b: &[u8]) {
         if b[0] == 0x06 {
             self.update_copies.push((src, u64::from_le_bytes(b[1..9].try_into().unwrap()), b[11], secured));
-            // one of the two copies a router sends under the global link key is acted on
             if secured != self.legacy_update_device {
                 self.on_update_device(src, b);
             }
@@ -1544,12 +1389,10 @@ impl Coord {
         }
     }
 
-    /// OTA Upgrade server.
     fn on_ota(&mut self, src: u16, p: &[u8]) {
         let (seq, cmd, b) = (p[1], p[2], &p[3..]);
         let mut rsp = vec![0x19, seq];
         match cmd {
-            // Query Next Image Request: field control, manufacturer, image type, current version
             0x01 => {
                 self.ota_queries += 1;
                 let (manufacturer, image_type) = (u16::from_le_bytes([b[1], b[2]]), u16::from_le_bytes([b[3], b[4]]));
@@ -1565,7 +1408,6 @@ impl Coord {
                     _ => rsp.push(0x98),
                 }
             }
-            // Image Block Request: ..., file version, offset, maximum data size
             0x03 => {
                 if self.ota_drop_blocks > 0 {
                     self.ota_drop_blocks -= 1;
@@ -1576,7 +1418,6 @@ impl Coord {
                 let max = b[13] as usize;
                 rsp.push(0x05);
                 if self.ota_wait.0 > 0 {
-                    // WAIT_FOR_DATA: current time, request time
                     self.ota_wait.0 -= 1;
                     rsp.push(0x97);
                     rsp.extend_from_slice(&1000u32.to_le_bytes());
@@ -1597,7 +1438,6 @@ impl Coord {
                     _ => rsp.push(0x95),
                 }
             }
-            // Upgrade End Request: status, manufacturer, image type, version
             0x06 => {
                 self.ota_end = Some(b[0]);
                 if b[0] != 0 {
@@ -1609,7 +1449,6 @@ impl Coord {
                 };
                 rsp.push(0x07);
                 rsp.extend_from_slice(&b[1..9]);
-                // current time 0: the upgrade time counts from now
                 rsp.extend_from_slice(&[0; 4]);
                 rsp.extend_from_slice(&upgrade_time.to_le_bytes());
             }
@@ -1619,7 +1458,6 @@ impl Coord {
         self.nwk_data(src, &aps);
     }
 
-    /// A Green Power cluster command to the proxies (broadcast to endpoint 242).
     pub fn gp_command(&mut self, cmd: u8, payload: &[u8]) {
         let seq = self.next_seq();
         let mut zcl = vec![0x19, seq, cmd];
@@ -1628,14 +1466,11 @@ impl Coord {
         self.nwk_data(0xFFFD, &aps);
     }
 
-    /// GP Proxy Commissioning Mode: enter (for 180 s, until the first
-    /// pairing) or exit; notifications by unicast or by broadcast.
     pub fn gp_commissioning_mode(&mut self, enter: bool, unicast: bool) {
         let options = if enter { 0x01 | 0x04 | (unicast as u8) << 5 } else { 0x00 };
         self.gp_command(0x02, &[options]);
     }
 
-    /// A Green Power cluster frame to one proxy (unicast to endpoint 242); returns the ZCL sequence number.
     pub fn gp_unicast(&mut self, dst: u16, frame_control: u8, cmd: u8, payload: &[u8]) -> u8 {
         let seq = self.next_seq();
         let mut zcl = vec![frame_control, seq, cmd];
@@ -1645,8 +1480,6 @@ impl Coord {
         seq
     }
 
-    /// GP Pairing: adds a device to the proxies' tables, or (`add` false)
-    /// removes it from them. `mode` 3 = lightweight unicast to us, 2 = to `group`.
     pub fn gp_pairing(&mut self, gpd: u32, add: bool, mode: u8, group: u16, security: u8, key: Option<[u8; 16]>, counter: u32) {
         let mut pairing = Pairing::new(gpd, mode);
         pairing.remove_gpd = !add;
@@ -1658,18 +1491,14 @@ impl Coord {
         self.gp_pair(&pairing);
     }
 
-    /// GP Pairing with every field under the test's control.
     pub fn gp_pair(&mut self, pairing: &Pairing) {
         self.gp_command(0x01, &pairing.payload());
     }
 
-    /// GP Response: a frame for a Green Power device, to be delivered by the
-    /// proxy `temp_master` on `channel` in the device's next receive window.
     pub fn gp_response(&mut self, temp_master: u16, channel: u8, gpd: u32, cmd: u8, payload: &[u8]) {
         self.gp_response_to(temp_master, channel, None, gpd, cmd, payload);
     }
 
-    /// The same for a device known by its IEEE address and endpoint (`ieee`), or by `gpd`.
     pub fn gp_response_to(&mut self, temp_master: u16, channel: u8, ieee: Option<(u64, u8)>, gpd: u32, cmd: u8, payload: &[u8]) {
         let mut p = vec![if ieee.is_some() { 0x02 } else { 0x00 }];
         p.extend_from_slice(&temp_master.to_le_bytes());
@@ -1687,14 +1516,12 @@ impl Coord {
         self.gp_command(0x06, &p);
     }
 
-    /// Image Notify: tells a client to ask for an image.
     pub fn ota_notify(&mut self, dst: u16) {
         let seq = self.next_seq();
         let aps = self.aps_frame(if nwk::is_broadcast(dst) { 0x08 } else { 0x00 }, 1, 0x0019, 0x0104, self.ota_endpoint, &[0x19, seq, 0x00, 0x00, 100]);
         self.nwk_data(dst, &aps);
     }
 
-    /// Upgrade End Response, unasked: manufacturer, image type, file version, upgrade time (current time 0).
     pub fn ota_upgrade_end_response(&mut self, dst: u16, manufacturer: u16, image_type: u16, version: u32, upgrade_time: u32) {
         let seq = self.next_seq();
         let mut zcl = vec![0x19, seq, 0x07];
@@ -1709,7 +1536,6 @@ impl Coord {
 
     fn on_zdo(&mut self, src: u16, cluster: u16, p: &[u8]) {
         match cluster {
-            // Match Descriptor Request for the OTA cluster: the server is on an endpoint here (1, usually)
             0x0006 => {
                 self.match_requests += 1;
                 if self.ota_hidden {
@@ -1721,7 +1547,6 @@ impl Coord {
             }
             0x0013 => {
                 let short = u16::from_le_bytes([p[1], p[2]]);
-                // a known device may announce a new address
                 if let Some(ext) = p.get(3..11) {
                     let ext = u64::from_le_bytes(ext.try_into().unwrap());
                     if let Some(d) = self.devices.iter_mut().find(|d| d.ext == ext) {
@@ -1752,29 +1577,20 @@ pub fn nonce(ext: u64, counter: u32, sc: u8) -> [u8; 13] {
     n
 }
 
-/// A scripted end device: just enough of one to join through a router,
-/// poll it and exchange frames. With `sleepy` its receiver is on only while
-/// it polls, so a frame the parent sends at any other time is lost.
 pub struct Zed {
     pub air: Shared,
     pub id: usize,
     pub ext: u64,
     pub short: u16,
     pub parent: u16,
-    /// PAN the device operates in.
     pub pan: u16,
     pub sleepy: bool,
     pub key: Option<[u8; 16]>,
     pub key_seq: u8,
-    /// Next outgoing NWK frame counter.
     pub fc: u32,
-    /// Set the End Device Initiator bit in the frames, as an end device
-    /// does whose parent answered its End Device Timeout Request.
     pub end_device_initiator: bool,
     seq: u8,
-    /// Decrypted NWK frames received: (header, payload).
     pub rx: Vec<(nwk::Header, Vec<u8>)>,
-    /// MAC frames received that are not NWK data: (header, payload).
     pub mac_rx: Vec<(mac::Header, Vec<u8>)>,
 }
 
@@ -1842,9 +1658,6 @@ impl Zed {
         self.tx(f.as_slice())
     }
 
-    /// Orphan scan: asks whether a router around still knows this device.
-    /// The Coordinator Realignment that comes back, if any: (PAN, the
-    /// router, channel, this device's address).
     pub fn orphan_scan(&mut self, net: &mut Net) -> Option<(u16, u16, u8, u16)> {
         self.listen(true);
         let mut f = Buf::new();
@@ -1873,7 +1686,6 @@ impl Zed {
             .map(|(_, p)| (u16::from_le_bytes([p[1], p[2]]), u16::from_le_bytes([p[3], p[4]]), p[5], u16::from_le_bytes([p[6], p[7]])))
     }
 
-    /// Takes what arrived: NWK frames are decrypted into `rx`, the rest goes to `mac_rx`.
     pub fn drain(&mut self) {
         loop {
             let next = self.air.borrow_mut().ports[self.id].queue.pop_front();
@@ -1905,7 +1717,6 @@ impl Zed {
         }
     }
 
-    /// MAC Data Request to the parent; whatever it sends within `wait` ms is taken.
     pub fn poll(&mut self, net: &mut Net, wait: u32) -> TxStatus {
         self.listen(true);
         let src = if self.short == 0xFFFF { Addr::Ext(self.ext) } else { Addr::Short(self.short) };
@@ -1916,7 +1727,6 @@ impl Zed {
         status
     }
 
-    /// Associates with a router and waits for the network key.
     pub fn join(&mut self, net: &mut Net, parent: u16) -> bool {
         self.parent = parent;
         self.air.borrow_mut().ports[self.id].pan = self.pan;
@@ -1928,8 +1738,6 @@ impl Zed {
             return false;
         }
         net.run(500);
-        // Poll, and take the address the moment the response is in: the
-        // key may follow within a millisecond or two.
         self.listen(true);
         self.mac_command(Addr::Ext(self.ext), self.pan, &[mac::CMD_DATA_REQ]);
         let mut response = None;
@@ -1950,7 +1758,6 @@ impl Zed {
         }
         self.short = u16::from_le_bytes([rsp[1], rsp[2]]);
         self.air.borrow_mut().ports[self.id].short = self.short;
-        // the key comes through the parent: poll for it
         for _ in 0..20 {
             net.run(100);
             self.poll(net, 20);
@@ -1962,8 +1769,6 @@ impl Zed {
         false
     }
 
-    /// Looks for a Transport Key among the frames received (unsecured NWK,
-    /// APS-encrypted with the key-transport key of the default link key).
     fn take_key(&mut self) -> bool {
         let found = self.rx.iter().find(|(h, p)| !h.security && p.first() == Some(&0x21)).cloned();
         let Some((_, aps)) = found else {
@@ -1977,7 +1782,6 @@ impl Zed {
         let mut aad = aps[..2 + aux_len].to_vec();
         aad[2] = (sc & !7) | 5;
         let mut body = r.rest().to_vec();
-        // from a Trust Center under the default link key, or from a router of a network without one
         let cipher = body.clone();
         let mut n = None;
         for link in [TCLK, DISTRIBUTED_LINK_KEY] {
@@ -1999,8 +1803,6 @@ impl Zed {
         true
     }
 
-    /// NWK rejoin without the network key (the device lost it): asks the
-    /// parent in the clear, then polls for the response and for the key.
     pub fn rejoin_without_key(&mut self, net: &mut Net, parent: u16) -> bool {
         self.parent = parent;
         self.key = None;
@@ -2041,9 +1843,6 @@ impl Zed {
         false
     }
 
-    /// A scripted router: a device that is on the network with its key and
-    /// address without having joined through anyone, and does nothing by
-    /// itself. What it sends "through its parent" goes to `via`.
     pub fn router(air: &Shared, short: u16, via: u16) -> Zed {
         let mut z = Zed::new(air, false);
         z.short = short;
@@ -2056,8 +1855,6 @@ impl Zed {
         z
     }
 
-    /// Link Status to everyone in range: the neighbors heard, with the cost
-    /// of hearing them (and of being heard by them).
     pub fn link_status(&mut self, neighbors: &[(u16, u8)]) {
         let mut list = neighbors.to_vec();
         list.sort();
@@ -2071,14 +1868,11 @@ impl Zed {
         self.mac_send(0xFFFF, h, &p);
     }
 
-    /// Sends a NWK frame through the parent.
     pub fn nwk_send(&mut self, mut h: nwk::Header, payload: &[u8]) -> TxStatus {
         h.src = self.short;
         self.mac_send(self.parent, h, payload)
     }
 
-    /// Sends a NWK frame, whatever its NWK source, to one device in range or
-    /// (0xFFFF) to all of them.
     pub fn mac_send(&mut self, mac_dst: u16, h: nwk::Header, payload: &[u8]) -> TxStatus {
         let mut f = Buf::new();
         mac::Header {
@@ -2111,7 +1905,6 @@ impl Zed {
         if frame_type == nwk::FRAME_CMD {
             h.src_ext = Some(self.ext);
         } else {
-            // an end device leaves route discovery to its parent
             h.discover = 1;
         }
         h
@@ -2128,7 +1921,6 @@ impl Zed {
         self.nwk_send(h, &aps);
     }
 
-    /// A ZCL frame from endpoint 1 to the coordinator's endpoint 1.
     pub fn zcl_to_coordinator(&mut self, cluster: u16, zcl: &[u8]) -> TxStatus {
         let mut aps = vec![0x00, 0x01];
         aps.extend_from_slice(&cluster.to_le_bytes());
@@ -2141,16 +1933,12 @@ impl Zed {
     }
 }
 
-/// A Green Power device: transmits, never listens, is not on the network.
-/// The fields of a GP Pairing command.
 #[derive(Clone)]
 pub struct Pairing {
     pub gpd: u32,
-    /// A device known by its IEEE address and an endpoint, instead of `gpd`.
     pub ieee: Option<(u64, u8)>,
     pub add_sink: bool,
     pub remove_gpd: bool,
-    /// 1 = derived group, 2 = pre-commissioned `group`, 3 = lightweight unicast to `sink`.
     pub mode: u8,
     pub sink: (u64, u16),
     pub group: u16,
@@ -2165,7 +1953,6 @@ pub struct Pairing {
 }
 
 impl Pairing {
-    /// Adds the coordinator as a sink in `mode`, without security.
     pub fn new(gpd: u32, mode: u8) -> Pairing {
         Pairing {
             gpd,
@@ -2196,7 +1983,6 @@ impl Pairing {
 
     pub fn payload(&self) -> Vec<u8> {
         let app: u32 = if self.ieee.is_some() { 2 } else { 0 };
-        // what describes the device is only sent (and announced in the options) when a sink is added
         let add = self.add_sink && !self.remove_gpd;
         let options: u32 = app
             | (add as u32) << 3
@@ -2218,7 +2004,6 @@ impl Pairing {
             }
             None => p.extend_from_slice(&self.gpd.to_le_bytes()),
         }
-        // removing the device: nothing more
         if self.remove_gpd {
             return p;
         }
@@ -2229,7 +2014,7 @@ impl Pairing {
             p.extend_from_slice(&self.group.to_le_bytes());
         }
         if self.add_sink {
-            p.push(0x02); // device: on/off switch
+            p.push(0x02);
             if let Some(counter) = self.counter {
                 p.extend_from_slice(&counter.to_le_bytes());
             }
@@ -2247,17 +2032,13 @@ impl Pairing {
     }
 }
 
-/// A Green Power device: sends frames, is on no network.
 pub struct Gpd {
     pub air: Shared,
     pub port: usize,
     pub id: u32,
-    /// Known by this IEEE address and endpoint instead of `id`.
     pub ieee: Option<(u64, u8)>,
     pub key: Option<[u8; 16]>,
-    /// Security level of the frames when there is a key: 3 (encrypted) or 2 (authenticated).
     pub level: u8,
-    /// The key is an individual one (the frames say so), not a shared one.
     pub individual: bool,
     pub auto_commissioning: bool,
     pub counter: u32,
@@ -2271,15 +2052,12 @@ impl Gpd {
         Gpd { air: air.clone(), port, id, ieee: None, key, level: 3, individual: true, auto_commissioning: false, counter: 100, seq: 0x30 }
     }
 
-    /// A device known by its IEEE address, with an endpoint.
     pub fn with_ieee(air: &Shared, ieee: u64, endpoint: u8, key: Option<[u8; 16]>) -> Gpd {
         let mut gpd = Gpd::new(air, 0, key);
         gpd.ieee = Some((ieee, endpoint));
         gpd
     }
 
-    /// MAC header (to everyone; the IEEE address, if that is how the device
-    /// is known, as source) and the NWK header up to the frame counter.
     fn headers(&self, rx_after_tx: bool) -> (Vec<u8>, Vec<u8>) {
         let secured = self.key.is_some();
         let auto = (self.auto_commissioning as u8) << 6;
@@ -2306,7 +2084,6 @@ impl Gpd {
         }
     }
 
-    /// One frame as it goes on the air.
     fn frame(&self, cmd: u8, payload: &[u8], rx_after_tx: bool) -> Vec<u8> {
         let (mut f, header) = self.headers(rx_after_tx);
         let mut body = vec![cmd];
@@ -2329,7 +2106,6 @@ impl Gpd {
                 body.extend_from_slice(&[0; 4]);
                 crypto::ccm_encrypt(&aes, &nonce, &header, &mut body, n).unwrap();
             } else {
-                // level 2: the payload stays readable, the MIC covers header and payload
                 let mut aad = header.clone();
                 aad.extend_from_slice(&body);
                 let mut mic = [0u8; 4];
@@ -2341,13 +2117,10 @@ impl Gpd {
         f
     }
 
-    /// The MAC sequence number of the last frame.
     pub fn seq(&self) -> u8 {
         self.seq
     }
 
-    /// Sends one unsecured command that announces a receive window after it
-    /// (as in bidirectional commissioning), once.
     pub fn send_and_listen(&mut self, cmd: u8, payload: &[u8]) {
         self.seq = self.seq.wrapping_add(1);
         let key = self.key.take();
@@ -2356,8 +2129,6 @@ impl Gpd {
         self.air.borrow_mut().transmit(self.port, &f);
     }
 
-    /// Sends one command that announces a receive window after it, secured
-    /// with the device's key at its level, once.
     pub fn send_secured_and_listen(&mut self, cmd: u8, payload: &[u8]) {
         self.seq = self.seq.wrapping_add(1);
         self.counter += 1;
@@ -2365,7 +2136,6 @@ impl Gpd {
         self.air.borrow_mut().transmit(self.port, &f);
     }
 
-    /// Sends a raw MAC payload (a frame no well-behaved device sends), once.
     pub fn send_raw(&mut self, nwk: &[u8]) {
         self.seq = self.seq.wrapping_add(1);
         let mut f = vec![0x01, 0x08, self.seq, 0xFF, 0xFF, 0xFF, 0xFF];
@@ -2373,15 +2143,12 @@ impl Gpd {
         self.air.borrow_mut().transmit(self.port, &f);
     }
 
-    /// Sends a Channel Request: a maintenance frame, without a source identifier.
     pub fn channel_request(&mut self) {
         self.seq = self.seq.wrapping_add(1);
         let f = vec![0x01, 0x08, self.seq, 0xFF, 0xFF, 0xFF, 0xFF, 0x0D, 0xE3, 0x85];
         self.air.borrow_mut().transmit(self.port, &f);
     }
 
-    /// Sends one command, three times over as these devices do. With a key
-    /// the frame is secured at the device's level.
     pub fn send(&mut self, cmd: u8, payload: &[u8]) {
         self.seq = self.seq.wrapping_add(1);
         self.counter += 1;
@@ -2392,12 +2159,10 @@ impl Gpd {
     }
 }
 
-/// The whole test network.
 pub struct Net {
     pub air: Shared,
     pub coord: Coord,
     pub nodes: Vec<Node>,
-    /// What the bulbs added from now on are.
     pub identity: Identity,
 }
 
@@ -2408,7 +2173,6 @@ impl Net {
         Net { air, coord, nodes: vec![], identity: IDENTITY }
     }
 
-    /// Adds a factory-new bulb and powers it on.
     pub fn add_node(&mut self) -> usize {
         let ext = (BULB_OUI << 40) + self.nodes.len() as u64 + 1;
         let id = self.air.borrow_mut().add_port(ext);
@@ -2418,7 +2182,6 @@ impl Net {
         self.nodes.len() - 1
     }
 
-    /// Power-cycles a bulb: RAM is lost, the non-volatile store stays.
     pub fn power_cycle(&mut self, n: usize) {
         let id = self.nodes[n].id;
         self.air.borrow_mut().ports[id].queue.clear();
@@ -2460,7 +2223,6 @@ impl Net {
         }
     }
 
-    /// Runs until `done` holds; panics with `what` after `max_ms`.
     pub fn run_until(&mut self, max_ms: u32, what: &str, mut done: impl FnMut(&Net) -> bool) {
         for _ in 0..max_ms {
             if done(self) {
@@ -2471,7 +2233,6 @@ impl Net {
         assert!(done(self), "timed out waiting for: {what}");
     }
 
-    /// Adds a bulb and lets it join completely (announce and key exchange).
     pub fn join_node(&mut self) -> usize {
         let n = self.add_node();
         let ext = self.air.borrow().ports[self.nodes[n].id].ext;
@@ -2482,18 +2243,14 @@ impl Net {
         n
     }
 
-    /// Frames sent by a port since `since`, as (time, MPDU).
     pub fn sent_by(&self, port: usize, since: u32) -> Vec<Vec<u8>> {
         self.air.borrow().log.iter().filter(|e| e.1 == port && e.0 >= since).map(|e| e.2.clone()).collect()
     }
 
-    /// NWK frames sent by a port since `since` that the network key opens
-    /// (or that are not secured): MAC header, NWK header, payload.
     pub fn nwk_sent_by(&self, port: usize, since: u32) -> Vec<(mac::Header, nwk::Header, Vec<u8>)> {
         self.timed_nwk_sent_by(port, since).into_iter().map(|e| (e.1, e.2, e.3)).collect()
     }
 
-    /// The same with the time of each frame.
     pub fn timed_nwk_sent_by(&self, port: usize, since: u32) -> Vec<(u32, mac::Header, nwk::Header, Vec<u8>)> {
         let air = self.air.borrow();
         let mut out = vec![];

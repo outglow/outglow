@@ -1,6 +1,3 @@
-//! Green Power proxy and OTA client: only what a clause states crisply (GP
-//! Basic 1.1.2 A.3.2, ZCL8 11.13.3.4), ported from emulator/spec/misc_ota_gp.py.
-
 use super::Test;
 use crate::session::{expect, Session, Stop, R};
 use crate::station::Tx;
@@ -34,12 +31,10 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-/// Python's repr of a list of ints.
 pub fn py_list<T: std::fmt::Display>(v: &[T]) -> String {
     format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))
 }
 
-/// Python's repr of `[hex(c) for c in v]`.
 pub fn py_hex_list(v: &[u16]) -> String {
     format!("[{}]", v.iter().map(|x| format!("'{x:#x}'")).collect::<Vec<_>>().join(", "))
 }
@@ -98,7 +93,6 @@ fn ota_image_notify(s: &mut Session) -> R<String> {
     expect(dst == 0x0000, format!("sent to {dst:#06x}, the Image Notify came from 0x0000"))?;
     let sent = format!("manufacturer {mfg:#06x}, image type {itype:#06x}, file version {ver:#010x}");
     expect(mfg != 0xFFFF && itype != 0xFFFF && ver != 0xFFFF_FFFF, format!("{sent}: a wild card in the request"))?;
-    // what the image is: the header of the OTA file next to it (bulb-tc32.ota beside bulb-tc32.bin)
     let Some(bin) = s.note::<std::path::PathBuf>(IMAGE_PATH) else {
         return Err(Stop::Error("the runner did not say which image this is".into()));
     };
@@ -119,10 +113,8 @@ fn ota_image_notify(s: &mut Session) -> R<String> {
     Ok(sent + ", as the image's OTA file")
 }
 
-/// The key under which the runner leaves the image's path in a session's notes.
 pub const IMAGE_PATH: &str = "image_path";
 
-/// (manufacturer code, image type, file version) of a Zigbee OTA file header (ZCL8 11.4.2).
 pub fn ota_header(b: &[u8]) -> Option<(u16, u16, u32)> {
     let u16_at = |i: usize| Some(u16::from_le_bytes(b.get(i..i + 2)?.try_into().ok()?));
     let u32_at = |i: usize| Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?));

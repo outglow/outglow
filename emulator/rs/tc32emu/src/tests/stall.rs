@@ -1,5 +1,3 @@
-// The CPU stall (Rust only, no Go counterpart; reference/cpu-stall-8258.md).
-// The probe with Telink's own cpu_stall* code is scenarios' sims::stallprobe.
 use crate::{isa, Error, Flash, Machine, FLASH_MEM};
 
 fn machine() -> Machine {
@@ -10,7 +8,6 @@ fn machine() -> Machine {
     m
 }
 
-/// Timer n in mode 0: count 0, capture `cap`, enabled.
 fn timer(m: &mut Machine, n: usize, cap: u32) {
     m.reg_write(0x630 + 4 * n, 4, 0).unwrap();
     m.reg_write(0x624 + 4 * n, 4, cap).unwrap();
@@ -72,7 +69,6 @@ fn no_wake_source_stalls_to_the_limit() {
     m.stall_until(c0 + 50_000).unwrap();
     assert!(m.stalled);
     assert_eq!(m.cycles, c0 + 50_000);
-    // a bare step advances by at most 1 ms and runs no instruction
     let pc = m.r[15];
     let s = m.step().unwrap();
     assert!(!s.ran && m.stalled && m.r[15] == pc);
@@ -90,7 +86,6 @@ fn suspend_is_bit_0() {
 fn the_watchdog_runs_while_stalled() {
     let mut m = machine();
     m.reg_write(0x78, 4, 0).unwrap();
-    // watchdog capture 1 (tick2 >> 18 >= 1), timer2 on
     m.reg_write(0x638, 4, 0).unwrap();
     m.reg_write(0x620, 4, (1 << 23) | (1 << 9) | 0x40).unwrap();
     let c0 = m.cycles;
@@ -103,7 +98,6 @@ fn the_watchdog_runs_while_stalled() {
 #[test]
 fn run_takes_the_waking_interrupt_first() {
     let mut m = machine();
-    // a branch to itself in SRAM to run on
     let pc = 0x840100u32;
     let b = isa::to_tc32(0xE7FE);
     m.sram[0x100] = b as u8;

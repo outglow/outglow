@@ -1,28 +1,20 @@
-//! Small helpers shared by the scenario ports (texts in Python's forms,
-//! the scripts' recurring `command()` and image paths).
-
 use super::Sim;
 use crate::image::Image;
 use crate::session::R;
 
-/// `x and hex(x)` of an optional address: "0x491e" or "None".
 pub fn hexo(v: Option<u16>) -> String {
     v.map(|x| format!("{x:#x}")).unwrap_or_else(|| "None".into())
 }
 
-/// `[hex(x) for x in v]` as Python prints the list.
 pub fn hex_list(v: &[u16]) -> String {
     format!("[{}]", v.iter().map(|x| format!("'{x:#x}'")).collect::<Vec<_>>().join(", "))
 }
 
-/// An Outglow (Rust firmware) image, not a Telink stack: it carries the board
-/// tag (outglow_image::board::TAG).
 pub fn is_outglow(img: &Image) -> bool {
     const TAG: &[u8] = b"outglow-board:";
     img.bytes().map(|b| b.windows(TAG.len()).any(|w| w == TAG)).unwrap_or(false)
 }
 
-/// The image path relative to the repository root (`os.path.relpath(path, REPO)`).
 pub fn rel(i: &Image) -> String {
     let root = crate::runner::repo_root();
     if let Ok(p) = i.path.strip_prefix(&root) {
@@ -40,8 +32,6 @@ pub fn onoff(on: bool) -> &'static str {
     }
 }
 
-/// `command()` of the scripts: a cluster command with a default response to
-/// `short` on endpoint 1; ms until the Default Response, or None.
 pub fn command(s: &mut Sim, short: u16, cluster: u16, cmd: u8, payload: &[u8], max_ms: f64) -> R<Option<f64>> {
     let n0 = s.w.coord.zcl_rsp.len();
     let t0 = s.now();
@@ -52,18 +42,10 @@ pub fn command(s: &mut Sim, short: u16, cluster: u16, cmd: u8, payload: &[u8], m
     Ok(if got { Some(s.now() - t0) } else { None })
 }
 
-/// Number of verify-key events with ok=True.
 pub fn verified(s: &Sim) -> usize {
     s.events("verify-key").iter().filter(|e| e.get("ok") == Some("True")).count()
 }
 
-/// Whether a Confirm Key of the coordinator reached the device `short`: on
-/// the air, its last hop (MAC and NWK destination `short`, NWK source the
-/// Trust Center, the NWK sequence number the coordinator gave it) and the
-/// device's MAC acknowledgement of it. The Trust Center's `verified` is
-/// its own half of the exchange; the joining node is done with it only on
-/// the Confirm Key (BDB 3.0.1 10.2.5 steps 11 to 13), and until then it
-/// retries and, when that fails, leaves the network (8.2, step 12).
 pub fn key_confirmed(s: &Sim, short: u16) -> bool {
     let seqs: Vec<u8> = s.w.coord.confirm_keys.iter().filter(|c| c.0 == short).map(|c| c.1).collect();
     if seqs.is_empty() {
@@ -86,18 +68,10 @@ pub fn key_confirmed(s: &Sim, short: u16) -> bool {
     })
 }
 
-/// `f"after {dt:.0f} ms" if dt is not None else otherwise`.
 pub fn after(dt: Option<f64>, otherwise: &str) -> String {
     dt.map(|d| format!("after {d:.0} ms")).unwrap_or_else(|| otherwise.into())
 }
 
-/// How deep the stacks of a Rust image went so far, as a line (`SIM_STACK=1`
-/// only; None otherwise or when the image has no ELF with the link script's
-/// symbols). Emulated SRAM starts zeroed and a reset does not clear it, so
-/// the lowest non-zero byte between the end of .bss and the top of the main
-/// stack is the deepest the main stack has been since power-up (a zero
-/// written there would be missed: a lower bound, good to a few bytes); the
-/// same from the bottom of the interrupt stack up.
 pub fn stack_report(node: &zbnode::Node, img: &Image) -> Option<String> {
     std::env::var_os("SIM_STACK")?;
     let floor = img.symbol("_end_bss_")?;
@@ -119,11 +93,6 @@ pub fn stack_report(node: &zbnode::Node, img: &Image) -> Option<String> {
     ))
 }
 
-/// `stack_report` so far, and then the main stack below the part in use
-/// cleared, so that the final report shows how deep the bulb went after
-/// this point (the start of the firmware builds its stacks and goes deeper
-/// than anything later). Only while the main stack is the one in use (not
-/// inside an interrupt); `SIM_STACK=1` only.
 pub fn stack_rearm(node: &mut zbnode::Node, img: &Image) -> Option<String> {
     let line = stack_report(node, img)?;
     let (floor, top) = (img.symbol("_end_bss_")?, img.symbol("_stack_end_")?);
@@ -136,7 +105,6 @@ pub fn stack_rearm(node: &mut zbnode::Node, img: &Image) -> Option<String> {
     Some(format!("{} at {:.0} ms; cleared below the stack in use", line.replacen("stack:", "stack so far:", 1), node.m.ms()))
 }
 
-/// `", ".join("lost" if x is None else f"{x:.0f}" for x in times) + " ms"`.
 pub fn times(t: &[Option<f64>]) -> String {
     t.iter().map(|x| x.map(|d| format!("{d:.0}")).unwrap_or_else(|| "lost".into())).collect::<Vec<_>>().join(", ") + " ms"
 }

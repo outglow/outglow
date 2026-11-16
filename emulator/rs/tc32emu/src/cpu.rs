@@ -1,12 +1,7 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The instruction set (cpu.go).
-
 use crate::error::{emu_err, Error};
 use crate::isa::to_thumb;
 use crate::machine::{Machine, ICACHE_LINES, ICACHE_LINE_SHIFT};
 
-/// What Step ran: the instruction's address and halfword, and whether one
-/// ran (a sleeping machine, or a PC hook that moved pc, runs none).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stepped {
     pub pc: u32,
@@ -90,13 +85,8 @@ impl Machine {
         }
     }
 
-    /// Step executes one instruction. TraceStep, when set, is called after
-    /// every instruction that completed. On an error the machine is left as
-    /// the Go Step leaves it.
     pub fn step(&mut self) -> Result<Stepped, Error> {
         if self.stalled {
-            // A stalled CPU runs no instruction: the step advances the time
-            // towards the wake, by at most 1 ms (Rust only).
             let to = self.cycles + (self.cpu_hz / 1000).max(1);
             self.stall_until(to)?;
             return Ok(Stepped { pc: 0, hw: 0, ran: false });
@@ -104,7 +94,6 @@ impl Machine {
         self.step_inline()
     }
 
-    /// Step, inlined into Run's loop.
     #[inline(always)]
     pub(crate) fn step_inline(&mut self) -> Result<Stepped, Error> {
         let (pc, hw, ran) = self.step_inner()?;
@@ -175,12 +164,8 @@ impl Machine {
         Ok((pc, hw, true))
     }
 
-    /// The instruction after its fetch (Go step() from "TC32-only instructions" on).
-    /// Forced inline only in the dev/test profile (`cargo test -p scenarios`),
-    /// where it is not inlined otherwise: 9 % there; neutral in release.
     #[cfg_attr(debug_assertions, inline(always))]
     fn exec(&mut self, pc: u32, hw: u16) -> Result<(), Error> {
-        // TC32-only instructions.
         if hw & 0xFFE0 == 0x6BC0 {
             let (op, rd) = ((hw >> 3) & 3, (hw & 7) as usize);
             match op {
@@ -234,7 +219,6 @@ impl Machine {
         let top = t >> 11;
         match top {
         0..=2 => {
-            // shift by immediate
             let (mut imm, rm, rd) = ((t >> 6) & 31, ((t >> 3) & 7) as usize, (t & 7) as usize);
             let mut x = self.r[rm];
             match top {
@@ -503,8 +487,6 @@ impl Machine {
         Ok(())
     }
 
-    /// `r[rd], err = read(...)`: Go assigns the register whether or not the
-    /// read fails (0 on an error).
     #[inline]
     fn load<F: FnOnce(&mut Machine) -> Result<u32, Error>>(&mut self, rd: usize, f: F) -> Result<(), Error> {
         match f(self) {
@@ -519,9 +501,6 @@ impl Machine {
         }
     }
 
-    /// fetch is Read(pc, 2) for the instruction at pc, the usual case written out
-    /// (a read hook that does not cover pc, see `mem_read_hook_below`, is skipped
-    /// here as Read skips it). Inlining as exec.
     #[cfg_attr(debug_assertions, inline(always))]
     #[cfg_attr(not(debug_assertions), inline)]
     fn fetch(&mut self, pc: u32) -> Result<u32, Error> {

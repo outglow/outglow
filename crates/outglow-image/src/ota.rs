@@ -1,13 +1,3 @@
-//! Zigbee OTA upgrade files (ZCL, OTA Upgrade cluster 0x0019).
-//!
-//! The header, little-endian, 56 bytes without optional fields:
-//! identifier 0x0BEEF11E, header version 0x0100, header length, field
-//! control (bit 0 security credential version, bit 1 upgrade file
-//! destination, bit 2 hardware versions), manufacturer code, image type, file
-//! version, Zigbee stack version (2 = PRO), a 32-byte header string, total
-//! image size; then the optional fields; then sub-elements (tag u16, length
-//! u32, data), tag 0 being the image itself.
-
 pub const IDENTIFIER: u32 = 0x0BEE_F11E;
 pub const HEADER_VERSION: u16 = 0x0100;
 pub const STACK_PRO: u16 = 0x0002;
@@ -27,7 +17,6 @@ pub struct Header {
     pub stack_version: u16,
     pub security_credential_version: Option<u8>,
     pub upgrade_file_destination: Option<[u8; 8]>,
-    /// (minimum, maximum)
     pub hardware_versions: Option<(u16, u16)>,
 }
 
@@ -62,12 +51,10 @@ impl Header {
 #[derive(Clone, Debug, PartialEq)]
 pub struct File {
     pub header: Header,
-    /// (tag, data)
     pub sub_elements: Vec<(u16, Vec<u8>)>,
 }
 
 impl File {
-    /// A file holding one image.
     pub fn with_image(header: Header, image: Vec<u8>) -> File {
         File { header, sub_elements: vec![(TAG_UPGRADE_IMAGE, image)] }
     }

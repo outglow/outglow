@@ -1,19 +1,3 @@
-//! Profiles of the stock AwoX/EGLO firmware images for the TLSR8258: what each
-//! product is and how it drives its LEDs, read off the stock firmware itself
-//! running in the emulator (docs/stock-profiles.md, `scenarios::profile`).
-//! JSON to analysis/profiles/<image>.json, then a markdown summary table.
-//!
-//! By default every image of the AwoX app, extracted once by
-//! tools/extract-stock-images.sh to stock/apk/smartlightz/. From emulator/rs:
-//!
-//!   cargo run --release -p scenarios --example stock_profile
-//!   cargo run --release -p scenarios --example stock_profile -- --only EGLO_ZM_TW --jobs 4
-//!   cargo run --release -p scenarios --example stock_profile -- --bin ../../stock/stock-dimm.bin --level-step 16
-//!
-//! Options: --bin PATH... (images instead of the app's), --only TEXT (image
-//! names containing it), --out DIR, --jobs N, --cpi N (3), --level-step N (1),
-//! --ct-step N (5), --hue-step N (6), --sat-step N (16).
-
 use std::path::PathBuf;
 
 use scenarios::profile::{default_jobs, dump, file_stem, pool, profile, repo_root, stock_images, summary, Opts};

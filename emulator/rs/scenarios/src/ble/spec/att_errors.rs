@@ -1,7 +1,3 @@
-//! ATT: what every server supports, requests it lacks, malformed requests, the
-//! error response (Core 5.4 Vol 3 Part F 3.3, 3.4.1.1, 3.4.4.7, 3.4.4.11,
-//! 3.4.9); emulator/spec_ble/att_errors.py.
-
 use crate::ble::harness::{att_error, hx, BleSession, Gatt, LinkOpts};
 use crate::ble::util::{
     ask, describe, ename, error_cases, error_problem, link, read, some, table, table_3_44, u16b, uuid128, value, Case,
@@ -113,14 +109,11 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// Concatenation of byte pieces.
 pub fn cat(parts: &[&[u8]]) -> Vec<u8> {
     parts.iter().flat_map(|p| p.iter().copied()).collect()
 }
 
 fn mandatory_requests(s: &mut BleSession) -> R<String> {
-    // 3.3: "A server shall be able to receive and properly respond to the following request PDUs:
-    // ATT_FIND_INFORMATION_REQ, ATT_READ_REQ".
     link(s, LinkOpts::new())?;
     let rsp = s.att(&cat(&[&[0x04], &u16b(1), &u16b(0xFFFF)]))?;
     expect(
@@ -142,12 +135,6 @@ fn mandatory_requests(s: &mut BleSession) -> R<String> {
 }
 
 fn unsupported_request(s: &mut BleSession) -> R<String> {
-    // 3.3: "If a server receives a request that it does not support, then the server shall respond with
-    // the ATT_ERROR_RSP PDU with the Error Code parameter set to Request Not Supported (0x06), with the
-    // Attribute Handle In Error set to 0x0000." 3.4.1.1: "If there was no attribute handle in the original
-    // request or if the request is not supported, then the value 0x0000 shall be used for this field."
-    // Opcodes 0x14 and 0x3E are unassigned in Table 3.43 (Command Flag and Authentication Signature Flag
-    // clear). The parameters are 0x0001, a valid handle: the answer must not echo it.
     link(s, LinkOpts::new())?;
     let cases: Vec<Case> = [0x14u8, 0x3E]
         .iter()
@@ -162,8 +149,6 @@ fn unsupported_request(s: &mut BleSession) -> R<String> {
     Ok("opcodes 0x14 and 0x3e: Request Not Supported, handle 0x0000".into())
 }
 
-/// Two attributes any server lets a client read: the first service declaration
-/// and the first readable characteristic value; with their values.
 fn two_readable(s: &mut BleSession, g: &Gatt) -> R<(u16, Vec<u8>, u16, Vec<u8>)> {
     let h1 = g.services[0].start;
     let mut c = None;
@@ -184,12 +169,6 @@ fn two_readable(s: &mut BleSession, g: &Gatt) -> R<(u16, Vec<u8>, u16, Vec<u8>)>
 }
 
 fn read_multiple(s: &mut BleSession) -> R<String> {
-    // 3.4.4.8: "The Set Of Values parameter shall be a concatenation of attribute values for each of the
-    // attribute handles in the request in the order that they were requested. If the Set Of Values
-    // parameter is longer than (ATT_MTU-1) then only the first (ATT_MTU-1) octets shall be included".
-    // 3.4.4.7: "If any of the handles are invalid ... Invalid Handle (0x01) ... the Attribute Handle In
-    // Error parameter shall be set to the handle of the first attribute causing the error." The request
-    // is optional in a server (Part G 4.2); 3.3 then requires Request Not Supported with handle 0x0000.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (h1, v1, h2, v2) = two_readable(s, &g)?;
@@ -227,12 +206,6 @@ fn read_multiple(s: &mut BleSession) -> R<String> {
 }
 
 fn read_multiple_variable(s: &mut BleSession) -> R<String> {
-    // 3.4.4.12: "The Length Value Tuple List shall be a concatenation of Length Value Tuples for each of
-    // the attribute handles in the request in the order that they were requested. If the Length Value
-    // Tuple List is longer than (ATT_MTU-1) octets, then it shall be truncated after (ATT_MTU-1) or, if
-    // that would be within the Value Length field of a Length Value Tuple, at the start of the Length
-    // Value Tuple." Optional in a server without Enhanced ATT bearers (Part G 4.2, C.4); 3.3 then requires
-    // Request Not Supported with handle 0x0000.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (h1, v1, h2, v2) = two_readable(s, &g)?;
@@ -266,8 +239,6 @@ fn read_multiple_variable(s: &mut BleSession) -> R<String> {
     Ok(format!("supported: Length Value Tuples of {h1:#06x} and {h2:#06x}"))
 }
 
-/// Requests a GATT server may lack (Part G 4.2: Exchange MTU, Read Long, Write,
-/// Write Long): Request Not Supported is an answer 3.3 allows as well.
 fn optional(op: u8) -> Vec<u8> {
     if [0x02, 0x0C, 0x12, 0x16, 0x18].contains(&op) {
         vec![0x04, 0x06]
@@ -294,11 +265,6 @@ fn not_after(bad: &[String]) -> usize {
 }
 
 fn invalid_pdu_short(s: &mut BleSession) -> R<String> {
-    // 3.3: "If the server receives an invalid request – for example, the PDU is the wrong length – then
-    // the server shall respond with the ATT_ERROR_RSP PDU with the Error Code parameter set to Invalid PDU
-    // (0x04), with the Attribute Handle In Error set to 0x0000." Each request below lacks octets of a
-    // mandatory field (Tables 3.7, 3.12, 3.15, 3.18, 3.20, 3.24, 3.30, 3.5). The octets present name valid
-    // handles, so that a server reading past the end of the PDU has something to answer with.
     let cases = vec![
         ("Find Information, 1 octet of the ending handle", cat(&[&[0x04], &u16b(1), &[0xff]])),
         ("Find By Type Value, 1 octet of the type", cat(&[&[0x06], &u16b(1), &u16b(0xFFFF), &[0x00]])),
@@ -325,10 +291,6 @@ fn invalid_pdu_short(s: &mut BleSession) -> R<String> {
 }
 
 fn invalid_pdu_long(s: &mut BleSession) -> R<String> {
-    // 3.3 as above ("the PDU is the wrong length"). ATT_FIND_INFORMATION_REQ (Table 3.7: 5 octets),
-    // ATT_READ_REQ (Table 3.18: 3), ATT_READ_BLOB_REQ (Table 3.20: 5), ATT_EXECUTE_WRITE_REQ (Table 3.36:
-    // 2) and ATT_EXCHANGE_MTU_REQ (Table 3.5: 3) have no variable field; one more octet makes the length
-    // wrong.
     let cases = vec![
         ("Find Information, 6 octets", cat(&[&[0x04], &u16b(1), &u16b(0xFFFF), &[0x00]])),
         ("Read Request, 4 octets", cat(&[&[0x0a], &u16b(3), &[0x00]])),
@@ -350,10 +312,6 @@ fn invalid_pdu_long(s: &mut BleSession) -> R<String> {
 }
 
 fn invalid_pdu_uuid_size(s: &mut BleSession) -> R<String> {
-    // Tables 3.15 and 3.24: "Attribute Type 2 or 16" octets. 3.2.1: "All 32-bit Attribute UUIDs shall be
-    // converted to 128-bit UUIDs when the Attribute UUID is contained in an ATT PDU", so 4 octets is not a
-    // valid size either. 3.3: a PDU of the wrong length is answered with Invalid PDU and handle 0x0000.
-    // The types begin with the octets of «Characteristic» and «Primary Service», which exist.
     let rng = cat(&[&u16b(1), &u16b(0xFFFF)]);
     let u = uuid128(0x2803);
     let cases = vec![
@@ -373,12 +331,6 @@ fn invalid_pdu_uuid_size(s: &mut BleSession) -> R<String> {
 }
 
 fn error_rsp_format(s: &mut BleSession) -> R<String> {
-    // Table 3.3: opcode 0x01, Request Opcode In Error (1), Attribute Handle In Error (2), Error Code (1).
-    // "The Request Opcode In Error parameter shall be set to the Attribute Opcode of the request that
-    // generated this error. The Attribute Handle In Error parameter shall be set to the attribute handle in
-    // the original request that generated this error. If there was no attribute handle in the original
-    // request or if the request is not supported, then the value 0x0000 shall be used". Requests on handles
-    // that do not exist, with distinct low and high octets; the error code is judged by other tests.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let free: Vec<u32> = [g.last_handle() as u32 + 1, 0x0123, 0x3456, 0xFFFE]
@@ -422,11 +374,6 @@ fn error_rsp_format(s: &mut BleSession) -> R<String> {
 }
 
 fn error_codes_permitted(s: &mut BleSession) -> R<String> {
-    // 3.4.1.1: "See Section 3.4.9 for the definitive list of which Error Code values are permitted."
-    // Well-formed requests that cannot succeed (and reads of every attribute, which may): handle 0x0000,
-    // handles beyond the table, reversed ranges, types that do not exist, a group type that is none,
-    // offsets beyond the value, writes to a service declaration and to no attribute. Whether each error
-    // is the right one is judged by the tests of each request; here only whether the table has it.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let nx = g.last_handle().wrapping_add(1);

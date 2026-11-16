@@ -1,11 +1,3 @@
-//! The deepest the main stack of a Rust image has been, at a few moments of a
-//! session in which it joins the coordinator (scan of the SRAM, see
-//! `sims::util::stack_report`). After the start (2 s) the part of the stack
-//! below the one in use is cleared once, so that the later lines show how
-//! deep the running bulb goes, apart from the start.
-//!
-//! `cargo run -p scenarios --example stack_depth -- [image.bin]`
-
 use scenarios::image::Image;
 use scenarios::session::{Session, SessionOpts};
 
@@ -21,7 +13,6 @@ fn main() {
         let dt = t - s.now();
         s.run(dt).unwrap();
         if t >= 2000.0 && !cleared {
-            // only while the main stack pointer is the one in r13 (not in an interrupt)
             while !cleared {
                 let sp = s.w.air.dut.m.r[13];
                 if (floor..top).contains(&sp) {

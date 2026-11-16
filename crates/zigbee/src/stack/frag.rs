@@ -1,35 +1,17 @@
-//! APS fragmentation: payloads longer than one frame travel as numbered
-//! blocks, each acknowledged by the receiver (window size 1).
-//!
-//! One incoming and one outgoing transfer at a time, each up to
-//! `MAX_TRANSFER` bytes. Blocks of an incoming transfer may arrive in any
-//! order after the first and more than once.
-
 use super::Stack;
 use crate::hal::Hal;
 use crate::util::{due, Buf, MAX_TRANSFER};
 
-/// Payload bytes per block of an outgoing transfer; of one whose blocks
-/// are encrypted, which leaves less room.
 const BLOCK: usize = 64;
 const BLOCK_SECURED: usize = 60;
-/// Longest payload sent in a single frame.
 pub(crate) const SINGLE_MAX: usize = 80;
-/// apscAckWaitDuration, roughly.
 const ACK_WAIT_MS: u32 = 1_600;
 const RETRIES: u8 = 3;
-/// An incoming transfer that stalls is dropped after this: its sender has
-/// given up by then (R22 2.2.8.4.5: apscAckWaitDuration for the first
-/// attempt and for each of the apscMaxFrameRetries). For as long again a
-/// transfer that was delivered is remembered, so that blocks the sender
-/// repeats because it missed their acknowledgements are acknowledged again
-/// and not taken for a new transfer.
 const REASSEMBLY_MS: u32 = ACK_WAIT_MS * (1 + RETRIES as u32);
 
 const FIRST: u8 = 1;
 const SUBSEQUENT: u8 = 2;
 
-/// Addressing of a data frame, shared by all blocks of a transfer.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Addressing {
     pub peer: u16,
@@ -46,7 +28,6 @@ impl Addressing {
 
 pub(crate) struct Incoming {
     active: bool,
-    /// The last transfer was delivered: late copies of its blocks are still acknowledged.
     done: bool,
     a: Addressing,
     total: u8,
@@ -59,7 +40,6 @@ pub(crate) struct Incoming {
 
 pub(crate) struct Outgoing {
     active: bool,
-    /// Every block is encrypted with the Trust Center link key.
     secure: bool,
     a: Addressing,
     len: usize,
@@ -101,8 +81,6 @@ impl Outgoing {
 }
 
 impl<H: Hal> Stack<H> {
-    /// One block of an incoming transfer. `a` is the frame's addressing as
-    /// received (`dst_ep` ours, `src_ep` the sender's).
     pub(crate) fn on_fragment(&mut self, a: Addressing, kind: u8, block: u8, data: &[u8]) -> Option<()> {
         let now = self.hal.now_ms();
         let rx = &mut self.frag_in;
@@ -112,10 +90,7 @@ impl<H: Hal> Stack<H> {
         }
         let index = match kind {
             FIRST => {
-                // (a first block of the transfer just delivered is a repeat: acknowledged below, nothing else)
                 if !((rx.active || rx.done) && rx.a == a) {
-                    // a new transfer; `block` is the number of blocks, at
-                    // most as many as `got` has bits
                     if data.is_empty() || data.len() > 255 || block == 0 || block > 32 {
                         return None;
                     }
@@ -144,7 +119,6 @@ impl<H: Hal> Stack<H> {
             }
             let at = index as usize * rx.block_len as usize;
             let last = index == rx.total - 1;
-            // every block but the last has the length of the first
             if (!last && data.len() != rx.block_len as usize) || data.is_empty() || at + data.len() > MAX_TRANSFER {
                 rx.active = false;
                 return None;
@@ -156,9 +130,6 @@ impl<H: Hal> Stack<H> {
             }
             rx.expires = now.wrapping_add(REASSEMBLY_MS);
         }
-        // acknowledge the block: extended header with the fragmentation
-        // value of the block (R22 2.2.5.2.3), its number and the bit field
-        // of the (one-block) window
         let mut ack = Buf::new();
         ack.u8(0x82);
         ack.u8(a.src_ep);
@@ -172,7 +143,6 @@ impl<H: Hal> Stack<H> {
         self.nwk_data(a.peer, ack.as_slice());
 
         let rx = &mut self.frag_in;
-        // (all of `total` bits, 1 to 32 of them)
         if rx.active && rx.got == u32::MAX >> (32 - rx.total as u32) {
             rx.active = false;
             rx.done = true;
@@ -184,8 +154,6 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    /// Starts sending a payload in blocks. False when another transfer is
-    /// under way or the payload is too long.
     pub(crate) fn send_fragmented(&mut self, a: Addressing, payload: &[u8], secure: bool) -> bool {
         if self.frag_out.active || payload.len() > MAX_TRANSFER {
             return false;
@@ -210,8 +178,6 @@ impl<H: Hal> Stack<H> {
         let to = (from + tx.block_len()).min(tx.len);
         let secure = tx.secure;
         let mut f = Buf::new();
-        // data, unicast, acknowledgement requested, extended header; each
-        // block is secured on its own (R22 2.2.8.4.5)
         f.u8(if secure { 0xE0 } else { 0xC0 });
         f.u8(tx.a.dst_ep);
         f.u16(tx.a.cluster);
@@ -237,7 +203,6 @@ impl<H: Hal> Stack<H> {
         self.nwk_data(peer, f.as_slice());
     }
 
-    /// Acknowledgement of a block of the outgoing transfer.
     pub(crate) fn on_fragment_ack(&mut self, src: u16, counter: u8, block: u8, bits: u8) {
         let tx = &mut self.frag_out;
         if !tx.active || tx.a.peer != src || tx.a.counter != counter || block != tx.block || bits & 1 == 0 {
@@ -259,7 +224,6 @@ impl<H: Hal> Stack<H> {
                 self.frag_out.active = false;
                 self.diag.add(super::diag::k::APS_TX_UCAST_FAIL);
             } else {
-                // a block sent again for want of its acknowledgement: an APS retry
                 self.diag.add(super::diag::k::APS_TX_UCAST_RETRY);
                 self.send_block();
             }

@@ -1,12 +1,3 @@
-//! The flash image of a linked TC32 firmware ELF.
-//!
-//! Every PT_LOAD segment with file bytes goes to its physical (load) address,
-//! counted from the start of the image; what lies between segments is 0xFF,
-//! as in erased flash. The code is TC32 already (clang -mcpu=tc32, ld.lld), so
-//! nothing is re-encoded. An ELF whose ARM build attributes do not name the
-//! tc32 core is refused: it holds code in the Thumb encoding, which the chip
-//! would run as garbage.
-
 use std::fmt;
 
 const PT_LOAD: u32 = 1;
@@ -33,7 +24,6 @@ fn u32_at(b: &[u8], i: usize) -> Result<u32, Refused> {
     b.get(i..i + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]])).ok_or_else(|| Refused("truncated ELF".into()))
 }
 
-/// (value, next index) of an unsigned LEB128.
 fn uleb(b: &[u8], mut i: usize) -> Option<(u32, usize)> {
     let (mut v, mut shift) = (0u32, 0);
     loop {
@@ -49,13 +39,11 @@ fn uleb(b: &[u8], mut i: usize) -> Option<(u32, usize)> {
     }
 }
 
-/// (text, next index) of a NUL-terminated string.
 fn cstr(b: &[u8], i: usize) -> Option<(String, usize)> {
     let end = i + b.get(i..)?.iter().position(|&c| c == 0)?;
     Some((String::from_utf8_lossy(&b[i..end]).into_owned(), end + 1))
 }
 
-/// Tag_CPU_name of the file-wide "aeabi" build attributes.
 pub fn cpu_name(elf: &[u8]) -> Option<String> {
     let shoff = u32_at(elf, 0x20).ok()? as usize;
     let shentsize = u16_at(elf, 0x2E).ok()? as usize;
@@ -89,7 +77,6 @@ pub fn cpu_name(elf: &[u8]) -> Option<String> {
                         return Some(cstr(a, k)?.0);
                     }
                     k = if t == 32 {
-                        // Tag_compatibility: a number, then a string
                         cstr(a, uleb(a, k)?.1)?.1
                     } else if matches!(t, 4 | 5 | 65 | 67) || (t > 32 && t & 1 == 1) {
                         cstr(a, k)?.1
@@ -106,7 +93,6 @@ pub fn cpu_name(elf: &[u8]) -> Option<String> {
     None
 }
 
-/// The flash image and the number of segments placed.
 pub fn image_of(elf: &[u8]) -> Result<(Vec<u8>, usize), Refused> {
     if elf.len() < 0x34 || &elf[..4] != b"\x7fELF" || elf[4] != 1 || elf[5] != 1 {
         return Err(Refused("not a 32-bit little-endian ELF".into()));
@@ -148,8 +134,6 @@ pub fn image_of(elf: &[u8]) -> Result<(Vec<u8>, usize), Refused> {
 mod tests {
     use super::*;
 
-    /// A minimal ELF: one attributes section naming `cpu`, PT_LOAD segments
-    /// of (paddr, bytes).
     fn elf(cpu: &str, segs: &[(u32, &[u8])]) -> Vec<u8> {
         let mut attrs = vec![b'A'];
         let mut file_sub = vec![TAG_CPU_NAME as u8];

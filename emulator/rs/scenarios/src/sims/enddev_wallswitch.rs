@@ -1,23 +1,3 @@
-//! A sleepy end device whose parent bulb is on a wall switch (an IKEA
-//! E2489 button, child of a stock TW bulb).
-//!
-//! The button (scripted) joins through the parent bulb by MAC association,
-//! polls it, and sends a press (On/Off Toggle to the coordinator) every few
-//! seconds. Like real end devices it takes its parent for lost after a few
-//! failed MAC transmissions and rejoins: Beacon Request, a parent chosen from
-//! the beacons (the previous parent when heard, else the best link; with the
-//! parent off only one beacon is heard, so taking simply the first beacon
-//! would make no difference), secured NWK Rejoin Request, Rejoin Response by poll,
-//! Device_annce; when no parent answers it tries again 3 s later.
-//!
-//! The parent is switched off, the button finds another router (an always-on
-//! bulb), the parent comes back. Measured per image (all bulbs the image under
-//! test): presses lost, how long the rejoin takes and where it goes, whether the
-//! old parent still holds the button as its child after power-up (its
-//! neighbour table, R22 3.6.2.3), who answers a route request and an address
-//! request for the button, and whether a frame from the coordinator reaches the
-//! button when it is routed the way the route replies say.
-
 use super::addr_conflict::{bulb_node, Net};
 use super::{SimCtx, SimDef};
 use crate::air::NodeId;
@@ -35,18 +15,14 @@ pub fn defs() -> Vec<SimDef> {
 }
 
 pub const BUTTON_EXT: u64 = 0x6cd8fb00002e163b;
-/// capability: allocate address only (battery, receiver off when idle, end device)
 const CAP: u8 = 0x80;
 const POLL_MS: f64 = 7500.0;
 const PRESS_MS: f64 = 5000.0;
-/// failed MAC transmissions in a row before the parent counts as lost
 const LOST_AFTER: u32 = 3;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Choice {
-    /// the previous parent if its beacon is heard, else the best link
     PrevThenBest,
-    /// as PrevThenBest, with the end device initiator bit set in the NWK frames it sends (R21 and later)
     EdInitiator,
 }
 
@@ -56,7 +32,6 @@ enum State {
     Rejoining { attempt: u32, next: f64 },
 }
 
-/// The scripted end device.
 pub struct Button {
     pub id: NodeId,
     pub parent: u16,
@@ -70,10 +45,8 @@ pub struct Button {
     pub rejoins: Vec<(f64, String)>,
     pub received: Vec<(f64, String)>,
     pub choice: Choice,
-    /// put the parent's IEEE address into the Rejoin Request (destination IEEE field)
     pub dst_ieee: bool,
     pub leaves: u32,
-    /// link quality the button sees from each router (the emulated air has one RSSI for all)
     pub quality: Vec<(NodeId, u8)>,
     seen_rx: usize,
 }
@@ -94,7 +67,6 @@ impl Button {
         net.s.w.peers[peer_ix(self.id)].st.short16()
     }
 
-    /// A MAC command from the button.
     fn mac_cmd(&self, net: &mut Net, payload: &[u8], dst: u16, src_ext: bool, ar: bool) -> u8 {
         let pan = net.s.w.coord.st.pan;
         let (st, air) = self.st(net);
@@ -110,13 +82,11 @@ impl Button {
         seq
     }
 
-    /// Did the MAC frame with this sequence number get an acknowledgement (None: still in flight)?
     fn acked(&self, net: &Net, seq: u8) -> Option<(bool, bool)> {
         let st = &net.s.w.peers[peer_ix(self.id)].st;
         st.tx_log.iter().rev().find(|(_, m, a)| m.get(2) == Some(&seq) && a.is_some()).map(|(_, _, a)| (a.unwrap(), st.ack_pending_seen))
     }
 
-    /// Sends a MAC frame and waits for its fate.
     fn mac_wait(&self, net: &mut Net, seq: u8) -> R<(bool, bool)> {
         for _ in 0..40 {
             if let Some(r) = self.acked(net, seq) {
@@ -127,7 +97,6 @@ impl Button {
         Ok((false, false))
     }
 
-    /// Frames for the button since `from` (MAC destination its address).
     fn frames_for(&self, net: &Net, from: usize) -> Vec<CapFrame> {
         let st = &net.s.w.peers[peer_ix(self.id)].st;
         let me: Vec<u64> = [st.short.map(|s| s as u64), Some(st.ext)].into_iter().flatten().collect();
@@ -139,7 +108,6 @@ impl Button {
             .collect()
     }
 
-    /// Data Request to the parent; the frames the parent sent us after it.
     fn poll(&mut self, net: &mut Net) -> R<Option<Vec<CapFrame>>> {
         let mark = net.cap.len();
         let p = self.parent;
@@ -178,7 +146,6 @@ impl Button {
         net.note(format!("button: Device_annce {me:#06x} (parent {pn})"));
     }
 
-    /// One step of the button's life (called every 50 ms).
     fn tick(&mut self, net: &mut Net) -> R<()> {
         let now = net.now();
         match self.state.clone() {
@@ -191,7 +158,7 @@ impl Button {
                         let (st, air) = self.st(net);
                         st.tx_zcl(air, 0x0000, 0x0006, 0x02, &[], &Tx::new().mac_dst(p).ar(true).ep(1).src_ep(1).src_ieee(SrcIeee::None));
                     }
-                    let seq = net.cap.len(); // placeholder for the MAC sequence below
+                    let seq = net.cap.len();
                     let _ = seq;
                     let mseq = net.s.w.peers[peer_ix(self.id)].st.mac_seq.wrapping_sub(1);
                     let (ok, _) = self.mac_wait(net, mseq)?;
@@ -203,7 +170,6 @@ impl Button {
                     let r = self.poll(net)?;
                     if let Some(fs) = &r {
                         self.note_rx(net, fs);
-                        // a NWK Leave with rejoin from the router we poll: rejoin now, as end devices do
                         if let Some(f) = fs.iter().find(|f| f.nwk_cmd() == Some(0x04)) {
                             let o = f.nwk.as_ref().unwrap().payload.as_ref().and_then(|p| p.get(1).copied()).unwrap_or(0);
                             let t = net.now();
@@ -243,7 +209,6 @@ impl Button {
         }
     }
 
-    /// Beacon Request, a parent from the beacons, secured Rejoin Request, poll for the response.
     fn rejoin(&mut self, net: &mut Net, attempt: u32) -> R<()> {
         let mark = net.cap.len();
         self.mac_cmd(net, &[0x07], 0xFFFF, false, false);
@@ -278,7 +243,6 @@ impl Button {
         };
         let mark = net.cap.len();
         let me = self.short(net);
-        // a secured rejoin first, then a Trust Center rejoin (NWK not secured), alternating
         let secure = attempt % 2 == 0;
         let pext = net.bulbs.iter().find(|x| x.id == pid).and_then(|x| x.ext);
         {
@@ -344,7 +308,6 @@ impl Button {
     }
 }
 
-/// The button joins through `parent` by MAC association (network key by poll), then announces.
 fn join_via(net: &mut Net, b: &mut Button, parent: NodeId) -> R<bool> {
     let ps = net.bulbs.iter().find(|x| x.id == parent).and_then(|x| x.ext).and_then(|e| net.short_of(e)).unwrap();
     b.parent = ps;
@@ -381,7 +344,6 @@ fn join_via(net: &mut Net, b: &mut Button, parent: NodeId) -> R<bool> {
     }
     b.annce(net);
     net.run(300.0)?;
-    // End Device Timeout Request (R22 3.4.11), timeout index 8 (256 min) as IKEA remotes ask
     {
         let pext = net.bulbs.iter().find(|x| x.id == parent).and_then(|x| x.ext).unwrap_or(0);
         let (st, air) = b.st(net);
@@ -400,7 +362,6 @@ fn run_nodst(cx: &mut SimCtx) -> R<()> {
     run_with(cx, Choice::EdInitiator)
 }
 
-/// Neighbour table entries of a bulb about the button: (text, is a child entry).
 fn button_entry(net: &mut Net, bulb: &str) -> R<String> {
     let Some(s) = net.short_of_bulb(bulb) else { return Ok("?".into()) };
     let Some(t) = net.lqi_table(s)? else { return Ok("no Mgmt_Lqi answer".into()) };
@@ -413,7 +374,6 @@ fn button_entry(net: &mut Net, bulb: &str) -> R<String> {
     Ok(if e.is_empty() { "no entry".into() } else { e.join(", ") })
 }
 
-/// Lets the button live for `ms`.
 fn run_b(net: &mut Net, b: &mut Button, ms: f64) -> R<()> {
     let end = net.now() + ms;
     while net.now() < end {
@@ -423,9 +383,6 @@ fn run_b(net: &mut Net, b: &mut Button, ms: f64) -> R<()> {
     Ok(())
 }
 
-/// What the network does for the button now: who answers a route request and an
-/// address request for it, and whether a frame from the coordinator, routed by the
-/// first route reply, reaches it.
 fn probe(net: &mut Net, b: &mut Button, label: &str) -> R<String> {
     let bshort = b.short(net);
     let mark = net.cap.len();
@@ -460,7 +417,6 @@ fn probe(net: &mut Net, b: &mut Button, label: &str) -> R<String> {
         .collect();
     rsp.dedup();
     let parent_name = net.name_of(b.parent_id);
-    // every router that replied (the first one first), else the parent
     let mut hops: Vec<u16> = Vec::new();
     for f in &reps {
         if let Some(s) = f.mac.as_ref().and_then(|m| m.src) {
@@ -472,7 +428,6 @@ fn probe(net: &mut Net, b: &mut Button, label: &str) -> R<String> {
     if hops.is_empty() {
         hops.extend(first_hop.or(net.short_of_bulb(&parent_name)));
     }
-    // a replier that is not the parent first, while its stale entry may still be there
     let ps = net.short_of_bulb(&parent_name);
     hops.sort_by_key(|h| Some(*h) == ps);
     let mut out = Vec::new();
@@ -511,15 +466,14 @@ fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
     let echo = cx.verbose > 0;
     let off_s: f64 = std::env::var("ENDDEV_OFF_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120.0);
     cx.say(&format!("image: {}; parent choice {choice:?}; parent off for {off_s} s", super::util::rel(&img)));
-    let sg = bulb_node(&img, cx.cpi, "SG", 0xa4c1380000000061)?; // the parent, on a wall switch
-    let sw = bulb_node(&img, cx.cpi, "SW", 0xa4c1380000000062)?; // another bulb, always on
+    let sg = bulb_node(&img, cx.cpi, "SG", 0xa4c1380000000061)?;
+    let sw = bulb_node(&img, cx.cpi, "SW", 0xa4c1380000000062)?;
     let mut net = Net::new(sg, Coord::new_plain(11, NWK_KEY), echo);
     let swid = net.add_bulb(sw, 700.0);
     let sgid = NodeId::Dut;
     let ok = net.run_until(60000.0, |n| n.bulbs.iter().all(|b| n.short_of_bulb(&b.name).is_some()))?;
     cx.check(net.now(), "bulbs join", ok, "");
     net.run(20000.0)?;
-    // the button: out of the coordinator's range
     let c = &net.s.w.coord.st;
     let mut st = Station::new(NodeId::Coord, c.channel, c.pan, None, BUTTON_EXT, NWK_KEY, (0x71, 0x72, 0x73, 0x74, 0x75), 0x10, 0);
     st.ed_initiator = choice == Choice::EdInitiator;
@@ -568,7 +522,6 @@ fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
     let ok_before = before.iter().filter(|p| p.1).count();
     cx.check(net.now(), "presses go through SG", ok_before == before.len() && !before.is_empty(),
              &format!("{ok_before} of {} acknowledged", before.len()));
-    // the wall switch: SG off
     let n_press = b.presses.len();
     net.power_off("SG");
     let t_off = net.now();
@@ -577,10 +530,6 @@ fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
     let lost = during.iter().filter(|p| !p.1).count();
     let rejoined = b.rejoins.iter().find(|r| r.0 >= t_off && r.1.contains("rejoined")).cloned();
     let first_ok_after = during.iter().find(|p| p.1).map(|p| (p.0 - t_off) / 1000.0);
-    // With the end device initiator bit, Telink's stack (stock, C firmware)
-    // refuses the rejoin of a device that is not its child; the button finds
-    // no parent until SG is back (docs/address-conflicts.md). That is what is
-    // expected of those images; the Rust stack takes the button.
     let refuses = choice == Choice::EdInitiator && !telink_free;
     cx.check(
         net.now(),
@@ -600,7 +549,6 @@ fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
             b.rejoins.iter().filter(|r| r.0 >= t_off && r.1.starts_with("attempt")).count()
         ),
     );
-    // SG on again
     net.power_on("SG")?;
     let t_on = net.now();
     let n_press = b.presses.len();
@@ -640,7 +588,6 @@ fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
         cx.say(&format!("   [{:9.3} s] rejoin: {}", r.0 / 1000.0, r.1));
     }
     if let Ok(w) = std::env::var("ENDDEV_DUMP") {
-        // frames in a window "from:to" (s)
         let (a, z) = w.split_once(':').map(|(a, z)| (a.parse::<f64>().unwrap_or(0.0), z.parse::<f64>().unwrap_or(0.0))).unwrap_or((0.0, 0.0));
         let i0 = net.cap.iter().position(|f| f.t0 >= a * 1000.0).unwrap_or(0);
         let i1 = net.cap.iter().position(|f| f.t0 > z * 1000.0).unwrap_or(net.cap.len());

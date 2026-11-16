@@ -1,11 +1,3 @@
-//! On/Off cluster (ZCL 8, 3.8) as a ZLO dimmable light must implement it (ZLO
-//! 7.2), ported from emulator/spec/zcl_onoff.py.
-//!
-//! The light output is read from the PWM registers; attribute values are read
-//! back with Read Attributes. Times in the cluster are in 1/10 s. The helpers
-//! marked `pub(super)` are shared with the Level and Color Control modules
-//! (the Python modules each carry the same copies).
-
 use super::Test;
 use crate::frames::{py_value, ZclValue};
 use crate::session::{expect, CmdAnswer, Session, Stop, R};
@@ -16,7 +8,6 @@ const ONOFF: u16 = 0x0006;
 const LEVEL: u16 = 0x0008;
 const SCENES: u16 = 0x0005;
 const GROUPS: u16 = 0x0004;
-/// ms allowed for a fade after a command before the PWM output is read
 const SETTLE: f64 = 1500.0;
 
 fn t(id: &'static str, doc: &'static str, clause: &'static str, req: &'static str, run: fn(&mut Session) -> R<String>) -> Test {
@@ -67,8 +58,6 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---- helpers (as in zcl_onoff.py; shared with zcl_level and zcl_color)
-/// `"on"`/`"off"`
 pub fn oo(b: bool) -> &'static str {
     if b {
         "on"
@@ -77,7 +66,6 @@ pub fn oo(b: bool) -> &'static str {
     }
 }
 
-/// Python's `str()` of a bool.
 pub fn tf(b: bool) -> &'static str {
     if b {
         "True"
@@ -86,7 +74,6 @@ pub fn tf(b: bool) -> &'static str {
     }
 }
 
-/// Python's `repr()` of a float.
 pub fn py_f(x: f64) -> String {
     if x.fract() == 0.0 && x.abs() < 1e16 {
         format!("{x:.1}")
@@ -95,12 +82,10 @@ pub fn py_f(x: f64) -> String {
     }
 }
 
-/// Python's `round(x, 1)`.
 pub fn round1(x: f64) -> f64 {
     format!("{x:.1}").parse().unwrap()
 }
 
-/// A status as Python prints the result of `s.cmd(...)`: None, the status, or the response frame.
 pub fn ans_py(a: &CmdAnswer) -> String {
     match a {
         CmdAnswer::None => "None".into(),
@@ -109,7 +94,6 @@ pub fn ans_py(a: &CmdAnswer) -> String {
     }
 }
 
-/// The status of a Default Response; None otherwise (no answer or a response frame).
 pub fn status(a: &CmdAnswer) -> Option<u8> {
     match a {
         CmdAnswer::Status(st) => Some(*st),
@@ -117,7 +101,6 @@ pub fn status(a: &CmdAnswer) -> Option<u8> {
     }
 }
 
-/// Value of an attribute; NotApplicable when the image does not have it, Inconclusive when it does not answer.
 pub fn attr(s: &mut Session, cluster: u16, aid: u16) -> R<i64> {
     let (st, _, v) = s.read1(cluster, aid)?;
     match st {
@@ -132,13 +115,11 @@ pub fn attr(s: &mut Session, cluster: u16, aid: u16) -> R<i64> {
     }
 }
 
-/// The value of an attribute when it reads with status SUCCESS, else `default`.
 pub fn opt_attr(s: &mut Session, cluster: u16, aid: u16, default: i64) -> R<i64> {
     let (st, _, v) = s.read1(cluster, aid)?;
     Ok(if st == Some(0) { v.and_then(|v| v.int()).unwrap_or(default) } else { default })
 }
 
-/// Sends a cluster command, requires Default Response SUCCESS.
 pub fn act(s: &mut Session, cluster: u16, cmd: u8, payload: &[u8], what: &str, settle: f64) -> R<()> {
     match s.cmd(cluster, cmd, payload)? {
         CmdAnswer::None => return Err(Stop::Fail(format!("{what}: no Default Response"))),
@@ -163,7 +144,6 @@ pub fn write_attr(s: &mut Session, cluster: u16, aid: u16, dtype: u8, value: Vec
     }
 }
 
-/// `try: body finally: fin` — an error of `fin` wins over the outcome of the body.
 pub fn finally<T>(s: &mut Session, body: impl FnOnce(&mut Session) -> R<T>,
                          fin: impl FnOnce(&mut Session) -> R<()>) -> R<T> {
     let r = body(s);
@@ -171,7 +151,6 @@ pub fn finally<T>(s: &mut Session, body: impl FnOnce(&mut Session) -> R<T>,
     r
 }
 
-/// The attribute-type check of the `attributes` tests: (id, required type).
 pub fn check_types(r: &[(u16, u8, Option<u8>, Option<ZclValue>)], want: &[(u16, u8)]) -> Vec<String> {
     let mut bad = Vec::new();
     for &(a, t) in want {
@@ -187,7 +166,6 @@ pub fn check_types(r: &[(u16, u8, Option<u8>, Option<ZclValue>)], want: &[(u16, 
     bad
 }
 
-/// (light on per PWM, OnOff attribute).
 fn state(s: &mut Session) -> R<(bool, i64)> {
     let on = s.light().on;
     Ok((on, attr(s, ONOFF, 0x0000)?))
@@ -226,7 +204,6 @@ fn power_cycle(s: &mut Session, settle: f64) -> R<bool> {
     Ok(on)
 }
 
-// ---- tests
 fn on_off_toggle(s: &mut Session) -> R<String> {
     act(s, ONOFF, 0x00, &[], "Off", SETTLE)?;
     expect_state(s, false, "after Off")?;
@@ -269,7 +246,6 @@ fn recall_global_scene(s: &mut Session) -> R<String> {
     act(s, ONOFF, 0x40, &[0x00, 0x00], "Off With Effect", SETTLE)?;
     let g = attr(s, ONOFF, 0x4000)?;
     expect(g == 0, "GlobalSceneControl is still TRUE after Off With Effect")?;
-    // change the level while off, so that the recall has something to restore (ExecuteIfOff overridden to 1)
     let st = s.cmd(LEVEL, 0x00, &[200, 0, 0, 1, 1])?;
     s.run(300.0)?;
     let changed = attr(s, LEVEL, 0x0000)? == 200;
@@ -353,7 +329,7 @@ fn gsc_after_recall_scene(s: &mut Session) -> R<String> {
         p
     };
     act(s, ONOFF, 0x01, &[], "On", 300.0)?;
-    let f = s.zcl(GROUPS, 0x00, &gs(&[0]), Tx::new())?; // Add Group, empty name
+    let f = s.zcl(GROUPS, 0x00, &gs(&[0]), Tx::new())?;
     let ok = f.as_ref().is_some_and(|f| {
         let z = f.zcl().unwrap();
         z.specific && matches!(z.payload.first(), Some(0x00) | Some(0x8A))
@@ -364,7 +340,7 @@ fn gsc_after_recall_scene(s: &mut Session) -> R<String> {
             f.map(|f| f.brief()).unwrap_or_else(|| "no response".into())
         )));
     }
-    let f = s.zcl(SCENES, 0x04, &gs(&[scene]), Tx::new())?; // Store Scene
+    let f = s.zcl(SCENES, 0x04, &gs(&[scene]), Tx::new())?;
     let ok = f.as_ref().is_some_and(|f| {
         let z = f.zcl().unwrap();
         z.specific && z.payload.first() == Some(&0)
@@ -394,7 +370,7 @@ fn gsc_after_recall_scene(s: &mut Session) -> R<String> {
             Ok(String::new())
         },
         |s| {
-            s.zcl(GROUPS, 0x03, &gs(&[]), Tx::new())?; // Remove Group (and its scenes)
+            s.zcl(GROUPS, 0x03, &gs(&[]), Tx::new())?;
             s.cmd(ONOFF, 0x01, &[])?;
             Ok(())
         },
@@ -522,7 +498,6 @@ fn level_off_clears_on_time(s: &mut Session) -> R<String> {
     if t == 0 {
         return Err(Stop::Inconclusive("OnTime is 0 right after On With Timed Off with on time 10.0 s".into()));
     }
-    // any Level Control command that sets OnOff to 0 will do: try the minimum level, then level 0
     let (st, _, mn) = s.read1(LEVEL, 0x0002)?;
     let first = if st == Some(0) { mn.and_then(|v| v.int()).unwrap_or(1) } else { 1 };
     let (mut a, mut how) = (1i64, String::new());

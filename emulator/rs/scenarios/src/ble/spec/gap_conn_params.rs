@@ -1,6 +1,3 @@
-//! GAP: when and how often a peripheral asks for new connection parameters
-//! (Core 5.4 Vol 3 Part C 9.3.9, 9.3.12, Appendix A); emulator/spec_ble/gap_conn_params.py.
-
 use crate::ble::harness::{BleSession, LinkOpts, ParamReq};
 use crate::ble::{BleTest, Level};
 use crate::py;
@@ -43,8 +40,6 @@ fn first_param_req(s: &mut BleSession) -> R<()> {
 }
 
 fn param_update_pause(s: &mut BleSession) -> R<String> {
-    // 9.3.12.2: "The Peripheral should not perform a Connection Parameter Update procedure within
-    // T_GAP(conn_pause_peripheral) after establishing a connection." Appendix A: 5 s (recommended value).
     s.connect(LinkOpts::new().set("interval", 24).set("timeout", 400).param_req(ParamReq::Reject))?;
     first_param_req(s)?;
     let dt = s.lk().param_reqs[0].t - s.lk().pdus[0].t_end;
@@ -53,9 +48,6 @@ fn param_update_pause(s: &mut BleSession) -> R<String> {
 }
 
 fn param_update_no_repeat(s: &mut BleSession) -> R<String> {
-    // 9.3.9.2: "The Peripheral shall not send an L2CAP_CONNECTION_PARAMETER_UPDATE_REQ command within
-    // T_GAP(conn_param_timeout) of an L2CAP_CONNECTION_PARAMETER_UPDATE_RSP being received." Appendix A:
-    // 30 s. The central rejects the request (result 0x0001) and keeps the connection for 32 s more.
     s.connect(LinkOpts::new().set("interval", 24).set("timeout", 600).param_req(ParamReq::Reject))?;
     first_param_req(s)?;
     let t0 = s.lk().param_reqs[0].t;

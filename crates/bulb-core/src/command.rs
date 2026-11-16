@@ -1,17 +1,10 @@
-//! Commands coming in from the network and the outgoing state report.
-
 pub use crate::colour::{ColorMode, HueDirection};
 
-/// Bulb behaviour after power returns (genOnOff `startUpOnOff`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PowerOnBehavior {
-    /// Stays off.
     Off,
-    /// Turns on.
     On,
-    /// Toggles relative to the state before the power loss.
     Toggle,
-    /// Returns to the state before the power loss (the manufacturer's default).
     Previous,
 }
 
@@ -34,53 +27,27 @@ impl PowerOnBehavior {
     }
 }
 
-/// Control commands (the subset of genOnOff + genLevelCtrl relevant to this bulb).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     On,
     Off,
     Toggle,
-    /// Set brightness 1..=254 with a transition time in ms (0 = immediately).
-    /// Brightness 0 is treated as turning off (as per Zigbee).
     MoveToLevel { level: u8, transition_ms: u32 },
-    /// Set the brightness after power-on (0xFF = "previous").
     SetStartupLevel(u8),
-    /// Set the behaviour after power-on.
     SetPowerOnBehavior(PowerOnBehavior),
-    /// Blink (identify) — `times` times.
     Identify { times: u8 },
-    /// Request a state report.
     ReadState,
-    /// Freeze a running brightness transition at the brightness it has
-    /// reached. The colour temperature goes on to where it was headed.
     StopTransition,
-    /// Set the colour temperature in mireds (tunable-white bulb), with a
-    /// transition time in ms.
     MoveToColorTemperature { mireds: u16, transition_ms: u32 },
-    /// Set the colour temperature after power-on (0xFFFF = "previous").
     SetStartupColorTemperature(u16),
-    /// Set the brightness (1..=254) the light will have when it is next
-    /// turned on, without turning it on (Zigbee "execute if off").
     SetLevelWhileOff(u8),
-    /// Freeze a running colour temperature transition where it is. The
-    /// brightness goes on to where it was headed.
     StopColorTransition,
-    /// Move to a hue (0..=254) and a saturation (colour bulb), the hue the
-    /// given way round, with a transition time in ms.
     MoveToHueSaturation { hue: u8, sat: u8, direction: HueDirection, transition_ms: u32 },
-    /// Move to CIE x and y (0..=65535 for 0..1, colour bulb) with a transition time in ms.
     MoveToXy { x: u16, y: u16, transition_ms: u32 },
-    /// Turn the hue round and round, up or down, at `rate` steps of the
-    /// enhanced hue (1/256 of a hue step) a second, until a colour command
-    /// or StopColorTransition (Color Control Enhanced Move Hue: the colour
-    /// animation of the AwoX app).
     MoveHue { up: bool, rate: u16 },
-    /// The candle mode of the AwoX app on or off (`candle`): the level flickers around its own.
     Candle(bool),
 }
 
-/// What the light shows at the moment of a report: in a transition, where
-/// it has got to (the rest of `StateReport` says where it is headed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Shown {
     pub level: u8,
@@ -89,54 +56,25 @@ pub struct Shown {
     pub sat: u8,
 }
 
-/// State snapshot reported to the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StateReport {
     pub on: bool,
-    /// Current brightness 1..=254 (the last non-zero one — as in Zigbee).
     pub level: u8,
     pub power_on_behavior: PowerOnBehavior,
     pub startup_level: u8,
-    /// Colour temperature in mireds (meaningful on a tunable-white bulb).
     pub color_temp: u16,
     pub startup_color_temp: u16,
-    /// Colour bulbs: which colour shows, and the hue, saturation and CIE x, y
-    /// it is set to (what a transition is headed for).
     pub color_mode: ColorMode,
     pub hue: u8,
     pub sat: u8,
     pub x: u16,
     pub y: u16,
-    /// The hue is turning (`Command::MoveHue`); `hue` is where it is now.
     pub hue_moving: bool,
-    /// The candle mode is on.
     pub candle: bool,
     pub shown: Shown,
 }
 
 impl Command {
-    /// Decodes a command from its wire form: an opcode byte and its
-    /// parameters. `None` for an unknown opcode or a short buffer.
-    ///
-    /// | opcode | command | parameters |
-    /// |---|---|---|
-    /// | 1 | On | |
-    /// | 2 | Off | |
-    /// | 3 | Toggle | |
-    /// | 4 | MoveToLevel | level, transition in ms (u32, little-endian) |
-    /// | 5 | SetStartupLevel | level (0xFF = previous) |
-    /// | 6 | SetPowerOnBehavior | behaviour as in `PowerOnBehavior::from_u8` |
-    /// | 7 | Identify | times |
-    /// | 8 | ReadState | |
-    /// | 9 | StopTransition | |
-    /// | 10 | MoveToColorTemperature | mireds (u16), transition in ms (u32), little-endian |
-    /// | 11 | SetStartupColorTemperature | mireds (u16, little-endian) |
-    /// | 12 | SetLevelWhileOff | level |
-    /// | 13 | StopColorTransition | |
-    /// | 14 | MoveToHueSaturation | hue, saturation, direction (0..=3), transition in ms (u32) |
-    /// | 15 | MoveToXy | x (u16), y (u16), transition in ms (u32), little-endian |
-    /// | 16 | MoveHue | 0 down / 1 up, rate (u16, little-endian) |
-    /// | 17 | Candle | 0 off / 1 on |
     pub fn decode(b: &[u8]) -> Option<Command> {
         let (&op, p) = b.split_first()?;
         Some(match op {

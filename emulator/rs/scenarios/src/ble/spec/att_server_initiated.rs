@@ -1,6 +1,3 @@
-//! ATT: notifications, and a confirmation nobody asked for (Core 5.4 Vol 3 Part F
-//! 3.4.7; Part G 3.3.1.1, 4.10); emulator/spec_ble/att_server_initiated.py.
-
 use crate::ble::harness::{hx, BleSession, LinkOpts, CID_ATT};
 use crate::ble::util::{cccds, describe, link, mesh_app, read, stimulate, table, MTU};
 use crate::ble::BleTest;
@@ -38,10 +35,6 @@ pub fn tests() -> Vec<BleTest> {
 }
 
 fn notification_format(s: &mut BleSession) -> R<String> {
-    // Part F 3.4.7.1, Table 3.38: opcode 0x1B, Attribute Handle (2), Attribute Value 0 to (ATT_MTU-3).
-    // Part G 4.10.1: the Attribute Handle is the Characteristic Value Handle being notified. Part G
-    // 3.3.1.1: Notify (0x10) permits notifications. Notifications are provoked the way the vendor
-    // application does it (every CCCD enabled first); ATT_MTU is 23.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     for (c, h) in cccds(&g) {
@@ -106,9 +99,6 @@ fn notification_format(s: &mut BleSession) -> R<String> {
 }
 
 fn unsolicited_confirmation(s: &mut BleSession) -> R<String> {
-    // Table 3.1: requests are "PDUs sent to a server by a client that invoke a response"; a confirmation is
-    // sent "to confirm receipt of an indication". 3.4.1.1: "The ATT_ERROR_RSP PDU is used to state that a
-    // given request cannot be performed". Control: a Read Request after the confirmations is answered.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let h = g.services[0].start;

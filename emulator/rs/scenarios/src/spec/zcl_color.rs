@@ -1,13 +1,3 @@
-//! Color Control cluster, colour temperature only (ZCL 8, 5.2) as a ZLO colour
-//! temperature light must implement it (ZLO 18.2), ported from
-//! emulator/spec/zcl_color.py.
-//!
-//! The tests need the cluster in the simple descriptor and the colour
-//! temperature capability (ColorCapabilities bit 4); otherwise they are N/A.
-//! Run them on the tunable-white images. The light output is the pair of PWM
-//! channels (duty0, duty5); how mireds map to the two channels is the device's
-//! own, so the tests only compare outputs measured on the same image.
-
 use super::zcl_onoff::{act, ans_py, attr, check_types, finally, py_f, round1, status, write_attr};
 use super::Test;
 use crate::frames::py_value;
@@ -96,15 +86,12 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---- local helpers (as in zcl_color.py)
 type Mix = (f64, f64);
 
-/// Python's repr of the (PWM0, PWM5) tuple.
 fn mx(m: Mix) -> String {
     format!("({}, {})", py_f(m.0), py_f(m.1))
 }
 
-/// N/A unless the endpoint has Color Control with colour temperature: (physical min, physical max).
 fn need_ct(s: &mut Session) -> R<(i64, i64)> {
     if !s.has_note("ct") {
         s.need_cluster(COLOR)?;
@@ -224,7 +211,6 @@ fn stable(s: &mut Session, ms: f64) -> R<(bool, Mix, Mix)> {
     Ok((a == b, a, b))
 }
 
-/// "missing" / "status 0x.." / `other` for a Default Response in a message.
 fn dr_text(a: &CmdAnswer, other: &str) -> String {
     match a {
         CmdAnswer::None => "missing".into(),
@@ -233,7 +219,6 @@ fn dr_text(a: &CmdAnswer, other: &str) -> String {
     }
 }
 
-// ---- tests
 fn base_attributes(s: &mut Session) -> R<String> {
     s.need_cluster(COLOR)?;
     let Some(r) = s.read(COLOR, &[MODE, OPTIONS, EMODE, CAPS], 1500.0)? else {
@@ -699,7 +684,7 @@ fn unsupported_command(s: &mut Session) -> R<String> {
         ));
     }
     light_on(s)?;
-    let st = s.cmd(COLOR, 0x00, &[100, 0, 0, 0, 0, 0])?; // Move to Hue
+    let st = s.cmd(COLOR, 0x00, &[100, 0, 0, 0, 0, 0])?;
     expect(
         status(&st) == Some(0x81),
         format!(

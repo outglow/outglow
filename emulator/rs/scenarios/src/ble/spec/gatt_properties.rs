@@ -1,7 +1,3 @@
-//! GATT: characteristic properties against what the server lets a client do,
-//! and the Characteristic User Description (Core 5.4 Vol 3 Part G 3.3.1.1,
-//! 3.3.3.1, 3.3.3.2, 4.8.1, 4.9.1, 4.9.3); emulator/spec_ble/gatt_properties.py.
-
 use crate::ble::harness::{att_error, hx, BleSession, Char, LinkOpts};
 use crate::ble::util::{describe, error_problem, link, read, read_all, some, table, value, SECURITY};
 use crate::ble::{BleTest, Level};
@@ -92,8 +88,6 @@ fn read_value(s: &mut BleSession, h: u16) -> R<Option<Vec<u8>>> {
 }
 
 fn props_read(s: &mut BleSession) -> R<String> {
-    // Table 3.5: Read (0x02) permits reads (4.8); 4.8.1: ATT_ERROR_RSP when a read is not permitted, Part F
-    // 3.4.4.3: Read Not Permitted (0x02). An error asking for security is not counted against a set Read bit.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let vals = read_all(s)?;
@@ -123,8 +117,6 @@ fn props_read(s: &mut BleSession) -> R<String> {
 }
 
 fn props_write(s: &mut BleSession) -> R<String> {
-    // Table 3.5: Write (0x08) permits writes with response; 4.9.3: ATT_ERROR_RSP when a write is not
-    // permitted, Part F 3.4.5.1: Write Not Permitted (0x03).
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (mut bad, mut n_w, mut n_nw) = (Vec::new(), 0, 0);
@@ -186,8 +178,6 @@ fn props_write(s: &mut BleSession) -> R<String> {
 }
 
 fn props_write_without_response(s: &mut BleSession) -> R<String> {
-    // Table 3.5: Write Without Response (0x04); Part F 3.4.5.3: a command the server cannot carry out is
-    // ignored. Seen through the value, with a Write Request as control where the characteristic has Write.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (mut bad, mut shown, mut blind, mut answered) = (Vec::new(), 0usize, 0usize, 0usize);
@@ -221,11 +211,11 @@ fn props_write_without_response(s: &mut BleSession) -> R<String> {
             }
         }
         if v1.as_ref() != Some(&v0) {
-            blind += 1; // the value changes by itself: it shows nothing
+            blind += 1;
             continue;
         }
         if c.props & 0x08 == 0 {
-            shown += 1; // read-only: nothing else could have changed it
+            shown += 1;
             continue;
         }
         let w = write(s, c.value, &new)?;
@@ -261,8 +251,6 @@ fn props_write_without_response(s: &mut BleSession) -> R<String> {
 }
 
 fn user_description(s: &mut BleSession) -> R<String> {
-    // 3.3.3.2: a UTF-8 string; writable if the Writable Auxiliaries bit is set (Table 3.8, bit 1). A refusal
-    // must be Write Not Permitted (Part F 3.4.5.1) and leave the string as it was.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let mut ds: Vec<(Char, u16)> = Vec::new();

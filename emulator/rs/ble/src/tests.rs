@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The Go package's tests (ble_test.go, air_test.go, tpll_test.go), ported:
-//! the radio, reset, central, air and TPLL checks of checks/ble_models_check.py
-//! and checks/ble_air_check.py, on a machine that is never run (only its
-//! registers, memory and clock). pyrandom_test.go and sc_test.go are next to
-//! their modules.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -39,13 +32,13 @@ impl Peer for Recorder {
 fn machine() -> Machine {
     let cfg = Config::env();
     let mut fl = Flash::new(cfg.flash_size);
-    fl.mem[8] = 0x4B; // the boot ROM's bootable-slot mark
+    fl.mem[8] = 0x4B;
     Machine::new(fl, -1, 1).unwrap()
 }
 
 fn run_until(m: &mut Machine, ms: f64) {
     while m.ms() < ms {
-        m.cycles += m.cpu_hz / 100_000; // 10 us
+        m.cycles += m.cpu_hz / 100_000;
         m.update_time().unwrap();
     }
 }
@@ -292,7 +285,6 @@ fn terminate_ack() {
     }
 }
 
-/// One ADV_IND by STX2RX on channel 37 (a random AdvA), and an answer's time.
 fn advertise(m: &mut Machine) {
     let buf = 0x840300u32;
     wbytes(m, buf, &[8, 0, 0, 0, 0x40, 6, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6]);
@@ -574,8 +566,6 @@ fn suspend_rf() {
     settings::set_suspend_rf("keep");
 }
 
-// ------------------------------------------------------------ tpll_test.go
-
 #[derive(Default)]
 struct TpllRec {
     heard: RefCell<Vec<TpllTx>>,
@@ -657,8 +647,6 @@ fn tpll() {
     assert!(r.b().brx.is_none() && r.b().srx.is_none(), "0x80 must close the windows");
 }
 
-// ------------------------------------------------------------ air_test.go
-
 #[derive(Default)]
 struct AirRec {
     replies: RefCell<Vec<Vec<u8>>>,
@@ -736,7 +724,6 @@ fn air() {
     assert!(Air::new(1, 0, 0, &[], 0, 0.0, -1).is_err());
 }
 
-/// A BRX on channel 7 with an empty packet to send.
 fn air_brx(m: &mut Machine, r: &RadioRef, rec: PeerRc) -> ([u8; 4], u32) {
     let empty = 0x840100u32;
     let rxbuf = 0x840200u32;
@@ -879,7 +866,6 @@ fn air_advertising() {
     );
 }
 
-/// Runs the radio's next scheduled step at its time and returns that time.
 fn step(r: &RadioRef, m: &mut Machine) -> f64 {
     let s = r.b().sched.pop_front().unwrap();
     m.cycles = (s.ms * m.cpu_hz as f64 / 1000.0) as i64 + 1;
@@ -917,7 +903,6 @@ fn air_central() {
     }
     assert_eq!(plain, [0.0 + 1.25 + 1.25 * 2.0 + 0.3, 24.0 * 1.25]);
 
-    // A connection update under a clock.
     let mut m = machine();
     let m = &mut m;
     let r = RadioRef::new(m, None);
@@ -940,7 +925,6 @@ fn air_central() {
         assert!((cc.base_t - want).abs() <= 1e-9 && (cc.interval_ms - 7.5 * f).abs() <= 1e-12 && cc.base_k == 2, "update under +250 ppm");
     }
 
-    // Jitter moves each event's start, not the times they are counted from.
     let mut m = machine();
     let m = &mut m;
     let r = RadioRef::new(m, None);
@@ -982,7 +966,6 @@ fn air_central() {
     }
 }
 
-/// A central in a connection that began at 0, with nothing queued; the machine is returned with it.
 fn air_connected(set: impl FnOnce(&mut Options)) -> (Machine, RadioRef, CentralRc) {
     let mut m = machine();
     let r = RadioRef::new(&mut m, None);
@@ -1059,7 +1042,6 @@ fn air_rules() {
         assert!(order == want_order && more == want_more && c.update.unwrap().instant == want_instant, "LLRules {}: {:?} {:?}", on, order, more);
     }
 
-    // LLRules: an update first sent after event 2 has timed event 3, with its instant 3.
     let (mut m, r, lc) = air_connected(|o| o.ll_rules = true);
     for _ in 0..3 {
         step(&r, &mut m);
@@ -1084,7 +1066,6 @@ fn air_rules() {
         );
     }
 
-    // UpdateLead.
     let req = [0x12u8, 0x07, 8, 0, 6, 0, 6, 0, 44, 0, 0x2C, 0x01];
     for (lead, on, want) in [(0i64, false, 52i64), (1, false, 41), (0, true, 55), (1, true, 44)] {
         let (mut m, _r, c) = air_connected(|o| {
@@ -1108,7 +1089,6 @@ fn air_rules() {
         );
     }
 
-    // Reclock: an air put on the radio during the connection.
     let (mut m, r, rc) = air_connected(|_| {});
     let mut starts = Vec::new();
     for k in 0..6 {
@@ -1139,7 +1119,6 @@ fn air_rules() {
         assert!(first == "LL_ENC_REQ" && held == "empty" && after == "L2CAP", "LLRules, LL_REJECT_IND: {} {} {}", first, held, after);
     }
 
-    // LLRules: an update held behind the encryption start is not applied at its instant.
     for on in [true, false] {
         let (mut m, r, c) = air_connected(|o| o.ll_rules = on);
         let mut enc_req = vec![0x03u8];
@@ -1153,7 +1132,6 @@ fn air_rules() {
         assert!(c.borrow().update.unwrap().is_applied != on, "LLRules {}: an update held behind LL_ENC_REQ", on);
     }
 
-    // Another host's data: QueueData with its tag, OnAck and RxData.
     let (mut m, _r, c) = air_connected(|_| {});
     let got = Rc::new(RefCell::new(Vec::<String>::new()));
     let acked = Rc::new(RefCell::new(Vec::<String>::new()));

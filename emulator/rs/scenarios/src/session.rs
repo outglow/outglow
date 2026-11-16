@@ -1,12 +1,3 @@
-//! A scenario session: one emulated bulb joined to the coordinator, and what a
-//! test uses to drive and observe it. A port of `Session` in
-//! emulator/spec/harness.py.
-//!
-//! The bulb is observed only from the outside: the frames it puts on the air
-//! (decoded by a sniffer that learns keys and addresses as they go by) and the
-//! state of its light outputs (the PWM registers of the chip). Nothing reads
-//! the firmware's own variables, so a session works on any image.
-
 use std::any::Any;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -22,15 +13,12 @@ use crate::frames::{
 };
 use crate::image::Image;
 
-/// How a test ends when it does not pass.
 #[derive(Clone, Debug)]
 pub enum Stop {
     Fail(String),
     Inconclusive(String),
     NotApplicable(String),
-    /// The bulb is no longer usable for further tests in this session.
     SessionLost(String),
-    /// The emulation itself failed.
     Error(String),
 }
 
@@ -44,7 +32,6 @@ pub fn expect(cond: bool, observed: impl Into<String>) -> R<()> {
     }
 }
 
-/// A frame as the sniffer saw it.
 #[derive(Clone, Debug)]
 pub struct CapFrame {
     pub i: usize,
@@ -59,7 +46,6 @@ pub struct CapFrame {
     pub aps: Option<Aps>,
 }
 
-/// A ZDO frame: sequence number, cluster, payload after the sequence number.
 #[derive(Clone, Debug)]
 pub struct Zdo {
     pub seq: u8,
@@ -92,7 +78,6 @@ impl CapFrame {
     pub fn mac_cmd(&self) -> Option<u8> {
         self.mac.as_ref().filter(|m| m.ty == 3).and_then(|m| m.payload.first().copied())
     }
-    /// One line about the frame, for failure messages (`Frame.brief`, the same text).
     pub fn brief(&self) -> String {
         let who = &self.who_name;
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
@@ -184,7 +169,6 @@ pub fn aps_cmd_name(c: u8) -> Option<&'static str> {
     })
 }
 
-// ---- predicates for Session::wait / frames / collect (as in harness.py)
 pub fn is_nwk_cmd(cmd: u8) -> impl Fn(&CapFrame) -> bool {
     move |f| f.nwk_cmd() == Some(cmd)
 }
@@ -201,7 +185,6 @@ pub fn is_zdo(cluster: u16, seq: Option<u8>) -> impl Fn(&CapFrame) -> bool {
     move |f| f.zdo().is_some_and(|z| z.cluster == cluster && seq.map_or(true, |s| z.seq == s))
 }
 
-/// `is_zcl(cluster, cmd, seq, specific, to_client)`; None = any.
 pub fn is_zcl(cluster: Option<u16>, cmd: Option<u8>, seq: Option<u8>, specific: Option<bool>, to_client: Option<bool>)
               -> impl Fn(&CapFrame) -> bool {
     move |f| {
@@ -218,25 +201,19 @@ pub fn is_data_from(src: u16) -> impl Fn(&CapFrame) -> bool {
     move |f| f.nwk.as_ref().is_some_and(|n| n.ty == NWK_DATA && n.src == src)
 }
 
-/// What a cluster command got back.
 #[derive(Clone, Debug)]
 pub enum CmdAnswer {
     None,
-    /// the status of a Default Response
     Status(u8),
-    /// a cluster-specific response instead
     Frame(Box<CapFrame>),
 }
 
-/// The state of the light outputs (`zigbee_sim.light`): PWM0/PC1 is the only
-/// dimm channel and the TW warm one, PWM5/PB5 the TW cold one.
 #[derive(Clone, Debug)]
 pub struct Light {
     pub on: bool,
     pub pwm_en: bool,
     pub cmp: u32,
     pub max: u32,
-    /// both channels relative to the period, in %
     pub duty: f64,
     pub duty0: f64,
     pub cmp5: u32,
@@ -248,10 +225,8 @@ pub struct Light {
 pub struct SessionOpts {
     pub cpi: i64,
     pub channel: i64,
-    /// join the bulb before the tests
     pub join: bool,
     pub log: Option<Log>,
-    /// changes to the Trust Center before it starts (`define_session(tc=...)`)
     pub tc: Option<fn(&mut Coord)>,
 }
 
@@ -261,7 +236,6 @@ impl Default for SessionOpts {
     }
 }
 
-/// The simple descriptor of an endpoint.
 #[derive(Clone, Debug)]
 pub struct SimpleDesc {
     pub ep: u8,
@@ -283,12 +257,9 @@ pub struct Session {
     pub t_joined: f64,
     pub join_mark: usize,
     pub last_tx: Option<Sent>,
-    /// active endpoints, once asked
     pub eps: Option<Vec<u8>>,
     sd: HashMap<u8, Option<SimpleDesc>>,
-    /// scratch space shared by the tests of a session
     notes: HashMap<String, Box<dyn Any>>,
-    /// the nodes each peer hears (None: everyone)
     pub hears: Vec<Option<Vec<String>>>,
 }
 
@@ -297,7 +268,6 @@ fn emu(e: String) -> Stop {
 }
 
 impl Session {
-    /// Boots `image` and (with `opts.join`) lets it join the coordinator.
     pub fn new(image: &Image, opts: SessionOpts) -> R<Session> {
         let node = image.node(opts.cpi).map_err(emu)?;
         let mut keys = crate::frames::Keys::default();
@@ -341,7 +311,6 @@ impl Session {
         self.w.run_ms(t).map_err(emu)
     }
 
-    /// Lets `ms` of simulated time pass.
     pub fn run(&mut self, ms: f64) -> R<()> {
         let t = self.now() + ms;
         self.run_to(t)?;
@@ -349,7 +318,6 @@ impl Session {
         Ok(())
     }
 
-    /// Decodes what went on the air since the last call.
     pub fn sync(&mut self) {
         while self.n_raw < self.w.air.frames.len() {
             let AirFrame { t0, t1, ch, who, psdu } = self.w.air.frames[self.n_raw].clone();
@@ -411,13 +379,11 @@ impl Session {
         f.aps = a;
     }
 
-    /// Index of the next frame to be captured.
     pub fn mark(&mut self) -> usize {
         self.sync();
         self.cap.len()
     }
 
-    /// Frames since `since` from `who` (None: anyone) that satisfy `pred`.
     pub fn frames(&mut self, since: usize, who: Option<NodeId>, pred: impl Fn(&CapFrame) -> bool) -> Vec<CapFrame> {
         self.sync();
         self.cap[since.min(self.cap.len())..]
@@ -427,7 +393,6 @@ impl Session {
             .collect()
     }
 
-    /// Runs until a frame from `who` (None: anyone) satisfies `pred`; None after `max_ms`.
     pub fn wait(&mut self, pred: impl Fn(&CapFrame) -> bool, max_ms: f64, since: Option<usize>, who: Option<NodeId>,
                 step: f64) -> R<Option<CapFrame>> {
         let mut i = match since {
@@ -449,7 +414,6 @@ impl Session {
         }
     }
 
-    /// Runs until `cond` holds or `max_ms` passed (checked every `step` ms).
     pub fn run_until(&mut self, max_ms: f64, step: f64, cond: impl Fn(&Session) -> bool) -> R<bool> {
         let end = self.now() + max_ms;
         while self.now() < end {
@@ -471,7 +435,6 @@ impl Session {
         self.light().duty
     }
 
-    /// Waits for the bulb to join: Device Announce, then the TC link key exchange if the image does one.
     pub fn join(&mut self, max_s: f64, tclk_wait_ms: f64) -> R<()> {
         let ok = self.run_until(max_s * 1000.0, 20.0, |s| s.w.coord.devices.iter().any(|d| d.announced))?;
         if !ok {
@@ -490,12 +453,10 @@ impl Session {
         Ok(())
     }
 
-    /// Power loss and return of the bulb.
     pub fn reboot(&mut self) -> R<()> {
         self.w.reboot().map_err(emu)
     }
 
-    // ---- scratch space
     pub fn note<T: Clone + 'static>(&self, k: &str) -> Option<T> {
         self.notes.get(k).and_then(|v| v.downcast_ref::<T>()).cloned()
     }
@@ -506,17 +467,14 @@ impl Session {
         self.notes.contains_key(k)
     }
 
-    /// Frames from the bulb since `since`.
     pub fn dut_frames(&mut self, since: usize, pred: impl Fn(&CapFrame) -> bool) -> Vec<CapFrame> {
         self.frames(since, Some(NodeId::Dut), pred)
     }
 
-    /// A frame from the bulb, as `wait` with the defaults (from the bulb, 5 ms steps).
     pub fn wait_dut(&mut self, pred: impl Fn(&CapFrame) -> bool, max_ms: f64, since: Option<usize>) -> R<Option<CapFrame>> {
         self.wait(pred, max_ms, since, Some(NodeId::Dut), 5.0)
     }
 
-    /// Runs for `ms` and returns the frames from the bulb since the mark that satisfy `pred`.
     pub fn collect(&mut self, pred: impl Fn(&CapFrame) -> bool, ms: f64, since: Option<usize>) -> R<Vec<CapFrame>> {
         let i = match since {
             Some(i) => i,
@@ -526,15 +484,10 @@ impl Session {
         Ok(self.dut_frames(i, pred))
     }
 
-    /// The link key the Trust Center holds for the bulb (the unique one after an exchange).
     pub fn tclk(&self) -> crate::frames::Key {
         self.w.coord.devices.iter().find(|d| d.ext == self.dut_ext).and_then(|d| d.tclk).unwrap_or(self.w.coord.tclk)
     }
 
-    // ---- requests from the Trust Center (or a peer) and their answers
-    /// Sends a ZCL command to the bulb (`o.dst` for another address, `o.sender`
-    /// for a peer) and returns the answering frame (same sequence number,
-    /// server to client, same cluster) or None.
     pub fn zcl(&mut self, cluster: u16, cmd: u8, payload: &[u8], o: Tx) -> R<Option<CapFrame>> {
         let i = self.mark();
         let dst = o.dst.unwrap_or(self.dut_short);
@@ -560,7 +513,6 @@ impl Session {
         Ok(f)
     }
 
-    /// Sends a ZCL frame without waiting for anything.
     pub fn tx_zcl(&mut self, cluster: u16, cmd: u8, payload: &[u8], o: Tx) -> Sent {
         let dst = o.dst.unwrap_or(self.dut_short);
         let sender = o.sender.unwrap_or(NodeId::Coord);
@@ -568,8 +520,6 @@ impl Session {
         st.tx_zcl(air, dst, cluster, cmd, payload, &o)
     }
 
-    /// A cluster command: the status of the Default Response, a cluster-specific
-    /// response frame, or nothing.
     pub fn cmd(&mut self, cluster: u16, cmd: u8, payload: &[u8]) -> R<CmdAnswer> {
         self.cmd_with(cluster, cmd, payload, Tx::new())
     }
@@ -584,7 +534,6 @@ impl Session {
         Ok(CmdAnswer::Frame(Box::new(f)))
     }
 
-    /// Read Attributes -> records, or None when nothing came back.
     pub fn read(&mut self, cluster: u16, attrs: &[u16], max_ms: f64) -> R<Option<Vec<(u16, u8, Option<u8>, Option<ZclValue>)>>> {
         self.read_with(cluster, attrs, Tx::new().max_ms(max_ms))
     }
@@ -600,7 +549,6 @@ impl Session {
         Ok(read_attr_records(&z.payload).ok())
     }
 
-    /// (status, type, value) of one attribute; all None when nothing came back.
     pub fn read1(&mut self, cluster: u16, attr: u16) -> R<(Option<u8>, Option<u8>, Option<ZclValue>)> {
         self.read1_with(cluster, attr, Tx::new())
     }
@@ -613,12 +561,10 @@ impl Session {
         })
     }
 
-    /// The value of one attribute (None when nothing came back or no value).
     pub fn value(&mut self, cluster: u16, attr: u16) -> R<Option<ZclValue>> {
         Ok(self.read1(cluster, attr)?.2)
     }
 
-    /// Write Attributes; records = [(id, type, value bytes)]. Returns the response frame.
     pub fn write(&mut self, cluster: u16, records: &[(u16, u8, Vec<u8>)]) -> R<Option<CapFrame>> {
         self.write_with(cluster, records, false, false, Tx::new())
     }
@@ -641,7 +587,6 @@ impl Session {
         self.zcl(cluster, cmd, &pl, o.general())
     }
 
-    /// A ZDO request; the response frame (cluster | 0x8000, same sequence number) or None.
     pub fn zdo(&mut self, cluster: u16, payload: &[u8], max_ms: f64) -> R<Option<CapFrame>> {
         self.zdo_with(cluster, payload, Tx::new().max_ms(max_ms))
     }
@@ -667,7 +612,6 @@ impl Session {
         )
     }
 
-    /// Does the bulb still answer a Read Attributes (Basic ZCLVersion)?
     pub fn alive(&mut self) -> R<bool> {
         for _ in 0..2 {
             if self.read(0x0000, &[0x0000], 2500.0)?.is_some() {
@@ -677,7 +621,6 @@ impl Session {
         Ok(false)
     }
 
-    /// Light on at full level, no transition; used between tests of a shared session.
     pub fn baseline(&mut self) -> R<()> {
         self.tx_zcl(0x0006, 0x01, &[], Tx::new().ddr());
         self.run(150.0)?;
@@ -685,7 +628,6 @@ impl Session {
         self.run(400.0)
     }
 
-    /// Active endpoints of the bulb.
     pub fn endpoints(&mut self) -> R<Vec<u8>> {
         if let Some(e) = &self.eps {
             return Ok(e.clone());
@@ -703,7 +645,6 @@ impl Session {
         Ok(eps)
     }
 
-    /// The simple descriptor of an endpoint, or None when the bulb answers with an error status.
     pub fn simple_desc(&mut self, ep: u8) -> R<Option<SimpleDesc>> {
         if let Some(d) = self.sd.get(&ep) {
             return Ok(d.clone());
@@ -741,7 +682,6 @@ impl Session {
     }
 }
 
-/// The light outputs of any emulated bulb (`zigbee_sim.light`).
 pub fn light_of(node: &Node) -> Light {
     let g = &node.m.regs;
     let u16le = |a: usize| u16::from_le_bytes([g[a], g[a + 1]]) as u32;

@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! zbnode: a TLSR8258 firmware image in the tc32emu port with the 8258 layer,
-//! the 802.15.4 radio and the BLE model, driven in lockstep over stdin/stdout
-//! by the scenario scripts. A port of emulator/go/cmd/zbnode (main.go): the
-//! same arguments, environment (ZBNODE_*, TC32EMU_*) and output, line for
-//! line. The protocol is described there.
-//!
-//! The node itself is the library (`lib.rs`, [`zbnode::Node`]); this binary
-//! only speaks the protocol.
-
 use std::cell::RefCell;
 use std::env;
 use std::fmt::Write as _;
@@ -84,7 +74,6 @@ fn main() {
         if line.last() == Some(&b'\n') {
             line.pop();
         }
-        // bufio.Scanner with a 1 MB buffer: a longer line ends the input.
         if line.len() >= 1 << 20 {
             break;
         }
@@ -101,7 +90,6 @@ fn main() {
             "RUN" => {
                 let target = float0(&f[1]);
                 loop {
-                    // in the order Go writes its buffered output: what this loop printed, then the ATT lines
                     out.borrow_mut().push_str(&o);
                     o.clear();
                     flush_ble(&out, &attq, &central, &mut rsp_sent, &mut ntf_sent);
@@ -426,7 +414,6 @@ fn main() {
                 return;
             }
             _ => {
-                // BS...: the commands of the BLE conformance suite (blespec.rs)
                 spec.command(&f, &mut o, &mut node.m, &node.ble_radio);
             }
         }

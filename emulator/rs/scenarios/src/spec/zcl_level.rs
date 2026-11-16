@@ -1,13 +1,3 @@
-//! Level Control cluster (ZCL 8, 3.10) and Level Control for Lighting (3.19)
-//! as a ZLO dimmable light must implement them (ZLO 7.2), ported from
-//! emulator/spec/zcl_level.py.
-//!
-//! Transitions are checked on the PWM output while they run: the duty cycle is
-//! sampled between steps of simulated time. The mapping of level to duty is the
-//! device's own (the text leaves it open), so the tests only use that it is
-//! monotonic: reference duties are measured on the same image with a
-//! transition time of 0.
-
 use std::collections::HashSet;
 
 use super::zcl_onoff::{act, attr, check_types, finally, oo, opt_attr, write_attr};
@@ -106,7 +96,6 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---- local helpers (as in zcl_level.py)
 fn level(s: &mut Session) -> R<i64> {
     attr(s, LEVEL, 0x0000)
 }
@@ -186,7 +175,6 @@ fn off(s: &mut Session) -> R<()> {
     act(s, ONOFF, 0x00, &[], "Off", SETTLE)
 }
 
-/// Light on at a level, no transition; returns the settled duty.
 fn start(s: &mut Session, lvl: u8) -> R<f64> {
     act(s, ONOFF, 0x01, &[], "On", 200.0)?;
     move_to(s, lvl, 0, true, 1200.0)?;
@@ -213,7 +201,6 @@ fn stable(s: &mut Session, ms: f64) -> R<(bool, f64, f64)> {
     Ok(((a - b).abs() < 0.05, a, b))
 }
 
-// ---- tests
 fn attributes(s: &mut Session) -> R<String> {
     let Some(r) = s.read(LEVEL, &[0x0000, 0x0001, 0x000F, 0x4000], 1500.0)? else {
         return Err(Stop::Fail("no Read Attributes Response".into()));
@@ -296,7 +283,6 @@ fn move_to_level_default_time(s: &mut Session) -> R<String> {
                 )?;
                 return Ok("OnOffTransitionTime implemented and used".into());
             }
-            // the optional attribute is absent: what the clause asks of it cannot be seen; the level was reached
             Err(Stop::NotApplicable(format!(
                 "OnOffTransitionTime (0x0010), optional, is not implemented; Move to Level 40 with transition time \
                  0xffff reached the level (duty {mid:.1}% after 1.0 s, {d:.1}% after 3 s)"
@@ -564,7 +550,6 @@ fn options_attribute(s: &mut Session) -> R<String> {
     )
 }
 
-/// Level 123, Off, On: (duty before, CurrentLevel after Off, CurrentLevel after On, duty after On).
 fn off_on(s: &mut Session) -> R<(f64, i64, i64, f64)> {
     let (st, _, onlevel) = s.read1(LEVEL, 0x0011)?;
     if st == Some(0)
@@ -580,7 +565,6 @@ fn off_on(s: &mut Session) -> R<(f64, i64, i64, f64)> {
     on(s)?;
     let mut d2 = 0.0;
     for _ in 0..8 {
-        // no attribute tells how long the fade is: wait until the output is steady
         let (ok, _, b) = stable(s, 500.0)?;
         d2 = b;
         if ok {
@@ -716,7 +700,6 @@ fn cfg_payload(min: u16, max: u16, change: u8) -> Vec<u8> {
     p
 }
 
-/// Python's `repr()` of a list of str.
 fn py_str_list(v: &[String]) -> String {
     format!("[{}]", v.iter().map(|x| format!("'{x}'")).collect::<Vec<_>>().join(", "))
 }

@@ -1,11 +1,3 @@
-//! ZCL foundation (ZCL rev 8, 07-5123-08, chapter 2): general commands,
-//! Default Response rules, status codes and attribute reporting, as a light's
-//! server clusters must provide them. Ported from emulator/spec/zcl_foundation.py.
-//!
-//! Status values are those of ZCL8 Table 2-12. Where ZCL8 retired a value that
-//! older revisions required (0x82-0x84 -> UNSUP_COMMAND 0x81), the test asks for
-//! the ZCL8 value and the observation says which retired value was seen.
-
 use std::collections::HashMap;
 
 use super::Test;
@@ -29,15 +21,12 @@ const UNSUP_CLUSTER: u8 = 0xC3;
 const BASIC: u16 = 0x0000;
 const IDENTIFY: u16 = 0x0003;
 const ONOFF: u16 = 0x0006;
-/// not defined for Basic, Identify or On/Off in ZCL8
 const ABSENT_ATTR: u16 = 0x0F00;
 const U8: u8 = 0x20;
 const U16: u8 = 0x21;
 const BOOL: u8 = 0x10;
 const ENUM8: u8 = 0x30;
 
-// ------------------------------------------------------------------ shared with zcl_basic_identify
-/// Python's `repr()` of a float.
 pub fn py_float(x: f64) -> String {
     let s = format!("{x}");
     if s.contains('.') || s.contains('e') || s.contains("inf") || s.contains("NaN") {
@@ -47,24 +36,20 @@ pub fn py_float(x: f64) -> String {
     }
 }
 
-/// Python's `round(x, n)`.
 pub fn py_round(x: f64, n: usize) -> f64 {
     format!("{x:.n$}").parse().unwrap()
 }
 
-/// Python's `repr()` of a list of strings.
 pub fn py_strs<S: AsRef<str>>(v: &[S]) -> String {
     let parts: Vec<String> = v.iter().map(|s| format!("'{}'", s.as_ref())).collect();
     format!("[{}]", parts.join(", "))
 }
 
-/// Python's `repr()` of a list of floats.
 pub fn py_floats(v: &[f64]) -> String {
     let parts: Vec<String> = v.iter().map(|x| py_float(*x)).collect();
     format!("[{}]", parts.join(", "))
 }
 
-/// Python's `hex()`.
 pub fn py_hex(x: u64) -> String {
     format!("{x:#x}")
 }
@@ -73,7 +58,6 @@ pub fn opt_str<T: ToString>(v: Option<T>) -> String {
     v.map(|x| x.to_string()).unwrap_or_else(|| "None".into())
 }
 
-/// Python's `sorted(set(...))` of floats.
 pub fn sorted_set(v: &[f64]) -> Vec<f64> {
     let mut o = v.to_vec();
     o.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -81,7 +65,6 @@ pub fn sorted_set(v: &[f64]) -> Vec<f64> {
     o
 }
 
-/// `try: body finally: cleanup`: an error of the cleanup replaces the body's result.
 pub fn fin<T>(r: R<T>, cleanup: R<()>) -> R<T> {
     cleanup?;
     r
@@ -91,13 +74,10 @@ pub fn int(v: &Option<ZclValue>) -> Option<i64> {
     v.as_ref().and_then(|x| x.int())
 }
 
-/// A Python TypeError (formatting None or a frame as a number): the test ends with ERROR.
 pub fn type_error(what: &str) -> Stop {
     Stop::Error(format!("TypeError: {what}"))
 }
 
-/// True when, since the mark, a unicast frame of the Trust Center went through a
-/// whole round of MAC retries without an acknowledgement.
 pub fn air_disturbed(s: &mut Session, since: usize, lost: usize) -> bool {
     if s.w.coord.st.no_ack.len() > lost {
         return true;
@@ -111,8 +91,6 @@ pub fn air_disturbed(s: &mut Session, since: usize, lost: usize) -> bool {
     seen.values().any(|n| *n > 4)
 }
 
-/// The module wrapper `T`: a test that fails while a request of the Trust
-/// Center went unacknowledged for a whole round of MAC retries is run once more.
 pub fn retry(s: &mut Session, f: fn(&mut Session) -> R<String>) -> R<String> {
     let (lost, since) = (s.w.coord.st.no_ack.len(), s.mark());
     match f(s) {
@@ -127,14 +105,12 @@ pub fn retry(s: &mut Session, f: fn(&mut Session) -> R<String>) -> R<String> {
     }
 }
 
-/// `{id: (status, type, value)}` of a Read Attributes Response.
 pub type Records = HashMap<u16, (u8, Option<u8>, Option<ZclValue>)>;
 
 pub fn records(v: Vec<(u16, u8, Option<u8>, Option<ZclValue>)>) -> Records {
     v.into_iter().map(|(a, st, t, x)| (a, (st, t, x))).collect()
 }
 
-// ------------------------------------------------------------------ local helpers
 fn st(v: u8) -> String {
     let retired = match v {
         0x82 => Some("UNSUP_GENERAL_COMMAND"),
@@ -153,12 +129,10 @@ fn st(v: u8) -> String {
     format!("{v:#04x}") + &retired.map(|r| format!(" (retired in ZCL8: {r})")).unwrap_or_default()
 }
 
-/// General (profile-wide) command; the answering frame or None.
 fn gen(s: &mut Session, cluster: u16, cmd: u8, payload: &[u8]) -> R<Option<CapFrame>> {
     s.zcl(cluster, cmd, payload, Tx::new().general())
 }
 
-/// (command id, status) of a Default Response frame.
 fn default_rsp(f: &Option<CapFrame>) -> Option<(u8, u8)> {
     let z = f.as_ref()?.zcl()?;
     if !z.specific && z.cmd == 0x0B && z.payload.len() >= 2 {
@@ -191,7 +165,6 @@ fn stop_identify(s: &mut Session) -> R<()> {
     s.zcl(IDENTIFY, 0x00, &0u16.to_le_bytes(), Tx::new().ddr().max_ms(300.0)).map(|_| ())
 }
 
-/// Write Attributes Response -> [(status, attribute id or None)].
 fn write_records(f: &CapFrame) -> Vec<(u8, Option<u16>)> {
     let p = f.zcl().unwrap().payload;
     if p.len() == 1 {
@@ -206,7 +179,6 @@ fn write_records(f: &CapFrame) -> Vec<(u8, Option<u16>)> {
     v
 }
 
-/// `[(st(a), b) for a, b in recs]`
 fn recs_text(recs: &[(u8, Option<u16>)]) -> String {
     let parts: Vec<String> = recs.iter().map(|(a, b)| format!("('{}', {})", st(*a), opt_str(*b))).collect();
     format!("[{}]", parts.join(", "))
@@ -403,7 +375,6 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ------------------------------------------------------------------ Read Attributes
 fn read_supported(s: &mut Session) -> R<String> {
     let f = gen(s, BASIC, 0x00, &u16v(0x0000))?;
     expect(f.is_some(), "no response to Read Attributes (Basic ZCLVersion)")?;
@@ -451,7 +422,7 @@ fn read_several(s: &mut Session) -> R<String> {
         let stt = p[i + 2];
         i += 3;
         if stt == SUCCESS {
-            i += 2; // both supported attributes here are one-octet types
+            i += 2;
         }
         got.push((a, stt));
     }
@@ -469,7 +440,6 @@ fn read_several(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-// ------------------------------------------------------------------ Write Attributes
 fn write_success(s: &mut Session) -> R<String> {
     let r = (|| {
         let f = write_rsp(s, IDENTIFY, &[(0x0000, U16, u16v(40))])?;
@@ -525,7 +495,6 @@ fn write_unsupported(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-/// Writable attributes with a restricted range: (cluster, attribute, type, out-of-range value, name).
 fn ranged_candidates(s: &mut Session) -> R<Vec<(u16, u16, u8, i64, String)>> {
     let mut out = Vec::new();
     let mn = if s.has_cluster(0x0008)? { int(&s.value(0x0008, 0x0002)?) } else { None };
@@ -548,7 +517,6 @@ fn write_out_of_range(s: &mut Session) -> R<String> {
             continue;
         }
         let Some(b) = int(&before) else { return Err(type_error("bytes([before])")) };
-        // is it writable at all? (write back its own value)
         let f = s.write(cluster, &[(attr, typ, vec![b as u8])])?;
         if f.as_ref().map_or(true, |f| f.zcl().unwrap().payload != [0x00]) {
             tried.push(format!("{name}: not writable"));
@@ -639,7 +607,6 @@ fn write_no_response(s: &mut Session) -> R<String> {
     fin(r, stop_identify(s))
 }
 
-// ------------------------------------------------------------------ Discover Attributes
 fn discover(s: &mut Session, cluster: u16, start: u16, maxn: u8) -> R<(u8, Vec<(u16, u8)>)> {
     let mut pl = u16v(start);
     pl.push(maxn);
@@ -707,7 +674,6 @@ fn discover_complete(s: &mut Session) -> R<String> {
         start = ids.last().unwrap().wrapping_add(1);
         expect(rounds < 40, "discovery does not terminate")?;
     }
-    // nothing may remain above the last identifier once the device said "complete"
     let last = all_ids.last().copied().unwrap_or(0);
     if last < 0xFFFF {
         let (done, recs) = discover(s, BASIC, last + 1, 3)?;
@@ -718,7 +684,6 @@ fn discover_complete(s: &mut Session) -> R<String> {
         )?;
     }
     expect(ascending(&all_ids), format!("identifiers are not in ascending order: {}", ids_hex(&all_ids)))?;
-    // the list is the attribute set: what it names can be read, and the mandatory ones are in it
     expect(
         all_ids.contains(&0x0000) && all_ids.contains(&0x0007),
         format!("discovered {}; the mandatory ZCLVersion and PowerSource must be among them", ids_hex(&all_ids)),
@@ -731,7 +696,6 @@ fn discover_complete(s: &mut Session) -> R<String> {
         .map(|a| py_hex(*a as u64))
         .collect();
     expect(bad.is_empty(), format!("discovered attributes {} cannot be read", py_strs(&bad)))?;
-    // complete = 0 must be reported when the maximum cuts the list short
     let (done, recs) = discover(s, BASIC, 0x0000, 1)?;
     if all_ids.len() > 1 {
         expect(
@@ -746,7 +710,6 @@ fn discover_complete(s: &mut Session) -> R<String> {
     Ok(format!("{} attributes in {rounds} responses", all_ids.len()))
 }
 
-// ------------------------------------------------------------------ Default Response
 fn dr_success(s: &mut Session) -> R<String> {
     s.need_cluster(ONOFF)?;
     let f = s.zcl(ONOFF, 0x01, &[], Tx::new())?;
@@ -792,7 +755,6 @@ fn dr_broadcast(s: &mut Session) -> R<String> {
     let mut f = None;
     let mut off = false;
     for _ in 0..3 {
-        // a single broadcast copy can be lost on the air
         f = s.zcl(ONOFF, 0x00, &[], Tx::new().dst(0xFFFD).max_ms(1500.0))?;
         s.run(600.0)?;
         off = !s.light().on;
@@ -808,12 +770,10 @@ fn dr_broadcast(s: &mut Session) -> R<String> {
 
 fn dr_to_default_response(s: &mut Session) -> R<String> {
     s.need_cluster(ONOFF)?;
-    // a Default Response as a client would send it for a (fictitious) server command 0x00
     let f = s.zcl(ONOFF, 0x0B, &[0x00, SUCCESS], Tx::new().general().max_ms(1500.0))?;
     expect(f.is_none(), format!("a Default Response (status SUCCESS) was answered: {}", describe(&f)))?;
     let f = s.zcl(ONOFF, 0x0B, &[0x00, FAILURE], Tx::new().general().max_ms(1500.0))?;
     expect(f.is_none(), format!("a Default Response (status FAILURE) was answered: {}", describe(&f)))?;
-    // negative control: the same path does answer other general commands
     let f = gen(s, ONOFF, 0x00, &u16v(0x0000))?;
     expect(f.is_some(), "control failed: Read Attributes on the same cluster is not answered either")?;
     Ok(String::new())
@@ -874,7 +834,6 @@ fn dr_unsupported_cluster(s: &mut Session) -> R<String> {
 fn malformed(s: &mut Session) -> R<String> {
     s.need_cluster(IDENTIFY)?;
     let r = (|| {
-        // Identify needs a 16-bit Identify Time; one octet is sent
         let f = s.zcl(IDENTIFY, 0x00, &[0x28], Tx::new())?;
         let v = identify_time(s)?;
         expect(
@@ -894,14 +853,13 @@ fn malformed(s: &mut Session) -> R<String> {
     fin(r, stop_identify(s))
 }
 
-// ------------------------------------------------------------------ ClusterRevision
 fn cluster_revision(s: &mut Session) -> R<String> {
     let Some(sd) = s.simple_desc(1)? else { return Err(type_error("simple descriptor is None")) };
     let mut bad: Vec<String> = Vec::new();
     let mut good: Vec<String> = Vec::new();
     for c in sd.inc {
         if c >= 0xFC00 {
-            continue; // manufacturer-specific clusters are outside the ZCL
+            continue;
         }
         let (stt, t, v) = s.read1(c, 0xFFFD)?;
         let iv = int(&v);
@@ -921,7 +879,6 @@ fn cluster_revision(s: &mut Session) -> R<String> {
     Ok(good.join(", "))
 }
 
-// ------------------------------------------------------------------ reporting
 fn cfg_record(attr: u16, typ: u8, mn: u16, mx: u16, change: &[u8]) -> Vec<u8> {
     let mut v = vec![0x00];
     v.extend_from_slice(&attr.to_le_bytes());
@@ -941,7 +898,6 @@ fn configure(s: &mut Session, cluster: u16, record: &[u8]) -> R<Vec<u8>> {
     Ok(z.payload)
 }
 
-/// Configures reporting as a precondition of a reporting test.
 fn configured(s: &mut Session, record: &[u8]) -> R<()> {
     let p = configure(s, ONOFF, record)?;
     if !(p.first() == Some(&0x00) && (p.len() == 1 || p.len() == 4)) {
@@ -978,7 +934,6 @@ fn set_onoff(s: &mut Session, on: bool) -> R<()> {
     s.zcl(ONOFF, if on { 0x01 } else { 0x00 }, &[], Tx::new().ddr().max_ms(250.0)).map(|_| ())
 }
 
-/// Stops On/Off reporting again (maximum interval 0xffff, 2.5.7.1.6) and turns the light on.
 fn quiet(s: &mut Session) -> R<()> {
     gen(s, ONOFF, 0x06, &cfg_record(0x0000, BOOL, 0, 0xFFFF, &[]))?;
     set_onoff(s, true)
@@ -1092,7 +1047,7 @@ fn report_on_change(s: &mut Session) -> R<String> {
     bind_onoff(s, false)?;
     let r = (|| {
         configured(s, &cfg_record(0x0000, BOOL, 0, 300, &[]))?;
-        s.run(1500.0)?; // a first report after configuration is allowed
+        s.run(1500.0)?;
         let i = s.mark();
         set_onoff(s, false)?;
         let r = reports(s, 3000.0, Some(i))?;
@@ -1140,10 +1095,9 @@ fn report_min_interval(s: &mut Session) -> R<String> {
     bind_onoff(s, false)?;
     let r = (|| {
         configured(s, &cfg_record(0x0000, BOOL, 5, 120, &[]))?;
-        s.run(6000.0)?; // let a report at configuration time and its interval pass
+        s.run(6000.0)?;
         let i = s.mark();
         for k in 0..4 {
-            // four changes within 3 s
             set_onoff(s, k % 2 == 1)?;
             s.run(750.0)?;
         }
@@ -1220,7 +1174,6 @@ fn report_without_binding(s: &mut Session) -> R<String> {
             return Err(Stop::Inconclusive("control failed: no report even with a binding".into()));
         }
         bind_onoff(s, true)?;
-        // the binding table must really have no On/Off entry left
         let f = s.zdo(0x0033, &[0x00], 2000.0)?;
         if let Some(f) = &f {
             let p = f.zdo().unwrap().payload;

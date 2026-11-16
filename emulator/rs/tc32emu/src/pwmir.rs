@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! PWM0 IR-FIFO engine (pwmir.go).
-
 use crate::machine::Machine;
 
 const PWM_FIFO_DEPTH: usize = 8;
@@ -34,7 +31,6 @@ impl Machine {
             return;
         }
         self.pwm_fifo.clear();
-        // Go: if int(0x7cc & 0x0f) >= 0, always.
         self.regs[0x7B3] |= 0x01;
         self.pwm_ir_done = true;
     }

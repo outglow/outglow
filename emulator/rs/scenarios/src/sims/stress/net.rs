@@ -1,25 +1,3 @@
-//! The mesh every stress scenario runs on: a house of rooms with emulated
-//! bulbs (any images), scripted routers ("plugs") and the coordinator, on
-//! one 802.15.4 air with a seeded channel model, and the bookkeeping that
-//! turns the air into numbers (what was sent, what arrived, how fast, what
-//! the bulbs did on the way).
-//!
-//! Who does what:
-//! - the emulated bulbs route on their own (the firmware under test);
-//! - the coordinator (`Coord::new`, the spec Trust Center: carrier sense, MAC
-//!   retries) is a concentrator: many-to-one route requests, source routes
-//!   from the route records it gets; without one it hands a frame to a
-//!   neighbour router of its own (heard in Link Status) closest to the
-//!   destination and lets the mesh carry it on, and drops a source route that
-//!   failed;
-//! - a scripted router acknowledges at MAC and APS level, sends Link Status,
-//!   answers a Route Request for itself, answers commands with a Default
-//!   Response and sends its own traffic to a neighbour router; it does not
-//!   relay (the bulbs are the mesh);
-//! - the scenario loop advances everything in small steps (`STEP` ms),
-//!   decodes what went on the air with the network key and reacts for the
-//!   scripted routers.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::{node_of, Sim, SimCtx};
@@ -32,10 +10,8 @@ use crate::peer::Peer;
 use crate::session::{light_of, Stop, R};
 use crate::station::{Station, Tx, HA};
 
-/// Loop granularity (ms): reactions of the scripted routers come at most this late.
 pub const STEP: f64 = 2.0;
 const QUANTUM: f64 = 0.25;
-/// A neighbour counts as alive this long after its last Link Status.
 const LS_ALIVE_MS: f64 = 40000.0;
 pub const PAN: u16 = 0x1A62;
 pub const GROUP: u16 = 0x0001;
@@ -45,11 +21,9 @@ pub enum Kind {
     Bulb,
     Plug,
     Coord,
-    /// not in the network (jammer, foreign PAN)
     Other,
 }
 
-/// A place in the house.
 #[derive(Clone, Debug)]
 pub struct Spot {
     pub name: &'static str,
@@ -63,13 +37,8 @@ const fn spot(name: &'static str, room: &'static str, kind: Kind, x: f64, y: f64
     Spot { name, room, kind, x, y }
 }
 
-/// Radio range (m): nodes farther apart do not hear each other.
 pub const RANGE: f64 = 6.5;
 
-/// The full house: 9 bulbs (as in a real home network), 3 scripted routers, the
-/// coordinator in the living room. The hall bulb is the bulb under test and
-/// the main bridge between the kitchen and the bedroom; the only other way
-/// is the weak kitchen-bedroom link (kit1-bed1, 6 m).
 pub fn house_full() -> Vec<Spot> {
     vec![
         spot("coord", "living", Kind::Coord, 0.0, 0.0),
@@ -88,7 +57,6 @@ pub fn house_full() -> Vec<Spot> {
     ]
 }
 
-/// The quick house: 4 bulbs in a chain (one weak shortcut kit-bed), 3 scripted routers.
 pub fn house_quick() -> Vec<Spot> {
     vec![
         spot("coord", "living", Kind::Coord, 0.0, 0.0),
@@ -106,23 +74,18 @@ pub fn dist(a: &Spot, b: &Spot) -> f64 {
     ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt()
 }
 
-/// The RSSI of a link (dBm) at distance d: synthetic, -40 dBm at 0 m, 7 dB/m.
 pub fn rssi_at(d: f64) -> i64 {
     (-40.0 - 7.0 * d).round() as i64
 }
 
-/// Extra loss of a weak link: 0 up to 5 m, rising to 10 % at the edge of range.
 pub fn weak_loss(d: f64) -> f64 {
     ((d - 5.0) / 1.5).clamp(0.0, 1.0) * 0.10
 }
 
-/// What a scenario is run with.
 #[derive(Clone, Debug)]
 pub struct Cfg {
     pub full: bool,
     pub seed: u32,
-    /// images per bulb: the bulb under test ("hall") gets `dut`, the others
-    /// `dut` too, or every second one `mix` when given
     pub dut: Image,
     pub mix: Option<Image>,
     pub cpi: i64,
@@ -155,9 +118,7 @@ pub struct BulbInfo {
     pub spot: usize,
     pub name: String,
     pub ext: u64,
-    /// its address now (as the coordinator knows it)
     pub short: u16,
-    /// its address when the house was complete
     pub short0: u16,
     pub image: String,
     pub img: Image,
@@ -173,7 +134,6 @@ pub struct PlugInfo {
     pub alive: bool,
 }
 
-/// One decoded air frame.
 #[derive(Clone, Debug, Default)]
 pub struct Dec {
     pub idx: usize,
@@ -198,7 +158,6 @@ pub struct NwkInfo {
     pub dst: u16,
     pub seq: u8,
     pub radius: u8,
-    /// decrypted payload
     pub payload: Vec<u8>,
 }
 
@@ -215,20 +174,13 @@ pub struct ApsInfo {
     pub group: Option<u16>,
 }
 
-/// A traffic flow (what a message is).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Flow {
-    /// coordinator -> bulb: On/Off or Move to Level, Default Response back
     CmdBulb,
-    /// coordinator -> bulb: Read Attributes, response back
     ReadBulb,
-    /// scripted router -> coordinator: Report Attributes through the mesh (one way)
     Report,
-    /// scripted router -> bulb: Read Attributes, response back to the router
     PlugReadBulb,
-    /// coordinator -> scripted router: On/Off, Default Response back through the mesh
     CmdPlug,
-    /// coordinator -> group (broadcast): On/Off/Toggle to every bulb
     Group,
 }
 
@@ -255,18 +207,13 @@ pub struct Msg {
     pub cmd: u8,
     pub seq: u8,
     pub t: f64,
-    /// the destination got it (last hop heard intact)
     pub delivered: Option<f64>,
-    /// the answer reached the sender (Default Response / Read Attributes Response)
     pub answered: Option<f64>,
-    /// APS counters of the answers seen at the sender (more than one: executed again)
     pub answer_ctrs: Vec<u8>,
-    /// the light state the command asks for
     pub want_on: Option<bool>,
 }
 
 impl Msg {
-    /// Done: answered, or (one-way flows) delivered.
     pub fn ok(&self) -> bool {
         match self.flow {
             Flow::Report => self.delivered.is_some(),
@@ -282,18 +229,15 @@ impl Msg {
     }
 }
 
-/// A phase of a scenario: a named time span the numbers are grouped by.
 #[derive(Clone, Debug)]
 pub struct Phase {
     pub name: String,
     pub t0: f64,
     pub t1: f64,
-    /// watchdog/software resets of the bulbs at its start and end
     pub r0: u32,
     pub r1: u32,
 }
 
-/// What the bulbs did on the air in a time span.
 #[derive(Clone, Debug, Default)]
 pub struct AirCount {
     pub frames: u64,
@@ -308,14 +252,8 @@ pub struct AirCount {
     pub leave: u64,
     pub rejoin_req: u64,
     pub assoc_req: u64,
-    /// unicast frames a bulb acknowledged for relaying and then neither
-    /// forwarded nor answered with a Network Status (within 3 s), each
-    /// once (`Mesh::relays`)
     pub relay_lost: u64,
-    /// ... of all unicast frames bulbs acknowledged for relaying, each once
     pub relay_acked: u64,
-    /// Route Requests (originator, id; not many-to-one) that reached a bulb
-    /// intact on the air, neither its own nor for it, and how many it passed on
     pub rreq_heard: u64,
     pub rreq_passed: u64,
 }
@@ -327,45 +265,34 @@ pub struct Mesh {
     pub chan: ChanRef,
     pub bulbs: Vec<BulbInfo>,
     pub plugs: Vec<PlugInfo>,
-    /// spot index -> node
     pub node_of_spot: BTreeMap<usize, NodeId>,
     keys: Keys,
     pub dec: Vec<Dec>,
     n_dec: usize,
     pub msgs: Vec<Msg>,
     pub phases: Vec<Phase>,
-    /// per bulb (index into `bulbs`): (ms, on) at every change of the light
     pub light_log: Vec<Vec<(f64, bool)>>,
     last_on: Vec<Option<bool>>,
-    /// (receiver, sender short) -> (ms, neighbours listed in its Link Status)
     pub ls: BTreeMap<(NodeId, u16), (f64, Vec<u16>)>,
-    /// next hops that failed recently: (node, next hop) -> until ms
     suspect: BTreeMap<(NodeId, u16), f64>,
     coord_noack: usize,
     plug_noack: Vec<usize>,
     route_rec_seen: usize,
     rrep_done: BTreeSet<(u16, u16, u8)>,
-    /// per bulb: last (mac seq, psdu) for MAC retransmission counting
     last_tx: BTreeMap<NodeId, (u8, Vec<u8>)>,
-    /// NWK broadcasts by (src, seq): first seen ms, for relay counting
     seen_rreq: BTreeSet<(u16, u8)>,
-    /// time-stamped bulb air events (ms, which counter, bulb)
     pub air_events: Vec<(f64, &'static str, NodeId)>,
-    /// plug requests received: (plug, src, aps counter) -> times
     pub plug_rx: BTreeMap<(u16, u16, u8, u8), u32>,
     pub mtorr_period: Option<f64>,
     next_mtorr: f64,
     pub traffic_rng: Rng,
     pub notes: Vec<String>,
     pub join_ms: Vec<Option<f64>>,
-    /// air time when the house was complete (joined, ranges applied, routers started)
     pub t_formed: f64,
-    /// print the decoded frames in this time span (STRESS_TRACE=t0-t1, ms)
     trace: Option<(f64, f64)>,
     next_refresh: f64,
     reset_seen: Vec<u32>,
     last_reset_line: std::rc::Rc<std::cell::RefCell<String>>,
-    /// STRESS_ACCOUNT: what became of every frame (`account.rs`)
     pub acct: Option<super::account::Account>,
 }
 
@@ -374,8 +301,6 @@ pub fn emu(e: String) -> Stop {
 }
 
 impl Mesh {
-    /// Boots the house: every bulb hears the coordinator while it joins
-    /// (powered on 1.5 s apart); then the house's ranges apply.
     pub fn build(cfg: Cfg, log: Option<crate::air::Log>) -> R<Mesh> {
         let spots = if cfg.full { house_full() } else { house_quick() };
         let mut bulbs = Vec::new();
@@ -390,11 +315,6 @@ impl Mesh {
                 _ => cfg.dut.clone(),
             };
             let mut n = node_of(&img, cfg.cpi)?;
-            // the MAC sector: stock keeps it only with the Telink OUI in bytes 3..6 (else
-            // it writes its own) and makes its IEEE address of bytes 6..8 + 0..6; the C and
-            // Rust firmware take the 8 bytes as they are. The bulb is found by its marker
-            // (bytes 0..3). The other bytes differ from bulb to bulb as factory MACs do
-            // (the firmware seeds its backoff generator from them).
             let h = mac_bytes(k);
             let mac = [h[0], h[1], h[2], 0x38, 0xC1, 0xA4, h[3], h[4]];
             n.write_flash(0xFF000, &mac);
@@ -408,7 +328,6 @@ impl Mesh {
         let first = it.next().ok_or_else(|| Stop::Error("no bulbs".into()))?;
         let mut coord = Coord::new(11, NWK_KEY);
         coord.nwk_discover = 1;
-        // keep the emulator's last RESET line (cause, pc) for the notes
         let last_reset = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
         let lr = last_reset.clone();
         let inner = log.clone();
@@ -536,11 +455,7 @@ impl Mesh {
         self.spots[self.spot_of(id)].room
     }
 
-    /// What the coordinator knows of the bulbs (their addresses, also those
-    /// of joiners not yet announced), and its next hop to each: the
-    /// coordinator's own frames (keys, ZDO) take the same way as the traffic.
     fn refresh_coord(&mut self) {
-        // a joiner is reached the coordinator's own way until it has announced itself
         let devs: Vec<(u64, u16)> = self.s.w.coord.devices.iter().filter(|d| d.announced).map(|d| (d.ext, d.short)).collect();
         for (ext, short) in devs {
             let b = ext.to_le_bytes();
@@ -568,18 +483,12 @@ impl Mesh {
         }
     }
 
-    /// The IEEE address a bulb announced, found by the marker in its MAC sector.
     fn announced_ext(&self, k: usize) -> Option<u64> {
         let h = mac_bytes(k);
         let mark = [h[0], h[1], h[2]];
         self.s.w.coord.devices.iter().filter(|d| d.announced).map(|d| d.ext).find(|e| e.to_le_bytes().windows(3).any(|w| w == mark))
     }
 
-    /// The house forms in place: ranges apply from the start, bulbs are
-    /// powered one after the other, nearest to the coordinator first, each once
-    /// the previous one has joined (through the coordinator or a bulb: the
-    /// coordinator opens joining with Mgmt_Permit_Joining_req, again after
-    /// every join); then the link key exchanges, then the scripted routers.
     fn form(&mut self) -> R<()> {
         let n = self.bulbs.len();
         self.apply_ranges();
@@ -605,7 +514,6 @@ impl Mesh {
                     break;
                 }
                 if helped {
-                    // the coordinator's next hop from the failed join through a router is stale
                     let h = mac_bytes(i);
                     let mark = [h[0], h[1], h[2]];
                     let stale: Vec<u16> = self.s.w.coord.devices.iter()
@@ -614,14 +522,11 @@ impl Mesh {
                         self.s.w.coord.st.via.remove(&sh);
                     }
                 }
-                // a join through a router that the Trust Center answered three times without the
-                // newcomer ever announcing itself will not complete; nor one that took 45 s
                 let h = mac_bytes(i);
                 let mark = format!("{:02x}:{:02x}:{:02x}", h[2], h[1], h[0]);
                 let tries = self.s.w.coord.events.iter().filter(|e| e.ms >= t_on && e.kind == "update-device"
                     && e.get("ext").is_some_and(|x| x.contains(&mark))).count();
                 if !helped && (tries >= 3 || self.now() - t_on > 45000.0) {
-                    // no join through the mesh: let it hear the coordinator (paired next to it)
                     helped = true;
                     let all: Vec<NodeId> = self.s.w.air.nodes.clone();
                     for o in all {
@@ -629,7 +534,6 @@ impl Mesh {
                             self.s.w.air.block(id, o, o != NodeId::Coord);
                         }
                     }
-                    // and start over as from the factory (its flash as first loaded: no network)
                     let mut n = node_of(&self.bulbs[i].img, self.cfg.cpi)?;
                     let h = mac_bytes(i);
                     n.write_flash(0xFF000, &[h[0], h[1], h[2], 0x38, 0xC1, 0xA4, h[3], h[4]]);
@@ -653,8 +557,6 @@ impl Mesh {
                 }
             }
             if helped && self.join_ms[i].is_some() {
-                // its link key exchange, then back to its place, and a power cycle there so that
-                // what it heard next to the coordinator is not in its neighbour table
                 self.tick(8000.0)?;
                 self.apply_ranges();
                 self.s.w.reboot_bulb(id).map_err(emu)?;
@@ -679,15 +581,12 @@ impl Mesh {
         if !missing.is_empty() {
             return Err(Stop::Fail(format!("bulbs did not join: {} ({})", missing.join(", "), self.notes.join("; "))));
         }
-        // link key exchange of every bulb that does one, then a little calm
         self.tick(8000.0)?;
-        // scripted routers
         self.add_plugs();
         self.start_plugs()?;
         Ok(())
     }
 
-    /// Ranges and link qualities of the house (static positions).
     fn apply_ranges(&mut self) {
         let spots = self.spots.clone();
         let ids: Vec<(usize, NodeId)> = self.node_of_spot.iter().map(|(s, n)| (*s, *n)).collect();
@@ -701,7 +600,6 @@ impl Mesh {
                     self.s.w.air.block(a, b, true);
                 } else {
                     self.s.w.air.block(a, b, false);
-                    // asymmetric by a fixed amount per direction (transmit power, antenna)
                     let skew = ((sa * 7 + sb * 3) % 5) as i64 - 2;
                     self.chan.m().links.insert((a, b), Link { rssi: rssi_at(d) + skew, loss: weak_loss(d) });
                 }
@@ -733,7 +631,6 @@ impl Mesh {
         self.apply_ranges();
     }
 
-    /// Starts the scripted routers' Link Status (every 15 s, 4 s apart).
     fn start_plugs(&mut self) -> R<()> {
         for k in 0..self.plugs.len() {
             let nb = self.plug_neighbours(k);
@@ -746,9 +643,6 @@ impl Mesh {
         Ok(())
     }
 
-    /// Another node that is not part of the mesh (a jammer, a station of a
-    /// neighbour's network): a scripted node at (x, y) with its own PAN;
-    /// `ack`: it acknowledges frames addressed to it.
     pub fn add_other(&mut self, name: &'static str, room: &'static str, x: f64, y: f64, pan: u16, short: u16, ack: bool) -> NodeId {
         let id = NodeId::Peer(self.s.w.peers.len() as u8);
         let ch = self.s.w.coord.st.channel;
@@ -762,7 +656,6 @@ impl Mesh {
         id
     }
 
-    /// The routers a scripted router lists in its Link Status: those in range and powered.
     fn plug_neighbours(&self, k: usize) -> Vec<u16> {
         let me = self.plugs[k].spot;
         let mut v = Vec::new();
@@ -784,7 +677,6 @@ impl Mesh {
         v
     }
 
-    /// Static hop count over the routers that relay (bulbs, coordinator) from spot `a` to spot `b`.
     pub fn hops(&self, a: usize, b: usize) -> u32 {
         let relay = |s: usize| matches!(self.spots[s].kind, Kind::Bulb | Kind::Coord);
         let mut dist_v = vec![u32::MAX; self.spots.len()];
@@ -804,8 +696,6 @@ impl Mesh {
         dist_v[a]
     }
 
-    // ------------------------------------------------------------------ running
-    /// Runs `ms` in steps of `STEP`, decoding the air and reacting.
     pub fn tick(&mut self, ms: f64) -> R<()> {
         let end = self.now() + ms;
         while self.now() < end - 1e-9 {
@@ -817,7 +707,6 @@ impl Mesh {
     }
 
     fn after_step(&mut self) -> R<()> {
-        // watchdog/software resets: when, which bulb, and the emulator's line about it
         for k in 0..self.bulbs.len() {
             let n = self.s.w.bulb_resets(self.bulbs[k].id);
             if n != self.reset_seen[k] {
@@ -873,7 +762,6 @@ impl Mesh {
         light_of(self.s.w.node(id)).on
     }
 
-    /// Decodes every frame that has ended by now.
     fn decode_new(&mut self) {
         let now = self.now();
         while self.n_dec < self.s.w.air.frames.len() {
@@ -938,7 +826,6 @@ impl Mesh {
     fn count_air(&mut self, d: &Dec, psdu: &[u8]) {
         let Some(who) = d.who else { return };
         if !self.is_bulb(who) {
-            // the coordinator and the plugs: only Link Status heard matters (below)
         } else {
             self.air_events.push((d.t0, "frame", who));
             if d.mac_ty == 1 && d.mac_ar {
@@ -978,7 +865,6 @@ impl Mesh {
                 }
             }
         }
-        // Link Status as each receiver got it
         if let Some(n) = &d.nwk {
             if n.ty == NWK_CMD && n.payload.first() == Some(&0x08) {
                 let cnt = (n.payload.get(1).copied().unwrap_or(0) & 0x1F) as usize;
@@ -995,7 +881,6 @@ impl Mesh {
         }
     }
 
-    /// The air counters of the bulbs between t0 and t1 (optionally one bulb only).
     pub fn air_count(&self, t0: f64, t1: f64, only: Option<NodeId>) -> AirCount {
         let mut c = AirCount::default();
         let (acked, lost) = self.relay_drops(t0, t1, only);
@@ -1027,12 +912,10 @@ impl Mesh {
         c
     }
 
-    /// The relayed frames a bulb acknowledged and lost (debugging): (index into `dec`, bulb).
     pub fn relay_lost_list(&self) -> Vec<(usize, NodeId)> {
         self.relays(0.0, f64::MAX, None).into_iter().filter(|r| r.2).map(|r| (r.0, r.1)).collect()
     }
 
-    /// (Route Requests heard, passed on) by the bulbs between t0 and t1.
     pub fn rreq_relays(&self, t0: f64, t1: f64, only: Option<NodeId>) -> (u64, u64) {
         let mut heard: BTreeMap<(NodeId, u16, u8), f64> = BTreeMap::new();
         let mut passed: BTreeSet<(NodeId, u16, u8)> = BTreeSet::new();
@@ -1046,7 +929,7 @@ impl Mesh {
                 continue;
             }
             if (n.payload[1] >> 3) & 3 != 0 {
-                continue; // many-to-one
+                continue;
             }
             let (id, target) = (n.payload[2], u16::from_le_bytes([n.payload[3], n.payload[4]]));
             if let Some(w) = d.who.filter(|w| self.is_bulb(*w)) {
@@ -1070,26 +953,14 @@ impl Mesh {
         (heard.len() as u64, p)
     }
 
-    /// (relayed frames acknowledged, of those lost) by the bulbs between t0 and t1.
     pub fn relay_drops(&self, t0: f64, t1: f64, only: Option<NodeId>) -> (u64, u64) {
         let v = self.relays(t0, t1, only);
         (v.len() as u64, v.iter().filter(|r| r.2).count() as u64)
     }
 
-    /// The unicast frames for someone else that a bulb acknowledged between
-    /// t0 and t1, each once: (index into `dec` of the first copy it
-    /// acknowledged, bulb, lost). Lost: within 3 s of that copy the bulb
-    /// neither passed it on nor answered it with a Network Status. A frame
-    /// is the same frame when the same neighbour hands the same NWK frame
-    /// (source, sequence number) to the same bulb again within 5 s, as it
-    /// does when it missed the acknowledgement: a MAC retransmission, or the
-    /// same secured frame sent once more, which the bulb rightly drops as a
-    /// replay. Counting every copy would count one frame several times, and
-    /// a copy of a frame passed on before it as lost.
     fn relays(&self, t0: f64, t1: f64, only: Option<NodeId>) -> Vec<(usize, NodeId, bool)> {
         let mut out = Vec::new();
         let mut first: BTreeMap<(NodeId, Option<NodeId>, u16, u8), f64> = BTreeMap::new();
-        // copies before t0 still make a later one a copy
         let start = self.dec.partition_point(|d| d.t0 < t0 - 5000.0);
         for i in start..self.dec.len() {
             let d = &self.dec[i];
@@ -1104,7 +975,6 @@ impl Mesh {
             if only.is_some_and(|o| o != x) {
                 continue;
             }
-            // its acknowledgement right after
             let ack = self.dec[i + 1..].iter().take_while(|e| e.t0 < d.t1 + 2.0).any(|e| e.who == Some(x) && e.mac_ty == 2 && e.mac_seq == d.mac_seq);
             if !ack {
                 continue;
@@ -1123,8 +993,6 @@ impl Mesh {
         out
     }
 
-    // ------------------------------------------------------------------ scripted routers
-    /// What the scripted routers do with frames they received.
     fn react(&mut self, d: &Dec) {
         let Some(n) = d.nwk.clone() else { return };
         for k in 0..self.plugs.len() {
@@ -1137,7 +1005,6 @@ impl Mesh {
                 continue;
             }
             let hop = d.mac_src.unwrap_or(n.src);
-            // a Route Request for us: Route Reply to the router we heard it from
             if n.ty == NWK_CMD && n.payload.first() == Some(&0x01) && n.payload.len() >= 6 {
                 let target = u16::from_le_bytes([n.payload[3], n.payload[4]]);
                 let rid = n.payload[2];
@@ -1176,9 +1043,8 @@ impl Mesh {
             let e = self.plug_rx.entry((p.short, n.src, a.counter, z.seq)).or_insert(0);
             *e += 1;
             if *e > 1 {
-                continue; // the same APS frame again: rejected as a duplicate
+                continue;
             }
-            // a command (not a response) that wants a Default Response
             if !z.to_client && !z.ddr && z.cmd != 0x0B && (z.specific || z.cmd != 0x0A) {
                 self.plug_route(k, n.src);
                 let (st, air) = self.s.w.st(p.id);
@@ -1188,8 +1054,6 @@ impl Mesh {
         }
     }
 
-    /// Next hop of scripted router k towards `dst`: the destination itself if
-    /// it is a neighbour, else the live neighbour router closest to it.
     pub fn plug_route(&mut self, k: usize, dst: u16) {
         let p = self.plugs[k].clone();
         let now = self.now();
@@ -1212,8 +1076,6 @@ impl Mesh {
         }
     }
 
-    /// The routers in range of `id` (static positions), powered and not suspect: the
-    /// fallback before any Link Status was heard.
     fn in_range(&self, id: NodeId) -> Vec<u16> {
         let me = self.spot_of(id);
         let now = self.now();
@@ -1230,7 +1092,6 @@ impl Mesh {
             .collect()
     }
 
-    /// Among neighbour routers `alive`, the destination itself or the one closest to it.
     fn pick_hop(&self, alive: &[u16], dst: u16) -> Option<u16> {
         if alive.contains(&dst) {
             return Some(dst);
@@ -1247,8 +1108,6 @@ impl Mesh {
         self.plugs.iter().any(|p| p.short == s)
     }
 
-    /// The coordinator's way to `dst`: direct if a neighbour, a source route
-    /// from a route record, else via its neighbour router closest to `dst`.
     pub fn coord_route(&mut self, dst: u16) {
         let now = self.now();
         let alive: Vec<u16> = self
@@ -1283,7 +1142,6 @@ impl Mesh {
         }
     }
 
-    /// MAC failures of the coordinator and the plugs: that next hop is suspect for a while.
     fn watch_failures(&mut self) {
         let now = self.now();
         let nwk_dst = |mpdu: &[u8]| -> Option<(u16, u16)> {
@@ -1314,8 +1172,6 @@ impl Mesh {
             }
             self.plug_noack[k] = na;
         }
-        // Network Status to the coordinator about a destination: its source route is stale
-        // (handled in match_msgs through the decoded frames)
     }
 
     fn take_route_records(&mut self) {
@@ -1331,10 +1187,8 @@ impl Mesh {
         self.route_rec_seen = n;
     }
 
-    // ------------------------------------------------------------------ traffic
     pub fn phase(&mut self, name: &str) -> usize {
         if self.phases.is_empty() {
-            // the addresses the bulbs start the test with
             self.refresh_coord();
             for b in self.bulbs.iter_mut() {
                 b.short0 = b.short;
@@ -1379,7 +1233,6 @@ impl Mesh {
         self.msgs.len() - 1
     }
 
-    /// Coordinator -> bulb: On, Off or Move to Level (transition 0).
     pub fn cmd_bulb(&mut self, b: usize, what: u8) -> usize {
         let dst = self.bulbs[b].short;
         self.coord_route(dst);
@@ -1399,7 +1252,6 @@ impl Mesh {
         self.push_msg(Flow::ReadBulb, 0, dst, 0x0006, 0x00, seq, None)
     }
 
-    /// Scripted router -> coordinator: a temperature report.
     pub fn report(&mut self, k: usize) -> Option<usize> {
         let p = self.plugs[k].clone();
         if !p.alive {
@@ -1413,7 +1265,6 @@ impl Mesh {
         Some(self.push_msg(Flow::Report, p.short, 0x0000, 0x0402, 0x0A, sent.zcl_seq.unwrap_or(0), None))
     }
 
-    /// Scripted router -> bulb: Read Attributes (On/Off).
     pub fn plug_read_bulb(&mut self, k: usize, b: usize) -> Option<usize> {
         let p = self.plugs[k].clone();
         if !p.alive {
@@ -1427,7 +1278,6 @@ impl Mesh {
         Some(self.push_msg(Flow::PlugReadBulb, p.short, dst, 0x0006, 0x00, sent.zcl_seq.unwrap_or(0), None))
     }
 
-    /// Coordinator -> scripted router: On/Off with a Default Response.
     pub fn cmd_plug(&mut self, k: usize) -> usize {
         let dst = self.plugs[k].short;
         self.coord_route(dst);
@@ -1436,7 +1286,6 @@ impl Mesh {
         self.push_msg(Flow::CmdPlug, 0, dst, 0x0006, cmd, seq, None)
     }
 
-    /// Coordinator -> group (NWK broadcast to rx-on-when-idle devices, APS group addressing).
     pub fn group_cmd(&mut self, cmd: u8) -> usize {
         let o = Tx::new().group(GROUP).radius(8);
         let sent = self.s.w.coord.tx_zcl(&mut self.s.w.air, 0xFFFD, 0x0006, cmd, &[], &o);
@@ -1448,7 +1297,6 @@ impl Mesh {
         self.push_msg(Flow::Group, 0, GROUP, 0x0006, cmd, sent.zcl_seq.unwrap_or(0), want)
     }
 
-    /// One message of the traffic mix, drawn from the traffic stream.
     pub fn random_msg(&mut self, mix: &[(Flow, u32)]) -> Option<usize> {
         let total: u32 = mix.iter().map(|x| x.1).sum();
         let mut r = self.traffic_rng.below(total);
@@ -1496,12 +1344,10 @@ impl Mesh {
         }
     }
 
-    /// Runs `ms` with messages of `mix` at `rate` per second (exponential gaps from the traffic stream).
     pub fn traffic(&mut self, ms: f64, rate: f64, mix: &[(Flow, u32)]) -> R<()> {
         self.traffic_with(ms, rate, mix, &mut |_| Ok(()))
     }
 
-    /// `traffic` with `hook` called after every step (jammers, probes, foreign traffic).
     pub fn traffic_with(&mut self, ms: f64, rate: f64, mix: &[(Flow, u32)], hook: &mut dyn FnMut(&mut Mesh) -> R<()>) -> R<()> {
         let end = self.now() + ms;
         let mut next = if rate > 0.0 { self.now() + self.gap(rate) } else { f64::MAX };
@@ -1522,14 +1368,11 @@ impl Mesh {
 
     fn gap(&mut self, rate: f64) -> f64 {
         let u = self.traffic_rng.random();
-        // at least a step apart
         (-(1.0 - u).ln() / rate * 1000.0).max(STEP)
     }
 
-    /// Matches a decoded frame against the open messages.
     fn match_msgs(&mut self, d: &Dec) {
         let Some(n) = &d.nwk else { return };
-        // Network Status to the coordinator: the source route to that destination is stale
         if n.ty == NWK_CMD && n.payload.first() == Some(&0x03) && n.dst == 0 && d.mac_dst == Some(0) && self.chan.got(d.idx, NodeId::Coord) {
             if let Some(b) = n.payload.get(2..4) {
                 let about = u16::from_le_bytes([b[0], b[1]]);
@@ -1541,7 +1384,6 @@ impl Mesh {
             return;
         }
         let rx_node = d.mac_dst.and_then(|m| if m == 0xFFFF { None } else { self.node_of_short(m) });
-        // the last hop: MAC destination is the NWK destination, and it got the frame
         let last_hop = d.mac_dst == Some(n.dst) && rx_node.is_some_and(|r| self.chan.got(d.idx, r));
         if !last_hop {
             return;
@@ -1575,7 +1417,6 @@ impl Mesh {
         }
     }
 
-    /// One line per decoded frame (debugging).
     pub fn brief(&self, d: &Dec) -> String {
         let who = d.who.map(|w| self.s.w.air.name_of(w)).unwrap_or_default();
         let nm = |s: Option<u16>| s.map(|x| self.node_of_short(x).map(|n| self.s.w.air.name_of(n)).unwrap_or(format!("{x:#06x}"))).unwrap_or("-".into());
@@ -1599,7 +1440,6 @@ impl Mesh {
         t + &format!("  got: {}", rx.join(","))
     }
 
-    /// Failed messages of phase `p` with the frames around them (STRESS_DEBUG=1).
     pub fn debug_failed(&self, p: usize, max: usize) -> Vec<String> {
         let mut out = Vec::new();
         for m in self.msgs.iter().filter(|x| x.phase == p && !x.ok()).take(max) {
@@ -1614,8 +1454,6 @@ impl Mesh {
         out
     }
 
-    // ------------------------------------------------------------------ churn
-    /// A scripted router goes silent and deaf.
     pub fn plug_vanish(&mut self, k: usize) {
         let id = self.plugs[k].id;
         self.plugs[k].alive = false;
@@ -1631,7 +1469,6 @@ impl Mesh {
         }
     }
 
-    /// It comes back (same address, same keys, counters going on).
     pub fn plug_return(&mut self, k: usize) {
         self.plugs[k].alive = true;
         let id = self.plugs[k].id;
@@ -1658,7 +1495,6 @@ impl Mesh {
         self.bulbs.iter().map(|b| self.s.w.bulb_resets(b.id)).sum()
     }
 
-    /// Short addresses in a bulb's neighbour table (Mgmt_Lqi, all pages); None: no answer.
     pub fn neighbours(&mut self, b: usize) -> R<Option<Vec<u16>>> {
         let short = self.bulbs[b].short;
         let (mut out, mut start) = (Vec::new(), 0u8);
@@ -1693,7 +1529,6 @@ impl Mesh {
         }
     }
 
-    /// Adds every bulb to the group (Add Group, unicast with Default Response); how many confirmed.
     pub fn join_group(&mut self) -> R<usize> {
         let mut ok = 0;
         for b in 0..self.bulbs.len() {
@@ -1723,8 +1558,6 @@ impl Mesh {
     }
 }
 
-/// Whether frame `e` shows relay `x` dealing with frame `n`: an attempt to
-/// pass it on, or a Network Status about its source or destination.
 fn handled(e: &Dec, x: NodeId, n: &NwkInfo) -> bool {
     e.who == Some(x)
         && e.nwk.as_ref().is_some_and(|m| {
@@ -1735,18 +1568,12 @@ fn handled(e: &Dec, x: NodeId, n: &NwkInfo) -> bool {
         })
 }
 
-/// Bulb k's sources of randomness, each with its own seed: the random number
-/// generator (the emulator's "healthy" source, register 0xfff4) and the ADC
-/// noise (register 0xffe8), which Telink's driver seeds its generator from.
-/// Identical machines would otherwise all draw the same numbers (the same
-/// stochastic addresses and backoffs), which real bulbs do not.
 fn seed_rbg(n: &mut zbnode::Node, k: usize) {
     let seed = 0x5EED00u32 + k as u32 * 0x101;
     let _ = n.m.reg_write(0xFFF4, 4, (seed << 8) | 1);
     let _ = n.m.reg_write(0xFFE8, 4, (seed.wrapping_mul(7) & 0xFFFFFF) << 8);
 }
 
-/// The varying bytes of bulb k's factory MAC (fixed per bulb, splitmix64 of k).
 pub fn mac_bytes(k: usize) -> [u8; 5] {
     let mut z = (k as u64 + 1).wrapping_mul(0x9E3779B97F4A7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
@@ -1756,14 +1583,12 @@ pub fn mac_bytes(k: usize) -> [u8; 5] {
     [b[0], b[1], b[2], b[3], b[4]]
 }
 
-// ---------------------------------------------------------------------- statistics
 pub fn pct(v: &[f64], p: f64) -> Option<f64> {
     if v.is_empty() {
         return None;
     }
     let mut s = v.to_vec();
     s.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    // nearest rank
     let k = ((p / 100.0) * s.len() as f64).ceil().max(1.0) as usize;
     Some(s[k.min(s.len()) - 1])
 }

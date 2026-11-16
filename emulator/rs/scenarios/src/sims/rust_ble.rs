@@ -1,9 +1,3 @@
-//! Zigbee and BLE side by side on one radio, for the Rust firmware
-//! (emulator/rust_ble_sim.py): Zigbee answers while the bulb advertises and
-//! while it is connected at 30 ms and at 7.5 ms; few lost connection events;
-//! a change over one radio shows on the other; the 802.15.4 registers after
-//! BLE events are what they were before.
-
 use std::collections::BTreeMap;
 
 use super::ble_central::{
@@ -38,10 +32,6 @@ fn reg_diff(before: &BTreeMap<usize, u8>, after: &BTreeMap<usize, u8>) -> Vec<(u
     before.iter().filter(|(k, v)| after[k] != **v && !BLE_OWN.contains(k)).map(|(k, v)| (*k, *v, after[k])).collect()
 }
 
-/// The registers against `before` outside a BLE event: an event (about 1.1 ms
-/// of a connection, 2.4 ms of advertising) has the radio in BLE mode, so the
-/// snapshot is taken again up to three times 2.5 ms apart, and the first that
-/// matches counts. Registers left in BLE mode after the events differ in all.
 fn reg_diff_between_events(b: &mut Bench, before: &BTreeMap<usize, u8>) -> R<Vec<(usize, u8, u8)>> {
     let mut d = reg_diff(before, &rf_regs(b));
     for _ in 0..3 {
@@ -58,7 +48,6 @@ fn diff_text(d: &[(usize, u8, u8)]) -> String {
     d.iter().take(8).map(|(k, a, b)| format!("{k:#x}: {a:#04x}->{b:#04x}")).collect::<Vec<_>>().join(", ")
 }
 
-/// `until(cond, max_ms, step)` of the script: the condition is checked before every step.
 fn until(b: &mut Bench, max_ms: f64, step: f64, mut cond: impl FnMut(&Bench) -> bool) -> R<bool> {
     let end = b.t(D) + max_ms;
     while b.t(D) < end && !cond(b) {
@@ -67,7 +56,6 @@ fn until(b: &mut Bench, max_ms: f64, step: f64, mut cond: impl FnMut(&Bench) -> 
     Ok(cond(b))
 }
 
-/// Read Attributes over Zigbee; the value bytes after the type, or None.
 fn zcl_read(b: &mut Bench, short: u16, cluster: u16, attr: u16) -> R<Option<Vec<u8>>> {
     let n0 = b.w.coord.zcl_rsp.len();
     b.w.coord.read_attrs(&mut b.w.air, short, EP, cluster, &[attr]);
@@ -105,7 +93,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         okv
     };
 
-    // --- Zigbee first
     let joined = until(&mut b, 60000.0, 20.0, |b| b.w.coord.events.iter().any(|e| e.kind == "device-announce"))?;
     let t = b.t(D);
     check(cx, "joins the Zigbee network with BLE in the image", joined, &format!("after {:.1} s", t / 1000.0));
@@ -119,15 +106,11 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.run(D, 6000.0)?;
     let before = rf_regs(&b);
 
-    // --- advertising next to Zigbee
     let t0 = b.t(D);
     let okn = zigbee_answers(&mut b, short, 40, 110.0)?;
     let adv = b.ble_rf(D, t0).1.iter().filter(|(_, ch, pdu)| *ch == 37 && pdu[0] & 0x0F == 0).count();
     let span = (b.t(D) - t0) / 1000.0;
     check(cx, "Zigbee answers while the bulb advertises", okn >= 39, &format!("{okn}/40 reads answered in {span:.1} s"));
-    // An advertising event that would fall into the Zigbee traffic is left
-    // out on purpose (the radio stays with Zigbee), so a busy stretch has a
-    // few less; never more than every 300 ms, and not starved: at least 80 %.
     let expected = span / 0.305;
     check(
         cx,
@@ -138,7 +121,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let d = reg_diff_between_events(&mut b, &before)?;
     check(cx, "802.15.4 radio registers are the same after advertising events", d.is_empty(), &diff_text(&d));
 
-    // --- a scanning central, then a connection at 30 ms
     let t0 = b.t(D);
     let scans0 = b.ble_stats(D).scanreqs;
     b.ble_connect(D, 24, Some(1600.0));
@@ -149,7 +131,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let advs: Vec<u8> = sent.iter().filter(|(_, _, p)| p[0] & 0x0F == 0).map(|(_, ch, _)| *ch).collect();
     let good = scans >= 4
         && rsp.len() as i64 == scans
-        // AwoX data of 29 octets, as the stock bulb: the app needs it to list the bulb
         && rsp.iter().all(|r| r[1] == 37 && r[8..12] == [0x1e, 0xff, 0x60, 0x01]);
     check(cx, "a scan request is answered with the scan response: the AwoX data the app reads", good,
           &format!("{scans} requests, {} responses, last {}", rsp.len(), rsp.last().map(|r| hx(r)).unwrap_or_else(|| "None".into())));
@@ -175,14 +156,12 @@ fn run(cx: &mut SimCtx) -> R<()> {
     ok(tr.write(&mut b, 0x11, &[0x01])?)?;
     b.run(D, 500.0)?;
 
-    // BLE -> light -> Zigbee attribute
     ok(cl.send(&mut b, &mut tr, OP_POWER, &[0], 0xFFFF)?)?;
     b.run(D, 700.0)?;
     let v = zcl_read(&mut b, short, 0x0006, 0x0000)?;
     let l = b.light(D);
     check(cx, "BLE power off: light off, ZCL OnOff reads 0", !l.on && v.as_ref().is_some_and(|v| v[0] == 0),
           &format!("{}, OnOff {}", fmt_light(&l), v.as_ref().map(|v| hx(v)).unwrap_or_else(|| "None".into())));
-    // Zigbee -> light -> BLE notification
     let n0 = b.ntfs_len(D);
     b.w.coord.zcl_cmd(&mut b.w.air, short, EP, 0x0006, 0x01, &[]);
     b.run(D, 900.0)?;
@@ -220,7 +199,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     check(cx, "the attribute protocol still answers", rsp == b"\x0bAwoX", &hx(&rsp));
     let d = reg_diff_between_events(&mut b, &before)?;
     check(cx, "802.15.4 radio registers are the same after connection events", d.is_empty(), &diff_text(&d));
-    // --- packets damaged on their way
     b.ble_crc_errors(D, 4);
     let s0 = b.ble_stats(D);
     let want = |h: u16| -> &'static [u8] {
@@ -249,7 +227,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let st = b.ble_disconnect(D, 3000.0)?;
     check(cx, "the central ends the connection", st.starts_with("terminat"), &st);
 
-    // --- a connection at 7.5 ms: BLE wants the radio most of the time
     b.run(D, 800.0)?;
     b.ble_connect(D, 6, None);
     let adva = b.ble_wait_connected(D, 15000.0)?;

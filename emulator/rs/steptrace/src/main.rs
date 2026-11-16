@@ -1,5 +1,3 @@
-// steptrace: the Rust twin of emulator/go/cmd/steptrace (same flags, same
-// output lines), for the differential check of the tc32emu port.
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;

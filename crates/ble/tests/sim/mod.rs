@@ -1,8 +1,3 @@
-//! A simulated BLE world for the host tests: the radio half of `ble::Hal`
-//! (events, acknowledgements, queues), flash, and a scripted central that
-//! keeps its own time and hops channels on its own. The bulb is the real
-//! `bulb-core` one on mock hardware.
-
 #![allow(dead_code)]
 
 use std::cell::RefCell;
@@ -24,7 +19,6 @@ pub const MS: u64 = TICKS_PER_MS as u64;
 pub const STAGING: usize = 0x8000;
 const TX_SLOTS: usize = 8;
 const RX_SLOTS: usize = 8;
-/// One packet each way with the turnarounds, roughly.
 const EXCHANGE: u64 = 700 * TICKS_PER_US as u64;
 
 #[derive(Debug, Clone, Copy)]
@@ -56,18 +50,13 @@ impl Default for Params {
     }
 }
 
-/// The central: connects when told to, runs its connection events on its own
-/// clock and channel sequence, whether or not the peripheral listens.
 pub struct Central {
     pub connect: bool,
     pub scan: bool,
     pub params: Params,
     pub connected: bool,
-    /// Where in the transmit window the first packet goes, in ticks.
     pub place_in_window: u64,
-    /// The central's clock error against the peripheral's, parts per million.
     pub ppm: i64,
-    /// Stops transmitting (a central that went away).
     pub silent: bool,
     next_event: u64,
     pub event: u16,
@@ -85,12 +74,9 @@ pub struct Central {
     pub control: Vec<Vec<u8>>,
     pub scan_responses: Vec<Vec<u8>>,
     pub advertisements: Vec<Vec<u8>>,
-    /// Events the peripheral answered, and those it was not there for.
     pub served: u32,
     pub missed: u32,
-    /// Channels of the events the peripheral answered.
     pub channels: Vec<u8>,
-    /// The central saw its LL_TERMINATE_IND acknowledged, or the peripheral's.
     pub ended: bool,
     terminate_sent: bool,
 }
@@ -134,7 +120,6 @@ impl Central {
         (nominal as i64 + nominal as i64 * self.ppm / 1_000_000) as u64
     }
 
-    /// Channel selection written out the long way, independently of the crate's.
     fn channel(&mut self) -> u8 {
         self.unmapped = (self.unmapped + self.params.hop) % 37;
         let used: Vec<u8> = (0..37).filter(|c| self.params.map[(*c / 8) as usize] & (1 << (*c % 8)) != 0).collect();
@@ -145,7 +130,6 @@ impl Central {
         }
     }
 
-    /// Moves to the next event; changes whose instant it is take effect.
     fn advance(&mut self) {
         self.event = self.event.wrapping_add(1);
         self.next_event += self.interval();
@@ -179,7 +163,6 @@ impl Central {
         }
     }
 
-    /// One L2CAP frame in link layer packets cut where the test wants them.
     pub fn send_fragments(&mut self, parts: &[&[u8]]) {
         for (i, part) in parts.iter().enumerate() {
             self.txq.push_back((if i == 0 { 2 } else { 1 }, part.to_vec()));
@@ -190,7 +173,6 @@ impl Central {
         self.send_l2cap(4, pdu);
     }
 
-    /// LL_CONNECTION_UPDATE_IND taking effect `lead` events from now.
     pub fn update_connection(&mut self, win_size: u8, win_offset: u16, interval: u16, timeout: u16, lead: u16) {
         let instant = self.event.wrapping_add(lead);
         let mut p = self.params;
@@ -208,7 +190,6 @@ impl Central {
         self.send_control(&c);
     }
 
-    /// LL_CHANNEL_MAP_IND taking effect `lead` events from now.
     pub fn update_channel_map(&mut self, map: [u8; 5], lead: u16) {
         let instant = self.event.wrapping_add(lead);
         self.map_update = Some((map, instant));
@@ -264,26 +245,19 @@ impl Central {
     }
 }
 
-/// The air between several bulbs, for the mesh. A listener hears what was
-/// sent inside its window; a packet sent into a window that a bulb already
-/// ran through (the bulbs take turns in simulated time) is handed to it at
-/// its next listen.
 #[derive(Default)]
 pub struct Ether {
     sends: Vec<(u64, u8, u32, Vec<u8>, usize, Vec<usize>)>,
     windows: Vec<(usize, u8, u32, u64, u64)>,
     inbox: Vec<VecDeque<Vec<u8>>>,
-    /// Pairs of bulbs out of each other's range.
     pub blocked: Vec<(usize, usize)>,
 }
 
 impl Ether {
-    /// Bursts node `node` has put on the air (one per channel), of packets `pdu_filter` accepts.
     pub fn sent_by(&self, node: usize, pdu_filter: impl Fn(&[u8]) -> bool) -> usize {
         self.sends.iter().filter(|s| s.4 == node && pdu_filter(&s.3)).count()
     }
 
-    /// When node `node` started each of its bursts (its first channel).
     pub fn bursts_of(&self, node: usize) -> Vec<u64> {
         let first = self.sends.iter().find(|s| s.4 == node).map(|s| s.1);
         self.sends.iter().filter(|s| s.4 == node && Some(s.1) == first).map(|s| s.0).collect()
@@ -300,36 +274,26 @@ pub struct World {
     pub node: usize,
     pub now: u64,
     pub central: Central,
-    // the peripheral's radio
     sn: u8,
     nesn: u8,
     in_flight: bool,
     txq: VecDeque<(u8, Vec<u8>)>,
     rxq: VecDeque<(u8, Vec<u8>)>,
-    /// Every connection event the peripheral ran: channel and whether the central was heard.
     pub events: Vec<(u8, bool)>,
     pub nv: Option<Vec<u8>>,
     pub nv_writes: u32,
     pub staging: Vec<u8>,
     pub erased_sectors: Vec<u32>,
     pub activated: bool,
-    /// How often the bulb listened on a mesh channel.
     pub mesh_listens: u32,
-    /// The flash does not hold what was written: activation finds the image bad.
     pub flash_fault: bool,
-    /// Stretches of time (from, to, neighbours) in which the radio's other
-    /// user has traffic (`Hal::radio_busy`), its neighbours' when the flag is
-    /// set (`Hal::neighbours_talking`); and the start of every advertising event.
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
-    /// Every packet on air, for the capture: time, channel, access address,
-    /// who sent it (0 advertising channel, 2 central, 3 bulb), header and payload.
     capture: Vec<(u64, u8, u32, u8, Vec<u8>)>,
     rng: u32,
 }
 
 impl World {
-    /// Central events that end before `until` went by unanswered.
     fn pass_events(&mut self, until: u64) {
         let c = &mut self.central;
         while c.connected && c.next_event < until {
@@ -342,10 +306,6 @@ impl World {
     }
 }
 
-/// With `BLE_PCAP_DIR` set every simulated bulb leaves a capture of its air
-/// there (`<test name>[.n].pcap`, link type 256: Bluetooth LE link layer with
-/// a pseudo-header that says which side sent a data packet), for a look in
-/// Wireshark and for `emulator/ble_wireshark_check.py`.
 impl Drop for World {
     fn drop(&mut self) {
         let Ok(dir) = std::env::var("BLE_PCAP_DIR") else {
@@ -364,7 +324,6 @@ impl Drop for World {
         out.extend_from_slice(&256u32.to_le_bytes());
         for (at, channel, access, from, pdu) in &self.capture {
             let us = at / TICKS_PER_US as u64;
-            // RF channel number of a channel index
             let rf = match channel {
                 37 => 0,
                 38 => 12,
@@ -372,8 +331,6 @@ impl Drop for World {
                 c if *c <= 10 => c + 1,
                 c => c + 2,
             };
-            // dewhitened, reference access address valid, PDU type (advertising, or data by
-            // direction), CRC checked and good (there is no CRC in this simulation)
             let flags: u16 = 0x0001 | 0x0010 | (*from as u16) << 7 | 0x0c00;
             let len = 10 + 4 + pdu.len() + 3;
             out.extend_from_slice(&((us / 1_000_000) as u32).to_le_bytes());
@@ -447,7 +404,6 @@ impl Hal for SimHal {
             w.now += 3 * MS;
             return None;
         }
-        // the CONNECT_IND follows the advertisement on the first channel
         w.now += MS;
         let end = w.now;
         let p = w.central.params;
@@ -495,7 +451,6 @@ impl Hal for SimHal {
     fn connection_event(&mut self, ev: &ConnEvent) -> EventResult {
         let mut w = self.0.borrow_mut();
         let w = &mut *w;
-        // the clock is 64 bits here; the event's times are its low 32
         let start = w.now + ev.start.wrapping_sub(w.now as u32) as i32 as i64 as u64;
         assert!(start + ev.window as u64 >= w.now, "event that is already over");
         let room = ev.deadline.wrapping_sub(ev.start.wrapping_add(ev.window));
@@ -512,7 +467,6 @@ impl Hal for SimHal {
         }
         let channel = w.central.channel();
         if channel != ev.channel || ev.access_address != w.central.params.access_address || ev.crc_init != w.central.params.crc_init {
-            // listening in the wrong place
             w.central.missed += 1;
             w.central.advance();
             w.now = start + ev.window as u64;
@@ -521,7 +475,6 @@ impl Hal for SimHal {
         }
         w.now = at;
         for _ in 0..8 {
-            // central -> peripheral
             let c = &mut w.central;
             let (llid, payload) = c.txq.front().cloned().unwrap_or((1, vec![]));
             let central_more = c.txq.len() > 1;
@@ -530,7 +483,6 @@ impl Hal for SimHal {
             on_air.extend_from_slice(&payload);
             w.capture.push((w.now, channel, ev.access_address, 2, on_air));
             if c_nesn != w.sn {
-                // our last packet was acknowledged
                 w.sn ^= 1;
                 if w.in_flight {
                     w.txq.pop_front();
@@ -543,7 +495,6 @@ impl Hal for SimHal {
                     w.rxq.push_back((llid, payload));
                 }
             }
-            // peripheral -> central
             let (llid, payload) = w.txq.front().cloned().unwrap_or((1, vec![]));
             w.in_flight = !w.txq.is_empty();
             let more = w.txq.len() > 1;
@@ -563,7 +514,6 @@ impl Hal for SimHal {
                 c.nesn ^= 1;
                 c.received(llid, &payload);
                 if llid == 3 && payload[0] == 0x02 {
-                    // the central acknowledges the peripheral's LL_TERMINATE_IND and leaves
                     w.sn ^= 1;
                     w.txq.pop_front();
                     w.in_flight = false;
@@ -632,14 +582,12 @@ impl Hal for SimHal {
         assert!(offset % 0x1000 == 0 && (offset as usize) < STAGING);
         w.staging[offset as usize..offset as usize + 0x1000].fill(0xff);
         w.erased_sectors.push(offset);
-        // an erase stops the processor for a while
         w.now += 40 * MS;
     }
 
     fn ota_write(&mut self, offset: u32, data: &[u8]) {
         let mut w = self.0.borrow_mut();
         for (i, b) in data.iter().enumerate() {
-            // flash can only clear bits
             w.staging[offset as usize + i] &= *b;
         }
     }
@@ -656,8 +604,6 @@ impl Hal for SimHal {
 
     fn mesh_send(&mut self, channels: &[u8], access_code: u32, pdu: &[u8]) -> bool {
         let mut w = self.0.borrow_mut();
-        // as the radio does (ble_radio::mesh_send): nothing while packets of
-        // the connection wait in its queue
         if w.central.connected && !w.txq.is_empty() {
             w.now += 100 * TICKS_PER_US as u64;
             return false;
@@ -717,7 +663,6 @@ impl Hal for SimHal {
     }
 }
 
-/// The bulb's link to the outside in these tests: only BLE.
 pub struct BleLink(pub Rc<RefCell<Ble<SimHal>>>);
 
 impl Radio for BleLink {
@@ -737,7 +682,6 @@ pub const TUNABLE: Identity =
 pub const COLOUR: Identity =
     Identity { product: 0x2096, model: "EGLO_ZM_RGB_TW", firmware_revision: "3.0.2_1610", hardware_revision: "4.60", tunable: true, ct_min: 153, ct_max: 370, colour: true };
 
-/// A bulb with its BLE side, and the world around it.
 pub struct Rig {
     pub world: Rc<RefCell<World>>,
     pub ble: Rc<RefCell<Ble<SimHal>>>,
@@ -745,7 +689,6 @@ pub struct Rig {
     clock: MockClock,
     clock_ms: u64,
     identity: Identity,
-    /// Session key of the mesh login, once `login` succeeded.
     pub key: Option<[u8; 16]>,
     sn: u32,
 }
@@ -755,7 +698,6 @@ impl Rig {
         Rig::boot(Rig::world(ADDRESS, None, 0), identity)
     }
 
-    /// One of several bulbs that hear each other's mesh packets.
     pub fn in_ether(ether: &Rc<RefCell<Ether>>, address: [u8; 6], identity: Identity) -> Rig {
         let node = ether.borrow().inbox.len();
         ether.borrow_mut().inbox.push(VecDeque::new());
@@ -789,7 +731,6 @@ impl Rig {
         }))
     }
 
-    /// Starts the firmware on an existing world (a restart keeps flash).
     pub fn boot(world: Rc<RefCell<World>>, identity: Identity) -> Rig {
         let ble = Rc::new(RefCell::new(Ble::new(SimHal(world.clone()), identity)));
         let clock = MockClock::new();
@@ -812,7 +753,6 @@ impl Rig {
         Rig::boot(world, identity)
     }
 
-    /// Runs the main loop for `ms` of simulated time.
     pub fn run(&mut self, ms: u64) {
         let end = self.world.borrow().now + ms * MS;
         self.run_until(end);
@@ -821,7 +761,6 @@ impl Rig {
     pub fn run_until(&mut self, end: u64) {
         while self.world.borrow().now < end {
             self.bulb.tick();
-            // a pass of the main loop
             self.world.borrow_mut().now += 100 * TICKS_PER_US as u64;
             let now_ms = self.world.borrow().now / MS;
             self.clock.advance(now_ms - self.clock_ms);
@@ -829,7 +768,6 @@ impl Rig {
         }
     }
 
-    /// The main loop is kept busy elsewhere for `ms` (a flash erase, a long transmission).
     pub fn stall(&mut self, ms: u64) {
         self.world.borrow_mut().now += ms * MS;
     }
@@ -850,7 +788,6 @@ impl Rig {
         assert!(self.central().served > 0, "the bulb answered in the connection");
     }
 
-    /// Sends an attribute protocol request and waits for its response.
     pub fn att(&mut self, request: &[u8]) -> Vec<u8> {
         self.central().att.clear();
         self.central().send_att(request);
@@ -878,13 +815,10 @@ impl Rig {
         rsp[1..].to_vec()
     }
 
-    /// The factory mesh password of this bulb (reference value from crates/outglow/src/flash/protocol.rs).
     pub fn secure_password() -> [u8; 16] {
-        // sha256(a4 c1 38 11 22 33, 56e850edcfdd8b99, 00 00)[..16]
         [0x82, 0xbf, 0x5e, 0x36, 0x56, 0xb2, 0xc0, 0xa6, 0xe4, 0x6f, 0xa4, 0x3c, 0xaa, 0x90, 0x4a, 0xcd]
     }
 
-    /// Mesh login as the app does it. True when the bulb accepted; the session key is kept.
     pub fn login(&mut self, name: &[u8], password: &[u8]) -> bool {
         let pad = |s: &[u8]| {
             let mut b = [0u8; 16];
@@ -912,13 +846,11 @@ impl Rig {
         true
     }
 
-    /// Turns the status notifications on, the way the app does.
     pub fn enable_status(&mut self) {
         self.write(0x13, &[1, 0]);
         self.write(0x12, &[1]);
     }
 
-    /// A mesh command in the counter-mode format (python-awox-mesh-light).
     pub fn command_packet(&mut self, dst: u16, op: u8, params: &[u8]) -> Vec<u8> {
         self.sn += 1;
         let key = self.key.expect("logged in");
@@ -946,15 +878,10 @@ impl Rig {
         self.run(600);
     }
 
-    /// Decrypts the status notifications received since the last call:
-    /// (opcode, parameters after the vendor id).
     pub fn statuses(&mut self) -> Vec<(u8, Vec<u8>)> {
         self.statuses_from().into_iter().map(|(op, params, _)| (op, params)).collect()
     }
 
-    /// The app's statuses (`0x80` and one AES block of the session key, then
-    /// three octets in the clear): the 19 octets each, decrypted. Mesh
-    /// notifications among them are counted in the second element.
     pub fn app_statuses(&mut self) -> (Vec<[u8; 19]>, usize) {
         let key = self.key.expect("logged in");
         let raw: Vec<Vec<u8>> = self.central().notifications.drain(..).collect();
@@ -977,7 +904,6 @@ impl Rig {
         (out, other)
     }
 
-    /// The same with the mesh address each came from.
     pub fn statuses_from(&mut self) -> Vec<(u8, Vec<u8>, u16)> {
         let key = self.key.expect("logged in");
         let raw: Vec<Vec<u8>> = self.central().notifications.drain(..).collect();
@@ -1005,7 +931,6 @@ impl Rig {
     }
 }
 
-/// Runs several bulbs side by side, in turns of a few milliseconds.
 pub fn run_all(rigs: &mut [&mut Rig], ms: u64) {
     let start = rigs.iter().map(|r| r.world.borrow().now).min().unwrap();
     for slice in 1..=ms / 5 {
@@ -1015,7 +940,6 @@ pub fn run_all(rigs: &mut [&mut Rig], ms: u64) {
     }
 }
 
-/// An update packet: index, block, CRC-16.
 pub fn ota_packet(index: u16, block: &[u8]) -> Vec<u8> {
     let mut p = index.to_le_bytes().to_vec();
     p.extend_from_slice(block);
@@ -1024,8 +948,6 @@ pub fn ota_packet(index: u16, block: &[u8]) -> Vec<u8> {
     p
 }
 
-/// A Telink firmware image of `len` bytes: "KNLT" at 8, its size at 0x18,
-/// the CRC-32 register (not inverted) over all but the last four bytes at the end.
 pub fn make_image(len: usize, seed: u8) -> Vec<u8> {
     let mut image: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect();
     image[8..12].copy_from_slice(b"KNLT");

@@ -1,26 +1,3 @@
-//! Profiles of bulb images: what a product is and how it drives its LEDs,
-//! read off the firmware itself running in the emulator (docs/stock-profiles.md).
-//! Shared by the examples `stock_profile` (the stock AwoX images ->
-//! analysis/profiles/), `stock_color` (fine colour sweeps -> analysis/color/)
-//! and `board_check` (every board of the Rust firmware against the stock
-//! profile of that board; also the sim `board_check`).
-//!
-//! A profile:
-//! - identity from the image bytes: modelId, BLE product number, hardware
-//!   revision (from the file name), firmware version;
-//! - in the emulator, next to the test coordinator: does it join, its
-//!   endpoints and server clusters, Basic, the Color Control capabilities and
-//!   limits;
-//! - its light outputs: which pins are switched to which PWM channel (the pin
-//!   multiplexer table of Telink's platform/chip_8258/gpio.c), which channels
-//!   are enabled, their period and duty;
-//! - sweeps, the outputs after each command once they have settled: level
-//!   1..254, colour temperature over its range, hue and saturation (images
-//!   with hue/saturation), level at a saturated colour, four xy points.
-//!
-//! The JSON is the one `cargo xtask boards` reads (key names and value forms
-//! as the former Python tool wrote them).
-
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
@@ -32,9 +9,6 @@ use crate::session::{Session, SessionOpts, Stop, R};
 use crate::sims::json::{dump_str, J};
 use crate::station::Tx;
 
-/// Pins that can carry a PWM output: (pin, mux register, field shift, field
-/// value, function). Taken from the comments of gpio_set_mux() in Telink's
-/// platform/chip_8258/gpio.c (Zigbee+BLE concurrent SDK).
 pub const PWM_MUX: [(&str, usize, u32, u8, &str); 25] = [
     ("PA0", 0x5a8, 0, 1, "PWM0_N"), ("PA2", 0x5a8, 4, 2, "PWM0"), ("PA3", 0x5a8, 6, 2, "PWM1"),
     ("PA4", 0x5a9, 0, 2, "PWM2"), ("PB0", 0x5aa, 0, 0, "PWM3"), ("PB1", 0x5aa, 2, 0, "PWM4"),
@@ -47,7 +21,6 @@ pub const PWM_MUX: [(&str, usize, u32, u8, &str); 25] = [
     ("PD5", 0x5af, 2, 2, "PWM0_N"),
 ];
 
-/// GPIO function enable register of a port (bit set: plain GPIO, clear: the multiplexed function).
 pub fn gpio_func(port: u8) -> usize {
     match port {
         b'A' => 0x586,
@@ -63,11 +36,9 @@ pub const LEVEL: u16 = 0x0008;
 pub const COLOR: u16 = 0x0300;
 pub const BASIC: u16 = 0x0000;
 
-/// The light outputs: pins on PWM channels, and the state of the six channels.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Outputs {
     pub pins: Vec<(&'static str, &'static str)>,
-    /// (enabled, compare, period) of PWM0..5
     pub chans: [(bool, u16, u16); 6],
     pub raw: [u8; 8],
 }
@@ -88,7 +59,6 @@ impl Outputs {
     }
 }
 
-/// Duty in percent (3 decimals) of every channel a pin carries, by channel number.
 pub type Duties = Vec<(u8, f64)>;
 
 pub fn duties_json(d: &Duties) -> J {
@@ -99,7 +69,6 @@ pub fn obj(v: Vec<(&str, J)>) -> J {
     J::Obj(v.into_iter().map(|(k, j)| (k.to_string(), j)).collect())
 }
 
-/// `a | b` of two Python dicts.
 fn merge(mut a: Vec<(String, J)>, b: Vec<(String, J)>) -> Vec<(String, J)> {
     for (k, v) in b {
         match a.iter_mut().find(|(x, _)| *x == k) {
@@ -110,10 +79,8 @@ fn merge(mut a: Vec<(String, J)>, b: Vec<(String, J)>) -> Vec<(String, J)> {
     a
 }
 
-/// One image in the emulator with the test coordinator.
 pub struct Bulb {
     pub s: Session,
-    /// the endpoint commands go to
     pub ep: u8,
 }
 
@@ -132,14 +99,12 @@ impl Bulb {
         self.s.run(ms)
     }
 
-    /// Waits up to 60 s for the Device Announce, then lets 6 s pass; false when it did not join.
     pub fn join(&mut self) -> R<bool> {
         match self.s.join(60.0, 0.0) {
             Ok(()) => {}
             Err(Stop::SessionLost(_)) => return Ok(false),
             Err(e) => return Err(e),
         }
-        // join() ran 300 ms after the announce already
         self.s.run(5700.0)?;
         Ok(true)
     }
@@ -165,7 +130,6 @@ impl Bulb {
         Outputs { pins, chans, raw: p[..8].try_into().unwrap() }
     }
 
-    /// Duty in percent of every channel a pin carries (0 when disabled).
     pub fn duties(&self) -> Duties {
         let o = self.outputs();
         let used: BTreeSet<u8> = o.pins.iter().map(|(_, f)| f.as_bytes()[3] - b'0').collect();
@@ -177,7 +141,6 @@ impl Bulb {
             .collect()
     }
 
-    /// Runs until the outputs stop changing (a transition is over).
     pub fn settle(&mut self) -> R<Duties> {
         let t0 = self.ms();
         let mut last: Option<Duties> = None;
@@ -194,13 +157,11 @@ impl Bulb {
         Ok(last.unwrap_or_default())
     }
 
-    /// A cluster command to the endpoint; waits for the answer (Default Response) up to 1.5 s.
     pub fn cmd(&mut self, cluster: u16, cmd: u8, payload: &[u8]) -> R<()> {
         self.s.zcl(cluster, cmd, payload, Tx::new().ep(self.ep))?;
         Ok(())
     }
 
-    /// Read Attributes, decoded as `{"0x0000": value}` (empty when nothing came back).
     pub fn read(&mut self, cluster: u16, attrs: &[u16]) -> R<Vec<(String, J)>> {
         let pl: Vec<u8> = attrs.iter().flat_map(|a| a.to_le_bytes()).collect();
         let f = self.s.zcl(cluster, 0x00, &pl, Tx::new().ep(self.ep).general())?;
@@ -233,7 +194,6 @@ impl Bulb {
         self.cmd(COLOR, 0x0A, &[m[0], m[1], t[0], t[1], 0, 0])
     }
 
-    /// `[{"v": v, "pwm0": ..}]`: the settled outputs after each value.
     pub fn sweep<V: Copy>(&mut self, values: &[V], v_json: impl Fn(V) -> J, mut send: impl FnMut(&mut Bulb, V) -> R<()>)
                           -> R<J> {
         let mut rows = Vec::new();
@@ -256,8 +216,6 @@ fn hex16(v: u16) -> String {
     format!("{v:#06x}")
 }
 
-/// Read Attributes Response records as `{"0x0003": value}`: strings, integers,
-/// "status 0x86" for an unsupported attribute.
 pub fn decode_attrs(b: &[u8]) -> Vec<(String, J)> {
     let mut out: Vec<(String, J)> = Vec::new();
     let put = |k: String, v: J, out: &mut Vec<(String, J)>| match out.iter_mut().find(|(x, _)| *x == k) {
@@ -300,12 +258,8 @@ pub fn decode_attrs(b: &[u8]) -> Vec<(String, J)> {
     out
 }
 
-/// What the image says of itself: modelId, BLE product numbers, firmware
-/// version; the hardware revision from the file name (`..._jing_xun_4.60_..`
-/// or `..__4.60`).
 pub fn identity(img: &[u8], name: &str) -> Vec<(String, J)> {
     let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    // (?:ESML|EGLO_ZM|EBF|EPIR|ERCU)[A-Za-z0-9_]{2,24}, the first match
     let mut model = None;
     'scan: for i in 0..img.len() {
         for pre in [&b"ESML"[..], b"EGLO_ZM", b"EBF", b"EPIR", b"ERCU"] {
@@ -319,7 +273,6 @@ pub fn identity(img: &[u8], name: &str) -> Vec<(String, J)> {
             }
         }
     }
-    // \x60\x01(.)\x20, every non-overlapping match (`.` is not a newline)
     let mut product = BTreeSet::new();
     let mut i = 0;
     while i + 4 <= img.len() {
@@ -330,7 +283,6 @@ pub fn identity(img: &[u8], name: &str) -> Vec<(String, J)> {
             i += 1;
         }
     }
-    // \d\.\d\.\d_\d{4}
     let d = |c: u8| c.is_ascii_digit();
     let sw = img.windows(10).find(|w| {
         d(w[0]) && w[1] == b'.' && d(w[2]) && w[3] == b'.' && d(w[4]) && w[5] == b'_' && w[6..].iter().all(|&c| d(c))
@@ -346,7 +298,6 @@ pub fn identity(img: &[u8], name: &str) -> Vec<(String, J)> {
     ]
 }
 
-/// `\d\.\d+` at the start of `s`: its length.
 fn rev_len(s: &[u8]) -> Option<usize> {
     if s.len() >= 3 && s[0].is_ascii_digit() && s[1] == b'.' && s[2].is_ascii_digit() {
         Some(2 + s[2..].iter().take_while(|c| c.is_ascii_digit()).count())
@@ -357,7 +308,6 @@ fn rev_len(s: &[u8]) -> Option<usize> {
 
 fn hw_of(name: &str) -> Option<String> {
     let b = name.as_bytes();
-    // jing_xun_(\d\.\d+)_
     let key = b"jing_xun_";
     for i in 0..b.len().saturating_sub(key.len() - 1) {
         if b[i..].starts_with(key) {
@@ -369,7 +319,6 @@ fn hw_of(name: &str) -> Option<String> {
             }
         }
     }
-    // __(\d\.\d+)$
     for i in 0..b.len().saturating_sub(1) {
         if b[i..].starts_with(b"__") {
             let r = &b[i + 2..];
@@ -381,7 +330,6 @@ fn hw_of(name: &str) -> Option<String> {
     None
 }
 
-/// Sweep steps and the emulator speed.
 #[derive(Clone, Debug)]
 pub struct Opts {
     pub cpi: i64,
@@ -401,7 +349,6 @@ fn int_j(v: usize) -> J {
     J::Int(v as i64)
 }
 
-/// The profile of one image (`name`: the image name, the hardware revision is read from it).
 pub fn profile(path: &Path, name: &str, a: &Opts) -> R<J> {
     let img = std::fs::read(path).map_err(|e| Stop::Error(format!("{}: {e}", path.display())))?;
     let mut prof: Vec<(String, J)> = vec![("image".into(), J::Str(name.into()))];
@@ -419,7 +366,6 @@ pub fn profile(path: &Path, name: &str, a: &Opts) -> R<J> {
     }
     prof.push(("joined_after_s".into(), J::Float(py::round(n.s.t_joined / 1000.0, 1))));
 
-    // endpoints and clusters
     let eps = match n.s.endpoints() {
         Ok(e) => e,
         Err(Stop::Inconclusive(_)) => Vec::new(),
@@ -509,7 +455,6 @@ pub fn profile(path: &Path, name: &str, a: &Opts) -> R<J> {
         prof.push(("level_sweep_red".into(), r));
     }
     if caps & 0x08 != 0 {
-        // the CIE xy of the sRGB primaries and D65, as 0..65535
         const XY: [(&str, f64, f64); 4] = [("red", 0.64, 0.33), ("green", 0.30, 0.60), ("blue", 0.15, 0.06), ("d65", 0.3127, 0.3290)];
         n.move_level(254)?;
         n.settle()?;
@@ -527,7 +472,6 @@ pub fn profile(path: &Path, name: &str, a: &Opts) -> R<J> {
     Ok(J::Obj(prof))
 }
 
-/// One line of the summary table (`| image | modelId | BLE product | hw | joins | device | colour caps | CT range | PWM pins |`).
 pub fn summary(p: &J) -> String {
     let o = if p.get("outputs_on").truthy() { p.get("outputs_on") } else { p.get("boot") };
     let pins: Vec<String> = o.get("pins").arr().iter().map(|x| format!("{}={}", x.idx(0).py_str(), x.idx(1).py_str())).collect();
@@ -553,7 +497,6 @@ pub fn summary(p: &J) -> String {
     )
 }
 
-/// `json.dump(j, f, indent=indent)`.
 pub fn dump(j: &J, indent: usize) -> String {
     let mut s = String::new();
     dump_into(j, indent, 0, &mut s);
@@ -593,7 +536,6 @@ pub fn repo_root() -> PathBuf {
     crate::runner::repo_root()
 }
 
-/// The stock images of the AwoX app, extracted by tools/extract-stock-images.sh.
 pub fn stock_images() -> Result<Vec<PathBuf>, String> {
     let dir = repo_root().join("stock/apk/smartlightz");
     let mut v: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -608,8 +550,6 @@ pub fn stock_images() -> Result<Vec<PathBuf>, String> {
     Ok(v)
 }
 
-/// Runs `f` over `items` on `jobs` threads; `done` sees each result (with
-/// its index) as it comes; the results in the order of `items`.
 pub fn pool<T: Sync, U: Send>(items: &[T], jobs: usize, f: impl Fn(&T) -> U + Sync, mut done: impl FnMut(usize, &T, &U))
                               -> Vec<U> {
     let q = Arc::new(Mutex::new((0..items.len()).collect::<VecDeque<usize>>()));
@@ -636,9 +576,6 @@ pub fn default_jobs() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
 
-// ---- the boards of the Rust firmware against their stock firmware
-
-/// The boards of crates/bulb-tc32/boards.tsv: (name, tunable, OTA image type).
 pub fn boards() -> Result<Vec<(String, bool, String)>, String> {
     let p = repo_root().join("crates/bulb-tc32/boards.tsv");
     let t = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -651,7 +588,6 @@ pub fn boards() -> Result<Vec<(String, bool, String)>, String> {
         .collect())
 }
 
-/// Where `cargo xtask build --board <name>` puts the image.
 pub fn image_dir(name: &str) -> PathBuf {
     let d = match name {
         "ESMLFzm_w6_Dimm-4.63" => "tc32".to_string(),
@@ -661,7 +597,6 @@ pub fn image_dir(name: &str) -> PathBuf {
     repo_root().join("target").join(d)
 }
 
-/// The stock profile of a board (analysis/profiles/<model>__<rev>.json).
 pub fn stock_of(name: &str) -> Result<J, String> {
     let (model, rev) = name.rsplit_once('-').ok_or(format!("board name {name}: model-rev expected"))?;
     let p = repo_root().join(format!("analysis/profiles/{model}__{rev}.json"));
@@ -669,15 +604,12 @@ pub fn stock_of(name: &str) -> Result<J, String> {
     crate::sims::json::parse(&t)
 }
 
-/// One check of a board: (what, passed, detail).
 pub type Row = (String, bool, String);
 
-/// The largest difference over a sweep, in PWM steps, and where.
 fn rows_close(ours: &[&J], stock: &[&J], period: f64, key: &str) -> (f64, Option<String>) {
     let mut worst = (0.0, None);
     for r in ours {
         let v = r.get("v");
-        // {r["v"]: r}: the last row of a value
         let Some(t) = stock.iter().rev().find(|t| t.get("v") == v) else {
             return (f64::INFINITY, Some(format!("{key} {} not in the stock sweep", v.py_str())));
         };
@@ -701,7 +633,6 @@ fn diff_text(d: f64, where_: Option<String>) -> String {
     format!("largest difference {d:.2} PWM steps") + &where_.map(|w| format!(" ({w})")).unwrap_or_default()
 }
 
-/// `[('PC1', 'PWM0'), ...]`, sorted.
 fn pins_of(p: &J) -> Vec<(String, String)> {
     let mut v: Vec<(String, String)> =
         p.get("outputs_on").get("pins").arr().iter().map(|x| (x.idx(0).py_str(), x.idx(1).py_str())).collect();
@@ -713,7 +644,6 @@ fn pins_repr(v: &[(String, String)]) -> String {
     py::list(v.iter().map(|(a, b)| format!("({}, {})", py::str_repr(a), py::str_repr(b))))
 }
 
-/// Our profile of a board against the stock one: the checks.
 pub fn compare(ours: &J, stock: &J) -> Vec<Row> {
     let mut res: Vec<Row> = Vec::new();
     let mut add = |what: &str, ok: bool, detail: String| res.push((what.to_string(), ok, detail));
@@ -730,7 +660,6 @@ pub fn compare(ours: &J, stock: &J) -> Vec<Row> {
     let (per, sper) = (max_of(ours), max_of(stock));
     add("PWM period", per == sper, format!("ours {} stock {}", py::ints(per.iter().copied()), py::ints(sper.iter().copied())));
     let period = sper.iter().max().copied().unwrap_or(0) as f64;
-    // within one PWM step, plus the rounding of the percentages in the profiles
     let tol = 1.0 + period * 0.001 / 100.0 * 2.0;
     let rows = |p: &J, k: &str| -> Vec<J> { p.get(k).arr().to_vec() };
     let (ol, sl) = (rows(ours, "level_sweep"), rows(stock, "level_sweep"));
@@ -756,7 +685,6 @@ pub fn compare(ours: &J, stock: &J) -> Vec<Row> {
         if stock.get(key).is_null() {
             continue;
         }
-        // level 1 with On/Off is off by ZCL 8 (shown above)
         let keep = |r: &&J| !(key == "level_sweep_red" && r.get("v") == &J::Int(1));
         let (o, s) = (rows(ours, key), rows(stock, key));
         let (d, w) = rows_close(&o.iter().filter(keep).collect::<Vec<_>>(), &s.iter().filter(keep).collect::<Vec<_>>(), period, key);
@@ -780,7 +708,6 @@ pub fn compare(ours: &J, stock: &J) -> Vec<Row> {
     res
 }
 
-/// Profiles our image of a board and compares it with the stock profile; our profile too.
 pub fn check_board(name: &str, a: &Opts) -> (Vec<Row>, Option<J>) {
     let path = image_dir(name).join("bulb-tc32.bin");
     if !path.exists() {
@@ -796,7 +723,6 @@ pub fn check_board(name: &str, a: &Opts) -> (Vec<Row>, Option<J>) {
     }
 }
 
-/// Builds the image of a board (`cargo xtask build --board <name>`).
 pub fn build_board(name: &str) -> Result<(), String> {
     let r = std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .current_dir(repo_root())
@@ -814,9 +740,6 @@ pub fn build_board(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Checks the boards (`only`: names containing it) on `jobs` threads and
-/// reports each as the former Python tool did (`== name`, `  PASS  what  detail`),
-/// in board order; `out`: keep our profiles there. Returns the checks per board.
 pub fn board_check(only: Option<&str>, a: &Opts, jobs: usize, out: Option<&Path>, mut say: impl FnMut(&str))
                    -> Result<Vec<(String, Vec<Row>)>, String> {
     let todo: Vec<String> = boards()?.into_iter().map(|b| b.0).filter(|n| only.map_or(true, |o| n.contains(o))).collect();

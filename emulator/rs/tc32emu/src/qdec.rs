@@ -1,11 +1,7 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Quadrature decoder (qdec.go).
-
 use crate::machine::Machine;
 
 const QDEC_PINS: [[usize; 2]; 8] = [[0, 2], [0, 3], [1, 6], [1, 7], [2, 2], [2, 3], [3, 6], [3, 7]];
 
-/// The CW Gray sequence of state (A<<1|B): 0->1->3->2->0 (Go's cwNext map).
 const CW_NEXT: [i64; 4] = [1, 3, 0, 2];
 
 impl Machine {

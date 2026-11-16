@@ -1,9 +1,3 @@
-//! APS data service (Zigbee R22, 2.2.5 and 2.2.8.4): acknowledgements,
-//! duplicate rejection, retransmissions, group and endpoint delivery,
-//! transmissions due to bindings, fragmentation. Ported from
-//! emulator/spec/aps_data.py. Constants from Table 2-23: apscMaxFrameRetries = 3,
-//! apscAckWaitDuration = 0.05 * (2 * nwkcMaxDepth) + 0.1 = 1.6 s.
-
 use super::Test;
 use crate::frames::{read_attr_records, APS_ACK, APS_CMD, APS_DATA};
 use crate::session::{expect, CapFrame, Session, Stop, R};
@@ -74,14 +68,12 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---- Python-style texts
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 fn opt<T: std::fmt::Display>(v: Option<T>) -> String {
     v.map(|x| x.to_string()).unwrap_or_else(|| "None".into())
 }
-/// repr() of a float rounded to 2 places.
 fn py_round2(x: f64) -> String {
     let v: f64 = format!("{x:.2}").parse().unwrap();
     let s = format!("{v}");
@@ -97,8 +89,6 @@ fn gaps_py(tx: &[CapFrame]) -> (Vec<f64>, String) {
     (r, format!("[{}]", g.iter().map(|x| py_round2(*x)).collect::<Vec<_>>().join(", ")))
 }
 
-// ---- local helpers
-/// APS acknowledgements from the bulb for a counter, one per NWK frame (MAC retries removed).
 fn acks(s: &mut Session, since: usize, counter: Option<u8>) -> Vec<CapFrame> {
     let dut = s.dut_short;
     let mut seen = Vec::new();
@@ -199,7 +189,6 @@ fn tc_zdo(s: &mut Session, cluster: u16, payload: &[u8], o: Tx) -> Sent {
     w.coord.tx_zdo(&mut w.air, dst, cluster, payload, &o)
 }
 
-// ---- tests
 fn ack_on_request(s: &mut Session) -> R<String> {
     let mut obs = Vec::new();
     let dut = s.dut_short;
@@ -264,9 +253,6 @@ fn no_ack_without_request(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-/// Sends a Toggle and then copies of it (same APS counter, same payload, new
-/// NWK sequence number) at the given times after the original. The light must
-/// have toggled exactly once.
 fn duplicate(s: &mut Session, copies_ms: &[f64]) -> R<String> {
     light_on(s)?;
     let cnt = nx(&mut s.w.coord.st.aps_ctr);
@@ -291,7 +277,6 @@ fn duplicate(s: &mut Session, copies_ms: &[f64]) -> R<String> {
         }
     }
     let n = acks(s, i, Some(cnt)).len();
-    // control: a new APS counter is a new frame and must be executed
     let before = is_on(s);
     tc_zcl(s, dut, ONOFF, 0x02, &[], Tx::new().ack_req().ddr());
     s.run(1200.0)?;
@@ -334,9 +319,6 @@ fn duplicate_rejected_last_only(s: &mut Session) -> R<String> {
 
 type Retry = Option<(String, Vec<CapFrame>)>;
 
-/// Makes the bulb send a frame with acknowledgement request while the Trust
-/// Center sends no APS acknowledgements: (description, transmissions with
-/// distinct NWK sequence numbers).
 fn retry_experiment(s: &mut Session) -> R<Retry> {
     if s.has_note("aps_retry") {
         return Ok(s.note::<Retry>("aps_retry").unwrap());
@@ -464,7 +446,7 @@ fn aps_counter(s: &mut Session) -> R<String> {
             earlier.push((key, f.t0));
         }
         if f.i < i || retransmission {
-            continue; // an APS retransmission keeps the counter of its original
+            continue;
         }
         let kind = if a.profile == Some(0) {
             "ZDO"
@@ -620,7 +602,6 @@ fn binding_group(s: &mut Session) -> R<String> {
 }
 
 fn extended_header_unfragmented(s: &mut Session) -> R<String> {
-    // ZCL sequence number 0x0b: should a receiver read the frame one octet off, it sees a Default Response
     let zcl = [0x00u8, 0x0B, 0x00, 0x00, 0x00];
     let cnt = nx(&mut s.w.coord.st.aps_ctr);
     let mut aps = vec![0x80, 1];
@@ -697,7 +678,6 @@ fn frag_experiment(s: &mut Session) -> R<Frag> {
         desc: String::new(),
     };
     let zseq = nx(&mut s.w.coord.st.zcl_seq);
-    // frame control 0x10 (general command, default response disabled)
     let mut zcl = vec![0x10, zseq, 0x00];
     for a in &r.attrs {
         zcl.extend_from_slice(&a.to_le_bytes());
@@ -801,7 +781,6 @@ fn fragmentation_rx(s: &mut Session) -> R<String> {
         format!("acknowledgement addressing: {}", lastf.brief()),
     )?;
     if let Some(e) = r.early.first() {
-        // the receive window holds one block: every block is acknowledged on its own
         let e = e.aps.as_ref().unwrap();
         expect(
             e.block == Some(0) && e.ack_bits.unwrap_or(0) & 1 != 0,

@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Rust port of tc32-devtools `go/tc32emu`: the TC32 (Telink TLSR825x/827x)
-//! instruction-set emulator with the TLSR8278 peripherals. It follows the Go
-//! package function by function, so that a run gives the same machine state,
-//! instruction by instruction and cycle by cycle (see emulator/rs/README.md).
-
 mod adc;
 mod aes;
 pub mod aes128;

@@ -1,8 +1,3 @@
-//! Python's text forms of values, so that the observation texts of the Rust
-//! tests are byte-identical to the Python suites' (and can be compared).
-
-/// `repr(float)`: the shortest text that reads back as the same double, with
-/// ".0" on integral values, "inf"/"nan", exponent form outside 1e-4..1e16.
 pub fn float(x: f64) -> String {
     if x.is_nan() {
         return "nan".into();
@@ -12,7 +7,6 @@ pub fn float(x: f64) -> String {
     }
     let a = x.abs();
     if a != 0.0 && !(1e-4..1e16).contains(&a) {
-        // Rust's {:e} gives the shortest mantissa too: 1e16, 1.5e-5 -> Python 1e+16, 1.5e-05
         let s = format!("{x:e}");
         let (m, e) = s.split_once('e').unwrap();
         let (sign, digits) = match e.strip_prefix('-') {
@@ -24,18 +18,15 @@ pub fn float(x: f64) -> String {
     format!("{x:?}")
 }
 
-/// `round(x, n)` as Python does it (on the double, ties to even on the decimal text).
 pub fn round(x: f64, n: i32) -> f64 {
     let s = format!("{:.*}", n.max(0) as usize, x);
     s.parse().unwrap()
 }
 
-/// `str(list)` of already formatted items.
 pub fn list<I: IntoIterator<Item = String>>(items: I) -> String {
     format!("[{}]", items.into_iter().collect::<Vec<_>>().join(", "))
 }
 
-/// `str(tuple)` of already formatted items.
 pub fn tuple<I: IntoIterator<Item = String>>(items: I) -> String {
     let v: Vec<String> = items.into_iter().collect();
     if v.len() == 1 {
@@ -61,7 +52,6 @@ pub fn boolean(b: bool) -> &'static str {
     }
 }
 
-/// `bytes.hex(sep)`.
 pub fn hex_sep(b: &[u8], sep: &str) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(sep)
 }
@@ -76,13 +66,12 @@ mod tests {
         assert_eq!(float(1e16), "1e+16");
         assert_eq!(float(1.5e-5), "1.5e-05");
         assert_eq!(float(-0.0), "-0.0");
-        assert_eq!(round(2.675, 2), 2.67); // the double is below 2.675
+        assert_eq!(round(2.675, 2), 2.67);
         assert_eq!(tuple(["37".to_string()]), "(37,)");
         assert_eq!(floats([1.25, 2.0]), "[1.25, 2.0]");
     }
 }
 
-/// `repr(str)`: quotes and escapes as Python chooses them.
 pub fn str_repr(s: &str) -> String {
     let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
     let mut o = String::new();
@@ -107,12 +96,10 @@ pub fn str_repr(s: &str) -> String {
     o
 }
 
-/// `repr(bytes)`.
 pub fn bytes_repr(b: &[u8]) -> String {
     crate::frames::py_bytes(b)
 }
 
-/// `bytes.decode("utf-8")`; Err: the text of Python's UnicodeDecodeError.
 pub fn utf8(b: &[u8]) -> Result<String, String> {
     match std::str::from_utf8(b) {
         Ok(s) => Ok(s.to_string()),
@@ -128,7 +115,6 @@ pub fn utf8(b: &[u8]) -> Result<String, String> {
     }
 }
 
-/// `hex(x)` as a list item: `'0x1f'`.
 pub fn hexq(x: u64) -> String {
     format!("'{x:#x}'")
 }

@@ -1,5 +1,3 @@
-// flash_busy_test.go: the machine-attached flash is driven through
-// Machine::flash_select / flash_clock (Go's fl.Select / fl.Clock).
 use super::err_text;
 use crate::{Error, Flash, Machine};
 

@@ -1,12 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Central (central.go): a scripted BLE central: link layer, L2CAP,
-//! signaling, ATT client, SMP.
-//!
-//! A central is a plain struct shared as `Rc<RefCell<Central>>`; the radio
-//! sees it as a `Peer` (implemented for `RefCell<Central>`, so the radio's
-//! peer and the caller's handle are the same object). Its methods take the
-//! machine explicitly (Go's `c.M`).
-
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashSet};
@@ -22,7 +13,6 @@ use crate::radio::{att_name_of, ll_name_of, Peer, PeerRc, RadioRef};
 use crate::sc;
 use crate::{round3, settings};
 
-/// What the ATT script is sent (Go's `any`: nil, the response bytes, or a PairResult).
 #[derive(Clone, Debug, PartialEq)]
 pub enum ScriptValue {
     Nil,
@@ -30,7 +20,6 @@ pub enum ScriptValue {
     Pair(PairResult),
 }
 
-/// The Python att_script generator: the next ATT request, or pair, or done.
 pub trait AttScript {
     fn next(&self, c: &mut Central, m: &mut Machine, value: &ScriptValue) -> (Option<Vec<u8>>, bool, bool);
 }
@@ -51,7 +40,6 @@ pub struct Params {
     pub win_offset: i64,
 }
 
-/// A pending LL_CONNECTION_UPDATE_IND.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Update {
     pub win_size: i64,
@@ -71,7 +59,6 @@ pub struct ChmUpdate {
     pub applied: f64,
 }
 
-/// A QueueData tag (Go's `any`).
 pub type Tag = Rc<dyn Any>;
 
 #[derive(Clone)]
@@ -89,7 +76,6 @@ pub(crate) struct Queued {
     pub(crate) tag: Option<Tag>,
 }
 
-/// The encryption state.
 #[derive(Clone, Debug, Default)]
 pub struct Enc {
     pub sk: Vec<u8>,
@@ -99,13 +85,11 @@ pub struct Enc {
     pub txc: i64,
     pub rxc: i64,
     pub ltk: u128,
-    /// None: Go's nil.
     pub skdm: Option<Vec<u8>>,
     pub ivm: Vec<u8>,
     pub mic_fail: i64,
 }
 
-/// The pairing state.
 #[derive(Clone, Debug, Default)]
 pub struct Smp {
     pub preq: Vec<u8>,
@@ -122,7 +106,6 @@ pub struct Smp {
     pub started: bool,
     pub sent_keys: BTreeMap<String, String>,
     pub private: Option<BigUint>,
-    /// None: Go's nil.
     pub pka: Option<Vec<u8>>,
     pub pkb: Option<Vec<u8>>,
     pub method: String,
@@ -148,16 +131,13 @@ pub struct Stats {
     pub retx: i64,
 }
 
-/// A received Handle Value Notification/Indication.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Notification {
     pub ms: f64,
     pub handle: i64,
-    /// hex, " (ind)" appended for an indication.
     pub value: String,
 }
 
-/// One line of the ATT log.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttEntry {
     pub ms: f64,
@@ -166,7 +146,6 @@ pub struct AttEntry {
     pub hex: String,
 }
 
-/// A reply the central deliberately lost.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Dropped {
     pub ms: f64,
@@ -174,7 +153,6 @@ pub struct Dropped {
     pub hex: String,
 }
 
-/// The peripheral's L2CAP Connection Parameter Update Request.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ParamRequest {
     pub t_ms: f64,
@@ -186,7 +164,6 @@ pub struct ParamRequest {
     pub instant: i64,
 }
 
-/// A value of Central.records (Go's map[string]any).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Rec {
     F(f64),
@@ -219,9 +196,7 @@ pub struct Central {
     pub p: Params,
     pub connect_after_ms: f64,
     pub anchor_in_window_ms: f64,
-    /// As sent (LSO first).
     pub aa: Vec<u8>,
-    /// As a link layer writes 0x408..0x40b.
     pub aa_reg: Vec<u8>,
     pub init_a: Vec<u8>,
     pub init_a_type: i64,
@@ -247,7 +222,6 @@ pub struct Central {
     pub stats: Stats,
     pub records: BTreeMap<String, Rec>,
     pub channels: Vec<[i64; 2]>,
-    /// (event, ms) of every packet the central started.
     pub sent: Vec<[f64; 2]>,
     pub ntf: Vec<Notification>,
     pub att_log: Vec<AttEntry>,
@@ -306,7 +280,6 @@ pub struct Central {
 
 pub type CentralRc = Rc<RefCell<Central>>;
 
-/// Central's constructor arguments with the Python defaults.
 #[derive(Clone)]
 pub struct Options {
     pub interval: i64,
@@ -330,12 +303,9 @@ pub struct Options {
     pub send_version: bool,
     pub send_features: bool,
     pub join: bool,
-    /// 0: 0x71764129.
     pub aa: u32,
     pub active_scan: bool,
-    /// "": "public".
     pub own_addr: String,
-    /// None: DEFAULT_IRK.
     pub irk: Option<Vec<u8>>,
     pub dist_id: bool,
     pub no_terminate_ack: bool,
@@ -345,16 +315,13 @@ pub struct Options {
     pub update_lead: i64,
 }
 
-/// The central's IRK, LSO first.
 pub const DEFAULT_IRK: [u8; 16] = [0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF];
 
 thread_local! {
-    /// The resolvable private addresses made so far in this process (Go's rpaN).
     static RPA_N: Cell<u32> = const { Cell::new(0) };
 }
 
 impl Default for Options {
-    /// The Python defaults (DefaultOptions; its Log prints to stdout).
     fn default() -> Options {
         Options {
             interval: 24,
@@ -422,7 +389,6 @@ fn encpdu(q: &Queued) -> bool {
     q.llid == 3 && !q.payload.is_empty() && (q.payload[0] == 0x06 || q.payload[0] == 0x02)
 }
 
-/// Describes a data channel PDU as the Python Central.fmt does.
 pub fn fmt_pdu(pdu: &[u8]) -> String {
     let (hdr0, ln) = (pdu[0], pdu[1] as usize);
     let llid = hdr0 & 3;
@@ -451,7 +417,6 @@ pub fn fmt_pdu(pdu: &[u8]) -> String {
 }
 
 impl Central {
-    /// NewCentral makes a central on the radio and registers it there.
     pub fn new(m: &mut Machine, radio: &RadioRef, o: Options) -> CentralRc {
         settings::init();
         let mut o = o;
@@ -570,7 +535,6 @@ impl Central {
         self.me.upgrade().expect("central dropped")
     }
 
-    /// The public identity, or a resolvable private address with the next prand.
     pub fn new_address(&mut self) {
         if self.own_addr == "public" {
             self.init_a = self.identity.clone();
@@ -593,7 +557,6 @@ impl Central {
         self.init_a_type = 1;
     }
 
-    /// With ActiveScan, a SCAN_REQ for a scannable advertising packet heard in state "scan".
     pub fn scan_request(&mut self, m: &mut Machine, pdu: &[u8], ch: u8) -> Option<Vec<u8>> {
         if !self.active_scan || self.state != "scan" || pdu.len() < 8 || (pdu[0] & 0xF != 0 && pdu[0] & 0xF != 6) {
             return None;
@@ -606,8 +569,6 @@ impl Central {
         self.rec(m, "air", format!("ch {} -> SCAN_REQ {}", ch, hex(&req)));
         Some(req)
     }
-
-    // ------------------------------------------------------------ advertising
 
     pub fn on_adv_default(&mut self, m: &mut Machine, pdu: &[u8], ch: u8) -> Option<Vec<u8>> {
         if self.state != "scan" || m.ms() < self.connect_after_ms || pdu[0] & 0xF != 0 || pdu.len() < 8 {
@@ -635,7 +596,6 @@ impl Central {
         Some(full)
     }
 
-    /// The CONNECT_IND has left the air.
     pub fn on_connect_sent(&mut self, _m: &mut Machine, _pdu: &[u8], t_end: f64) {
         self.state = "connected";
         self.heard = false;
@@ -662,8 +622,6 @@ impl Central {
         self.radio.at(at, Box::new(move |m| me.borrow_mut().conn_event(m, k)), "central");
     }
 
-    // ------------------------------------------------------------ the air
-
     pub(crate) fn clock(&self) -> f64 {
         match &self.radio.b().air {
             None => 1.0,
@@ -678,7 +636,6 @@ impl Central {
         }
     }
 
-    /// The radio's air changed during a connection: from the next event on, the interval is the new clock's.
     pub fn reclock(&mut self) {
         if self.state != "connected" || self.event < 0 {
             return;
@@ -699,25 +656,20 @@ impl Central {
         "   (MISSED by the peripheral)"
     }
 
-    /// The peripheral's reply was lost on air.
     pub fn air_lost(&mut self, m: &mut Machine, pdu: &[u8]) {
         let s = format!("ev {:4} ch {:2} <- {}  (LOST on air)", self.event, self.cur_ch, fmt_pdu(pdu));
         self.rec(m, "rx", s);
     }
 
-    /// The central's packet after a reply in this event was lost on air.
     pub fn air_lost_tx(&mut self, m: &mut Machine, _pdu: &[u8]) {
         let s = format!("ev {:4} ch {:2} -> the packet above  (LOST on air)", self.event, self.cur_ch);
         self.rec(m, "tx", s);
     }
 
-    // ------------------------------------------------------------ link layer
-
     pub(crate) fn chm_used(&self, ch: i64) -> bool {
         (self.chm[(ch >> 3) as usize] >> (ch & 7)) & 1 != 0
     }
 
-    /// Channel selection algorithm #1.
     pub fn channel(&mut self) -> i64 {
         self.unmapped = (self.unmapped + self.p.hop) % 37;
         if self.chm_used(self.unmapped) {
@@ -817,7 +769,6 @@ impl Central {
         self.schedule_event(at, k + 1);
     }
 
-    /// The connection update from event k, its instant, on.
     pub(crate) fn move_update(&mut self, k: i64, anchor: f64) {
         let clk = self.clock();
         let mut u = self.update.unwrap();
@@ -833,7 +784,6 @@ impl Central {
         self.records.insert("conn_update_applied".into(), Rec::U(u));
     }
 
-    /// The packet to send: the one in flight again, or the next queued one.
     pub(crate) fn next_pdu(&mut self) -> Vec<u8> {
         if self.inflight.is_none() {
             let (llid, mut payload, tag) = self.take_tagged();
@@ -862,7 +812,6 @@ impl Central {
         pdu
     }
 
-    /// The next queued PDU to send, or an empty one.
     pub fn take(&mut self) -> (u8, Vec<u8>) {
         let (llid, payload, _) = self.take_tagged();
         (llid, payload)
@@ -900,7 +849,6 @@ impl Central {
         (q.llid, q.payload, q.tag)
     }
 
-    /// Whether a PDU waits behind the one in flight (the MD bit).
     pub(crate) fn more(&self) -> bool {
         if self.ll_rules && self.enc_busy {
             return self.txq.iter().any(encpdu);
@@ -908,7 +856,6 @@ impl Central {
         !self.txq.is_empty()
     }
 
-    /// The peripheral's reply; the next PDU to send in this event, or None.
     pub fn on_air(&mut self, m: &mut Machine, pdu: &[u8], ch: u8, _tx_addr: u32) -> Option<Vec<u8>> {
         self.stats.replies += 1;
         self.heard = true;
@@ -979,7 +926,6 @@ impl Central {
         None
     }
 
-    /// Whether the central loses this reply.
     pub fn drop_pdu(&mut self, m: &mut Machine, pdu: &[u8]) -> bool {
         if self.drop_at.contains(&self.event) && pdu[1] != 0 {
             self.drop_at.remove(&self.event);
@@ -998,17 +944,14 @@ impl Central {
         }
     }
 
-    /// Queues an LL control PDU.
     pub fn queue_ll(&mut self, payload: Vec<u8>) {
         self.txq.push(Queued { llid: 3, payload, tag: None });
     }
 
-    /// One LL data PDU of another host; on_ack(tag) when the peripheral acknowledges it.
     pub fn queue_data(&mut self, llid: u8, payload: &[u8], tag: Option<Tag>) {
         self.txq.push(Queued { llid, payload: payload.to_vec(), tag });
     }
 
-    /// Queues an L2CAP frame, fragmented into 27-byte PDUs.
     pub fn queue_l2cap(&mut self, cid: i64, data: &[u8]) {
         let mut frame = (data.len() as u16).to_le_bytes().to_vec();
         frame.extend_from_slice(&(cid as u16).to_le_bytes());
@@ -1024,9 +967,6 @@ impl Central {
         }
     }
 
-    // ------------------------------------------------------------ LL procedures a test starts
-
-    /// LL_CHANNEL_MAP_IND; the central switches at the instant.
     pub fn channel_map_update(&mut self, chm: &[u8], instant: i64) {
         self.chm_update = Some(ChmUpdate { chm: chm.to_vec(), instant: instant & 0xFFFF, applied: 0.0 });
         let mut p = vec![0x01];
@@ -1035,7 +975,6 @@ impl Central {
         self.queue_ll(p);
     }
 
-    /// LL_CONNECTION_UPDATE_IND; the central moves at the instant.
     pub fn connection_update(&mut self, win_size: i64, win_offset: i64, interval: i64, latency: i64, timeout: i64, instant: i64) {
         self.update = Some(Update { win_size, win_offset, interval, latency, timeout, instant: instant & 0xFFFF, applied: 0.0, is_applied: false });
         self.update_lead_k = (instant - self.event) & 0xFFFF;
@@ -1047,12 +986,10 @@ impl Central {
         self.queue_ll(p);
     }
 
-    /// LL_TERMINATE_IND; the central leaves once it is acknowledged.
     pub fn terminate(&mut self, reason: u8) {
         self.queue_ll(vec![0x02, reason]);
     }
 
-    /// From this event on the central sends nothing.
     pub fn go_silent(&mut self, event: i64) {
         self.silent_from = event;
         self.silent = true;
@@ -1094,7 +1031,6 @@ impl Central {
         }
     }
 
-    /// The central's handling of an LL control PDU of the peripheral (the default LLCtrlFn).
     pub fn ll_ctrl(&mut self, m: &mut Machine, p: &[u8]) {
         let op = p[0];
         self.append_record("ll_from_peripheral", Rec::L(vec![Rec::F(round3(m.ms())), Rec::S(ll_name(op)), Rec::S(hex(p))]));
@@ -1175,8 +1111,6 @@ impl Central {
         }
     }
 
-    // ------------------------------------------------------------ L2CAP
-
     pub(crate) fn l2cap(&mut self, m: &mut Machine, cid: i64, data: &[u8]) {
         match cid {
             4 => self.att_rx(m, data),
@@ -1237,9 +1171,6 @@ impl Central {
         }
     }
 
-    // ------------------------------------------------------------ ATT
-
-    /// Sends an ATT PDU.
     pub fn att_send(&mut self, m: &mut Machine, pdu: &[u8]) {
         self.att_log.push(AttEntry { ms: round3(m.ms()), dir: "->", name: att_name(pdu[0]), hex: hex(pdu) });
         self.queue_l2cap(4, pdu);
@@ -1280,7 +1211,6 @@ impl Central {
         }
     }
 
-    /// Feeds the ATT script.
     pub fn script_step(&mut self, m: &mut Machine, value: ScriptValue) {
         let f = self.script_step_fn.clone();
         f(self, m, value);
@@ -1303,19 +1233,15 @@ impl Central {
         self.att_send(m, &req.unwrap_or_default());
     }
 
-    // ------------------------------------------------------------ SMP
-
     pub(crate) fn smp_send(&mut self, d: &[u8]) {
         self.queue_l2cap(6, d);
     }
 
-    /// Starts SMP legacy Just Works pairing.
     pub fn start_pairing(&mut self, m: &mut Machine) {
         let f = self.start_pairing_fn.clone();
         f(self, m);
     }
 
-    /// start_pairing(sc).
     pub fn start_pairing_sc(&mut self, m: &mut Machine, sc: bool) {
         let (mut auth, mut io) = (0x01u8, 0x03u8);
         if sc {
@@ -1438,7 +1364,6 @@ impl Central {
         self.queue_ll(p);
     }
 
-    /// The Secure Connections PDUs; true when it handled one.
     pub(crate) fn sc_rx(&mut self, m: &mut Machine, code: u8, d: &[u8]) -> bool {
         if code == 0x0C {
             let pkb = d[1..65].to_vec();
@@ -1572,7 +1497,6 @@ impl Central {
         }
     }
 
-    /// The responder's keys are in, or it distributes none: the pairing is done.
     pub(crate) fn smp_complete(&mut self, m: &mut Machine) {
         if self.smp.done_ms != 0.0 {
             return;
@@ -1603,8 +1527,6 @@ impl Central {
             f(self, m, ScriptValue::Nil);
         }
     }
-
-    // ------------------------------------------------------------ output
 
     pub fn rec(&mut self, m: &Machine, kind: &str, text: String) {
         let line = format!("[{:9.3}] {:<3} {}", m.ms(), kind, text);

@@ -1,13 +1,3 @@
-//! `stress_diag`: the stress traffic on the house mesh (the phases of
-//! `stress_traffic` of `cargo stress`, with its table and its checks: no
-//! reset, nobody moved, nothing executed twice, the light as last answered),
-//! and the Diagnostics cluster of every bulb read over ZCL before and after,
-//! its counters
-//! held against what the harness itself sees on the air (`net.rs`, the
-//! accounting of `STRESS_ACCOUNT`): MAC unicasts and their retransmissions,
-//! MAC broadcasts, relayed frames and the relayed frames lost. A bulb whose
-//! image has no such cluster (stock, a mixed house) is left out.
-
 use std::collections::BTreeMap;
 
 use super::net::Mesh;
@@ -17,12 +7,9 @@ use crate::session::R;
 
 const DIAG: u16 = 0x0B05;
 const MFR: u16 = 0x1141;
-/// MacTxBcast, MacTxUcast, MacTxUcastRetry, MacTxUcastFail, RelayedUcast, NWKFCFailure
 const STD: [u16; 6] = [0x0101, 0x0103, 0x0104, 0x0105, 0x0118, 0x0112];
-/// relays lost: queue full, no route, MAC failure, duplicate; Network Status sent
 const MAN: [u16; 5] = [0x5005, 0x5006, 0x5007, 0x5008, 0x5009];
 
-/// Integer values of the records of a Read Attributes Response body.
 fn values(b: &[u8]) -> BTreeMap<u16, u32> {
     let mut out = BTreeMap::new();
     let mut i = 0;
@@ -47,10 +34,6 @@ fn values(b: &[u8]) -> BTreeMap<u16, u32> {
     out
 }
 
-/// One Read Attributes of bulb `b` (standard or under our code), tried up
-/// up to three times: the values, and when the bulb began to send the
-/// answer. It took the values as it built the answer, so its frames before
-/// that moment are in them and its frames from it on are not.
 fn read(m: &mut Mesh, b: usize, mfr: bool, attrs: &[u16]) -> R<Option<(BTreeMap<u16, u32>, f64)>> {
     let (short, id) = (m.bulbs[b].short, m.bulbs[b].id);
     for _ in 0..3 {
@@ -84,7 +67,6 @@ fn read(m: &mut Mesh, b: usize, mfr: bool, attrs: &[u16]) -> R<Option<(BTreeMap<
     Ok(None)
 }
 
-/// Every bulb's counters and the moment it took them (None: no cluster, or no answer).
 fn snapshot(m: &mut Mesh) -> R<Vec<Option<(BTreeMap<u16, u32>, f64)>>> {
     let mut out = Vec::new();
     for b in 0..m.bulbs.len() {
@@ -93,7 +75,6 @@ fn snapshot(m: &mut Mesh) -> R<Vec<Option<(BTreeMap<u16, u32>, f64)>>> {
             Some(_) => read(m, b, true, &MAN)?,
             None => None,
         };
-        // the manufacturer's attributes change little; the moment is that of the standard ones
         out.push(std.zip(man).map(|((mut a, at), (b, _))| {
             a.extend(b);
             (a, at)
@@ -102,9 +83,6 @@ fn snapshot(m: &mut Mesh) -> R<Vec<Option<(BTreeMap<u16, u32>, f64)>>> {
     Ok(out)
 }
 
-/// What bulb `id` did on the air between t0 and t1: unicast frames that ask
-/// for an acknowledgement (first attempts), their retransmissions, frames
-/// that ask for none (broadcasts, beacons).
 fn air_mac(m: &Mesh, k: usize, t0: f64, t1: f64) -> (u64, u64, u64) {
     let id = m.bulbs[k].id;
     let c = m.air_count(t0, t1, Some(id));
@@ -119,11 +97,6 @@ fn air_mac(m: &Mesh, k: usize, t0: f64, t1: f64) -> (u64, u64, u64) {
     (ucast - c.mac_retx.min(ucast), c.mac_retx, bcast)
 }
 
-/// Frames of others bulb `k` handed on between t0 and t1 and the next hop
-/// acknowledged: each MAC frame once (its retransmissions are the same
-/// frame), as RelayedUcast counts them. A copy of a frame the bulb relayed
-/// before that comes secured anew (its sender tried again at the NWK
-/// level) is relayed again, and counts again, here as there.
 fn air_relayed(m: &Mesh, k: usize, t0: f64, t1: f64) -> u64 {
     let (id, me) = (m.bulbs[k].id, m.bulbs[k].short);
     let mut seen: Vec<(u8, u16, u16, u8, f64)> = Vec::new();
@@ -192,14 +165,11 @@ pub fn run(m: &mut Mesh, res: &mut StressResult) -> R<()> {
             d16(0x0118) + drops, d16(0x5008), d16(0x0112), d16(0x5009)
         );
         res.notes.push(line.clone());
-        // the window runs from one answer's first transmission to the
-        // next's; the slack is for frames in flight at its ends
         res.check(&format!("{name}: MacTxUcastRetry = the bulb's MAC retransmissions on the air"), close(d16(0x0104), retx, 2, 1.0), line.clone());
         res.check(&format!("{name}: MacTxUcast = the bulb's unicast frames on the air (first attempts)"), close(d(0x0103), ucast, 2, 1.0), line.clone());
         res.check(&format!("{name}: MacTxBcast = the bulb's frames without acknowledgement on the air"), close(d(0x0101), bcast, 2, 1.0), line.clone());
         res.check(&format!("{name}: RelayedUcast = the frames of others the bulb handed on, acknowledged"), close(d16(0x0118), relayed, 2, 1.0),
                   line.clone());
-        // a frame acknowledged for relaying ends relayed (once or, sent again secured anew, more often) or lost by a cause
         res.check(
             &format!("{name}: every relayed frame the bulb acknowledged is relayed or lost by a counted cause"),
             d16(0x0118) + drops + 3 >= acked,

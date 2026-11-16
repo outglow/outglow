@@ -1,20 +1,3 @@
-//! A bulb moved between the stock firmware and the Rust firmware, both ways,
-//! the ways the README describes: the first install over BLE from the stock
-//! firmware, and back to the stock firmware over Zigbee OTA or BLE from the
-//! Rust firmware.
-//!
-//! Each update ends with the image staged at 0x6000 and marked bootable (0x4B
-//! at +8); the AwoX bootloader at 0x0 then installs it at 0x6A000. Nobody has
-//! that bootloader (the chip's debug port is locked), so the emulator does not
-//! run it: `install_staged` does what it is inferred to do (both firmwares
-//! are linked at 0x6A000 and validated by KNLT, size and CRC only). That step
-//! is the one thing here not taken from a firmware; the rest is the two
-//! firmwares as they are.
-//!
-//! Images: `--image stock=...` (default stock/stock-dimm.bin), `--image
-//! rust=...` (default target/tc32/bulb-tc32.bin) and its BLE update image
-//! `--image rust-ota=...` (default target/tc32/bulb-tc32-ota.bin).
-
 use super::ble_central::{data_packets, discover, end_packet, erase_packet, hex_or_empty, hx, tel_get, Bench, Transport, OTA};
 use super::mixed::{ieee_of, mac_record, Fw, SETTLE_MS};
 use super::ota::{body as ota_body, Layout};
@@ -38,11 +21,6 @@ const STAGING: usize = 0x6000;
 const APP: usize = 0x6A000;
 const MAC: [u8; 5] = [0x31, 0x00, 0x56, 0x00, 0x00];
 
-/// What the AwoX bootloader is taken to do at the next start with an image
-/// staged at 0x6000 and marked bootable: copy it to 0x6A000 and start it.
-/// The emulator starts every image from 0 (and runs the rest from its link
-/// address, 0x6A000), so the image is written at 0 too, as it is when a node
-/// is made from an image. The staged image (KNLT, size at 0x18).
 pub fn install_staged(node: &mut zbnode::Node) -> Result<Vec<u8>, String> {
     let f = &node.m.flash.mem;
     if f[STAGING + 8] != 0x4B || &f[STAGING + 9..STAGING + 12] != b"NLT" {
@@ -58,7 +36,6 @@ pub fn install_staged(node: &mut zbnode::Node) -> Result<Vec<u8>, String> {
     Ok(img)
 }
 
-/// A Zigbee OTA file (header 0x0BEEF11E, one sub-element of tag 0) of an image.
 pub fn ota_file(mfg: u16, image_type: u16, version: u32, header: &str, image: &[u8]) -> Vec<u8> {
     let mut v = Vec::new();
     v.extend_from_slice(&0x0BEEF11Eu32.to_le_bytes());
@@ -79,9 +56,6 @@ pub fn ota_file(mfg: u16, image_type: u16, version: u32, header: &str, image: &[
     v
 }
 
-/// The AwoX BLE update over ...1915 (`awox_ota.run_ota`, no mesh login: neither
-/// firmware asks for one there): erase, every block, the end packet; Ok(final
-/// status) or the error.
 pub fn ble_push(b: &mut Bench, tr: &mut Transport, img: &[u8], say: &mut dyn FnMut(String)) -> R<Result<Vec<u8>, String>> {
     let (mtu, read_every) = (23usize, 8usize);
     macro_rules! t {
@@ -124,7 +98,6 @@ pub fn ble_push(b: &mut Bench, tr: &mut Transport, img: &[u8], say: &mut dyn FnM
     Ok(Ok(st))
 }
 
-/// Connects the central and finds the OTA characteristic.
 fn ble_open(b: &mut Bench) -> R<Option<Transport>> {
     b.ble_connect(D, 24, None);
     if b.ble_wait_connected(D, 15000.0)?.is_none() {
@@ -134,7 +107,6 @@ fn ble_open(b: &mut Bench) -> R<Option<Transport>> {
     Ok(tel_get(&tel, OTA).map(|h| Transport::new(D, &[(OTA, h)])))
 }
 
-/// A scenario's checks, printed as the others print them.
 struct Run<'a> {
     cx: &'a mut SimCtx,
 }
@@ -164,7 +136,6 @@ fn announced(b: &Bench, ext: u64, since: usize) -> Option<u16> {
         .and_then(|e| e.get("short").and_then(|s| u16::from_str_radix(s.trim_start_matches("0x"), 16).ok()))
 }
 
-/// A cluster command and the bulb's Default Response; the light once settled.
 fn light_cmd(b: &mut Bench, short: u16, cluster: u16, cmd: u8, payload: &[u8]) -> R<(bool, crate::session::Light)> {
     let n0 = b.w.coord.zcl_rsp.len();
     let air = &mut b.w.air;
@@ -174,7 +145,6 @@ fn light_cmd(b: &mut Bench, short: u16, cluster: u16, cmd: u8, payload: &[u8]) -
     Ok((got, b.light(D)))
 }
 
-/// Basic: manufacturer name, model identifier, software build.
 fn basic(b: &mut Bench, short: u16) -> R<Option<String>> {
     let n0 = b.w.coord.zcl_rsp.len();
     let air = &mut b.w.air;
@@ -183,8 +153,6 @@ fn basic(b: &mut Bench, short: u16) -> R<Option<String>> {
     Ok(b.w.coord.zcl_rsp[n0..].iter().find(|r| r.src == short && r.cluster == 0x0000 && r.cmd == Some(0x01)).map(|r| decode_attrs(&r.body)))
 }
 
-/// After a firmware change: power cycle, joins (again), Basic, Off/On/Level.
-/// `model` judges the Basic attributes the new firmware reports.
 fn comes_back(r: &mut Run, b: &mut Bench, ext: u64, what: &str, model: (&str, &dyn Fn(&str) -> bool)) -> R<()> {
     let n0 = b.w.coord.events.len();
     let assoc0 = b.w.coord.events.iter().filter(|e| e.kind == "association-request").count();
@@ -226,7 +194,6 @@ fn node(cx: &SimCtx, fw: Fw) -> R<(zbnode::Node, crate::image::Image, u64)> {
     Ok((n, img, ieee_of(fw, &rec)))
 }
 
-/// The sectors of the stock firmware's configuration and Zigbee NV that hold data.
 fn stock_nv(flash: &[u8]) -> Vec<usize> {
     (0xCF000..0xF0000).step_by(0x1000).filter(|a| flash[*a..a + 0x1000].iter().any(|x| *x != 0xFF)).collect()
 }
@@ -245,12 +212,6 @@ fn ranges(v: &[usize]) -> String {
     out.iter().map(|r| format!("{:#x}-{:#x}", r[0], r[1] + 0xFFF)).collect::<Vec<_>>().join(", ")
 }
 
-// =================================================================== stock -> Rust
-
-/// The first install: the stock firmware on the network, the Rust update
-/// image sent over its BLE OTA (README: Flashing, 1), installed, power cycle.
-/// The Rust firmware does not read the stock firmware's network data (other
-/// format, other place), so it starts factory new and joins again.
 fn migrate(cx: &mut SimCtx) -> R<()> {
     let (n, simg, ext) = node(cx, Fw::Stock)?;
     let rota = cx.image("rust-ota", "target/tc32/bulb-tc32-ota.bin");
@@ -298,7 +259,6 @@ fn migrate(cx: &mut SimCtx) -> R<()> {
     let inst = install_staged(b.w.node_mut(D)).map_err(Stop::Error)?;
     r.say(&format!("   (the AwoX bootloader's install, as inferred: {} B to 0x6a000)", inst.len()));
     b.w.power_on(D).map_err(Stop::Error)?;
-    // power_on reboots; comes_back reboots once more (a second power cycle)
     comes_back(&mut r, &mut b, ext, "Rust", ("with its own model identifier (outglow-...)", &|x| x.contains("outglow")))?;
     let nv_after = stock_nv(&b.w.node(D).m.flash.mem);
     r.say(&format!("   stock configuration and NV afterwards: {}", ranges(&nv_after)));
@@ -307,13 +267,6 @@ fn migrate(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-// =================================================================== Rust -> stock
-
-/// Zigbee OTA from the Rust firmware to the stock image: the stock image in
-/// a .ota file of the Rust firmware's manufacturer code and image type (the
-/// client takes any version of its own type, README: ota/), checked against
-/// the staging area as the Rust update path is (`ota_rust`); then installed
-/// and started: the stock firmware, factory new, joins the network.
 fn back_to_stock_ota(cx: &mut SimCtx) -> R<()> {
     let from = super::mixed::image(cx, Fw::Rust);
     let stock = super::mixed::image(cx, Fw::Stock);
@@ -376,10 +329,6 @@ fn back_to_stock_ota(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-/// BLE from the Rust firmware to the stock image: the Rust firmware's AwoX
-/// OTA service takes the stock image into the staging area, checks it in the
-/// flash, marks it and restarts; installed, the stock firmware starts,
-/// advertises over BLE again and joins the network factory new.
 fn back_to_stock_ble(cx: &mut SimCtx) -> R<()> {
     let (n, rimg, ext) = node(cx, Fw::Rust)?;
     let stock = super::mixed::image(cx, Fw::Stock);
@@ -422,7 +371,6 @@ fn back_to_stock_ble(cx: &mut SimCtx) -> R<()> {
     let inst = install_staged(b.w.node_mut(D)).map_err(Stop::Error)?;
     r.say(&format!("   (the AwoX bootloader's install, as inferred: {} B to 0x6a000)", inst.len()));
     comes_back(&mut r, &mut b, ext, "stock", ("with the vendor's model identifier, not outglow-...", &|x| !x.contains("outglow")))?;
-    // the stock firmware's BLE is back: its advertisement names the vendor's mesh
     let adv = b.ble_adv(D);
     r.check(b.t(D), "stock: advertises over BLE again (the vendor app finds it)", !adv.is_empty(), &format!("advertising data {}", hx(&adv)));
     Ok(())

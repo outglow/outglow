@@ -1,28 +1,3 @@
-//! `cargo xtask compare`: the data of the website's comparison page
-//! (site/public/compare.json): the Zigbee and the Bluetooth conformance tests
-//! (emulator/rs/scenarios, `cargo spec` and `cargo ble-spec`) run in the
-//! emulator on the original firmware and on Outglow, for the two filament
-//! bulbs.
-//!
-//!     OUTGLOW_STOCK_DIR=<checkout of outglow/original-firmware> cargo xtask compare \
-//!         [--out site/public/compare.json] [--no-build] [--jobs N] [--cpi N]
-//!
-//! The Outglow images are built first (`cargo xtask build`, default options)
-//! unless `--no-build`; the original images come from OUTGLOW_STOCK_DIR (a
-//! checkout of outglow/original-firmware, not part of this repository): every
-//! image its `manifest.json` lists for one of the two boards is tested, so a
-//! newer original version there is tested by the next run, and several
-//! versions of one board give results per version. The website's workflow
-//! (.github/workflows/site.yml) runs this before it builds the site; the
-//! committed site/public/compare.json is what a build without the original
-//! images (a fork) shows.
-//!
-//! The original firmware's results of the tests on security (keys, frame
-//! security, Bluetooth pairing and encryption) and on access control (who
-//! may make a bulb leave the network, reset it or bind it) are not written:
-//! whatever they are, pass or fail, the file says "withheld" for them. The
-//! Outglow results of those tests are written as for every other test.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -32,27 +7,25 @@ use sha2::Sha256;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// where to write the data (default site/public/compare.json)
+    #[doc = " where to write the data (default site/public/compare.json)"]
     #[arg(long)]
     out: Option<PathBuf>,
-    /// use the Outglow images already in target/ instead of building them
+    #[doc = " use the Outglow images already in target/ instead of building them"]
     #[arg(long)]
     no_build: bool,
-    /// emulator sessions in parallel (default: one per CPU)
+    #[doc = " emulator sessions in parallel (default: one per CPU)"]
     #[arg(long)]
     jobs: Option<usize>,
-    /// emulator clocks per instruction (3: full fidelity, as `cargo spec`)
+    #[doc = " emulator clocks per instruction (3: full fidelity, as `cargo spec`)"]
     #[arg(long, default_value_t = 3)]
     cpi: u32,
 }
 
-/// The bulbs compared: short id, board, name on the page.
 const BOARDS: [(&str, &str, &str); 2] = [
     ("dimm", "ESMLFzm_w6_Dimm-4.63", "Dimmable filament bulb (ESMLFzm_w6_Dimm)"),
     ("tw", "ESMLFzm_w6_TW-4.63", "Tunable white filament bulb (ESMLFzm_w6_TW)"),
 ];
 
-/// The two test suites: id, the scenarios test binary, what it covers.
 const SUITES: [(&str, &str, &str); 2] = [
     ("zigbee", "spec", "Zigbee: Zigbee PRO R22, Zigbee Cluster Library revision 8, Base Device Behavior 3.0.1, Lighting & Occupancy 1.0, Green Power Basic 1.1.2"),
     ("ble", "ble", "Bluetooth LE: Bluetooth Core Specification 5.4 and the Core Specification Supplement"),
@@ -61,11 +34,8 @@ const SUITES: [(&str, &str, &str); 2] = [
 const SECURITY: &str = "security";
 const ACCESS: &str = "access";
 
-/// Tests (module, id or id prefix) whose result on the original firmware is not published.
 const WITHHELD: [(&str, &str); 16] = [
     ("security_keys", SECURITY),
-    // what the original firmware claims about encryption, and its own
-    // reset command over Bluetooth: next to findings not yet disclosed
     ("ll_ctrl_feature_used", SECURITY),
     ("ll_ctrl_peripheral_terminate", SECURITY),
     ("ll_ctrl_peripheral_terminate_timer", SECURITY),
@@ -87,7 +57,6 @@ fn withheld(module: &str, id: &str) -> Option<&'static str> {
     WITHHELD.iter().find(|(k, _)| module == *k || id == *k || (k.ends_with('-') && id.starts_with(k))).map(|(_, c)| *c)
 }
 
-/// The area a test counts in on the page's summary.
 fn area(module: &str, id: &str) -> &'static str {
     if let Some(c) = withheld(module, id) {
         return if module.starts_with("smp") || module.starts_with("ll_") {
@@ -138,7 +107,6 @@ fn git(root: &Path, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-/// The original images of a board: (manifest entry, path), every version the manifest lists.
 fn stock_images(dir: &Path, manifest: &Value, board: &str) -> Vec<(Value, PathBuf)> {
     manifest["images"]
         .as_array()
@@ -154,7 +122,6 @@ fn stock_images(dir: &Path, manifest: &Value, board: &str) -> Vec<(Value, PathBu
         .unwrap_or_default()
 }
 
-/// One suite on one board: the verdicts by image label and test id, and what every test checks.
 fn run_suite(root: &Path, bin: &str, stock: &Path, outglow: &Path, a: &Args, tmp: &Path) -> Result<(Value, Value)> {
     let (res, meta) = (tmp.join(format!("{bin}-results.json")), tmp.join(format!("{bin}-tests.json")));
     let mut cmd = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
@@ -180,7 +147,6 @@ fn run_suite(root: &Path, bin: &str, stock: &Path, outglow: &Path, a: &Args, tmp
     Ok((read(&res)?, read(&meta)?))
 }
 
-/// An observation as the page shows it: no paths of this machine, not too long.
 fn note(obs: &str, root: &Path) -> String {
     let mut s = obs.replace(&root.display().to_string(), "outglow");
     if let Some(h) = std::env::var_os("HOME") {
@@ -203,11 +169,8 @@ pub fn run(a: Args) -> Result<()> {
         &std::fs::read(stock_dir.join("manifest.json")).context("manifest.json of OUTGLOW_STOCK_DIR")?,
     )?;
 
-    // one target per (board, original version)
     let mut targets = Vec::new();
-    // test id -> (suite, its description)
     let mut tests: Vec<(String, &str, Value)> = Vec::new();
-    // (target, verdicts by "label:id")
     let mut results: Vec<(String, Value)> = Vec::new();
     for (bid, board, name) in BOARDS {
         let stocks = stock_images(&stock_dir, &manifest, board);

@@ -1,5 +1,3 @@
-//! Firmware update over the mesh service's update characteristics.
-
 mod sim;
 
 use sim::{make_image, ota_packet, Rig, DIMMABLE};
@@ -7,8 +5,6 @@ use sim::{make_image, ota_packet, Rig, DIMMABLE};
 const OTA: u16 = 0x1b;
 const OTA_CLASSIC: u16 = 0x18;
 
-/// Sends an image the way crates/outglow/src/flash/protocol.rs does: 16-byte blocks, the
-/// last one padded with 0xff. Returns the number of blocks.
 fn send_blocks(rig: &mut Rig, handle: u16, image: &[u8]) -> u16 {
     for (i, block) in image.chunks(16).enumerate() {
         let mut b = block.to_vec();
@@ -47,7 +43,6 @@ fn an_image_is_staged_checked_and_started() {
     let blocks = send_blocks(&mut rig, OTA, &image);
     assert_eq!(status(&mut rig), (3, 0, blocks));
     assert_eq!(rig.read(OTA)[7], 100, "percent");
-    // end packet: the block count and its CRC
     rig.write(OTA, &ota_packet(blocks, &[]));
     assert_eq!(status(&mut rig), (4, 0, blocks));
     {
@@ -95,7 +90,6 @@ fn an_image_that_fails_its_checksum_is_not_started() {
             sent[9] = b'X';
         }
         let blocks = send_blocks(&mut rig, OTA, &sent);
-        // a wrong magic is seen in the first block; the rest only at the end
         if damage != "magic" {
             assert_eq!(status(&mut rig), (3, 0, blocks), "{damage}");
             rig.write(OTA, &ota_packet(blocks, &[]));
@@ -116,19 +110,15 @@ fn blocks_must_come_in_order_and_whole() {
     let block = |i: usize| ota_packet(i as u16, &image[16 * i..16 * i + 16]);
     rig.write(OTA, &block(0));
     rig.write(OTA, &block(1));
-    // the last block again: a retransmission
     rig.write(OTA, &block(1));
     assert_eq!(status(&mut rig), (3, 0, 2));
-    // a damaged packet is ignored
     let mut bad = block(2);
     bad[5] ^= 0x10;
     rig.write(OTA, &bad);
     assert_eq!(status(&mut rig), (3, 0, 2));
     rig.write(OTA, &block(2));
-    // a gap ends the transfer
     rig.write(OTA, &block(4));
     assert_eq!(status(&mut rig).0..=status(&mut rig).1, 4..=2);
-    // and a new one can start from block 0
     rig.write(OTA, &block(0));
     assert_eq!(status(&mut rig), (3, 0, 1));
 }
@@ -139,13 +129,11 @@ fn an_end_packet_must_match() {
     rig.connect();
     let image = make_image(640, 5);
     let blocks = send_blocks(&mut rig, OTA, &image);
-    // the wrong block count
     rig.write(OTA, &ota_packet(blocks - 1, &[]));
     assert_eq!(status(&mut rig).1, 2);
     rig.run(1500);
     assert!(!rig.world.borrow().activated);
 
-    // an end packet with nothing received
     let mut rig = Rig::new(DIMMABLE);
     rig.connect();
     rig.write(OTA, &ota_packet(0xffff, &[]));
@@ -158,7 +146,6 @@ fn a_transfer_that_failed_while_erasing_is_not_started() {
     rig.connect();
     let image = make_image(20000, 3);
     erase(&mut rig, &image);
-    // an end packet out of place, with the erase timer still running
     rig.central().send_att(&[&[0x52, OTA as u8, 0][..], &ota_packet(0xffff, &[])].concat());
     rig.run(100);
     assert_eq!(status(&mut rig).0..=status(&mut rig).1, 4..=2);
@@ -193,7 +180,6 @@ fn a_lost_connection_starts_the_transfer_over() {
     assert!(!rig.ble.borrow().ota_active());
     rig.connect();
     assert_eq!(status(&mut rig), (0, 0, 0));
-    // block 40 is no longer expected
     rig.write(OTA, &ota_packet(40, &image[640..656]));
     assert_eq!(status(&mut rig), (0, 0, 0));
     let blocks = send_blocks(&mut rig, OTA, &image);
@@ -202,9 +188,6 @@ fn a_lost_connection_starts_the_transfer_over() {
     assert!(rig.world.borrow().activated);
 }
 
-/// `ota_busy`: what the firmware waits for before it stops BLE (the setting
-/// over Zigbee): the transfer, the restart into a good image, and the
-/// connection the update ran in, whose central reads the final status.
 #[test]
 fn an_update_is_busy_until_its_restart_or_the_end_of_its_connection() {
     let mut rig = Rig::new(DIMMABLE);
@@ -243,7 +226,6 @@ fn larger_blocks_after_an_mtu_exchange() {
     rig.connect();
     assert_eq!(rig.att(&[0x02, 64, 0]), [0x03, 64, 0]);
     let image = make_image(3000, 2);
-    // MTU - 7 bytes per block
     for (i, block) in image.chunks(57).enumerate() {
         let mut b = block.to_vec();
         b.resize(57, 0xff);

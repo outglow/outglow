@@ -1,20 +1,3 @@
-//! The image x scenario runner behind `cargo test -p scenarios` (a
-//! `harness = false` test, no external crates): runs every selected test on
-//! every image, one joined bulb per (image, session), and reports a verdict
-//! per test as emulator/spec_suite.py does.
-//!
-//! Arguments (after `--`): substring filters on `label::TEST-ID` (`a|b` = a or
-//! b), `--list`, `--exact`, `--image label=path[@0xOFFSET]` (repeatable),
-//! `--json out.json` (the verdicts), `--meta-json tests.json` (what each test checks),
-//! `--cpi N` (3 = full fidelity), `--jobs N` / `--test-threads N`, `-v`,
-//! `--shard K/N` (the scenarios only: the K-th of N parts, for parallel CI jobs),
-//! `--expect NAME|FILE` (the committed verdicts the run must match, see [`Expect`];
-//! default on the default image: expect/<suite>-dimm.txt), `--no-expect`,
-//! `--write-expect` (rewrite that file from this run), `--sweep N` (the run N times
-//! over other starts of the bulbs' system timer, see [`sweep_main`]).
-//! Environment: SCENARIO_IMAGES=label=path,... SCENARIO_CPI, SCENARIO_JOBS (or RUST_TEST_THREADS), NO_COLOR,
-//! TC32EMU_TICK_OFFSET (where the system timer starts, what `--sweep` varies).
-
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
@@ -32,7 +15,6 @@ pub enum Verdict {
     Inconclusive,
     NotApplicable,
     Error,
-    /// a "should" clause (or one whose failure depends on its reading) not followed
     Note,
 }
 
@@ -66,39 +48,25 @@ pub struct Args {
     pub cpi: i64,
     pub jobs: usize,
     pub verbose: u8,
-    /// write the outcomes as JSON here
     pub json: Option<PathBuf>,
-    /// write what every test checks (module, document, clause, requirement) as JSON here
     pub meta_json: Option<PathBuf>,
-    /// the conformance report over stock, C and Rust instead of the red/green run
     pub matrix: bool,
-    /// libtest's --skip: names containing one of these are left out
     pub skip: Vec<String>,
-    /// colour the verdicts (libtest's --color auto|always|never, NO_COLOR)
     pub color: bool,
-    /// run only part K (1-based) of N of the selected scenarios
     pub shard: Option<(usize, usize)>,
-    /// the baseline of expected verdicts (`--expect`): a name in expect/ or a file
     pub expect: Option<String>,
-    /// `--no-expect`: no baseline, not even the default one
     pub no_expect: bool,
-    /// `--write-expect`: rewrite the baseline from this run instead of checking it
     pub write_expect: bool,
-    /// the images are the defaults (no --image, no SCENARIO_IMAGES)
     pub default_images: bool,
 }
 
-/// The prefix of the observation of a test whose session never started (the image did not boot or join).
 pub const NOT_STARTED: &str = "session could not start: ";
-/// The prefix of the observation of a test skipped because its session was lost before it.
 pub const NOT_RUN: &str = "not run: ";
 
-/// The repository root, from this crate's place in it (emulator/rs/scenarios).
 pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-/// The images of `--matrix`: the stock firmware and the Rust firmware.
 pub fn default_images() -> Vec<Image> {
     let r = repo_root();
     [("stock", "stock/stock-dimm.bin"), ("rust", "target/tc32/bulb-tc32.bin")]
@@ -107,7 +75,6 @@ pub fn default_images() -> Vec<Image> {
         .collect()
 }
 
-/// `K/N` with 1 <= K <= N.
 fn parse_shard(v: &str) -> Result<(usize, usize), String> {
     let (k, n) = v.split_once('/').ok_or(format!("--shard {v}: expected K/N"))?;
     let k: usize = k.parse().map_err(|e| format!("--shard {v}: {e}"))?;
@@ -122,8 +89,6 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
     parse_args_with(argv, default_images)
 }
 
-/// `parse_args` with the images of `--matrix`; without `--matrix` and
-/// without images the run is the Rust image alone (the last of them).
 pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<Args, String> {
     let mut a = Args {
         filters: Vec::new(),
@@ -131,7 +96,6 @@ pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<
         list: false,
         images: Vec::new(),
         cpi: 3,
-        // libtest's default: one session per CPU, or RUST_TEST_THREADS
         jobs: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
         verbose: 0,
         json: None,
@@ -180,7 +144,6 @@ pub fn parse_args_with(argv: &[String], defaults: fn() -> Vec<Image>) -> Result<
             "--expect" => a.expect = Some(it.next().ok_or("--expect needs a name or a file")?.clone()),
             "--no-expect" => a.no_expect = true,
             "--write-expect" => a.write_expect = true,
-            // libtest flags cargo/nextest may pass: accepted, no effect here
             "--nocapture" | "--show-output" | "-q" | "--quiet" | "--include-ignored" | "--ignored" => {}
             "--color" => match it.next().map(|s| s.as_str()) {
                 Some("always") => a.color = true,
@@ -216,7 +179,6 @@ pub fn selected(a: &Args, name: &str) -> bool {
         && !a.skip.iter().any(|f| name.contains(f.as_str()))
 }
 
-/// One (image, session): the tests run in order on one joined bulb (`spec_suite.run_group`).
 fn run_group(image: &Image, session: &str, tests: &[&Test], cpi: i64, verbose: u8, out: &mpsc::Sender<Outcome>) {
     let def = tests[0].setup;
     let log: Option<Log> = if verbose > 1 {
@@ -234,7 +196,6 @@ fn run_group(image: &Image, session: &str, tests: &[&Test], cpi: i64, verbose: u
     let mut s = match Session::new(image, SessionOpts { cpi, join: def.join, log, tc: def.tc, ..Default::default() }) {
         Ok(mut s) => {
             s.set_note(spec::misc_ota_gp::IMAGE_PATH, image.path.clone());
-            // a broadcast lost to the bulb's BLE event is sent again (`World::ble_retry`)
             s.w.dut_rx_log();
             s.w.ble_retry = true;
             s
@@ -293,10 +254,8 @@ fn run_group(image: &Image, session: &str, tests: &[&Test], cpi: i64, verbose: u
     }
 }
 
-/// Runs the selected tests; `on` sees every outcome as it comes; returns them in (image, test) order.
 pub fn run(a: &Args, on: &mut dyn FnMut(&Outcome)) -> Vec<Outcome> {
     let all = spec::tests();
-    // (image, session, tests of that session in order)
     let mut groups: Vec<(Image, String, Vec<&Test>)> = Vec::new();
     for img in &a.images {
         let mut by_session: Vec<(String, Vec<&Test>)> = Vec::new();
@@ -314,7 +273,6 @@ pub fn run(a: &Args, on: &mut dyn FnMut(&Outcome)) -> Vec<Outcome> {
             groups.push((img.clone(), s, v));
         }
     }
-    // long sessions first, as spec_suite does
     groups.sort_by_key(|g| std::cmp::Reverse(g.2.len()));
     let (tx, rx) = mpsc::channel();
     let queue = Arc::new(Mutex::new(groups.into_iter().collect::<VecDeque<_>>()));
@@ -351,26 +309,10 @@ pub fn run(a: &Args, on: &mut dyn FnMut(&Outcome)) -> Vec<Outcome> {
     out
 }
 
-/// The system timer's start for run `j` (1-based) of `--sweep`: spread over
-/// the first 16 s of the timer (golden-ratio steps), so that the firmware's
-/// timer-seeded random numbers come out different in every run, while the
-/// timer stays far from its wrap (268 s) at power-on, as on the chip.
 pub fn sweep_offset(j: u32) -> u32 {
     j.wrapping_mul(0x9E37_79B9) & 0x0FFF_FFF8
 }
 
-/// `--sweep N`: runs this test binary again N times with the same other
-/// arguments, each with the system timer of every emulated chip starting
-/// elsewhere (`TC32EMU_TICK_OFFSET`, `sweep_offset`), one run after the
-/// other; prints each run's output and then which runs failed where, with
-/// the command that repeats one. `None` without `--sweep` (a plain run).
-///
-/// A firmware draws its random advertising delays, back-offs and jitter
-/// from a seed stirred with the system timer, so another start of the timer
-/// gives other draws and so another timing of the same code: what a change
-/// of code layout does (CI's build put the advertising, and with it the
-/// connection, elsewhere than a local one, and a test that depended on where
-/// failed only there). The plain run is offset 0.
 pub fn sweep_main(argv: &[String], cargo_alias: &str) -> Option<i32> {
     use std::io::BufRead;
     let i = argv.iter().position(|x| x == "--sweep")?;
@@ -414,7 +356,6 @@ pub fn sweep_main(argv: &[String], cargo_alias: &str) -> Option<i32> {
         if let Some(out) = child.stdout.take() {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
                 println!("{line}");
-                // libtest's line of a failed test: `test NAME ... FAILED[, why]`
                 if let Some(name) = line.strip_prefix("test ").and_then(|l| l.split_once(" ... FAILED")).map(|(n, _)| n) {
                     failed.push(name.to_string());
                 }
@@ -442,7 +383,6 @@ pub fn sweep_main(argv: &[String], cargo_alias: &str) -> Option<i32> {
     Some(if bad > 0 { 1 } else { 0 })
 }
 
-/// The test binary's main: list or run, print, exit code.
 pub fn main_with(argv: &[String]) -> i32 {
     if let Some(code) = sweep_main(argv, "spec") {
         return code;
@@ -472,24 +412,17 @@ pub fn main_with(argv: &[String]) -> i32 {
     drive(&a, "zigbee", &meta, &mut |on| run(&a, on))
 }
 
-/// What the reports need of a test.
 pub struct TestMeta {
     pub id: &'static str,
-    /// the module the test is in (its area)
     pub module: &'static str,
     pub doc: &'static str,
     pub clause: &'static str,
     pub req: &'static str,
     pub mandatory: bool,
-    /// "shall", "should" (a failure is a NOTE) or "reading" (it depends on how the clause is read: NOTE too)
     pub level: &'static str,
     pub ambiguous: Option<&'static str>,
 }
 
-/// How a verdict counts in the red/green run without a baseline: PASS is `ok`,
-/// FAIL and ERROR are `FAILED`, the rest (the clause could not be judged on
-/// this image) `ignored`. With a baseline ([`Expect`]) see [`status`].
-/// The status word in libtest's colours: ok green, FAILED red, ignored yellow.
 fn paint(st: &str, color: bool) -> String {
     if !color {
         return st.to_string();
@@ -510,16 +443,10 @@ pub fn libtest_status(v: Verdict) -> &'static str {
     }
 }
 
-/// A test that never ran: its session could not start (the image did not boot
-/// or join) or was lost before it. Never an expected verdict.
 pub fn not_run(o: &Outcome) -> bool {
     o.obs.starts_with(NOT_STARTED) || o.obs.starts_with(NOT_RUN)
 }
 
-/// The status of an outcome in the red/green run: a test that did not run is
-/// `FAILED`; with a baseline a verdict is `ok` (PASS as expected), `ignored`
-/// (another verdict, as expected) or `FAILED` (not what the baseline says, in
-/// either direction); without one [`libtest_status`].
 pub fn status(o: &Outcome, expect: Option<&Expect>) -> &'static str {
     if not_run(o) {
         return "FAILED";
@@ -532,7 +459,6 @@ pub fn status(o: &Outcome, expect: Option<&Expect>) -> &'static str {
     }
 }
 
-/// One line of a baseline: a test expected not to PASS, and why.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExpectEntry {
     pub id: String,
@@ -540,23 +466,14 @@ pub struct ExpectEntry {
     pub reason: String,
 }
 
-/// The committed verdicts a run must match (`--expect`, emulator/rs/scenarios/expect/*.txt).
-/// One line per test that is expected NOT to pass: `TEST-ID  VERDICT  reason`
-/// (VERDICT one of FAIL, N/A, INCONCLUSIVE, NOTE, ERROR; the reason says why:
-/// a deviation, not applicable by design, a known red test). Every test not
-/// listed is expected to PASS. `#` starts a comment line. Any difference from
-/// the file fails the run, a test that newly passes too, so that the file
-/// always says what the image does.
 #[derive(Clone, Debug, Default)]
 pub struct Expect {
     pub path: PathBuf,
-    /// the comment lines at the top, kept by --write-expect
     pub header: Vec<String>,
     pub entries: Vec<ExpectEntry>,
 }
 
 const EXPECT_VERDICTS: [&str; 5] = ["FAIL", "N/A", "INCONCLUSIVE", "NOTE", "ERROR"];
-/// The reason --write-expect gives a new entry; a baseline with it is not accepted.
 const TODO: &str = "TODO";
 
 impl Expect {
@@ -604,7 +521,6 @@ impl Expect {
         Expect::parse(path, &text)
     }
 
-    /// The verdict expected of a test: its entry's, else PASS.
     pub fn want(&self, id: &str) -> &str {
         self.entries.iter().find(|e| e.id == id).map_or("PASS", |e| e.verdict.as_str())
     }
@@ -613,7 +529,6 @@ impl Expect {
         self.entries.iter().find(|e| e.id == id)
     }
 
-    /// What is wrong with the file itself: tests that do not exist, reasons still to be written.
     pub fn problems(&self, meta: &[TestMeta]) -> Vec<String> {
         let mut v = Vec::new();
         for e in &self.entries {
@@ -627,9 +542,6 @@ impl Expect {
         v
     }
 
-    /// The baseline after this run: the outcomes' verdicts for the tests that
-    /// ran (a reason kept where the verdict stayed, `TODO: observation` where it
-    /// changed), every other entry as it was; in the order of `meta`.
     pub fn updated(&self, meta: &[TestMeta], out: &[Outcome]) -> Expect {
         let mut entries = Vec::new();
         for t in meta {
@@ -667,13 +579,10 @@ impl Expect {
     }
 }
 
-/// The baselines' directory: emulator/rs/scenarios/expect.
 pub fn expect_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("expect")
 }
 
-/// Where `--expect` points: a bare name is expect/NAME.txt, a path is taken
-/// from the current directory, else from the repository root.
 fn expect_path(v: &str) -> PathBuf {
     let p = PathBuf::from(v);
     if !v.contains('/') && !v.ends_with(".txt") {
@@ -685,9 +594,6 @@ fn expect_path(v: &str) -> PathBuf {
     p
 }
 
-/// The baseline of this run: `--expect`, else on the default image (the
-/// dimmable bulb's target/tc32) expect/<suite>-dimm.txt, unless --no-expect,
-/// --matrix or --list.
 fn expect_of(a: &Args, suite: &str) -> Result<Option<Expect>, String> {
     if a.no_expect || a.list || (a.matrix && a.expect.is_none()) {
         return Ok(None);
@@ -724,14 +630,6 @@ fn expect_of(a: &Args, suite: &str) -> Result<Option<Expect>, String> {
     Expect::load(path).map(Some)
 }
 
-/// List, run and report, shared by the Zigbee (`suite` "zigbee") and the BLE
-/// ("ble") test binaries. Without --matrix: libtest's format; exit 1 on a test
-/// that did not run, on a run where no test passed, and on any FAIL or ERROR,
-/// or, with a baseline (`--expect`, by default expect/<suite>-dimm.txt on the
-/// default image), on any verdict other than the baseline's. With --matrix:
-/// the conformance report over all images (FAILs of stock and C are findings,
-/// not a broken run: exit 1 only on ERROR, on a session that could not start
-/// and on an image where no test passed).
 pub fn drive(a: &Args, suite: &str, meta: &[TestMeta], run: &mut dyn FnMut(&mut dyn FnMut(&Outcome)) -> Vec<Outcome>) -> i32 {
     let names: Vec<String> =
         a.images.iter().flat_map(|img| meta.iter().map(move |t| format!("{}::{}", img.label, t.id))).collect();
@@ -755,7 +653,6 @@ pub fn drive(a: &Args, suite: &str, meta: &[TestMeta], run: &mut dyn FnMut(&mut 
         }
     };
     let ex = if a.write_expect { None } else { expect.as_ref() };
-    // --write-expect takes every verdict as it comes; only a test that did not run fails that run
     let st = |o: &Outcome| -> &'static str {
         match (a.write_expect, not_run(o), o.verdict) {
             (true, true, _) => "FAILED",
@@ -798,7 +695,6 @@ pub fn drive(a: &Args, suite: &str, meta: &[TestMeta], run: &mut dyn FnMut(&mut 
         })
     };
     let count = |os: &[&Outcome], v: Verdict| os.iter().filter(|o| o.verdict == v).count();
-    // images on which nothing passed, or a session never started: the run says nothing about them
     let mut broken: Vec<String> = Vec::new();
     for l in &labels {
         let mine: Vec<&Outcome> = out.iter().filter(|o| o.image == *l).collect();
@@ -927,8 +823,6 @@ pub fn json_str(s: &str) -> String {
     o
 }
 
-/// `{"label": {"TEST-ID": {"verdict": ..., "obs": ..., "sim_s": ...}}}`, the shape of
-/// spec_suite.py --json `results`.
 pub fn outcomes_json(labels: &[&str], out: &[Outcome]) -> String {
     let mut s = String::from("{\n");
     for (k, l) in labels.iter().enumerate() {
@@ -950,7 +844,6 @@ pub fn outcomes_json(labels: &[&str], out: &[Outcome]) -> String {
     s
 }
 
-/// `[{"id", "module", "doc", "clause", "req", "mandatory", "level", "ambiguous"}]`: what each test checks.
 pub fn meta_json(meta: &[TestMeta]) -> String {
     let mut s = String::from("[\n");
     for (k, t) in meta.iter().enumerate() {
@@ -1010,11 +903,9 @@ mod tests {
         assert_eq!(st(&out("A-01", Verdict::NotApplicable, "")), "ignored");
         assert_eq!(st(&out("B-02", Verdict::Fail, "")), "ignored");
         assert_eq!(st(&out("C-03", Verdict::Pass, "")), "ok");
-        // either direction is a difference
         assert_eq!(st(&out("A-01", Verdict::Pass, "")), "FAILED");
         assert_eq!(st(&out("C-03", Verdict::Inconclusive, "")), "FAILED");
         assert_eq!(st(&out("C-03", Verdict::NotApplicable, "")), "FAILED");
-        // a test that did not run fails even where the baseline expects INCONCLUSIVE
         let lost = Expect::parse("x.txt".into(), "C-03 INCONCLUSIVE why").unwrap();
         assert_eq!(status(&out("C-03", Verdict::Inconclusive, &format!("{NOT_STARTED}no join")), Some(&lost)), "FAILED");
         assert_eq!(status(&out("C-03", Verdict::Inconclusive, &format!("{NOT_RUN}lost")), None), "FAILED");
@@ -1028,7 +919,6 @@ mod tests {
         let p = e.problems(&m);
         assert_eq!(p.len(), 2, "{p:?}");
         assert!(p[0].contains("GONE-01") && p[1].contains("B-02"));
-        // A-01 kept with its reason, B-02 passes now, C-03 is new, D-04 was not run and keeps no entry
         let n = e.updated(&m, &[out("A-01", Verdict::NotApplicable, "x"), out("B-02", Verdict::Pass, ""),
                                 out("C-03", Verdict::Inconclusive, "nothing seen")]);
         let got: Vec<(&str, &str, &str)> =

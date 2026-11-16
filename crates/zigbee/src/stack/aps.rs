@@ -1,7 +1,3 @@
-//! Application support sublayer: data frames with duplicate rejection and
-//! acknowledgements, group addressing, and the security commands (Transport
-//! Key, Switch Key, Request Key, Verify Key, Confirm Key).
-
 use super::frag::{Addressing, SINGLE_MAX};
 use super::gp::{CLUSTER_GP, GP_ENDPOINT, PROFILE_GP};
 use super::diag::k;
@@ -15,7 +11,6 @@ use crate::util::{due, Buf, Reader};
 pub(crate) const PROFILE_ZDO: u16 = 0x0000;
 pub(crate) const PROFILE_HA: u16 = 0x0104;
 pub(crate) const PROFILE_WILDCARD: u16 = 0xFFFF;
-/// The light's endpoint.
 pub(crate) const ENDPOINT: u8 = 1;
 
 const CMD_TRANSPORT_KEY: u8 = 0x05;
@@ -30,18 +25,10 @@ const CMD_CONFIRM_KEY: u8 = 0x10;
 const KEY_NETWORK: u8 = 0x01;
 const KEY_TC_LINK: u8 = 0x04;
 
-/// What APS security adds to a frame: the auxiliary header (control, frame
-/// counter, extended source) and the integrity code.
 pub(crate) const SECURITY_OVERHEAD: usize = 13 + crypto::MIC_LEN;
 
-/// How long a frame is remembered for the rejection of its duplicates: as
-/// long as its sender may go on repeating it, which is apscMaxFrameRetries
-/// (3) times, apscAckWaitDuration (1.6 s) apart (R22 2.2.8.4.2, 2.2.8.4.4),
-/// and one such wait on top for the time the copies take to arrive.
 const DUPLICATE_MS: u32 = 6_400;
 
-/// The key an APS frame is secured with, from its key identifier: the link
-/// key itself, or the key-transport or key-load key derived from it.
 fn aps_key(link: &[u8; 16], key_id: u8) -> Option<[u8; 16]> {
     match key_id {
         0 => Some(*link),
@@ -92,11 +79,9 @@ impl<H: Hal> Stack<H> {
         let counter = r.u8()?;
         let unicast = delivery == 0 && !nwk::is_broadcast(h.dst);
         if fc & 0x80 != 0 {
-            // extended header: a block of a fragmented transfer
             let kind = r.u8()? & 3;
             let block = if kind != 0 { r.u8()? } else { 0 };
             if kind != 0 {
-                // (fragments of an encrypted transfer are not supported)
                 if !unicast || fc & 0x20 != 0 {
                     return None;
                 }
@@ -104,8 +89,6 @@ impl<H: Hal> Stack<H> {
                 return self.on_fragment(a, kind, block, r.rest());
             }
         }
-        // Data encrypted with a link key: the only link key this node has is
-        // the Trust Center's, so only the Trust Center can send such frames.
         let mut plain = [0u8; 96];
         let secured = fc & 0x20 != 0;
         let payload = if secured {
@@ -131,16 +114,12 @@ impl<H: Hal> Stack<H> {
         if unicast && self.aps_duplicate(h.src, counter) {
             return None;
         }
-        // what was asked under encryption is answered under encryption
         self.reply_secured = secured;
         self.aps_deliver(h.src, dst_ep, src_ep, cluster, profile, payload, unicast);
         self.reply_secured = false;
         Some(())
     }
 
-    /// Verifies and decrypts the payload of a data frame secured with the
-    /// Trust Center link key. `p` is the whole APS frame, its header
-    /// `header_len` bytes long. Returns the payload's length in `out`.
     fn aps_unsecure(&mut self, h: &nwk::Header, p: &[u8], header_len: usize, out: &mut [u8; 96]) -> Option<usize> {
         let mut a = Reader::new(p.get(header_len..)?);
         let sc = a.u8()?;
@@ -148,9 +127,7 @@ impl<H: Hal> Stack<H> {
         let ext = if sc & 0x20 != 0 { a.u64()? } else { self.nib.tc_ext };
         let aux_len = a.pos();
         let cipher = a.rest();
-        // data key (key identifier 0) of the Trust Center
         if ext != self.nib.tc_ext || h.src != 0x0000 {
-            // the only link key this node holds is the Trust Center's
             self.diag.add(k::APS_UNAUTHORIZED_KEY);
             return None;
         }
@@ -179,13 +156,9 @@ impl<H: Hal> Stack<H> {
         Some(len)
     }
 
-    /// Appends the auxiliary header, the encrypted payload and the MIC to an
-    /// APS frame whose header is in `f` (security bit set), using the Trust
-    /// Center link key as data key.
     pub(crate) fn aps_secure(&mut self, f: &mut Buf, payload: &[u8]) {
         let counter = self.next_aps_fc();
         let aux_at = f.len();
-        // data key (key id 0), extended nonce, level 5
         f.u8(0x25);
         f.u32(counter);
         f.u64(self.ext);
@@ -202,13 +175,11 @@ impl<H: Hal> Stack<H> {
         f.set(aux_at, 0x20);
     }
 
-    /// Hands a complete application payload to the endpoint it is for.
     pub(crate) fn aps_deliver(&mut self, src: u16, dst_ep: u8, src_ep: u8, cluster: u16, profile: u16, payload: &[u8], unicast: bool) {
         match (dst_ep, profile) {
             (0, PROFILE_ZDO) => self.on_zdo(src, cluster, payload, unicast),
             (ENDPOINT, PROFILE_HA | PROFILE_WILDCARD) => self.on_zcl(src, src_ep, ENDPOINT, cluster, payload, unicast),
             (0xFF, PROFILE_HA | PROFILE_WILDCARD) => {
-                // every endpoint with the cluster; none has it: the light's answers
                 let mut served = false;
                 for ep in core::iter::once(ENDPOINT).chain(super::objects::ENDPOINTS) {
                     if self.clusters_of(ep).contains(&cluster) {
@@ -230,8 +201,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// An APS acknowledgement; only those of fragments matter (nothing else
-    /// we send asks for one).
     fn on_aps_ack(&mut self, h: &nwk::Header, p: &[u8]) -> Option<()> {
         let mut r = Reader::new(p);
         let fc = r.u8()?;
@@ -239,7 +208,6 @@ impl<H: Hal> Stack<H> {
             return None;
         }
         if fc & 0x10 == 0 {
-            // data acknowledgement format: endpoints, cluster and profile
             r.skip(6)?;
         }
         let counter = r.u8()?;
@@ -252,8 +220,6 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    /// True when this (source, counter) was seen a moment ago: a retry of a
-    /// frame whose acknowledgement got lost.
     fn aps_duplicate(&mut self, src: u16, counter: u8) -> bool {
         let now = self.hal.now_ms();
         let mut slot = 0;
@@ -275,15 +241,10 @@ impl<H: Hal> Stack<H> {
         false
     }
 
-    /// Unicast or broadcast data from one of our endpoints.
     pub(crate) fn aps_data(&mut self, dst: u16, dst_ep: u8, cluster: u16, profile: u16, src_ep: u8, payload: &[u8]) {
         self.aps_counter = self.aps_counter.wrapping_add(1);
-        // What was asked under the link key is answered under it, whatever
-        // the length of the answer: security takes room, and what no longer
-        // fits one frame goes in blocks like any long payload.
         let secure = self.reply_secured && dst == 0x0000;
         if payload.len() > if secure { SINGLE_MAX - SECURITY_OVERHEAD } else { SINGLE_MAX } {
-            // too long for one frame: in blocks, to one node only
             if !nwk::is_broadcast(dst) {
                 let a = Addressing { peer: dst, dst_ep, src_ep, cluster, profile, counter: self.aps_counter };
                 self.send_fragmented(a, payload, secure);
@@ -307,7 +268,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Data to a group.
     pub(crate) fn aps_group(&mut self, group: u16, cluster: u16, profile: u16, src_ep: u8, payload: &[u8]) {
         let mut f = Buf::new();
         f.u8(0x0C);
@@ -322,8 +282,6 @@ impl<H: Hal> Stack<H> {
             self.nwk_data(APS_BROADCAST_RX_ON, f.as_slice());
         }
     }
-
-    // ------------------------------------------------------------ commands
 
     fn on_aps_command(&mut self, h: &nwk::Header, p: &[u8]) -> Option<()> {
         let fc = *p.first()?;
@@ -345,24 +303,12 @@ impl<H: Hal> Stack<H> {
             let aad = &aad[..2 + aux_len];
             let nonce = nwk::nonce(ext, counter, sc_calc);
             let work = body.get_mut(..cipher.len())?;
-            // Who may send this node a secured command (R22 4.4.1.3): in a
-            // network with a Trust Center, the Trust Center alone, under the
-            // link key shared with it; in a network without one, nobody
-            // (there are no key updates there, 4.6.3.4). While this node is
-            // joining by association it does not know yet which kind of
-            // network it is (the address is 0), and its parent may be the
-            // one to hand it the key.
             let tc = self.nib.tc_ext;
             let joining = self.state == State::WaitKey && tc == 0;
             if !joining && (tc == super::NO_TRUST_CENTER || ext != tc) {
-                // no key of ours is authorised for this sender
                 self.diag.add(k::APS_UNAUTHORIZED_KEY);
                 return None;
             }
-            // The key in use; while joining, the key the routers of a
-            // network without a Trust Center use; the key received and not
-            // yet confirmed; and while joining, the key of this device's
-            // install code.
             let installed = self.identity.install_code.map(|code| crypto::install_code_key(&code));
             let links = [
                 Some(self.nib.tclk),
@@ -381,7 +327,6 @@ impl<H: Hal> Stack<H> {
                 plain = crypto::ccm_decrypt(&Aes128::with_engine(&key, H::AES), &nonce, aad, work);
                 if plain.is_some() {
                     if i == 3 {
-                        // the Trust Center knows the install code: its key is the link key from here on
                         self.nib.tclk = *link;
                     }
                     unconfirmed = i == 2;
@@ -393,15 +338,6 @@ impl<H: Hal> Stack<H> {
                 self.diag.add(k::APS_DECRYPT_FAILURES);
                 return None;
             };
-            // The incoming frame counter belongs to the link key and starts
-            // at 0 with a new one (BDB 10.2.5 step 9): a frame under the key
-            // just received is not held to the counter of the key in use,
-            // which goes on guarding the frames still sent under that one.
-            // (An association starts the count anew; a rejoin does not, so
-            // a key transport recorded earlier cannot be played back to a
-            // node waiting for the key again. The count is not kept through
-            // a power cycle: a Trust Center that lost its own, as after a
-            // coordinator is replaced, would otherwise never be heard again.)
             if !unconfirmed {
                 if counter < self.tc_fc_next {
                     self.stats.replays = self.stats.replays.wrapping_add(1);
@@ -420,22 +356,6 @@ impl<H: Hal> Stack<H> {
         match r.u8()? {
             CMD_TRANSPORT_KEY => {
                 let key_type = r.u8()?;
-                // A key without APS encryption is taken in one case only: the
-                // Trust Center's broadcast of the next network key to a node
-                // that is on the network (R22 4.4.1.5, 4.6.3.4.1), which has
-                // to name the Trust Center as its sender (NWK source 0x0000
-                // here, its address in the key's source field below; 4.4.1.3).
-                // Such a frame has the security of the network layer alone.
-                // That shows that whoever sent or passed it on holds the
-                // current network key, and nothing more: any node of the
-                // network can write the Trust Center's addresses into it.
-                // It is as much as the Switch Key that follows ever has, and
-                // a node with the network key reads and forges all traffic
-                // as it is. What must stay impossible is a key from someone
-                // who is not on the network: while joining (no network
-                // security yet) the key has to come under the link key. And
-                // a network without a Trust Center has no key updates at all
-                // (4.6.3.4).
                 let broadcast_update = key_type == KEY_NETWORK
                     && self.state == State::Up
                     && h.security
@@ -455,9 +375,6 @@ impl<H: Hal> Stack<H> {
                             return None;
                         }
                         if self.state == State::WaitKey {
-                            // the key names the Trust Center; a node that
-                            // comes back by a rejoin knows it already, and
-                            // takes the key from no other (4.4.1.3)
                             if self.nib.tc_ext != 0 && src != self.nib.tc_ext {
                                 return None;
                             }
@@ -467,16 +384,10 @@ impl<H: Hal> Stack<H> {
                             let now = self.hal.now_ms();
                             self.network_up(now);
                         } else if self.state == State::Up && seq != self.nib.key_seq && src == self.nib.tc_ext {
-                            // key update, from the Trust Center by what it
-                            // says of its source too (4.4.1.3): keep it
-                            // until the Switch Key, or until someone is
-                            // heard using it
                             self.nib.alt_key = key;
                             self.nib.alt_seq = seq;
                             self.nib.alt_valid = true;
                             self.nib.alt_old = false;
-                            // nobody has used this key yet, whatever was heard
-                            // under its sequence number before (R22 4.6.3.4.2)
                             for n in self.neighbors.iter_mut().filter(|n| n.fc_seq == seq) {
                                 n.fc_next = 0;
                             }
@@ -489,8 +400,6 @@ impl<H: Hal> Stack<H> {
                     KEY_TC_LINK => {
                         let key = r.key()?;
                         if self.state == State::Up && matches!(self.tclk_step, 3 | 4) {
-                            // the key in use again is no new key: the
-                            // exchange has failed (BDB 10.2.5 step 9)
                             if key == self.nib.tclk {
                                 self.tclk_refused();
                                 return None;
@@ -504,12 +413,7 @@ impl<H: Hal> Stack<H> {
                     _ => {}
                 }
             }
-            // The commands below name no sender and need no APS
-            // encryption: they are the Trust Center's when they come from
-            // its network address (R22 4.4.1.3), and a network without a
-            // Trust Center has none of them.
             CMD_TUNNEL => {
-                // only the Trust Center tunnels keys, and only inside the network's security
                 let ext = r.u64()?;
                 if self.state == State::Up && h.security && from_tc {
                     self.on_tunnel(ext, r.rest());
@@ -533,7 +437,6 @@ impl<H: Hal> Stack<H> {
                 if secured && matches!(self.tclk_step, 5 | 6) && status == 0 && key_type == KEY_TC_LINK {
                     self.nib.tclk = self.nib.tclk_new;
                     self.nib.tclk_state = 2;
-                    // the new key's frame counter starts at 0 (R22 4.4.8.2.3 step 9)
                     self.tc_fc_next = 0;
                     self.store_network();
                     self.tclk_step = 0;
@@ -545,9 +448,6 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    /// Makes the network key that was to come the active one. The key in use
-    /// until now stays as the alternate: frames under it are still read
-    /// (R22 4.7.3.10.6), nothing is sent under it any more.
     pub(crate) fn switch_network_key(&mut self) {
         core::mem::swap(&mut self.nib.key, &mut self.nib.alt_key);
         core::mem::swap(&mut self.nib.key_seq, &mut self.nib.alt_seq);
@@ -557,10 +457,6 @@ impl<H: Hal> Stack<H> {
         self.log_event(super::diag::ev::KEY_SWITCH, self.nib.key_seq as u16, 0);
     }
 
-    /// Transport Key for a device that joined through this router on a
-    /// network without a Trust Center: the routers hand out the network key
-    /// themselves, encrypted with the key-transport key of the distributed
-    /// link key, in an unsecured NWK frame.
     pub(crate) fn distribute_key(&mut self, short: u16, ext: u64) {
         let mut body = Buf::new();
         body.u8(CMD_TRANSPORT_KEY);
@@ -575,7 +471,6 @@ impl<H: Hal> Stack<H> {
         let mut f = Buf::new();
         f.u8(0x21);
         f.u8(self.aps_counter);
-        // key-transport key (key id 2), extended nonce, level 5
         let aux_at = f.len();
         f.u8(0x35);
         f.u32(counter);
@@ -593,8 +488,6 @@ impl<H: Hal> Stack<H> {
         self.transmit_nwk(short, &h, f.as_slice());
     }
 
-    /// Sends an APS command to the Trust Center, encrypted with the link key
-    /// when `secure`.
     pub(crate) fn aps_command(&mut self, payload: &[u8], secure: bool) {
         let mut f = Buf::new();
         self.aps_counter = self.aps_counter.wrapping_add(1);
@@ -617,7 +510,6 @@ impl<H: Hal> Stack<H> {
         self.aps_command(&[CMD_REQUEST_KEY, KEY_TC_LINK], true);
     }
 
-    /// Proves possession of the new link key: its hash, keyed with 0x03.
     pub(crate) fn aps_verify_key(&mut self) {
         let mut p = Buf::new();
         p.u8(CMD_VERIFY_KEY);

@@ -1,8 +1,3 @@
-//! Just enough JSON for the scenarios that exchange data with Node
-//! (emulator/ble_diag_sim.py): parsing as Python's json.loads does (integers
-//! stay integers) and printing as json.dumps does with its defaults
-//! (", " / ": " separators, ensure_ascii).
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum J {
     Null,
@@ -17,7 +12,6 @@ pub enum J {
 static NULL: J = J::Null;
 
 impl J {
-    /// `d[k]` (Null when absent; the scripts only read keys that exist).
     pub fn get(&self, k: &str) -> &J {
         match self {
             J::Obj(v) => v.iter().find(|(x, _)| x == k).map(|(_, j)| j).unwrap_or(&NULL),
@@ -48,7 +42,6 @@ impl J {
         }
     }
 
-    /// `== n` in Python (True == 1 too).
     pub fn eq_num(&self, n: f64) -> bool {
         self.num() == Some(n)
     }
@@ -60,7 +53,6 @@ impl J {
         }
     }
 
-    /// Python truthiness.
     pub fn truthy(&self) -> bool {
         match self {
             J::Null => false,
@@ -77,7 +69,6 @@ impl J {
         matches!(self, J::Null)
     }
 
-    /// `str(value)` of the decoded Python object (for f-strings).
     pub fn py_str(&self) -> String {
         match self {
             J::Null => "None".into(),
@@ -89,7 +80,6 @@ impl J {
         }
     }
 
-    /// `repr(value)`.
     pub fn py_repr(&self) -> String {
         match self {
             J::Str(s) => crate::py::str_repr(s),
@@ -102,7 +92,6 @@ impl J {
         }
     }
 
-    /// `json.dumps(value)`.
     pub fn dumps(&self) -> String {
         match self {
             J::Null => "null".into(),

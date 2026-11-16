@@ -1,13 +1,3 @@
-//! Harness of the BLE conformance tests, a port of emulator/spec_ble/harness.py.
-//!
-//! A session boots one image with nothing else on the 802.15.4 air and gives
-//! the tests an advertising bulb; `connect` makes a connection with the
-//! scripted central of the emulator (zbnode's blespec, driven by the same BS
-//! commands the Python suite sends over the zbnode protocol). The host side of
-//! the central is here: L2CAP recombination, the attribute client, signalling.
-//!
-//! Nothing here encodes an expectation: verdicts come only from the tests.
-
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -77,14 +67,11 @@ fn pi(s: &str) -> i64 {
     s.parse().unwrap_or(0)
 }
 
-// ------------------------------------------------------------------ packets
-/// An advertising channel packet the bulb sent: start time, channel index, PDU.
 #[derive(Clone, Debug)]
 pub struct AdvPkt {
     pub ms: f64,
     pub ch: u8,
     pub pdu: Vec<u8>,
-    /// ms from the packet's start to the stop of a transmission the firmware stopped
     pub cut: Option<f64>,
 }
 
@@ -119,13 +106,11 @@ impl AdvPkt {
     pub fn airtime_ms(&self) -> f64 {
         (1 + 4 + 2 + self.pdu[1] as usize + 3) as f64 * 8.0 / 1000.0
     }
-    /// `repr()` in Python.
     pub fn repr(&self) -> String {
         format!("<adv {:.3} ch{} {}>", self.ms, self.ch, hx(&self.pdu))
     }
 }
 
-/// A data channel PDU of the bulb as the central heard it.
 #[derive(Clone, Debug)]
 pub struct Pdu {
     pub i: usize,
@@ -174,7 +159,6 @@ impl Pdu {
             None
         }
     }
-    /// `repr()` in Python.
     pub fn repr(&self) -> String {
         let what = if self.empty() {
             format!("empty {}", hx(self.payload()))
@@ -199,7 +183,6 @@ impl Pdu {
     }
 }
 
-/// An L2CAP frame recombined from the bulb's LL data PDUs.
 #[derive(Clone, Debug)]
 pub struct L2Frame {
     pub t: f64,
@@ -218,7 +201,6 @@ impl L2Frame {
     }
 }
 
-/// What the central sent in one packet (a line of BSLOG).
 #[derive(Clone, Debug)]
 pub struct CentralTx {
     pub ms: f64,
@@ -233,8 +215,6 @@ pub struct CentralTx {
     pub lost: bool,
 }
 
-/// `TX_RE` of harness.py on a BSLOG line without its first two characters:
-/// `[   12.345] tx  ev   3 ch  7 -> [NESN1 SN0 MD0 len  0] what`.
 fn parse_tx(s: &str) -> Option<CentralTx> {
     let s = s.strip_prefix('[')?;
     let (ms, rest) = s.split_once(']')?;
@@ -271,8 +251,6 @@ fn parse_tx(s: &str) -> Option<CentralTx> {
     })
 }
 
-/// Channel Selection Algorithm #1 (Vol 6 Part B 4.5.8.2): the data channel of
-/// n consecutive events, starting after unmapped channel `last`.
 pub fn csa1(hop: i64, chm: &[u8], n: usize, last: i64) -> (Vec<i64>, i64) {
     let used: Vec<i64> = (0..37).filter(|ch| chm[(*ch >> 3) as usize] >> (ch & 7) & 1 != 0).collect();
     let mut out = Vec::new();
@@ -284,7 +262,6 @@ pub fn csa1(hop: i64, chm: &[u8], n: usize, last: i64) -> (Vec<i64>, i64) {
     (out, last)
 }
 
-/// AD structures (Vol 3 Part C 11): [(type, value)], and a list of syntax problems.
 pub fn parse_ad(data: &[u8]) -> (Vec<(u8, Vec<u8>)>, Vec<String>) {
     let (mut out, mut bad, mut i) = (Vec::new(), Vec::new(), 0usize);
     while i < data.len() {
@@ -305,8 +282,6 @@ pub fn parse_ad(data: &[u8]) -> (Vec<(u8, Vec<u8>)>, Vec<String>) {
     (out, bad)
 }
 
-// ------------------------------------------------------------------ link state
-/// The central's state (BSSTATE), kept as text with typed accessors.
 #[derive(Clone, Debug, Default)]
 pub struct LinkSt(pub HashMap<String, String>);
 
@@ -331,7 +306,6 @@ impl LinkSt {
     }
 }
 
-/// How the host side of the central answers a Connection Parameter Update Request.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ParamReq {
     Reject,
@@ -339,7 +313,6 @@ pub enum ParamReq {
     Ignore,
 }
 
-/// Options of a connection: the keys of BSCENTRAL plus the host's behaviour.
 #[derive(Clone, Debug)]
 pub struct LinkOpts {
     pub kv: Vec<(String, String)>,
@@ -357,8 +330,6 @@ impl LinkOpts {
     pub fn new() -> LinkOpts {
         LinkOpts::default()
     }
-    /// A BSCENTRAL option (interval, latency, timeout, hop, winsize, winoffset,
-    /// anchor, maxexch, after, scan, version, features, llauto, noack, sca, lead, llrules).
     pub fn set(mut self, k: &str, v: impl ToString) -> Self {
         let v = v.to_string();
         match self.kv.iter_mut().find(|(x, _)| x == k) {
@@ -386,7 +357,6 @@ impl LinkOpts {
     }
 }
 
-/// A connection as the scripted central sees it.
 pub struct Link {
     pub opts: LinkOpts,
     pub pdus: Vec<Pdu>,
@@ -401,8 +371,6 @@ pub struct Link {
     asm: Option<(Vec<u8>, Pdu, Pdu)>,
     pub mtu: usize,
     pub st: LinkSt,
-    /// `connect_rx_mtu`: the central answers the server's ATT_EXCHANGE_MTU_REQ with this
-    /// Client Rx MTU (and with `hold` only when the test releases it)
     pub rx_mtu: Option<(u16, bool)>,
     pub mtu_held: bool,
 }
@@ -418,7 +386,6 @@ impl Link {
     }
 }
 
-// ------------------------------------------------------------------ session
 pub struct BleSession {
     pub w: World,
     spec: blespec::Spec,
@@ -437,7 +404,6 @@ fn emu(e: String) -> Stop {
     Stop::Error(e)
 }
 
-/// The defaults of a Link (`Link.__init__`), in their order.
 fn link_defaults() -> LinkOpts {
     LinkOpts::new()
         .set("interval", 24)
@@ -453,7 +419,6 @@ fn link_defaults() -> LinkOpts {
 impl BleSession {
     pub fn new(image: &Image, cpi: i64, log: Option<Log>, boot_ms: f64) -> R<BleSession> {
         let node = image.node(cpi).map_err(emu)?;
-        // no Trust Center: the bulb is alone on the 802.15.4 air (an empty Medium in Python)
         let coord = Coord::new(11, NWK_KEY);
         let mut w = World::new(node, coord, Keys::default(), log);
         w.air.nodes.retain(|n| *n != NodeId::Coord);
@@ -475,7 +440,6 @@ impl BleSession {
         Ok(s)
     }
 
-    // ---- the BS commands (zbnode protocol, in-process)
     fn bs_raw(&mut self, line: &str) -> String {
         let f: Vec<String> = line.split_whitespace().map(String::from).collect();
         let mut out = String::new();
@@ -484,7 +448,6 @@ impl BleSession {
         out
     }
 
-    /// A command answered with one line; its fields. ERROR stops the test.
     pub fn bs(&mut self, line: &str) -> R<Vec<String>> {
         let out = self.bs_raw(line);
         let first = out.lines().next().unwrap_or("").to_string();
@@ -494,7 +457,6 @@ impl BleSession {
         Ok(first.split_whitespace().map(String::from).collect())
     }
 
-    /// A command answered with lines up to END.
     pub fn bs_lines(&mut self, line: &str) -> R<Vec<String>> {
         let out = self.bs_raw(line);
         let mut v = Vec::new();
@@ -510,7 +472,6 @@ impl BleSession {
         Err(Stop::Error(format!("RuntimeError: {line}: no END")))
     }
 
-    // ---- scratch space shared by the tests of a session
     pub fn note<T: Clone + 'static>(&self, k: &str) -> Option<T> {
         self.notes.get(k).and_then(|v| v.downcast_ref::<T>()).cloned()
     }
@@ -518,7 +479,6 @@ impl BleSession {
         self.notes.insert(k.to_string(), Box::new(v));
     }
 
-    // ---- time
     pub fn now(&self) -> f64 {
         self.w.now()
     }
@@ -532,7 +492,6 @@ impl BleSession {
         self.w.run_ms(t).map_err(emu)
     }
 
-    /// Runs until `cond` gives Some (checked every `step` ms) or `max_ms` passed; the last value.
     pub fn until<T>(&mut self, max_ms: f64, step: f64, mut cond: impl FnMut(&mut BleSession) -> R<Option<T>>) -> R<Option<T>> {
         let end = self.now() + max_ms;
         loop {
@@ -549,8 +508,6 @@ impl BleSession {
         self.w.resets
     }
 
-    // ---- what the radio did
-    /// Keeps the whole radio log of the node here, fetched in increments (`_rf_sync`).
     fn rf_sync(&mut self) {
         let from = self.rf_t;
         let (cmds, sent): (Vec<(f64, u8, u8)>, Vec<(f64, u8, Vec<u8>)>) = {
@@ -575,8 +532,6 @@ impl BleSession {
             t = t.max(p.0);
         }
         self.rf_t = t;
-        // A transmission the firmware stopped (0x80) before the packet was out is marked (`cut`):
-        // every send command (0x85/0x87) gives one logged packet, in order.
         let stx: Vec<f64> = self.cmds.iter().filter(|c| c.1 == 0x85 || c.1 == 0x87).map(|c| c.0).collect();
         for (ms, ch, pdu) in new {
             let mut p = AdvPkt { ms, ch, pdu, cut: None };
@@ -592,8 +547,6 @@ impl BleSession {
         }
     }
 
-    /// The firmware's commands to the BLE state machine of the radio (ms, command, channel)
-    /// and every packet it sent outside a connection, from `since` on.
     pub fn rf(&mut self, since: f64) -> (Vec<(f64, u8, u8)>, Vec<AdvPkt>) {
         self.rf_sync();
         (
@@ -602,17 +555,14 @@ impl BleSession {
         )
     }
 
-    /// Advertising channel packets (channels 37-39) from `since` on; stopped ones only with `cut`.
     pub fn adv(&mut self, since: f64, cut: bool) -> Vec<AdvPkt> {
         self.rf(since).1.into_iter().filter(|p| p.ch >= 37 && p.pdu.len() >= 2 && (cut || p.cut.is_none())).collect()
     }
 
-    /// (ms, channel) of every connection event receive window the firmware opened.
     pub fn rx_windows(&mut self, since: f64) -> Vec<(f64, u8)> {
         self.rf(since).0.into_iter().filter(|c| c.1 == 0x82).map(|c| (c.0, c.2)).collect()
     }
 
-    /// Runs until n packets of the type were sent after `since` (default: now); the packets.
     pub fn wait_adv(&mut self, n: usize, timeout_ms: f64, since: Option<f64>, typ: u8) -> R<Vec<AdvPkt>> {
         let t0 = since.unwrap_or_else(|| self.now());
         let got = |s: &mut BleSession| -> Vec<AdvPkt> { s.adv(t0, false).into_iter().filter(|p| p.ty() == typ).collect() };
@@ -620,7 +570,6 @@ impl BleSession {
         Ok(got(self))
     }
 
-    /// (AdvA as sent, TxAdd) from the bulb's ADV_IND.
     pub fn address(&mut self) -> R<(Vec<u8>, u8)> {
         if self.adva.is_none() {
             let pk = self.wait_adv(1, 5000.0, Some(0.0), 0)?;
@@ -630,7 +579,6 @@ impl BleSession {
         Ok(self.adva.clone().unwrap())
     }
 
-    /// Groups ADV_IND packets into advertising events: a new event starts when the channel index does not rise.
     pub fn events(pkts: &[AdvPkt], typ: u8) -> Vec<Vec<AdvPkt>> {
         let mut ev: Vec<Vec<AdvPkt>> = Vec::new();
         for p in pkts {
@@ -645,8 +593,6 @@ impl BleSession {
         ev
     }
 
-    // ---- scripted answers to advertising
-    /// The next n ADV_IND (on channel ch; -1 any) are answered T_IFS later with this PDU.
     pub fn adv_reply(&mut self, pdu: &[u8], n: i64, ch: i64) -> R<()> {
         self.bs(&format!("BSADVREPLY {n} {ch} {}", hx(pdu))).map(|_| ())
     }
@@ -655,7 +601,6 @@ impl BleSession {
         self.bs("BSADVREPLY 0 -1 0000").map(|_| ())
     }
 
-    /// Scripted answers that went out: (ms of the ADV_IND they answer, channel, pdu).
     pub fn adv_sent(&mut self, start: usize) -> R<Vec<(f64, i64, Vec<u8>)>> {
         Ok(self
             .bs_lines(&format!("BSADVSENT {start}"))?
@@ -675,14 +620,10 @@ impl BleSession {
         Ok(v)
     }
 
-    /// The default SCAN_REQ: ScanA 11:22:33:44:55:66 (public).
     pub fn scan_req_default(&mut self) -> R<Vec<u8>> {
         self.scan_req(None, None, &[0x66, 0x55, 0x44, 0x33, 0x22, 0x11], 0)
     }
 
-    // ---- connections
-    /// A central connects at the next ADV_IND. With wait, runs until the bulb
-    /// answered in a connection event; Inconclusive if it never does.
     pub fn connect(&mut self, o: LinkOpts) -> R<()> {
         self.connect_with(o, true, 8000.0)
     }
@@ -737,8 +678,6 @@ impl BleSession {
         Ok(())
     }
 
-    /// Ends the current connection (LL_TERMINATE_IND from the central) and waits
-    /// for advertising; SessionLost if the bulb does not advertise again.
     pub fn drop_link(&mut self, wait_adv_ms: f64) -> R<()> {
         if self.link.is_some() {
             let st = self.poll()?;
@@ -757,7 +696,6 @@ impl BleSession {
         Ok(())
     }
 
-    /// Answers a held ATT_EXCHANGE_MTU_REQ of the server (`lk.mtu_release()`).
     pub fn mtu_release(&mut self) -> R<()> {
         if self.lk().mtu_held {
             self.lk_mut().mtu_held = false;
@@ -775,8 +713,6 @@ impl BleSession {
         self.link.as_mut().expect("no link (connect first)")
     }
 
-    // ---- link state
-    /// Fetches what happened since the last call; returns the state.
     pub fn poll(&mut self) -> R<LinkSt> {
         let f = self.bs("BSSTATE")?;
         let mut st = LinkSt::default();
@@ -818,7 +754,6 @@ impl BleSession {
         self.lk().interval_ms()
     }
 
-    /// What the central sent.
     pub fn central_log(&mut self) -> R<Vec<CentralTx>> {
         let st = self.poll()?;
         if let Some(n) = st.i("log") {
@@ -836,7 +771,6 @@ impl BleSession {
         Ok(self.lk().central_tx.clone())
     }
 
-    /// (event, ms): the start of the central's first packet in each event it transmitted in.
     pub fn sent(&mut self) -> R<Vec<(i64, f64)>> {
         Ok(self
             .bs_lines("BSSENT 0")?
@@ -848,7 +782,6 @@ impl BleSession {
             .collect())
     }
 
-    /// Central packets the radio model did not deliver: (ms, channel, why).
     pub fn misses(&mut self, start: usize) -> R<Vec<(f64, i64, String)>> {
         Ok(self
             .bs_lines(&format!("BSMISSES {start}"))?
@@ -860,13 +793,6 @@ impl BleSession {
             .collect())
     }
 
-    /// The ones of `events` in which the bulb did not hear the central
-    /// because its radio was with 802.15.4 (the Zigbee side was sending, or
-    /// the main loop was away for the whole event): a combined chip's
-    /// coexistence, which costs a connection event now and then by design
-    /// (`ble::ll`, LEAD), not anything the link layer chose. A test that
-    /// needs the bulb in one particular event tries again when it lost that
-    /// event this way.
     pub fn lost_to_154(&mut self, events: &[i64]) -> R<Vec<i64>> {
         let misses = self.misses(0)?;
         let mut v: Vec<i64> = self
@@ -891,7 +817,6 @@ impl BleSession {
             .collect())
     }
 
-    // ---- the host side of the central
     fn rx(&mut self, p: Pdu) -> R<()> {
         if !p.new || p.length() == 0 {
             return Ok(());
@@ -959,7 +884,6 @@ impl BleSession {
         self.host(fr)
     }
 
-    /// What a host owes the peer without being asked by a test.
     fn host(&mut self, fr: L2Frame) -> R<()> {
         let d = fr.data.clone();
         if let Some((rx_mtu, hold)) = self.lk().rx_mtu {
@@ -994,23 +918,18 @@ impl BleSession {
         Ok(())
     }
 
-    // ---- sending
-    /// Queues an LL control PDU (opcode + CtrData).
     pub fn ll(&mut self, payload: &[u8]) -> R<()> {
         self.bs(&format!("BSLL {}", hx(payload))).map(|_| ())
     }
 
-    /// Queues one LL data PDU as it is.
     pub fn data(&mut self, llid: u8, payload: &[u8]) -> R<()> {
         self.bs(&format!("BSDATA {llid} {}", hx(payload))).map(|_| ())
     }
 
-    /// Queues an L2CAP frame (cut into 27-octet LL PDUs by the central).
     pub fn l2cap(&mut self, cid: u16, payload: &[u8]) -> R<()> {
         self.bs(&format!("BSL2CAP {cid} {}", hx(payload))).map(|_| ())
     }
 
-    /// LL_CONNECTION_UPDATE_IND; the central moves at the instant.
     #[allow(clippy::too_many_arguments)]
     pub fn update(&mut self, interval: i64, instant: i64, winsize: i64, winoffset: i64, latency: i64,
                   timeout: Option<i64>) -> R<()> {
@@ -1018,7 +937,6 @@ impl BleSession {
         self.bs(&format!("BSUPDATE {winsize} {winoffset} {interval} {latency} {timeout} {}", instant & 0xFFFF)).map(|_| ())
     }
 
-    /// LL_CHANNEL_MAP_IND; the central uses the map from the instant on.
     pub fn channel_map(&mut self, chm: &[u8], instant: i64) -> R<()> {
         self.bs(&format!("BSCHM {} {}", hx(chm), instant & 0xFFFF)).map(|_| ())
     }
@@ -1027,7 +945,6 @@ impl BleSession {
         self.bs(&format!("BSTERM {reason}")).map(|_| ())
     }
 
-    /// The central sends nothing from this event on (None: from the next one).
     pub fn silent(&mut self, event: Option<i64>) -> R<()> {
         let e = match event {
             Some(e) => e,
@@ -1040,12 +957,10 @@ impl BleSession {
         self.bs("BSSILENT off").map(|_| ())
     }
 
-    /// The central loses the bulb's first non-empty PDU of that event.
     pub fn drop_event(&mut self, event: i64) -> R<()> {
         self.bs(&format!("BSDROP {event}")).map(|_| ())
     }
 
-    /// The air between the two: lossk / lossh (millionths), ppm, jitter (us), blackout (ms).
     pub fn air(&mut self, kv: &[(&str, String)]) -> R<()> {
         let t = kv.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ");
         self.bs(&format!("BSAIR {t}")).map(|_| ())
@@ -1055,13 +970,11 @@ impl BleSession {
         self.bs("BSAIR off").map(|_| ())
     }
 
-    // ---- waiting on the link
     pub fn link_run(&mut self, ms: f64) -> R<LinkSt> {
         self.run(ms)?;
         self.poll()
     }
 
-    /// `Link.until`: polls, then evaluates cond.
     pub fn link_until<T>(&mut self, max_ms: f64, step: Option<f64>, mut cond: impl FnMut(&mut BleSession) -> R<Option<T>>)
                          -> R<Option<T>> {
         let step = step.unwrap_or_else(|| 1.0f64.max(5.0f64.min(self.interval_ms() / 2.0)));
@@ -1071,9 +984,6 @@ impl BleSession {
         })
     }
 
-    /// Runs until the central has started event k, and on to the middle of
-    /// that event's interval (`between_events`): what a test queues then goes
-    /// out in event k + 1.
     pub fn wait_event(&mut self, k: i64, max_ms: Option<f64>) -> R<i64> {
         let ev = self.event()?;
         let iv = self.interval_ms();
@@ -1084,17 +994,6 @@ impl BleSession {
         Ok(self.lk().st.event())
     }
 
-    /// Runs on to half an interval after the start of the central's latest
-    /// event, when that event's exchange is over and the next one is still
-    /// far. The event counter moves when the central sends the event's first
-    /// packet; a test that polls for it at a fixed step comes back anywhere
-    /// in the interval, on some code layouts of the bulb (where its
-    /// advertising, and so the connection, fell) between the central's first
-    /// packet and the bulb's answer. What it queued there went out in the
-    /// same event, after the answer, not in the next one
-    /// (ll_conn_more_data: "sent 0 of the 4 PDUs", the PING_REQs all in
-    /// event k; ll_ctrl_channel_map_before_instant: the map PDU in event 9,
-    /// not 10, on CI's TW image).
     pub fn between_events(&mut self) -> R<()> {
         let st = self.poll()?;
         let (Some(n), Some(now)) = (st.i("sent"), st.f("now")) else { return Ok(()) };
@@ -1108,7 +1007,6 @@ impl BleSession {
         }) else {
             return Ok(());
         };
-        // (times of the bulb's clock, as BSSTATE's now: it starts again at a reset)
         let left = t + self.interval_ms() / 2.0 - now;
         if k == st.event() && left > 0.0 {
             self.run(left)?;
@@ -1122,7 +1020,6 @@ impl BleSession {
         self.wait_event(e + n, None)
     }
 
-    /// The first LL control PDU of the bulb with one of the opcodes after index `start` in `ctrl`.
     pub fn ll_wait(&mut self, ops: &[u8], timeout_ms: f64, start: Option<usize>) -> R<Option<Pdu>> {
         let n0 = start.unwrap_or_else(|| self.lk().ctrl.len());
         let ops = ops.to_vec();
@@ -1131,8 +1028,6 @@ impl BleSession {
         })
     }
 
-    /// Sends an LL control PDU; the first of the bulb's control PDUs with one of
-    /// the opcodes, and all its control PDUs in that time.
     pub fn ll_req(&mut self, payload: &[u8], ops: &[u8], timeout_ms: f64) -> R<(Option<Pdu>, Vec<Pdu>)> {
         self.poll()?;
         let n0 = self.lk().ctrl.len();
@@ -1149,8 +1044,6 @@ impl BleSession {
         })
     }
 
-    /// Sends a signalling packet; the first signalling frame of the bulb afterwards
-    /// that is not its own Connection Parameter Update Request, or None.
     pub fn sig(&mut self, payload: &[u8], timeout_ms: f64) -> R<Option<L2Frame>> {
         self.poll()?;
         let n0 = self.lk().frames.len();
@@ -1158,12 +1051,10 @@ impl BleSession {
         self.frame_wait(CID_SIG, |f| f.data.first() != Some(&0x12), timeout_ms, Some(n0))
     }
 
-    /// A response or an error; not a notification, an indication or a request of the server.
     pub fn is_rsp(d: &[u8]) -> bool {
         !d.is_empty() && (d[0] == 0x01 || (d[0] & 1 != 0 && d[0] != 0x1B && d[0] != 0x1D))
     }
 
-    /// Sends an attribute PDU; the next response of the server, or None within the timeout.
     pub fn att(&mut self, pdu: &[u8]) -> R<Option<Vec<u8>>> {
         self.att_t(pdu, 30000.0)
     }
@@ -1176,8 +1067,6 @@ impl BleSession {
         Ok(fr.map(|f| f.data))
     }
 
-    /// Sends an attribute PDU that must not be answered; the attribute frames (other
-    /// than notifications) that came in the wait.
     pub fn att_quiet(&mut self, pdu: &[u8], wait_ms: f64) -> R<Vec<L2Frame>> {
         self.poll()?;
         let n0 = self.lk().frames.len();
@@ -1197,7 +1086,6 @@ impl BleSession {
             .collect()
     }
 
-    /// True when the bulb still answers in connection events.
     pub fn alive(&mut self, timeout_ms: f64) -> R<bool> {
         let n = self.lk().pdus.len();
         let got = self.link_until(timeout_ms, None, |s| Ok(if s.lk().pdus.len() > n { Some(()) } else { None }))?;
@@ -1205,8 +1093,6 @@ impl BleSession {
     }
 }
 
-// ------------------------------------------------------------------ attribute client helpers
-/// (request opcode, handle, error code) of an ATT_ERROR_RSP, else None.
 pub fn att_error(rsp: Option<&[u8]>) -> Option<(u8, u16, u8)> {
     let r = rsp?;
     if r.len() == 5 && r[0] == 0x01 {
@@ -1215,7 +1101,6 @@ pub fn att_error(rsp: Option<&[u8]>) -> Option<(u8, u16, u8)> {
     None
 }
 
-/// UUID as sent (little-endian, 2 or 16 octets) -> text.
 pub fn uuid_str(u: &[u8]) -> String {
     let mut v = u.to_vec();
     v.reverse();
@@ -1240,11 +1125,9 @@ pub struct Char {
     pub descs: Vec<(u16, Vec<u8>)>,
 }
 
-/// The attribute table of the server as discovery shows it (Vol 3 Part G 4.4-4.7).
 #[derive(Clone, Debug, Default)]
 pub struct Gatt {
     pub problems: Vec<String>,
-    /// handle -> type UUID (bytes as sent), from Find Information
     pub attrs: std::collections::BTreeMap<u16, Vec<u8>>,
     pub services: Vec<Service>,
     pub chars: Vec<Char>,
@@ -1392,7 +1275,6 @@ impl Gatt {
 }
 
 impl BleSession {
-    /// The table of the server, discovered once per session.
     pub fn gatt(&mut self) -> R<Gatt> {
         if let Some(g) = self.note::<Gatt>("gatt") {
             return Ok(g);
@@ -1403,7 +1285,6 @@ impl BleSession {
     }
 }
 
-/// The LLData and header choices of a scripted CONNECT_IND (`Session.connect_ind`).
 #[derive(Clone, Debug)]
 pub struct ConnInd {
     pub adva: Option<Vec<u8>>,
@@ -1446,7 +1327,6 @@ impl Default for ConnInd {
 }
 
 impl BleSession {
-    /// A CONNECT_IND for the bulb (to send with `adv_reply`).
     pub fn connect_ind(&mut self, c: &ConnInd) -> R<Vec<u8>> {
         let (a, t) = self.address()?;
         let mut v = vec![0x05 | c.chsel << 5 | c.txadd << 6 | c.rxadd.unwrap_or(t) << 7, 34];

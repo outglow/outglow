@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The public key engine (pke.go).
-
 use std::cmp::Ordering;
 
 use crate::bigint::BigUint;
@@ -40,13 +37,10 @@ pub(crate) struct EcPoint {
 fn modinv(g: &BigUint, p: &BigUint) -> BigUint {
     match BigUint::mod_inverse(g, p) {
         Some(v) => v,
-        // Go: ModInverse returns nil, and the multiplication by it panics.
         None => panic!("runtime error: invalid memory address or nil pointer dereference (ModInverse: no inverse)"),
     }
 }
 
-/// ecAdd: affine addition on y^2 = x^3 + a x + b over the prime field of p;
-/// None is the point at infinity.
 pub(crate) fn ec_add(p: &BigUint, a: &BigUint, pp: Option<&EcPoint>, q: Option<&EcPoint>) -> Option<EcPoint> {
     let pp = match pp {
         None => return q.cloned(),
@@ -61,7 +55,6 @@ pub(crate) fn ec_add(p: &BigUint, a: &BigUint, pp: Option<&EcPoint>, q: Option<&
         if pp.y.add(&q.y).rem(p).is_zero() {
             return None;
         }
-        // (3 x1^2 + a) / (2 y1)
         let num = pp.x.mul(&pp.x).mul(&BigUint::from_u64(3)).add(a);
         let d = pp.y.shl(1);
         lam = num.mul(&modinv(&d, p)).rem(p);
@@ -96,7 +89,6 @@ pub(crate) fn ec_on_curve(p: &BigUint, a: &BigUint, b: &BigUint, pt: &EcPoint) -
     BigUint::mod_sub(&l, &r, p).is_zero()
 }
 
-/// pkeMontgomery: R^2 mod p and -p^-1 mod 2^32 for R = 2^256.
 pub(crate) fn pke_montgomery(p: &BigUint) -> (BigUint, BigUint) {
     let r = BigUint::from_u64(1).shl(256);
     let r2 = r.mul(&r).rem(p);
@@ -105,13 +97,11 @@ pub(crate) fn pke_montgomery(p: &BigUint) -> (BigUint, BigUint) {
         Some(v) => v,
         None => panic!("runtime error: invalid memory address or nil pointer dereference (ModInverse: no inverse)"),
     };
-    // n1 = (-n1) mod w
     let n1 = BigUint::mod_sub(&BigUint::zero(), &n1, &w);
     (r2, n1)
 }
 
 impl Machine {
-    /// pkeOperand: words little-endian words of the operand RAM at off.
     pub(crate) fn pke_operand(&self, off: usize, words: usize) -> BigUint {
         let w: Vec<u32> = (0..words).map(|i| le32(&self.regs, off + 4 * i)).collect();
         BigUint::from_words(&w)
@@ -250,7 +240,6 @@ impl Machine {
         Ok(())
     }
 
-    /// pkeRead: Some(v) when handled.
     pub(crate) fn pke_read(&mut self, o: usize, size: usize) -> Option<u32> {
         if o == PKE_STAT && (size == 1 || size == 4) {
             return Some(if self.pke_done() { 1 } else { 0 });
@@ -264,7 +253,6 @@ impl Machine {
         None
     }
 
-    /// pkeWriteReg: Some(result) when handled.
     pub(crate) fn pke_write_reg(&mut self, o: usize, size: usize, val: u32) -> Option<Result<(), Error>> {
         if o == PKE_CTRL && (size == 1 || size == 4) {
             if val & 0x01 != 0 {

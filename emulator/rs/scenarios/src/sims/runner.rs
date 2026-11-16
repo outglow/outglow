@@ -1,11 +1,3 @@
-//! Runs the integration scenarios and reports them as `cargo test` does: one
-//! `test sims::NAME ... ok|FAILED` per scenario after its own output (the
-//! Python script's lines), then `test result:`.
-//!
-//! `--weekly` runs only the weekly measurements (`super::WEEKLY`), which are
-//! otherwise left out unless a filter names one exactly; `--exact` matches
-//! the name with or without its `sims::` prefix.
-
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
@@ -27,19 +19,12 @@ fn named(a: &Args, name: &str, f: &str) -> bool {
     }
 }
 
-/// Chosen by the filters and `--skip`; a weekly scenario only with `--weekly`
-/// or when a filter is its very name, and with `--weekly` nothing else.
 fn selected(a: &Args, weekly: bool, name: &str) -> bool {
     let by_name = a.filters.iter().any(|f| f == name || f == name.trim_start_matches("sims::"));
     let kind = if weekly { is_weekly(name) } else { !is_weekly(name) || by_name };
     kind && (a.filters.is_empty() || a.filters.iter().any(|f| named(a, name, f))) && !a.skip.iter().any(|f| name.contains(f.as_str()))
 }
 
-/// Rough wall time of the long scenarios [s] (one core, cpi 3), to balance
-/// `--shard` and to start the long ones first; every other scenario counts
-/// as `OTHER_S`. The weekly ones (house, child, echo, channel,
-/// enddev_wallswitch*: the original firmware) are never sharded, only
-/// started first.
 const COST_S: &[(&str, u32)] = &[
     ("addr_conflict_house", 620),
     ("addr_conflict_child", 260),
@@ -57,9 +42,6 @@ fn cost(name: &str) -> u32 {
     COST_S.iter().find(|(p, _)| n.starts_with(p)).map_or(OTHER_S, |c| c.1)
 }
 
-/// Part `k` (1-based) of `n` of `idx`: the longest first, each to the part
-/// with the least so far (ties: the lower part, then the name), so that every
-/// CI job computes the same split from the same list.
 fn shard(idx: Vec<usize>, names: &[String], k: usize, n: usize) -> Vec<usize> {
     let mut by_cost = idx;
     by_cost.sort_by(|&a, &b| cost(&names[b]).cmp(&cost(&names[a])).then(names[a].cmp(&names[b])));
@@ -80,7 +62,6 @@ pub fn main_with(argv: &[String]) -> i32 {
     main_with_extra(argv, Vec::new())
 }
 
-/// `main_with` with scenarios defined outside this crate next to these.
 pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
     if let Some(code) = crate::runner::sweep_main(argv, "sims") {
         return code;
@@ -107,7 +88,6 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
         }
         return 0;
     }
-    // the longest first, so a long one does not start last
     chosen.sort_by(|&x, &y| cost(&names[y]).cmp(&cost(&names[x])).then(x.cmp(&y)));
     let todo: VecDeque<usize> = chosen.into_iter().collect();
     let n_sel = todo.len();
@@ -117,8 +97,6 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
         if n_sel == 1 { "" } else { "s" },
         todo.iter().map(short).collect::<Vec<_>>().join(", ")
     );
-    // which scenarios run now and since when: a scenario's output comes in
-    // one piece when it ends, so a long one would leave the log silent
     let running: Arc<Mutex<Vec<(usize, Instant)>>> = Arc::new(Mutex::new(Vec::new()));
     let heartbeat = std::env::var("SIMS_HEARTBEAT_S").ok().and_then(|v| v.parse().ok()).unwrap_or(60u64);
     let t0 = Instant::now();
@@ -146,7 +124,6 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
                     Err(Stop::Error(m)) | Err(Stop::Fail(m)) | Err(Stop::Inconclusive(m)) | Err(Stop::NotApplicable(m))
                     | Err(Stop::SessionLost(m)) => Some(m),
                 };
-                // stopped for want of an image nobody gave: skipped
                 let missing = cx.missing.borrow().clone();
                 let skip = (err.is_some() && !missing.is_empty()).then(|| {
                     missing.iter().map(|m| format!("{m} ({})", SimCtx::how_to_get(m))).collect::<Vec<_>>().join(", ")

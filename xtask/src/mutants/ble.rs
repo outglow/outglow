@@ -1,12 +1,6 @@
-//! The mutations of `cargo test -p ble`: (what goes wrong, file under
-//! crates/ble/src, text to replace, replacement). Every `old` text must
-//! occur exactly once in its file; after a change to that code the entry is
-//! reported as stale and has to be written anew.
-
 use super::Mutation;
 
 pub const MUTATIONS: &[Mutation] = &[
-    // link layer
     Mutation {
         name: "link: no channel remapping",
         file: "pdu.rs",
@@ -217,7 +211,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        put(&self.identity.product.to_le_bytes());",
         new: "        put(&0x20a0u16.to_le_bytes());",
     },
-    // attribute server
     Mutation {
         name: "att: writes to read-only attributes accepted",
         file: "att.rs",
@@ -350,7 +343,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        if now != was {",
         new: "        if now || now != was {",
     },
-    // mesh profile
     Mutation {
         name: "login: any password accepted",
         file: "mesh.rs",
@@ -465,7 +457,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                self.mesh.address = u16::from_le_bytes([p[0], p[1]]);\n                self.mesh_save();",
         new: "                self.mesh.address = u16::from_le_bytes([p[0], p[1]]);",
     },
-    // update
     Mutation {
         name: "OTA: image checksum not checked",
         file: "ota.rs",
@@ -544,7 +535,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        self.ota_erase_to(end);\n        self.hal.ota_write(offset, buf);",
         new: "        self.hal.ota_write(offset, buf);",
     },
-    // mesh on air
     Mutation {
         name: "air: mesh radio time spent in the factory network too",
         file: "air.rs",

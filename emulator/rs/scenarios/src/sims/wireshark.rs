@@ -1,18 +1,3 @@
-//! What Wireshark makes of the Rust stacks' frames (emulator/wireshark_check.py
-//! and emulator/ble_wireshark_check.py): Wireshark's dissectors are an
-//! implementation of the same specifications unrelated to ours, so a
-//! misreading that sits on both sides of our own tests shows up here.
-//!
-//! `wireshark` runs `cargo test -p zigbee` with ZIGBEE_PCAP_DIR set (every
-//! host test leaves a capture and the list of who sent each frame), then
-//! checks every capture with tshark: nothing of a bulb malformed, undecrypted,
-//! with an expert warning or undissected bytes; objections to test-device
-//! frames only where listed; decoded fields as expected in named tests. With
-//! WIRESHARK_PCAPS=a.pcap,b.pcap it checks captures of emulator scenarios
-//! instead (see `Air::pcap`). `ble_wireshark` does the same for `cargo test -p
-//! ble` (BLE_PCAP_DIR). Both need tshark 4.x; without it they fail with a
-//! clear message.
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,8 +14,6 @@ pub fn def_ble() -> SimDef {
     SimDef { name: "ble_wireshark", doc: "tshark reads every packet of the BLE host tests", run: run_ble }
 }
 
-// ------------------------------------------------------------------ Zigbee
-/// Network and link keys the tests and scenarios use.
 const KEYS: [&str; 6] = [
     "01030507090b0d0f00020406080a0c0d",
     "5a6967426565416c6c69616e63653039",
@@ -39,10 +22,8 @@ const KEYS: [&str; 6] = [
     "77777777777777777777777777777777",
     "66b6900981e1ee3ca4206b6b861c02bb",
 ];
-/// Keys of Green Power devices in the tests and scenarios.
 const GP_KEYS: [&str; 3] = ["c0c1c2c3c4c5c6c7c8c9cacbcccdcecf", "505152535455565758595a5b5c5d5e5f", "01030507090b0d0f00020406080a0c0d"];
 
-/// Frames of test devices that Wireshark objects to, and why that is intended.
 const INTENDED: [(&str, &str, &str); 21] = [
     ("a_network_key_change_missed_while_off", "Encrypted Payload", "the coordinator moved to a key the capture has not shown yet"),
     ("replayed_and_forged_frames_are_dropped", "Encrypted Payload", "a forged frame"),
@@ -67,7 +48,6 @@ const INTENDED: [(&str, &str, &str); 21] = [
     ("addresses_in_the_header_are_checked_and_unknown_commands_answered", "Unknown Command", "a NWK command that does not exist, sent to see it answered"),
 ];
 
-/// Fields as Wireshark decodes them, in frames the bulb sent: (capture, display filter, at least).
 const EXPECT: &[(&str, &str, usize)] = &[
     ("joins_announces_and_exchanges_the_link_key", "wpan.cmd == 0x01", 1),
     ("joins_announces_and_exchanges_the_link_key", "zbee_aps.zdp_cluster == 0x0013 && zbee_zdp.ext_addr == a4:c1:38:00:00:00:00:01", 1),
@@ -123,7 +103,6 @@ const EXPECT: &[(&str, &str, usize)] = &[
     ("a_channel_configuration_is_delivered_on_the_channel", "zbee_nwk_gp.frame_type == 1 && zbee_nwk_gp.command_id == 0xf3", 1),
 ];
 
-/// Frames of the device under test of which Wireshark reads a field wrong.
 const QUIRKS: [(&str, &str, &str); 5] = [
     (
         "",
@@ -156,8 +135,6 @@ const QUIRKS: [(&str, &str, &str); 5] = [
     ),
 ];
 
-
-
 fn have_tshark() -> bool {
     Command::new("tshark").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
 }
@@ -187,13 +164,11 @@ impl Zb {
         Ok(String::from_utf8_lossy(&r.stdout).to_string())
     }
 
-    /// Numbers of the frames a display filter selects.
     fn matching(&self, pcap: &Path, filter: &str) -> Result<BTreeSet<usize>, String> {
         let out = self.tshark(pcap, &["-Y", filter, "-T", "fields", "-e", "frame.number"])?;
         Ok(out.split_whitespace().filter_map(|x| x.parse().ok()).collect())
     }
 
-    /// Rules 1 and 2: (frames, objections as (frame, who, what)).
     fn check_capture(&self, pcap: &Path, senders: Option<&[String]>) -> Result<(usize, Vec<(usize, String, String)>), String> {
         let name = pcap.file_name().unwrap().to_string_lossy().to_string();
         let out = self.tshark(pcap, &["-T", "fields", "-E", "separator=|", "-e", "frame.number", "-e", "frame.protocols", "-e",
@@ -272,7 +247,6 @@ fn tmpdir(prefix: &str) -> PathBuf {
 
 fn run_zigbee(cx: &mut SimCtx) -> R<()> {
     let mut zb = Zb { master: Vec::new() };
-    // the touchlink master key, when given (TOUCHLINK_MASTER_KEY, as for the build); never printed
     if let Ok(k) = std::env::var("TOUCHLINK_MASTER_KEY") {
         zb.master.push(k.to_lowercase());
     }
@@ -389,7 +363,6 @@ fn captures(cx: &mut SimCtx, zb: &Zb, paths: &[PathBuf]) -> R<usize> {
     Ok(bad)
 }
 
-// ------------------------------------------------------------------ BLE
 const BULB: &str = "btle_rf.pdu_type == 3";
 const BULB_ADV: &str = "btle.advertising_address == a4:c1:38:11:22:33 && btle.advertising_header.pdu_type in {0x00, 0x04}";
 
@@ -410,7 +383,6 @@ const BLE_QUIRKS: [(&str, &str); 2] = [
 
 const BLE_EXPECT: &[(&str, &str, usize)] = &[
     ("advertises_like_the_stock_bulb", "btle.advertising_header.pdu_type == 0x00 && btcommon.eir_ad.entry.device_name == \"unpaired\" && btcommon.eir_ad.entry.company_id == 0x0160 && btcommon.eir_ad.entry.uuid_16 == 0x1800 && btcommon.eir_ad.entry.flags.le_limited_discoverable_mode == 1 && btcommon.eir_ad.entry.flags.bredr_not_supported == 1", 8),
-    // the scan response: the stock's AwoX manufacturer data (company 0x0160), no name
     ("advertises_like_the_stock_bulb", "btle.advertising_header.pdu_type == 0x04 && btcommon.eir_ad.entry.company_id == 0x0160 && !btcommon.eir_ad.entry.device_name", 8),
     ("services_and_characteristics_sit_at_the_stock_handles", "btatt.opcode == 0x11 && btatt.uuid16 == 0x1800 && btatt.uuid16 == 0x180a", 1),
     ("services_and_characteristics_sit_at_the_stock_handles", "btatt.opcode == 0x11 && btatt.uuid128 == 10:19:0d:0c:0b:0a:09:08:07:06:05:04:03:02:01:00 && btatt.handle == 0x0010 && btatt.group_end_handle == 0x001f", 1),
@@ -458,7 +430,6 @@ fn bcount(pcap: &Path, filter: &str) -> Result<usize, String> {
     Ok(btshark(pcap, &["-Y", filter, "-T", "fields", "-e", "frame.number"])?.split_whitespace().count())
 }
 
-/// Per packet: (number, from the bulb, what Wireshark objects to).
 fn bobjections(pcap: &Path) -> Result<Vec<(usize, bool, String)>, String> {
     let out = btshark(pcap, &["-T", "fields", "-E", "separator=|", "-E", "aggregator=;", "-e", "frame.number", "-e", "btle_rf.pdu_type",
                               "-e", "btle.advertising_header.pdu_type", "-e", "frame.protocols", "-e", "_ws.expert.message",
@@ -535,7 +506,6 @@ fn run_ble(cx: &mut SimCtx) -> R<()> {
             }
         }
     }
-    // a test with several bulbs leaves several captures: <test>.pcap, <test>.1.pcap, ...
     let mut by_test: Vec<(String, Vec<PathBuf>)> = Vec::new();
     for name in &caps {
         let stem = &name[..name.len() - 5];

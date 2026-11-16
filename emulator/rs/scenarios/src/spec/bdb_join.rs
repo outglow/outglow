@@ -1,7 +1,3 @@
-//! Joining and what follows it (BDB 3.0.1 8.2, 10.2.5; R22 2.4.3.1.11,
-//! 3.6.1.4.1), ported from emulator/spec/bdb_join.py. The first tests only read
-//! what the bulb sent while the session's Trust Center admitted it.
-
 use super::misc_ota_gp::py_list;
 use super::{SessionDef, Test};
 use crate::air::NodeId;
@@ -228,7 +224,6 @@ fn permit_join_broadcast(s: &mut Session) -> R<String> {
 
 fn own_permit_join_lasts(s: &mut Session) -> R<String> {
     if !s.has_note("permit_tried") {
-        // run alone (--exact): the check right after the join first, as BDB-JOIN-04 does it
         if let Err(e @ (Stop::Error(_) | Stop::SessionLost(_))) = own_permit_join(s) {
             return Err(e);
         }

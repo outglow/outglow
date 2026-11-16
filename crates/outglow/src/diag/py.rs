@@ -1,9 +1,5 @@
-//! Values printed the way the Python original printed them (`str()`,
-//! truthiness, `csv`), so the reports read the same.
-
 use serde_json::Value;
 
-/// Python's `str()` of a JSON value.
 pub fn str(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
@@ -11,12 +7,10 @@ pub fn str(v: &Value) -> String {
     }
 }
 
-/// `str()` of a key that may be missing (`dict.get`: None).
 pub fn get(m: &serde_json::Map<String, Value>, k: &str) -> String {
     m.get(k).map(str).unwrap_or_else(|| "None".into())
 }
 
-/// Python's `repr()` of a JSON value.
 pub fn repr(v: &Value) -> String {
     match v {
         Value::Null => "None".into(),
@@ -36,7 +30,6 @@ pub fn repr(v: &Value) -> String {
     }
 }
 
-/// Python's `repr()` of a float (in the ranges a bulb reports).
 pub fn float(f: f64) -> String {
     if f.is_finite() && f.fract() == 0.0 && f.abs() < 1e16 {
         format!("{f:.1}")
@@ -45,7 +38,6 @@ pub fn float(f: f64) -> String {
     }
 }
 
-/// Python's truthiness.
 pub fn truthy(v: Option<&Value>) -> bool {
     match v {
         None | Some(Value::Null) => false,
@@ -57,12 +49,10 @@ pub fn truthy(v: Option<&Value>) -> bool {
     }
 }
 
-/// `x or 0` of a number.
 pub fn num(v: Option<&Value>) -> f64 {
     v.and_then(Value::as_f64).unwrap_or(0.0)
 }
 
-/// Python's `==` of two values (8 == 8.0).
 pub fn eq(a: Option<&Value>, b: Option<&Value>) -> bool {
     let a = a.unwrap_or(&Value::Null);
     let b = b.unwrap_or(&Value::Null);
@@ -72,7 +62,6 @@ pub fn eq(a: Option<&Value>, b: Option<&Value>) -> bool {
     }
 }
 
-/// One cell as Python's `csv` writes it (None empty, minimal quoting).
 pub fn csv_cell(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => String::new(),
@@ -88,7 +77,6 @@ pub fn csv_quote(s: &str) -> String {
     }
 }
 
-/// A row as Python's `csv.writer` ends it.
 pub fn csv_row(cells: &[String]) -> String {
     format!("{}\r\n", cells.join(","))
 }

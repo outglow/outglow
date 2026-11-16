@@ -1,4 +1,3 @@
-// go/ble/aes128/aes128_test.go
 use super::{hex, unhex};
 use crate::aes128::*;
 

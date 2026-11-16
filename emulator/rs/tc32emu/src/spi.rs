@@ -1,19 +1,12 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The SPI master and one device on its bus (spi.go).
-
 use crate::error::{emu_err, Error};
 use crate::machine::Machine;
 
-/// SpiFifoMax: how many received octets a device keeps.
 pub const SPI_FIFO_MAX: usize = 4096;
 
-/// The device the emulator-only register 0xffd8 attaches.
 #[derive(Clone, Debug, Default)]
 pub struct SpiDevice {
-    /// 0 echo, 1 constant K, 2 a count up from K.
     pub mode: i64,
     pub k: u8,
-    /// Chip select pin, 8 * port + pin; 0xff the master's own.
     pub cs: i64,
     pub high: bool,
     pub fifo: Vec<u8>,

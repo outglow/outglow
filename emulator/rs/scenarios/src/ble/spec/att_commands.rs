@@ -1,6 +1,3 @@
-//! ATT: commands are never answered (Core 5.4 Vol 3 Part F 3.3, 3.3.1, 3.4.5.3,
-//! 3.4.5.4); emulator/spec_ble/att_commands.py.
-
 use crate::ble::harness::{hx, BleSession, L2Frame, LinkOpts, CID_ATT};
 use crate::ble::util::{cccds, describe, link, read, table, value};
 use crate::ble::BleTest;
@@ -72,11 +69,6 @@ fn pdu(op: u8, h: u16, rest: &[u8]) -> Vec<u8> {
 }
 
 fn write_cmd_not_answered(s: &mut BleSession) -> R<String> {
-    // 3.4.5.3: "No ATT_ERROR_RSP or ATT_WRITE_RSP PDUs shall be sent in response to this command. If the
-    // server cannot write this attribute for any reason the command shall be ignored." 3.4.1.1: "Commands
-    // ... do not generate this response." Read-only attributes: a service declaration (Part G 3.1) and a
-    // characteristic value without any write property. Control: the same write as an ATT_WRITE_REQ is
-    // answered, and so is a Read Request after the commands.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let sv = g.services[0].start;
@@ -152,11 +144,6 @@ fn write_cmd_not_answered(s: &mut BleSession) -> R<String> {
 }
 
 fn unknown_command_ignored(s: &mut BleSession) -> R<String> {
-    // 3.3: "If a server receives a command that it does not support, indicated by the Command Flag of the
-    // PDU set to one, then the server shall ignore the command." 3.3.1: bit 6 of the opcode is the Command
-    // Flag. The only commands defined are ATT_WRITE_CMD (0x52) and ATT_SIGNED_WRITE_CMD (0xD2). Sent:
-    // reserved methods (0x54, 0x7E) and the methods of Read, Find Information and Read By Group Type with
-    // the Command Flag (0x4A, 0x44, 0x50). Control: the same PDUs without the flag are answered.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let h = g.services[0].start;
@@ -202,10 +189,6 @@ fn unknown_command_ignored(s: &mut BleSession) -> R<String> {
 }
 
 fn signed_write_ignored(s: &mut BleSession) -> R<String> {
-    // 3.4.5.4: "If the authentication signature verification fails, then the server shall ignore the
-    // command. No ATT_ERROR_RSP PDU or ATT_WRITE_RSP PDU shall be sent in response to this command." The
-    // device has not paired, so no signature can verify. Target: an attribute that is writable and readable
-    // (a CCCD, else a characteristic value with a write property).
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let cc = cccds(&g);

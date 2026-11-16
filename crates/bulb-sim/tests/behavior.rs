@@ -1,6 +1,3 @@
-//! Firmware behaviour tests through the emulator — scenarios as with a real
-//! bulb (wall switch, brightness/state after power-on, network commands).
-
 use bulb_core::command::PowerOnBehavior;
 use bulb_core::{Command, StartupLevel};
 use bulb_sim::Harness;
@@ -11,7 +8,6 @@ fn set_pob(h: &mut Harness, b: PowerOnBehavior) {
 
 #[test]
 fn first_boot_on_blank_flash_is_on_at_full_brightness() {
-    // Factory default: on whenever power returns, at full brightness the first time.
     let h = Harness::new();
     assert!(h.is_on());
     assert_eq!(h.level(), 254);
@@ -39,7 +35,6 @@ fn move_to_level_sets_brightness_immediately() {
     h.command(Command::MoveToLevel { level: 128, transition_ms: 0 });
     assert!(h.is_on());
     assert_eq!(h.level(), 128);
-    // brightness 0 = turn off
     h.command(Command::MoveToLevel { level: 0, transition_ms: 0 });
     assert!(!h.is_on());
 }
@@ -49,9 +44,7 @@ fn smooth_transition_reaches_target() {
     let mut h = Harness::new();
     h.command(Command::Off);
     h.command(Command::MoveToLevel { level: 254, transition_ms: 1000 });
-    // right after the start it is not at maximum yet
     assert!(h.level() < 254);
-    // once the full time has elapsed (tick every 50 ms) it reaches the target
     h.run_for(1000, 50);
     assert_eq!(h.level(), 254);
 }
@@ -60,9 +53,9 @@ fn smooth_transition_reaches_target() {
 fn power_on_off_stays_off() {
     let mut h = Harness::new();
     set_pob(&mut h, PowerOnBehavior::Off);
-    h.command(Command::On); // lit
+    h.command(Command::On);
     assert!(h.is_on());
-    h.power_cycle(); // flick of the switch
+    h.power_cycle();
     assert!(!h.is_on(), "with Off it must come up off");
 }
 
@@ -70,7 +63,7 @@ fn power_on_off_stays_off() {
 fn power_on_on_turns_on() {
     let mut h = Harness::new();
     set_pob(&mut h, PowerOnBehavior::On);
-    h.command(Command::Off); // off
+    h.command(Command::Off);
     h.power_cycle();
     assert!(h.is_on(), "with On it must come up on");
 }
@@ -84,7 +77,6 @@ fn power_on_previous_restores_state() {
     assert!(h.is_on(), "Previous: it was on, it must come back on");
     assert_eq!(h.level(), 200, "it must come back at the same brightness");
 
-    // now off before the power loss
     h.command(Command::Off);
     h.power_cycle();
     assert!(!h.is_on(), "Previous: it was off, it must come back off");
@@ -105,8 +97,8 @@ fn power_on_toggle_toggles() {
 fn fixed_startup_level_independent_of_previous_brightness() {
     let mut h = Harness::new();
     set_pob(&mut h, PowerOnBehavior::On);
-    h.command(Command::SetStartupLevel(60)); // always 60 after power-on
-    h.command(Command::MoveToLevel { level: 254, transition_ms: 0 }); // bright now
+    h.command(Command::SetStartupLevel(60));
+    h.command(Command::MoveToLevel { level: 254, transition_ms: 0 });
     h.power_cycle();
     assert!(h.is_on());
     assert_eq!(h.level(), 60, "it must come up at the fixed startup brightness, not 254");
@@ -114,7 +106,6 @@ fn fixed_startup_level_independent_of_previous_brightness() {
 
 #[test]
 fn startup_level_0_comes_up_at_the_lowest_brightness() {
-    // ZCL8 Table 3-58: 0x00 is "the minimum value permitted on the device", not "previous"
     let mut h = Harness::new();
     h.command(Command::SetStartupLevel(0));
     h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
@@ -129,7 +120,7 @@ fn startup_level_0_comes_up_at_the_lowest_brightness() {
 fn startup_level_previous_uses_last_brightness() {
     let mut h = Harness::new();
     set_pob(&mut h, PowerOnBehavior::On);
-    h.command(Command::SetStartupLevel(0xFF)); // previous
+    h.command(Command::SetStartupLevel(0xFF));
     h.command(Command::MoveToLevel { level: 90, transition_ms: 0 });
     h.power_cycle();
     assert_eq!(h.level(), 90);
@@ -148,7 +139,6 @@ fn config_survives_reboot() {
 
 #[test]
 fn flash_is_not_rewritten_needlessly() {
-    // Writing to flash is costly; we check that ReadState writes nothing.
     let mut h = Harness::new();
     let before = h.flash.write_count();
     h.command(Command::ReadState);
@@ -166,7 +156,6 @@ fn every_change_is_reported_to_network() {
 #[test]
 fn multiple_commands_from_radio_queue_at_once() {
     let mut h = Harness::new();
-    // queue several commands without ticking, then a single tick handles them in order
     h.radio.send(Command::On);
     h.radio.send(Command::MoveToLevel { level: 150, transition_ms: 0 });
     h.radio.send(Command::MoveToLevel { level: 30, transition_ms: 0 });
@@ -175,9 +164,6 @@ fn multiple_commands_from_radio_queue_at_once() {
     assert_eq!(h.level(), 30, "the last command from the queue wins");
 }
 
-// ------------------------------------------------------------ tunable white
-
-/// Duties of the warm and the cold channel.
 fn channels(h: &Harness) -> (u16, u16) {
     (h.bulb.pwm().duty, h.bulb.pwm().cold.unwrap())
 }
@@ -190,8 +176,6 @@ fn color_temperature_splits_the_brightness_between_two_channels() {
     assert_eq!(channels(&h), (1000, 0), "warmest: the warm channel alone");
     h.command(Command::MoveToColorTemperature { mireds: 153, transition_ms: 0 });
     assert_eq!(channels(&h), (0, 1000), "coldest: the cold channel alone");
-    // in between the split is linear in mireds, and the sum is the brightness curve's value:
-    // the tunable-white bulb's own curve, which is darker in the middle than the dimmable one's
     h.command(Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 });
     let (warm, cold) = channels(&h);
     assert_eq!(warm as u32, 1000 * (300 - 153) / (454 - 153));
@@ -204,9 +188,7 @@ fn color_temperature_splits_the_brightness_between_two_channels() {
         assert_eq!(warm + cold, bulb_core::curve::duty(level, 1000, true), "level {level}");
         assert_eq!(dimm.bulb.pwm().duty, bulb_core::curve::duty(level, 1000, false), "level {level}");
     }
-    // level 128, as measured on the two stock bulbs: 19.8 % and 25.2 %
     assert_eq!((bulb_core::curve::duty(128, 1000, true), bulb_core::curve::duty(128, 1000, false)), (198, 252));
-    // out of range values are clamped
     h.command(Command::MoveToColorTemperature { mireds: 1000, transition_ms: 0 });
     assert_eq!(h.state().color_temp, 454);
 }
@@ -221,17 +203,14 @@ fn color_temperature_fades_and_survives_a_power_cycle() {
     let half = 1000 * (300 - 153) / (454 - 153);
     assert!((warm as i32 - half).abs() < 30, "halfway through: warm duty {warm}");
     h.run_for(600, 50);
-    // the split is rounded to the nearest step, as on the stock bulb
     assert_eq!(channels(&h).0 as i32, (1000 * (400 - 153) + 150) / (454 - 153));
     h.power_cycle();
     assert_eq!(h.state().color_temp, 400);
-    // a fixed colour temperature after power-on
     h.command(Command::SetStartupColorTemperature(250));
     h.command(Command::MoveToColorTemperature { mireds: 420, transition_ms: 0 });
     h.power_cycle();
     assert_eq!(h.state().color_temp, 250);
     assert_eq!(h.state().startup_color_temp, 250);
-    // to the mired, odd values too: the startup value and the remembered one
     h.command(Command::SetStartupColorTemperature(193));
     h.power_cycle();
     assert_eq!((h.state().color_temp, h.state().startup_color_temp), (193, 193));
@@ -248,8 +227,6 @@ fn the_single_channel_bulb_ignores_color_temperature_on_its_output() {
     h.command(Command::MoveToColorTemperature { mireds: 153, transition_ms: 0 });
     assert_eq!(h.bulb.pwm().duty, 1000);
 }
-
-// ------------------------------------------------------------ identify, stop
 
 #[test]
 fn identify_blinks_and_then_restores_the_light() {
@@ -269,7 +246,6 @@ fn identify_blinks_and_then_restores_the_light() {
     assert!(!h.bulb.is_identifying());
     assert_eq!(h.bulb.pwm().duty, steady);
     assert_eq!(h.flash.write_count(), writes, "identifying is not a state worth storing");
-    // stopped early
     h.command(Command::Identify { times: 60 });
     h.run_for(700, 100);
     h.command(Command::Identify { times: 0 });
@@ -295,7 +271,6 @@ fn stopping_the_colour_and_stopping_the_brightness_are_separate() {
     let mut h = Harness::new_tunable();
     h.command(Command::MoveToLevel { level: 10, transition_ms: 0 });
     h.command(Command::MoveToColorTemperature { mireds: 153, transition_ms: 0 });
-    // both on their way; the colour is stopped, the brightness goes on
     h.command(Command::MoveToLevel { level: 210, transition_ms: 2000 });
     h.command(Command::MoveToColorTemperature { mireds: 454, transition_ms: 5000 });
     h.run_for(1000, 50);
@@ -307,7 +282,6 @@ fn stopping_the_colour_and_stopping_the_brightness_are_separate() {
     assert_eq!(h.level(), 210, "the brightness was not this command's to stop");
     let (warm, cold) = channels(&h);
     assert_eq!(warm as u32, ((warm + cold) as u32 * (reached as u32 - 153) + 150) / (454 - 153));
-    // the other way round: a colour on its way is not stopped with the brightness
     h.command(Command::MoveToLevel { level: 10, transition_ms: 2000 });
     h.command(Command::MoveToColorTemperature { mireds: 454, transition_ms: 1000 });
     h.run_for(500, 50);
@@ -316,7 +290,6 @@ fn stopping_the_colour_and_stopping_the_brightness_are_separate() {
     assert!((150..=170).contains(&level), "stopped at level {level}");
     h.run_for(2000, 50);
     assert_eq!((h.level(), h.state().color_temp), (level, 454));
-    // nothing on its way: nothing happens
     h.command(Command::StopColorTransition);
     assert_eq!(h.state().color_temp, 454);
 }
@@ -332,13 +305,11 @@ fn a_level_set_while_off_is_used_at_the_next_turn_on() {
     assert_eq!(h.state().level, 40);
     h.command(Command::On);
     assert_eq!(h.level(), 40);
-    // remembered over a power cut too (with which the bulb, by default, comes on)
     h.command(Command::Off);
     h.command(Command::SetLevelWhileOff(90));
     h.power_cycle();
     assert!(h.is_on());
     assert_eq!(h.level(), 90);
-    // on a light that is on it is a plain change of brightness
     h.command(Command::SetLevelWhileOff(120));
     assert!(h.is_on());
     assert_eq!(h.level(), 120);

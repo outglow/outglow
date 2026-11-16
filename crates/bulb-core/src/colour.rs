@@ -1,18 +1,3 @@
-//! Colour of the colour bulbs: what the stock firmware of the AwoX colour
-//! lamps computes for its red, green and blue channels, read out of its code
-//! and checked against it in the emulator (docs/stock-colour.md).
-//!
-//! - Hue and saturation: an HSV of its own, in 8-bit integers: the hue as
-//!   360 * hue / 254 degrees, six regions of 60, the position in a region in
-//!   steps of 4 (0..=236, so the middle channel never quite reaches the top
-//!   one), the value the level (at least 16).
-//! - CIE xy: xyY to linear sRGB in double precision with the sRGB matrix and
-//!   no gamma, each component cut to 0..=1 and taken to 0..=255; the level
-//!   counts twice, as Y and as the scale of the result (at least 16).
-//! - A channel value c (0..=255) drives its PWM at (c * c / 254) / 254 of the
-//!   period, in the stock firmware's integer steps.
-
-/// Which colour the light shows (Color Control ColorMode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMode {
     HueSaturation = 0,
@@ -30,7 +15,6 @@ impl ColorMode {
     }
 }
 
-/// The way a hue moves to another (Move to Hue direction).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HueDirection {
     Shortest,
@@ -50,8 +34,6 @@ impl HueDirection {
         }
     }
 
-    /// The signed distance from `from` to `to` on the hue circle of 255
-    /// steps (0..=254), the way this direction goes.
     pub fn delta(self, from: u8, to: u8) -> i16 {
         let up = (to as i16 - from as i16).rem_euclid(255);
         let down = up - 255;
@@ -84,8 +66,6 @@ impl HueDirection {
     }
 }
 
-/// The stock firmware's HSV: 8-bit red, green and blue for a hue (0..=254),
-/// a saturation (0..=255) and a value.
 pub fn hsv(hue: u8, sat: u8, v: u8) -> [u8; 3] {
     let (s, v) = (sat as u32, v as u32);
     if s == 0 {
@@ -93,7 +73,6 @@ pub fn hsv(hue: u8, sat: u8, v: u8) -> [u8; 3] {
     }
     let mut deg = 360 * hue as u32 / 254;
     if deg > 359 {
-        // hue 254 is 360 degrees: the stock firmware shows it as hue 0
         deg = 0;
     }
     let region = deg / 60;
@@ -113,9 +92,6 @@ pub fn hsv(hue: u8, sat: u8, v: u8) -> [u8; 3] {
     }
 }
 
-/// The stock firmware's xyY to RGB: 0..=255 for CIE x and y (on the 0..=65535
-/// scale of Color Control) at a level. With y 0 the divisions give infinities
-/// and NaN, as in the stock firmware: an infinite component is 255, a NaN 0.
 pub fn xy_rgb(x: u16, y: u16, level: u8) -> [u16; 3] {
     let mut dx = x as f64 * (1.0 / 65536.0);
     let mut dy = y as f64 * (1.0 / 65536.0);
@@ -145,9 +121,6 @@ pub fn xy_rgb(x: u16, y: u16, level: u8) -> [u16; 3] {
     [one(3.2406, -1.5372, -0.4986), one(-0.9692, 1.8758, 0.0416), one(0.0556, -0.204, 1.057)]
 }
 
-/// The stock firmware's RGB to HSV, in double precision: hue, saturation and
-/// value on 0..=65535 for red, green and blue on 0..=255. A channel counts
-/// as the largest within 1e-5; with none (the largest a NaN) the hue is 0.
 pub fn rgb_hsv(rgb: [u16; 3]) -> [u16; 3] {
     const EPS: f64 = 1e-5;
     let [r, g, b] = rgb.map(|c| c as f64 / 255.0);
@@ -179,47 +152,32 @@ pub fn rgb_hsv(rgb: [u16; 3]) -> [u16; 3] {
     [(h * 65535.0 / 360.0 + 0.5) as u32 as u16, s, v]
 }
 
-/// The hue and the saturation the stock firmware takes for CIE x and y when
-/// an xy command comes in: the RGB of x and y at level 218, to HSV, the top
-/// byte of each.
 pub fn xy_hue_sat(x: u16, y: u16) -> (u8, u8) {
     let [h, s, _] = rgb_hsv(xy_rgb(x, y, 0xDA));
     ((h >> 8) as u8, (s >> 8) as u8)
 }
 
-/// The PWM compare value of a channel value 0..=255 (or a little more) on a
-/// PWM with `max` steps: (c * c / 254) * 100 on the stock firmware's scale of
-/// 25400. A value above 254 drives above the period, as the stock firmware
-/// does (the PWM then stays high).
 pub fn channel(c: u16, max: u16) -> u16 {
     let c = c as u32;
     (max as u32 * ((c * c / 254) * 100) / 25400) as u16
 }
 
-/// The value the colour channels scale with: the level, at least 16.
 pub fn value(level: u8) -> u8 {
     level.max(16)
 }
 
-/// Compare values of red, green and blue for a hue and a saturation at a level.
 pub fn hs_duties(hue: u8, sat: u8, level: u8, max: u16) -> [u16; 3] {
     hsv(hue, sat, value(level)).map(|c| channel(c as u16, max))
 }
 
-/// Compare values of red, green and blue for CIE x and y at a level.
 pub fn xy_duties(x: u16, y: u16, level: u8, max: u16) -> [u16; 3] {
     let v = value(level) as u32;
     xy_rgb(x, y, level).map(|c| channel((c as u32 * v / 254) as u16, max))
 }
 
-/// The colour a bulb remembers over a power cut (a record of its own beside
-/// `config::Config`, eight bytes): `[0]` magic 0xC and the mode,
-/// `[1]` hue `[2]` saturation `[3..5]` x `[5..7]` y `[7]` crc8.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColourRecord {
     pub mode: ColorMode,
-    /// The colour the colour channels show (hue and saturation, or xy):
-    /// on most bulbs the one of `mode` when it is not the colour temperature.
     pub xy: bool,
     pub hue: u8,
     pub sat: u8,
@@ -262,7 +220,6 @@ impl ColourRecord {
 mod tests {
     use super::*;
 
-    // compare values the stock firmware drives (emulator, analysis/color/), PWM of 48000 steps
     #[test]
     fn hue_and_saturation_as_the_stock_firmware() {
         assert_eq!(hs_duties(42, 254, 254, 48000), [48000, 41007, 0], "the middle channel stops at 235");
@@ -272,7 +229,6 @@ mod tests {
         assert_eq!(hs_duties(160, 254, 254, 48000)[1], 3779);
         assert_eq!(hs_duties(254, 192, 254, 48000), [48000, 2834, 2834], "hue 254 is hue 0");
         assert_eq!(hs_duties(254, 1, 254, 48000), [48000, 47622, 47244]);
-        // the level, at least 16
         assert_eq!(hs_duties(0, 0, 1, 48000), [188; 3]);
         assert_eq!(hs_duties(30, 200, 1, 48000), [188, 0, 0]);
     }
@@ -289,7 +245,6 @@ mod tests {
 
     #[test]
     fn xy_to_hue_and_saturation_as_the_stock_firmware() {
-        // CurrentHue and CurrentSaturation the stock bulb reports after these
         assert_eq!(xy_hue_sat(41943, 21627), (0, 255));
         assert_eq!(xy_hue_sat(19661, 39321), (85, 255));
         assert_eq!(xy_hue_sat(20454, 17992), (213, 72));

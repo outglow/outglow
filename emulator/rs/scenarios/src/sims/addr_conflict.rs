@@ -1,20 +1,3 @@
-//! Address conflicts in a mixed network (R22 3.6.1.9): several emulated bulbs
-//! on one air with the plain coordinator and a scripted router that plays an
-//! EmberZNet router (an IKEA TRADFRI driver, as in a real home network): it detects conflicts on
-//! its own address as R22 3.6.1.9.2 asks (a frame for its address carrying
-//! another destination IEEE address, a frame or Device_annce from its address
-//! with another IEEE address, a Network Status 0x0d naming its address), then
-//! broadcasts a Network Status 0x0d, picks a new random address and announces
-//! it. Bulbs are switched off and on (power loss: the RAM is lost, the flash
-//! stays as it was at the moment of the loss), neighbours change their address
-//! while a bulb is off.
-//!
-//! Every frame that pairs a network address with an IEEE address (NWK header
-//! IEEE fields, the source of the security header, Device_annce, address
-//! responses, Route Request/Reply IEEE fields, Rejoin Response, Update Device)
-//! is checked against the ground truth; a pair whose network address belongs
-//! to another device is what makes an Ember node declare a conflict.
-
 use std::collections::HashSet;
 
 use super::{node_of, Sim, SimCtx, SimDef};
@@ -50,7 +33,6 @@ fn u64_at(p: &[u8], i: usize) -> Option<u64> {
     Some(u64::from_le_bytes(p.get(i..i + 8)?.try_into().ok()?))
 }
 
-/// A (network address, IEEE address) pair a frame states, and where it was.
 #[derive(Clone, Debug)]
 pub struct Claim {
     pub short: u16,
@@ -58,7 +40,6 @@ pub struct Claim {
     pub what: &'static str,
 }
 
-/// Every address pair a frame states.
 pub fn claims(f: &CapFrame) -> Vec<Claim> {
     let mut v = Vec::new();
     let Some(m) = &f.mac else { return v };
@@ -141,7 +122,6 @@ pub fn claims(f: &CapFrame) -> Vec<Claim> {
     v
 }
 
-/// Decodes a frame as the spec session's sniffer does (`Session::decode`).
 fn decode(keys: &mut crate::frames::Keys, f: &mut CapFrame) {
     let Some(m) = mac_parse(&f.psdu) else { return };
     if m.ty == 3 && m.payload.first() == Some(&0x02) && m.payload.len() >= 4 && m.dmode == 3 && m.payload[3] == 0 {
@@ -169,63 +149,42 @@ fn decode(keys: &mut crate::frames::Keys, f: &mut CapFrame) {
     f.aps = aps_parse(&pl, keys, Some(src));
 }
 
-/// A bulb of the scenario.
 pub struct Bulb {
     pub id: NodeId,
     pub name: String,
-    /// as the bulb itself states it (the stock firmware makes its own up)
     pub ext: Option<u64>,
-    /// the flash at the moment of the last power loss, while it is off
     pub off: Option<Vec<u8>>,
 }
 
-/// What the scripted Ember router does next.
 #[derive(Clone, Debug)]
 enum Act {
-    /// Network Status 0x0d to 0xFFFD naming `addr`
     Status { addr: u16 },
-    /// Device_annce with the current address
     Annce,
-    /// Link Status
     LinkStatus,
 }
 
-/// The scripted EmberZNet router (the IKEA driver).
 pub struct Ember {
     pub id: NodeId,
     pub ext: u64,
     rng: u64,
     acts: Vec<(f64, Act)>,
-    /// (ms, old, new, why)
     pub moves: Vec<(f64, u16, u16, String)>,
     pub link_status: bool,
-    /// the neighbours it lists in its Link Status
     pub neighbours: Vec<u16>,
-    /// detect conflicts on its own address (R22 3.6.1.9.2)
     pub detect: bool,
-    /// a conflict is being resolved: ignore further triggers until this time
     busy_until: f64,
     pub zcl_answers: u32,
-    /// broadcast transaction table: (source, sequence number, ms of the last copy)
     pub btt: Vec<(u16, u8, f64)>,
-    /// how long a record lives (nwkNetworkBroadcastDeliveryTime)
     pub btt_ms: f64,
-    /// records it holds at most (the oldest goes first)
     pub btt_size: usize,
-    /// R22 3.6.1.9.2: a new broadcast record whose source is our own address is a local conflict
     pub own_bcast_rule: bool,
-    /// when it started operating on the network (the rule applies only after btt_ms)
     pub t_up: f64,
-    /// relay broadcasts (once, after a jitter), as every router does
     pub relay: bool,
-    /// copies of its own broadcasts heard back: (ms, seq, radius, sender, already in the table)
     pub echoes: Vec<(f64, u8, u8, String, bool)>,
-    /// Route Replies sent
     pub rreps: u32,
 }
 
 impl Ember {
-    /// A broadcast seen (sent or received): true when it is new.
     fn btt_new(&mut self, src: u16, seq: u8, now: f64) -> bool {
         let life = self.btt_ms;
         self.btt.retain(|e| now - e.2 < life);
@@ -241,7 +200,6 @@ impl Ember {
     }
 
     fn rand16(&mut self) -> u16 {
-        // xorshift64*
         self.rng ^= self.rng >> 12;
         self.rng ^= self.rng << 25;
         self.rng ^= self.rng >> 27;
@@ -249,28 +207,22 @@ impl Ember {
     }
 }
 
-/// An event of the scenario's timeline.
 #[derive(Clone, Debug)]
 pub struct Note {
     pub ms: f64,
     pub text: String,
 }
 
-/// The network: bulbs, coordinator, the Ember router, a sniffer, the truth.
 pub struct Net {
     pub s: Sim,
     pub cap: Vec<CapFrame>,
     n_raw: usize,
     pub bulbs: Vec<Bulb>,
     pub ember: Option<Ember>,
-    /// ext -> current network address
     pub truth: Vec<(u64, u16, String)>,
-    /// (ext, address) pairs that were once true
     pub former: Vec<(u64, u16)>,
-    /// pairs of nodes out of each other's range
     pub range: HashSet<(NodeId, NodeId)>,
     pub notes: Vec<Note>,
-    /// claims that contradict the truth: (frame index, claim, what is true)
     pub bad: Vec<(usize, Claim, String)>,
     pub echo: bool,
 }
@@ -350,12 +302,10 @@ impl Net {
         }
     }
 
-    /// The nodes that are not powered (all bulbs that are off).
     fn is_off(&self, id: NodeId) -> bool {
         self.bulbs.iter().any(|b| b.id == id && b.off.is_some())
     }
 
-    /// Applies range and power to the air's blocked pairs.
     pub fn apply_blocks(&mut self) {
         let nodes = self.s.w.air.nodes.clone();
         for &a in &nodes {
@@ -383,7 +333,6 @@ impl Net {
         self.apply_blocks();
     }
 
-    /// Power loss: the bulb goes silent; its flash is kept as it is now.
     pub fn power_off(&mut self, name: &str) {
         let i = self.bulbs.iter().position(|b| b.name == name).unwrap();
         let id = self.bulbs[i].id;
@@ -393,7 +342,6 @@ impl Net {
         self.note(format!("power: {name} off"));
     }
 
-    /// Power returns: the flash as it was at the power loss, a cold boot.
     pub fn power_on(&mut self, name: &str) -> R<()> {
         let i = self.bulbs.iter().position(|b| b.name == name).unwrap();
         let id = self.bulbs[i].id;
@@ -405,8 +353,6 @@ impl Net {
         Ok(())
     }
 
-    // ------------------------------------------------------------- running
-    /// Runs `ms`, decoding the air and letting the Ember router react every `step`.
     pub fn run(&mut self, ms: f64) -> R<()> {
         let end = self.now() + ms;
         while self.now() < end {
@@ -443,7 +389,6 @@ impl Net {
         }
     }
 
-    /// A bulb's own frames tell its current address.
     fn learn_truth(&mut self, f: &CapFrame) {
         let Some(bi) = self.bulbs.iter().position(|b| b.id == f.who) else { return };
         let (Some(m), Some(n)) = (&f.mac, &f.nwk) else { return };
@@ -479,7 +424,6 @@ impl Net {
                 (None, Some(s)) => format!("stale: that IEEE is now {s:#06x}"),
                 (None, None) => "unknown pair".to_string(),
             };
-            // during a change the new address is known to the device before the truth learns it
             if self.ember.as_ref().is_some_and(|e| e.ext == c.ext && f.who == e.id) {
                 continue;
             }
@@ -496,7 +440,6 @@ impl Net {
         }
     }
 
-    // ------------------------------------------------------------- the Ember router
     pub fn add_ember(&mut self, short: u16, seed: u64) -> NodeId {
         let c = &self.s.w.coord.st;
         let mut st = Station::new(NodeId::Coord, c.channel, c.pan, Some(short), IKEA_EXT, NWK_KEY, (0x11, 0x21, 0x31, 0x41, 0x51), 0x1000, 2);
@@ -543,7 +486,6 @@ impl Net {
         self.s.w.st(id)
     }
 
-    /// Device_annce from the Ember router (broadcast to 0xFFFD, router capability).
     pub fn ember_annce(&mut self) {
         let me = self.ember_short();
         let mut body = me.to_le_bytes().to_vec();
@@ -563,13 +505,11 @@ impl Net {
         st.tx_link_status(air, &entries, &Tx::new());
     }
 
-    /// Starts its periodic Link Status (every 15 s).
     pub fn ember_start(&mut self) {
         let t = self.now() + 1000.0;
         self.ember.as_mut().unwrap().acts.push((t, Act::LinkStatus));
     }
 
-    /// A new address, as after a conflict: Network Status 0x0d with the old one, Device_annce.
     fn ember_conflict(&mut self, why: String, from_status: bool) {
         let now = self.now();
         let old = self.ember_short();
@@ -599,7 +539,6 @@ impl Net {
         self.set_truth(IKEA_EXT, new, "ikea");
     }
 
-    /// The Ember router changes its address now (as if a conflict had been resolved earlier).
     pub fn ember_move(&mut self, why: &str) {
         self.ember_conflict(why.to_string(), true);
     }
@@ -610,7 +549,6 @@ impl Net {
         let me = self.ember_short();
         let now = self.now();
         if f.who == eid {
-            // its own broadcasts go into its table when they are sent
             if let Some(n) = &f.nwk {
                 if n.dst >= 0xFFF8 && f.mac.as_ref().is_some_and(|m| m.src == Some(me as u64)) {
                     self.ember.as_mut().unwrap().btt_new(n.src, n.seq, now);
@@ -622,7 +560,6 @@ impl Net {
             return;
         }
         let Some(n) = &f.nwk else { return };
-        // the MAC delivers only frames for our address or broadcasts
         let mac_dst = f.mac.as_ref().and_then(|m| m.dst);
         if mac_dst != Some(me as u64) && mac_dst != Some(0xFFFF) && mac_dst != Some(IKEA_EXT) {
             return;
@@ -641,7 +578,6 @@ impl Net {
                     ));
                 }
             }
-            // relay a new broadcast once (radius - 1), as a router does
             if new && e.relay && n.src != me && n.radius > 1 && why.is_none() {
                 if let Some(pl) = n.payload.clone() {
                     let jitter = 2.0 + (e.rand16() % 64) as f64;
@@ -690,8 +626,6 @@ impl Net {
                 why = Some(format!("Device_annce {me:#06x} = {:#018x} via {}", c.ext, f.who_name));
             }
         }
-        // a Route Request for our address: Route Reply to the previous hop (R22 3.6.3.5.2),
-        // with both IEEE addresses as an Ember router sends them
         if f.nwk_cmd() == Some(0x01) && why.is_none() {
             let p = n.payload.as_ref().unwrap();
             if p.len() >= 6 && u16_at(p, 3) == Some(me) {
@@ -712,7 +646,6 @@ impl Net {
                 self.ember.as_mut().unwrap().rreps += 1;
             }
         }
-        // a unicast ZCL command for us that wants an answer: Default Response back to the source
         if n.dst == me && n.ty == NWK_DATA {
             if let (Some(a), Some(z)) = (&f.aps, f.zcl()) {
                 if a.profile == Some(0x0104) && !z.ddr && z.specific {
@@ -760,8 +693,6 @@ impl Net {
         }
     }
 
-    // ------------------------------------------------------------- joining
-    /// The Ember router joins through `parent` by MAC association (as a router).
     pub fn ember_join_via(&mut self, parent: NodeId) -> R<Option<u16>> {
         let pshort = self.bulbs.iter().find(|b| b.id == parent).and_then(|b| b.ext).and_then(|e| self.short_of(e)).unwrap();
         let eid = self.ember.as_ref().unwrap().id;
@@ -803,7 +734,6 @@ impl Net {
         self.s.w.peers[peer_ix(eid)].st.short = Some(short);
         self.s.w.air.keys.learn(Some(short), Some(IKEA_EXT));
         self.set_truth(IKEA_EXT, short, "ikea");
-        // the network key comes through the parent (Update Device, Tunnel, Transport Key)
         let ok = self.run_until(4000.0, |n| {
             n.cap[mark..].iter().any(|f| f.who == parent && f.aps_cmd() == Some(0x05))
         })?;
@@ -814,8 +744,6 @@ impl Net {
         Ok(Some(short))
     }
 
-    // ------------------------------------------------------------- traffic
-    /// On/Off Toggle from the coordinator to `short` (ep 1), routed through `via` if given.
     pub fn coord_cmd(&mut self, short: u16, via: Option<u16>) {
         match via {
             Some(v) => {
@@ -825,13 +753,11 @@ impl Net {
                 self.s.w.coord.st.via.remove(&short);
             }
         }
-        // route discovery enabled, as an Ember coordinator sends it
         let o = Tx::new().discover(1);
         let (st, air) = self.s.w.st(NodeId::Coord);
         st.tx_zcl(air, short, 0x0006, 0x02, &[], &o);
     }
 
-    /// Prints the frames of the window that pair addresses or are NWK commands / ZDO.
     pub fn dump(&self, from: usize, to: usize, filter: impl Fn(&CapFrame) -> bool) -> Vec<String> {
         let mut out = Vec::new();
         for f in &self.cap[from.min(self.cap.len())..to.min(self.cap.len())] {
@@ -873,7 +799,6 @@ fn split(s: &mut Sim, pi: usize) -> World2<'_> {
     World2 { st: &mut peers[pi].st, air }
 }
 
-/// A bulb node with its name; `ext` gives the bytes of its factory MAC record.
 pub struct Node0 {
     pub node: zbnode::Node,
     pub name: String,
@@ -882,16 +807,11 @@ pub struct Node0 {
 
 pub fn bulb_node(img: &Image, cpi: i64, name: &str, ext: u64) -> R<Node0> {
     let mut node = node_of(img, cpi)?;
-    // the factory MAC record at 0xFF000 as the stock firmware keeps it: the
-    // BLE MAC (little endian, Telink OUI a4:c1:38 last) and two more bytes;
-    // anything else (an 8-byte IEEE address) it replaces by a random one, the
-    // same in every emulated bulb. Our images read the 8 bytes as their IEEE address.
     let e = ext.to_le_bytes();
     node.write_flash(0xFF000, &[e[0], e[1], e[2], 0x38, 0xC1, 0xA4, e[3], e[4] & 0x7F]);
     Ok(Node0 { node, name: name.to_string(), ext })
 }
 
-/// Is `f` interesting for the timeline: NWK commands other than Link Status, ZDO, APS commands.
 pub fn interesting(f: &CapFrame) -> bool {
     match (f.nwk_cmd(), &f.aps) {
         (Some(0x08), _) => false,
@@ -901,14 +821,11 @@ pub fn interesting(f: &CapFrame) -> bool {
     }
 }
 
-// =================================================================== probes
 impl Net {
-    /// A ZDO request from the coordinator.
     pub fn coord_zdo(&mut self, dst: u16, cluster: u16, payload: &[u8]) {
         self.s.w.coord.zdo_send(&mut self.s.w.air, dst, cluster, payload);
     }
 
-    /// A Route Request from the coordinator for `target` (with its IEEE address if given).
     pub fn coord_rreq(&mut self, target: u16, ieee: Option<u64>, id: u8) {
         let mut b = vec![0x01, if ieee.is_some() { 0x20 } else { 0x00 }, id];
         b.extend_from_slice(&target.to_le_bytes());
@@ -920,7 +837,6 @@ impl Net {
         c.st.tx_nwk_cmd(&mut self.s.w.air, 0xFFFC, &b, &Tx::new().radius(30).mac_dst(0xFFFF));
     }
 
-    /// A bulb's neighbour table (Mgmt_Lqi_req, all pages): (address, IEEE, type/rx/relationship byte, depth, lqi).
     pub fn lqi_table(&mut self, short: u16) -> R<Option<Vec<(u16, u64, u8, u8, u8)>>> {
         let (mut out, mut start) = (Vec::new(), 0u8);
         loop {
@@ -949,7 +865,6 @@ impl Net {
         }
     }
 
-    /// The neighbour table as text, each entry checked against the truth.
     pub fn lqi_text(&mut self, short: u16) -> R<String> {
         let Some(t) = self.lqi_table(short)? else { return Ok("no answer".into()) };
         let rel = ["parent", "child", "sibling", "none", "previous child", "?", "?", "?"];
@@ -969,7 +884,6 @@ impl Net {
             .join("; "))
     }
 
-    /// Where the 8 bytes of `ext` (little endian) are in a bulb's flash between `a` and `b`.
     pub fn flash_find(&self, id: NodeId, ext: u64, a: usize, b: usize) -> Vec<(usize, String)> {
         let mem = &self.s.w.node(id).m.flash.mem;
         let pat = ext.to_le_bytes();
@@ -986,7 +900,6 @@ impl Net {
     }
 }
 
-/// Every frame `who` sent since `mark` (None: anyone), with the pairs it states.
 fn show_from(cx: &mut SimCtx, net: &Net, mark: usize, who: Option<NodeId>, skip_ls: bool) {
     let lines = net.dump(mark, net.cap.len(), |f| {
         who.map_or(true, |w| f.who == w) && !(skip_ls && f.nwk_cmd() == Some(0x08)) && f.mac.as_ref().is_some_and(|m| m.ty != 2)
@@ -998,7 +911,6 @@ fn show_from(cx: &mut SimCtx, net: &Net, mark: usize, who: Option<NodeId>, skip_
 
 type Probe = (&'static str, Box<dyn Fn(&mut Net)>);
 
-// =================================================================== the scenario
 fn run(cx: &mut SimCtx) -> R<()> {
     let img_d = cx.image("bulb", "stock/stock-dimm.bin");
     let echo = cx.verbose > 0;
@@ -1015,7 +927,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         net.bulbs.iter().map(|b| format!("{}={:?}", b.name, net.short_of_bulb(&b.name).map(|s| format!("{s:#06x}")))).collect();
     cx.check(net.now(), "bulbs join", ok, &shorts.join(" "));
     net.run(5000.0)?;
-    // the IKEA router joins through K1, out of the coordinator's range
     let eid = net.add_ember(0x1C3B, 0x1234_5678);
     net.out_of_range(eid, NodeId::Coord, true);
     net.s.w.coord.permit_joining(&mut net.s.w.air, 254);
@@ -1037,7 +948,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     for (a, t) in net.flash_find(k1id, IKEA_EXT, 0xC0000, 0x100000) {
         cx.say(&format!("   K1 flash (before off) {a:#x}: {t}"));
     }
-    // K1 off; the ikea changes its address meanwhile; K1 on again
     net.power_off("K1");
     net.run(5000.0)?;
     net.ember_move("forced while K1 is off");
@@ -1102,8 +1012,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-
-// =================================================================== broadcast table probe
 fn r_tx_bcast(net: &mut Net, rid: NodeId, seq: u8) {
     let o = Tx::new().ddr().radius(5).nwk_seq(seq).src_ieee(SrcIeee::None);
     let (st, air) = net.s.w.st(rid);
@@ -1114,7 +1022,6 @@ fn relays_of(net: &Net, mark: usize, src: u16, seq: u8) -> usize {
     net.cap[mark..].iter().filter(|f| f.who == NodeId::Dut && f.nwk.as_ref().is_some_and(|n| n.src == src && n.seq == seq)).count()
 }
 
-/// Device_annce of `short` with `ext` from `who` (NWK broadcast 0xFFFD).
 fn annce(net: &mut Net, who: NodeId, short: u16, ext: u64) {
     let mut body = short.to_le_bytes().to_vec();
     body.extend_from_slice(&ext_bytes(ext));
@@ -1123,38 +1030,11 @@ fn annce(net: &mut Net, who: NodeId, short: u16, ext: u64) {
     st.tx_zdo(air, 0xFFFD, 0x0013, &body, &Tx::new());
 }
 
-/// R22 3.6.5: nwkcMaxBroadcastJitter (0x40 ms), and the slack the conformance
-/// test of broadcast relaying allows on top (a transmission of its own in progress,
-/// CSMA-CA backoffs).
 const RELAY_BOUND_MS: f64 = 75.0;
-/// How long after the original a copy of it still counts as a relay (the
-/// originator's and the relays' passive-acknowledgement retries, R22 3.6.5:
-/// nwkMaxBroadcastRetries 2 x nwkPassiveAckTimeout 500 ms, end before).
 const LATE_MS: f64 = 1500.0;
-/// How long each round watches the air: the stock firmware's late copies came
-/// up to 7.8 s after the original in the house.
 const WATCH_MS: f64 = 10000.0;
 const BTT_OFFSETS_MS: [f64; 6] = [0.0, 2.0, 5.0, 10.0, 15.0, 20.0];
 
-/// The house problem in small (the lab's docs/address-conflicts.md): two
-/// broadcasts from two senders a few ms apart, as when a router's Device_annce
-/// and the coordinator's Mgmt_Permit_Joining_req (Zigbee2MQTT's answer to a
-/// bulb coming back) meet. The stock firmware drops one of them or relays it
-/// seconds later; an EmberZNet neighbour whose broadcast record has expired
-/// then takes the late copy of its own broadcast for an address conflict.
-///
-/// r, an Ember-like router out of the coordinator's range, announces itself;
-/// 0, 2, 5, 10, 15 and 20 ms after that frame has left the air the coordinator
-/// opens (closes) the network. (Frames that overlap at the bulb are lost to
-/// both, a hidden-terminal collision no relay can mend: real senders defer
-/// while a neighbour transmits, and the originators send again.)
-/// Per offset the bulb (default: the Rust firmware) must relay both, each
-/// within the jitter bound, and send no copy of either later than 1.5 s.
-///
-/// `ADDR_CONFLICT_BTT_FULL=1` adds the measurements of the study (how long the
-/// bulb remembers a broadcast, eviction, Route Request duplicates, Device_annce
-/// conflict checks, the house's announce-and-permit-join cases with relayed
-/// copies), for `--image bulb=stock/stock-dimm.bin`; about 700 s of air.
 fn run_btt(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "target/tc32/bulb-tc32.bin");
     cx.say(&format!("image: {}", super::util::rel(&img)));
@@ -1172,9 +1052,7 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
     st.key_seq = c.key_seq;
     let rid = net.s.w.add_peer_node(Peer::bare_ack(st, "r"));
     net.s.w.air.keys.learn(Some(0x4444), Some(0x00124B00AA004444));
-    // the coordinator does not hear r: only the bulb's relays count
     net.out_of_range(rid, NodeId::Coord, true);
-    // r becomes a neighbour with an IEEE address: its own announce and Link Status
     annce(&mut net, rid, 0x4444, 0x00124B00AA004444);
     for _ in 0..2 {
         let (st, air) = net.s.w.st(rid);
@@ -1186,7 +1064,6 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
         let m = net.cap.len();
         annce(&mut net, rid, 0x4444, 0x00124B00AA004444);
         let aseq = net.s.w.peers[peer_ix(rid)].st.nwk_seq.wrapping_sub(1);
-        // the second sender defers while the first frame is on the air (CSMA-CA)
         net.run_until(50.0, |n| n.cap[m..].iter().any(|f| f.who == rid && f.t1 <= n.now()))?;
         if lead > 0.0 {
             net.run(lead)?;
@@ -1225,11 +1102,6 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-/// The measurements of the study (`ADDR_CONFLICT_BTT_FULL`): how long a bulb
-/// remembers a broadcast (R22 3.6.5 broadcast transaction table), the same
-/// frame (NWK source, sequence number) again after a gap, eviction, two
-/// broadcasts of one sender close together, Route Request duplicates,
-/// Device_annce conflict checks, the house's announce-and-permit-join cases.
 fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
     let mut lines = Vec::new();
     let mut seq = 0x60u8;
@@ -1246,7 +1118,6 @@ fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
         lines.push(format!("gap {gap:5.0} ms: first copy relayed {n1}x, second copy relayed {n2}x"));
         net.run(10000.0)?;
     }
-    // eviction: other broadcasts between the two copies, 40 ms apart
     for k in [6u8, 10, 11, 12, 13, 16] {
         seq = seq.wrapping_add(20);
         let first = seq;
@@ -1268,7 +1139,6 @@ fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
         ));
         net.run(10000.0)?;
     }
-    // two different broadcasts close together: when is the second one relayed?
     for gap in [2.0, 10.0, 20.0, 40.0, 60.0, 100.0, 200.0, 400.0] {
         seq = seq.wrapping_add(10);
         let (a, b) = (seq, seq.wrapping_add(1));
@@ -1290,7 +1160,6 @@ fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
         lines.push(format!("two broadcasts {gap:3.0} ms apart: the first relayed after {}, the second after {}", when(a), when(b)));
         net.run(5000.0)?;
     }
-    // Route Request duplicates (route discovery table, R22 3.6.3.5.2): the same request id again after a gap
     let mut rid_n = 0x30u8;
     for gap in [1000.0, 2000.0, 4000.0, 8000.0] {
         rid_n += 1;
@@ -1318,7 +1187,6 @@ fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
         lines.push(format!("Route Request, same id again after {gap:5.0} ms: first relayed {n1}x, second relayed {n2}x"));
         net.run(10000.0)?;
     }
-    // Device_annce checks: a known neighbour's address announced with another IEEE address, the bulb's own address
     let bs = net.short_of_bulb("B").unwrap();
     let c = &net.s.w.coord.st;
     let mut sx = Station::new(NodeId::Coord, c.channel, c.pan, Some(0x7777), 0x00124B00AA007777, NWK_KEY, (9, 9, 9, 9, 9), 0x900, 0);
@@ -1341,8 +1209,6 @@ fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
             .collect();
         lines.push(format!("{what}: the bulb sends [{}]", st.join(" | ")));
     }
-    // as in the house: the coordinator's Mgmt_Permit_Joining_req (0xFFFC) and a router's
-    // Device_annce (0xFFFD) at the same moment, neighbours relaying the announce
     for (k, relays, lead) in [(0usize, 0usize, 0.0), (1, 2, 0.0), (2, 4, 0.0), (3, 4, 10.0), (4, 4, 20.0), (5, 4, 5.0), (6, 2, 15.0)] {
         net.run(12000.0)?;
         let m = net.cap.len();
@@ -1380,9 +1246,6 @@ fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
     Ok(lines)
 }
 
-
-// =================================================================== broadcast echoes
-/// Copies of the broadcast (src, seq) on the air since `mark`: count per sender, the last one, lowest radius.
 fn echo_report(net: &Net, mark: usize, src: u16, seq: u8, t0: f64) -> (usize, f64, String) {
     let mut per: Vec<(String, usize)> = Vec::new();
     let (mut n, mut last, mut rmin) = (0usize, 0.0f64, 255u8);
@@ -1403,7 +1266,6 @@ fn echo_report(net: &Net, mark: usize, src: u16, seq: u8, t0: f64) -> (usize, f6
     (n, last, format!("{n} copies over {:.1} s, lowest radius {rmin} ({txt})", last / 1000.0))
 }
 
-/// The last broadcast the Ember router sent: (seq, ms).
 fn ember_last_bcast(net: &Net, mark: usize) -> Option<(u16, u8, f64)> {
     let id = net.ember.as_ref()?.id;
     net.cap[mark..]
@@ -1477,20 +1339,6 @@ fn run_echo(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-
-// =================================================================== a conflict on a router child's address
-/// The Ember router joined through K1 (K1's child). A conflict is reported on its
-/// address (Network Status 0x0d from the coordinator, as an Ember coordinator
-/// broadcasts it) while K1 is on: what do K1 and the others do?
-///
-/// Weekly, on the original firmware (the default image), the checks hold what
-/// was measured (the lab's docs/address-conflicts.md): K1 keeps the router's
-/// old address and every command through K1 to the new one is lost (0 of 4 x
-/// 3). On an Outglow image (`--image bulb=target/tc32/bulb-tc32.bin`) they
-/// hold what Outglow does, which the host test
-/// `a_neighbouring_router_that_takes_a_new_address_is_reached_under_it`
-/// (crates/zigbee/tests/conflicts.rs) checks for every change: the new address
-/// only, every command through.
 fn run_child(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
     let outglow = super::util::is_outglow(&img);
@@ -1539,7 +1387,6 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
     show_from(cx, &net, mark, None, true);
     let t = net.lqi_text(k1s)?;
     cx.say(&format!("-- K1's neighbour table after: {t}"));
-    // traffic to the ikea at its new address through K1
     let new = net.ember_short();
     let t_move = net.ember.as_ref().unwrap().moves.last().map(|m| m.0).unwrap_or(0.0);
     let mut rows = Vec::new();
@@ -1564,7 +1411,6 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
         }
         let t = net.lqi_text(k1s)?;
         let entry = t.split("; ").filter(|e| e.contains("180df9fffef90302")).collect::<Vec<_>>().join("; ");
-        // the ikea's entries in K1's table: its new address, and only that
         let ikea_shorts: Vec<Option<u16>> = t
             .split("; ")
             .filter(|e| e.contains("180df9fffef90302"))
@@ -1581,8 +1427,6 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
     let moves = net.ember.as_ref().unwrap().moves.len();
     cx.check(net.now(), "the ikea took a new address once (the conflict report)", moves == 1 && new != old,
              &format!("address changes {moves}: {old:#06x} -> {new:#06x}"));
-    // pairs stated after the conflict report (before it, a pair of a bulb not yet
-    // announced counts as unknown: the ground truth learns it from its frames)
     let bad: Vec<String> = net.bad.iter().filter(|b| b.0 >= mark).map(|b| format!("{:#06x} = {:#018x} ({})", b.1.short, b.1.ext, b.2)).collect();
     let pairs = format!("bad pairs since the report {} [{}], before it {}", bad.len(), bad.join("; "), net.bad.len() - bad.len());
     if outglow {
@@ -1601,11 +1445,6 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-
-// =================================================================== multi-hop
-/// The coordinator reaches the Ember router only through K1 and K3 (K1 does not
-/// hear the router); the router changes its address with everything on, then
-/// K1 is power-cycled. Route discovery, relays and every address pair.
 fn run_multihop(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
     let echo = cx.verbose > 0;
@@ -1625,7 +1464,6 @@ fn run_multihop(cx: &mut SimCtx) -> R<()> {
     let ok = net.run_until(60000.0, |n| n.bulbs.iter().all(|b| n.short_of_bulb(&b.name).is_some()))?;
     cx.check(net.now(), "bulbs join", ok, "");
     let eid = net.add_ember(0x1C3B, 0x5EED_0003);
-    // ikea hears K3 only; the coordinator hears K1 and W2; W2 hears K1 and the coordinator
     for (a, b) in [(eid, NodeId::Coord), (eid, k1), (eid, w2), (k3, NodeId::Coord), (k3, w2)] {
         net.out_of_range(a, b, true);
     }
@@ -1677,14 +1515,6 @@ fn run_multihop(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-
-// =================================================================== the house
-/// Something like a real home network: three dimm bulbs on a wall switch (K1..K3),
-/// six TW bulbs (S1..S6), the coordinator, the Ember router (the IKEA driver) next
-/// to the corridor, not every node in range of every other; the corridor is
-/// switched off and on, the router changes its address once while it is off,
-/// and the coordinator talks to everyone as Z2M does (commands, a many-to-one
-/// route request every minute, an address request now and then).
 fn run_house(cx: &mut SimCtx) -> R<()> {
     let img_d = cx.image("bulb", "stock/stock-dimm.bin");
     let img_t = cx.image("tw", "stock/stock-tw.bin");
@@ -1708,7 +1538,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
     cx.check(net.now(), "bulbs join", ok, "");
     net.run(5000.0)?;
     let eid = net.add_ember(0x1C3B, 0x5EED_0004);
-    // the corridor (K*, ikea) is out of the coordinator's range; S5, S6 too
     let far = ["K1", "K2", "K3", "S5", "S6"];
     for f in far {
         net.out_of_range(id(f), NodeId::Coord, true);
@@ -1722,7 +1551,7 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
             net.out_of_range(id(k), id(s), true);
         }
     }
-    net.run(60000.0)?; // the far bulbs find their way (they may rejoin through others)
+    net.run(60000.0)?;
     net.s.w.coord.permit_joining(&mut net.s.w.air, 254);
     net.run(1000.0)?;
     let js = net.ember_join_via(id("K1"))?;
@@ -1736,7 +1565,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
     net.ember_start();
     let k1s = net.short_of_bulb("K1").unwrap();
     net.s.w.peers[peer_ix(eid)].st.via.insert(0x0000, k1s);
-    // stress: a broadcast of the ikea and one of the coordinator at nearly the same moment, many times
     let rounds: usize = std::env::var("ADDR_CONFLICT_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let (mut late1, mut late9, mut lost_relays, mut relays_total) = (0usize, 0usize, 0usize, 0usize);
     let moves0 = net.ember.as_ref().unwrap().moves.len();
@@ -1776,7 +1604,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
         if last > 9000.0 {
             late9 += 1;
         }
-        // which powered bulbs that hear a relayer never relayed it
         for b in &net.bulbs {
             if b.off.is_some() {
                 continue;
@@ -1825,7 +1652,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
         }
         if now >= next_cmd {
             next_cmd = now + 5000.0;
-            // the coordinator's routing: the corridor and S5, S6 through the bulbs it hears
             let targets: Vec<u16> = net.bulbs.iter().filter_map(|b| net.short_of_bulb(&b.name)).collect();
             let t = if k % 3 == 0 { net.ember_short() } else { targets[k % targets.len()] };
             k += 1;
@@ -1843,7 +1669,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
         }
         net.run(500.0)?;
     }
-    // what each bulb believes about the ikea and the corridor
     let ikea = net.ember_short();
     for b in names {
         if let Some(s) = net.short_of_bulb(b) {
@@ -1866,7 +1691,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
         }
     }
     cx.say(&format!("   Network Status / Rejoin Response / Leave frames: {kinds:?}"));
-    // the broadcasts that came back to the ikea after its record expired: every copy of them
     let e = net.ember.as_ref().unwrap();
     let mut seen = Vec::new();
     for m in &e.moves {
@@ -1890,7 +1714,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
             }
             prev = f.t0;
         }
-        // what the late sender did in between
         if let Some((who, tl)) = late {
             cx.say("   the late sender's frames in between:");
             for f in net.cap.iter().filter(|f| f.who == who && f.t0 > t0 && f.t0 <= tl) {
@@ -1909,20 +1732,6 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-
-// =================================================================== the bulb as the victim
-/// A late copy of the bulb's own broadcast, as a stock bulb relays it many
-/// seconds later: another router sends a broadcast whose NWK source is the
-/// bulb's address and whose sequence number the bulb really used, `d` seconds
-/// after the bulb used it, with or without the source IEEE field (the bulb's
-/// own IEEE address). Does the bulb take it for an address conflict (R22
-/// 3.6.1.9.2: a new broadcast record with its own address as source)?
-///
-/// Neither firmware may: the original one (the default image, weekly) does not
-/// apply the rule at all; Outglow recognises the copy by its own IEEE address
-/// or one of its recent sequence numbers (`own_late_copy` in the zigbee crate,
-/// checked by the host test `late_copies_of_its_own_announcement_are_no_conflict`
-/// in crates/zigbee/tests/conflicts.rs).
 fn run_victim(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
     cx.say(&format!("image: {}", super::util::rel(&img)));
@@ -1942,8 +1751,6 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
     for with_ieee in [false, true] {
         for d in [2.0, 5.0, 10.0, 20.0, 60.0] {
             cases += 1;
-            // a fresh broadcast of the bulb, the way it happens in a conflict: the coordinator reports
-            // a conflict on the bulb's address, the bulb (if it reacts) takes a new one and announces it
             net.run(12000.0)?;
             let me0 = net.short_of_bulb("B").unwrap();
             let mark0 = net.cap.len();
@@ -1951,13 +1758,11 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
                 let c = &mut net.s.w.coord;
                 c.st.tx_nwk_cmd(&mut net.s.w.air, 0xFFFD, &[0x03, 0x0D, me0 as u8, (me0 >> 8) as u8], &Tx::new().radius(30).mac_dst(0xFFFF));
             }
-            // the last broadcast (radius > 1) the bulb originated: the frame a stock bulb would relay late
             let own_bcast = |f: &CapFrame, me: u16| {
                 f.who == NodeId::Dut
                     && f.nwk.as_ref().is_some_and(|n| n.src == me && n.dst >= 0xFFF8 && n.radius > 1)
                     && f.mac.as_ref().is_some_and(|m| m.src == Some(me as u64))
             };
-            // up to 3 s for the bulb's answer to the report (the 2 s copy must not start later than that)
             net.run_until(3000.0, |n| {
                 let me = n.short_of_bulb("B").unwrap();
                 n.cap[mark0..].iter().any(|f| own_bcast(f, me))
@@ -2030,22 +1835,6 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-
-// =================================================================== a channel change while a bulb is off
-/// The coordinator moves the network from channel 11 to 25 (Mgmt_NWK_Update_req
-/// broadcast, then it changes its own channel) while bulb B is off; bulb A is on
-/// and follows. B comes back on channel 11 with its old network in flash:
-/// does it find the network, how (rejoin or a new association), and with
-/// which address? Once with the network closed to new devices, once open.
-///
-/// A follows the change. Weekly, on the original firmware (the default image),
-/// the checks hold what was measured: B stays on channel 11 and silent (no
-/// Beacon Request, no rejoin) for the whole wait (`CH_WAIT_S`, default 240 s).
-/// On an Outglow image they hold what Outglow does, which the host test
-/// `a_bulb_off_during_a_channel_change_rejoins_on_the_new_channel_while_the_network_is_closed`
-/// (crates/zigbee/tests/conflicts.rs) checks for every change: B scans the
-/// channels, finds the network on 25, rejoins it secured (no new association)
-/// with the address it had (183 s here).
 fn run_channel(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
     let outglow = super::util::is_outglow(&img);
@@ -2059,7 +1848,6 @@ fn run_channel(cx: &mut SimCtx) -> R<()> {
         cx.check(net.now(), "bulbs join", ok, "");
         net.run(20000.0)?;
         let (a0, b0) = (net.short_of_bulb("A").unwrap(), net.short_of_bulb("B").unwrap());
-        // reporting as Z2M configures it: On/Off attribute, at least every 60 s
         net.s.w.coord.zcl_send_with(&mut net.s.w.air, b0, 1, 0x0006, 0x06, &[0x00, 0x00, 0x00, 0x10, 0x01, 0x00, 0x3C, 0x00],
                                     crate::coord::HA, false, false, None, false);
         net.run(3000.0)?;
@@ -2069,7 +1857,6 @@ fn run_channel(cx: &mut SimCtx) -> R<()> {
         net.run(1000.0)?;
         net.power_off("B");
         net.run(3000.0)?;
-        // Mgmt_NWK_Update_req: channel mask with channel 25 only, ScanDuration 0xFE (change channel), update id 1
         let mask: u32 = 1 << 25;
         let mut p = mask.to_le_bytes().to_vec();
         p.push(0xFE);

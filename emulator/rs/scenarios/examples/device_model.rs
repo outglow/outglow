@@ -1,12 +1,3 @@
-//! What a coordinator learns of a bulb when it interviews it, as JSON: the
-//! node descriptor's manufacturer code, the Basic attributes, the active
-//! endpoints with their simple descriptors, and every attribute of every
-//! server cluster (Discover Attributes, then Read Attributes). The input of
-//! tools/z2m-generated-definition.mjs, which hands it to Zigbee2MQTT's
-//! definition generator.
-//!
-//!   cargo run --release -p scenarios --example device_model -- rust=../../target/tc32/bulb-tc32.bin [cpi] > model.json
-
 use scenarios::frames::ZclValue;
 use scenarios::image::Image;
 use scenarios::session::{Session, SessionOpts};
@@ -26,7 +17,6 @@ fn json_str(b: &[u8]) -> String {
     s
 }
 
-/// A value as JSON: numbers as numbers (single precision decoded), strings as strings.
 fn json_value(ty: u8, v: &ZclValue) -> String {
     match v {
         ZclValue::Int(i) if ty == 0x39 => {
@@ -44,7 +34,6 @@ fn json_value(ty: u8, v: &ZclValue) -> String {
     }
 }
 
-/// Every attribute of a server cluster of an endpoint: (id, type, value as JSON).
 fn attributes(s: &mut Session, ep: u8, cluster: u16) -> Vec<(u16, u8, String)> {
     let mut ids = Vec::new();
     let mut start = 0u16;
@@ -84,7 +73,6 @@ fn main() {
     let mut s = Session::new(&img, SessionOpts { cpi, ..Default::default() }).expect("session");
     s.run(3000.0).unwrap();
     let dst = s.dut_short.to_le_bytes();
-    // node descriptor: logical type, manufacturer code
     let nd = s.zdo(0x0002, &dst, 2000.0).unwrap().map(|f| f.zdo().unwrap().payload).unwrap_or_default();
     let (kind, mfr) = match nd.get(3..8) {
         Some(d) => (d[0] & 7, u16::from_le_bytes([d[3], d[4]])),
@@ -96,7 +84,6 @@ fn main() {
     for ep in eps {
         let Ok(Some(d)) = s.simple_desc(ep) else { continue };
         let mut clusters = Vec::new();
-        // the Green Power endpoint has no server clusters to read
         for c in d.inc.iter().copied() {
             let a = attributes(&mut s, ep, c);
             if ep == 1 && c == 0x0000 {

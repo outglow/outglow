@@ -1,6 +1,3 @@
-//! ATT: MTU exchange and the size of attribute PDUs (Core 5.4 Vol 3 Part F
-//! 3.2.8, 3.4.2; Part G 5.2.1); emulator/spec_ble/att_mtu.py.
-
 use super::att_errors::cat;
 use crate::ble::harness::{att_error, hx, BleSession, L2Frame, LinkOpts, CID_ATT};
 use crate::ble::util::{
@@ -98,7 +95,6 @@ fn rbt_char() -> Vec<u8> {
     cat(&[&[0x08], &u16b(1), &u16b(0xFFFF), &CHAR])
 }
 
-/// Sends ATT_EXCHANGE_MTU_REQ; the Server Rx MTU. N/A when the server says it lacks the request.
 fn exchange(s: &mut BleSession, client_rx: u16) -> R<u16> {
     let rsp = s.att(&cat(&[&[0x02], &u16b(client_rx)]))?;
     expect(rsp.is_some(), format!("ATT_EXCHANGE_MTU_REQ (Client Rx MTU {client_rx}): {}", describe(rsp.as_deref())))?;
@@ -129,8 +125,6 @@ fn exchange(s: &mut BleSession, client_rx: u16) -> R<u16> {
     Ok(u16::from_le_bytes([rsp[1], rsp[2]]))
 }
 
-/// A value put together from its Read Response and Read Blob Requests until a
-/// part comes back empty. None when Read Blob gives no answer to go by.
 fn whole(s: &mut BleSession, h: u16, first: &[u8]) -> R<Option<Vec<u8>>> {
     let mut v = first.to_vec();
     for _ in 0..64 {
@@ -145,11 +139,6 @@ fn whole(s: &mut BleSession, h: u16, first: &[u8]) -> R<Option<Vec<u8>>> {
 }
 
 fn exchange_rsp(s: &mut BleSession) -> R<String> {
-    // 3.4.2.2, Table 3.6: opcode 0x03, Server Rx MTU 2 octets. "The Server Rx MTU shall be greater than or
-    // equal to the default ATT_MTU." Rule 1 for a device that is client and server: "A device's
-    // ATT_EXCHANGE_MTU_REQ PDU shall contain the same MTU as the device's ATT_EXCHANGE_MTU_RSP PDU". The
-    // tester keeps rule 1 itself: it answers a request of the server with the 100 it then sends. The
-    // procedure is optional in a server (Part G 4.2): Request Not Supported is N/A.
     connect_rx_mtu(s, 100, false, LinkOpts::new())?;
     let own = server_mtu_req(s);
     let srv = exchange(s, 100)?;
@@ -171,13 +160,6 @@ fn exchange_rsp(s: &mut BleSession) -> R<String> {
 }
 
 fn applied(s: &mut BleSession) -> R<String> {
-    // 3.4.2.2: "The server and client shall set ATT_MTU to the minimum of the Client Rx MTU and the Server
-    // Rx MTU ... This ATT_MTU value shall be applied in the server after this response has been sent and
-    // before any other Attribute Protocol PDU is sent." 3.4.4.4: "If the attribute value is longer than
-    // (ATT_MTU-1) then the first (ATT_MTU-1) octets shall be included in this response." Client Rx MTU 100.
-    // A server without a value longer than 22 octets shows the new ATT_MTU only if some other response
-    // grows beyond 23 octets; how many declarations a Read By Type response then holds is judged in
-    // att_mtu_read_by_type_fill.
     connect_rx_mtu(s, 100, false, LinkOpts::new())?;
     let srv = exchange(s, 100)?;
     let a = 100.min(srv as usize);
@@ -240,11 +222,6 @@ fn applied(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_type_fill(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1: "The ATT Server shall include as many attributes as possible in the response in order to
-    // minimize the number of PDUs required to read attributes of the same type." 3.4.4.2, Table 3.16:
-    // Attribute Data List 2 to (ATT_MTU - 2) octets. 3.4.2.2: the new ATT_MTU applies to every PDU after
-    // the ATT_EXCHANGE_MTU_RSP. Characteristic declarations with 16-bit UUIDs are 7 octets each; a server
-    // with more than three of them in a row shows the difference between ATT_MTU 23 and a larger one.
     connect_rx_mtu(s, 100, false, LinkOpts::new())?;
     let srv = exchange(s, 100)?;
     let a = 100.min(srv as usize);
@@ -282,10 +259,6 @@ fn read_by_type_fill(s: &mut BleSession) -> R<String> {
 }
 
 fn below_default(s: &mut BleSession) -> R<String> {
-    // 3.4.2.2: "If either Client Rx MTU or Service Rx MTU are incorrectly less than the default ATT_MTU,
-    // then the ATT_MTU shall not be changed and the ATT_MTU shall be the default ATT_MTU." Requests whose
-    // responses need more than 10 octets are sent before and after an ATT_EXCHANGE_MTU_REQ with Client Rx
-    // MTU 10; the responses must be the same.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let mut reqs = vec![
@@ -363,10 +336,6 @@ fn below_default(s: &mut BleSession) -> R<String> {
 }
 
 fn never_exceeded(s: &mut BleSession) -> R<String> {
-    // 3.2.8: "ATT_MTU is defined as the maximum size of any packet sent between a client and a server."
-    // Part G 5.2.1: default 23 on LE. A server that asks for a larger MTU itself is answered with 23 by
-    // the harness, so ATT_MTU stays 23. Requests whose answers are as long as the table allows: the
-    // whole table by Find Information, Read By Type for declarations, Read By Group Type, every value.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let n0 = s.lk().frames.len();
@@ -414,13 +383,6 @@ fn wait_server_req(s: &mut BleSession) -> R<()> {
 }
 
 fn server_request(s: &mut BleSession) -> R<String> {
-    // 3.4.2.1: "The Client Rx MTU shall be greater than or equal to the default ATT_MTU. This request shall
-    // only be sent once during a connection by the client." 3.4.2.2 rule 4: "If an Attribute Protocol
-    // Request is received after the MTU Exchange Request is sent and before the MTU Exchange Response is
-    // received, the associated Attribute Protocol Response shall use the default MTU." The tester holds
-    // its response back for a while (far less than the 30 s transaction timeout) and then answers 100.
-    // The request asked meanwhile is Read By Type for «Characteristic», whose answer a server would make
-    // longer than 23 octets if it used a larger ATT_MTU already.
     connect_rx_mtu(s, 100, true, LinkOpts::new())?;
     wait_server_req(s)?;
     let Some(own) = server_mtu_req(s) else {
@@ -471,11 +433,6 @@ fn provoke(s: &mut BleSession) -> R<Vec<L2Frame>> {
 }
 
 fn server_request_notifications(s: &mut BleSession) -> R<String> {
-    // 3.4.2.2 rule 5: "Once the MTU Exchange Request has been sent, the initiating device shall not send an
-    // Attribute Protocol Indication or Notification until after the MTU Exchange Response has been
-    // received." The tester leaves the server's request unanswered for about 2.5 s (the transaction
-    // timeout is 30 s) and does meanwhile what makes the bulb notify. Control: in a second connection,
-    // where the request is answered at once, the same steps produce a notification.
     connect_rx_mtu(s, MTU as u16, true, LinkOpts::new())?;
     wait_server_req(s)?;
     if server_mtu_req(s).is_none() {

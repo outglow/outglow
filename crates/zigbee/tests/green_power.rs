@@ -1,5 +1,3 @@
-//! Green Power basic proxy.
-
 mod sim;
 
 use sim::*;
@@ -10,9 +8,6 @@ const GP: u16 = 0x0021;
 const SWITCH: u32 = 0x0171_2345;
 const KEY: [u8; 16] = [0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF];
 
-/// What a switch sends when it is being commissioned: device type 2 (on/off
-/// switch), sequence numbers from the MAC, and in the extended options
-/// security level 2, an individual key given in the clear, its frame counter.
 fn commissioning() -> Vec<u8> {
     let mut p = vec![0x02, 0x81, 0xB2];
     p.extend_from_slice(&KEY);
@@ -20,7 +15,6 @@ fn commissioning() -> Vec<u8> {
     p
 }
 
-/// Green Power frames the coordinator received with ZCL command `cmd`: (NWK source, ZCL payload).
 fn gp_frames(net: &Net, cmd: u8) -> Vec<(u16, Vec<u8>)> {
     net.coord.zcl_rx.iter().filter(|(_, c, f)| *c == GP && f[2] == cmd).map(|(s, _, f)| (*s, f[3..].to_vec())).collect()
 }
@@ -45,11 +39,9 @@ fn commissioning_frames_are_tunnelled_to_the_sink() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
-    // outside commissioning mode an unknown device is ignored
     gpd.send(0xE0, &commissioning());
     net.run(100);
     assert!(gp_frames(&net, 0x04).is_empty());
-    // commissioning mode, notifications by unicast
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     gpd.send(0xE0, &commissioning());
@@ -58,7 +50,6 @@ fn commissioning_frames_are_tunnelled_to_the_sink() {
     assert_eq!(got.len(), 1, "the device's three copies make one notification");
     let (src, p) = &got[0];
     assert_eq!(*src, short);
-    // options: proxy information present; device, its MAC sequence number as counter, command, payload
     assert_eq!(&p[..2], &[0x00, 0x08]);
     assert_eq!(&p[2..6], &SWITCH.to_le_bytes());
     assert_eq!(&p[6..10], &(gpd.seq() as u32).to_le_bytes());
@@ -66,7 +57,6 @@ fn commissioning_frames_are_tunnelled_to_the_sink() {
     assert_eq!(&p[12..12 + commissioning().len()], &commissioning()[..]);
     let at = 12 + commissioning().len();
     assert_eq!(&p[at..at + 2], &short.to_le_bytes());
-    // by broadcast the notification carries the device's alias as source
     net.coord.gp_commissioning_mode(true, false);
     net.run(100);
     gpd.send(0xE0, &commissioning());
@@ -74,7 +64,6 @@ fn commissioning_frames_are_tunnelled_to_the_sink() {
     let got = gp_frames(&net, 0x04);
     assert_eq!(got.len(), 2);
     assert_eq!(got[1].0, 0x2345, "alias: the low half of the source identifier");
-    // leaving commissioning mode
     net.coord.gp_commissioning_mode(false, false);
     net.run(100);
     gpd.send(0xE0, &commissioning());
@@ -90,39 +79,32 @@ fn a_paired_device_is_forwarded_decrypted_and_only_when_fresh() {
     let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
-    // lightweight unicast to the coordinator, security level 3, the device's key, counter 100
     net.coord.gp_pairing(SWITCH, true, 3, 0, 3, Some(KEY), 100);
     net.run(100);
-    // toggle
     gpd.send(0x22, &[]);
     net.run(100);
     let got = gp_frames(&net, 0x00);
     assert_eq!(got.len(), 1);
     let (src, p) = &got[0];
     assert_eq!(*src, short);
-    // options: also unicast, level 3, individual key (4), cannot queue for the device, proxy information
     assert_eq!(u16::from_le_bytes([p[0], p[1]]), 1 << 3 | 3 << 6 | 4 << 8 | 1 << 12 | 1 << 14);
     assert_eq!(&p[2..6], &SWITCH.to_le_bytes());
     assert_eq!(&p[6..10], &101u32.to_le_bytes());
     assert_eq!(&p[10..12], &[0x22, 0], "the command in the clear, no payload");
     assert!(gp_frames(&net, 0x04).is_empty(), "the pairing ended commissioning mode: no commissioning notification");
-    // a command with a payload
     gpd.send(0x30, &[0x55]);
     net.run(100);
     assert_eq!(&gp_frames(&net, 0x00)[1].1[10..13], &[0x30, 1, 0x55]);
-    // a replay of an old frame counter, long after the original
     net.run(5_000);
     gpd.counter = 100;
     gpd.send(0x22, &[]);
     net.run(100);
     assert_eq!(gp_frames(&net, 0x00).len(), 2);
-    // the right counter but the wrong key
     gpd.counter = 500;
     gpd.key = Some([0x11; 16]);
     gpd.send(0x22, &[]);
     net.run(100);
     assert_eq!(gp_frames(&net, 0x00).len(), 2);
-    // an unsecured frame claiming to be the device
     gpd.key = None;
     gpd.send(0x22, &[]);
     net.run(100);
@@ -135,7 +117,6 @@ fn group_notifications_of_two_proxies_collapse_into_one() {
     let a = net.join_node();
     let b = net.join_node();
     let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
-    // pre-commissioned group 0x0B84, as Zigbee2MQTT's coordinators use
     net.coord.gp_pairing(SWITCH, true, 2, 0x0B84, 3, Some(KEY), 100);
     net.run(500);
     gpd.send(0x22, &[]);
@@ -145,13 +126,10 @@ fn group_notifications_of_two_proxies_collapse_into_one() {
     assert_eq!(got[0].0, 0x2345, "from the device's alias address");
     assert_eq!(net.coord.group_rx.last(), Some(&(0x2345, 0x0B84)));
     assert_eq!(u16::from_le_bytes([got[0].1[0], got[0].1[1]]) & (1 << 5), 1 << 5, "also commissioned group");
-    // each proxy sent it under the same sequence number: the device's, minus nine
     let sent = |net: &Net, n: usize| net.sent_by(net.nodes[n].id, 0).iter().filter(|f| f[3..5] == PAN.to_le_bytes() && f[11..13] == [0xFD, 0xFF] && f[13..15] == [0x45, 0x23]).map(|f| f[16]).collect::<Vec<u8>>();
     let (sa, sb) = (sent(&net, a), sent(&net, b));
     assert!(!sa.is_empty() || !sb.is_empty());
     assert!(sa.iter().chain(sb.iter()).all(|s| *s == gpd.seq().wrapping_sub(9)));
-    // and with the same APS counter, that very number (A.3.6.3.3): whichever proxy a frame
-    // comes through, the sink sees one frame, and the next frame of the device is not a repeat
     for n in [a, b] {
         for f in net.sent_by(net.nodes[n].id, 0).iter().filter(|f| f.len() > 30 && f[0] & 7 == 1 && f[11..13] == [0xFD, 0xFF] && f[13..15] == [0x45, 0x23] && f[15] == 30) {
             assert_eq!(&aps_of(f)[..9], &[0x0C, 0x84, 0x0B, 0x21, 0x00, 0xE0, 0xA1, 242, gpd.seq().wrapping_sub(9)]);
@@ -187,17 +165,14 @@ fn the_sinks_answer_is_sent_in_the_devices_receive_window() {
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
-    // a commissioning frame that announces a receive window: tunnelled with that flag
     gpd.send_and_listen(0xE0, &[0x02, 0x23]);
     net.run(100);
     let got = gp_frames(&net, 0x04);
     assert!(!got.is_empty());
     assert_eq!(got[0].1[0] & 0x08, 0x08, "rx after tx");
     assert!(net.air.borrow().timed.is_empty(), "nothing to send to the device yet");
-    // the sink answers through the first bulb: a Commissioning Reply
     net.coord.gp_response(sa, 11, SWITCH, 0xF0, &[0x01, 0x62, 0x1A]);
     net.run(100);
-    // the device tries again; 20 ms after that frame the answer goes out
     let t_us = (net.now() + 1).wrapping_mul(1000);
     gpd.send_and_listen(0xE0, &[0x02, 0x23]);
     net.run(100);
@@ -206,14 +181,12 @@ fn the_sinks_answer_is_sent_in_the_devices_receive_window() {
     let (port, at_us, channel, frame) = &timed[0];
     assert_eq!((*port, *channel), (pa, 11));
     assert_eq!(*at_us, t_us + 20_000, "at the start of the receive window");
-    // MAC broadcast without source; GP data frame towards the device; the reply as the sink gave it
     assert_eq!(&frame[..2], &[0x01, 0x08]);
     assert_eq!(&frame[3..7], &[0xFF; 4]);
     let mut want = vec![0x8C, 0x80];
     want.extend_from_slice(&SWITCH.to_le_bytes());
     want.extend_from_slice(&[0xF0, 0x01, 0x62, 0x1A]);
     assert_eq!(&frame[7..], &want[..]);
-    // it is sent once: the next window gets nothing
     gpd.send_and_listen(0xE0, &[0x02, 0x23]);
     net.run(100);
     assert_eq!(net.air.borrow().timed.len(), 1);
@@ -228,13 +201,11 @@ fn a_channel_configuration_is_delivered_on_the_channel_the_device_listens_on() {
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
-    // a channel request (maintenance frame) reaches the sink as a commissioning notification without a device
     gpd.channel_request();
     net.run(100);
     let got = gp_frames(&net, 0x04);
     assert_eq!(&got[0].1[2..6], &[0, 0, 0, 0]);
     assert_eq!(&got[0].1[10..13], &[0xE3, 1, 0x85]);
-    // the sink: "tell it channel 11 (the network's), when it next listens on channel 15"
     net.coord.gp_response(short, 15, 0, 0xF3, &[0x10]);
     net.run(100);
     assert_eq!(net.air.borrow().ports[port].channel, 15, "the bulb waits there");
@@ -246,7 +217,6 @@ fn a_channel_configuration_is_delivered_on_the_channel_the_device_listens_on() {
     assert_eq!(timed[0].2, 15);
     assert_eq!(&timed[0].3[7..], &[0x0D, 0xF3, 0x10], "a maintenance frame with the channel configuration");
     assert_eq!(net.air.borrow().ports[port].channel, 11, "and it is back on the network's channel");
-    // the bulb still answers the coordinator
     let seq = net.coord.zcl(short, 0x0006, 0x01, 0x00, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, 0x0006, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
@@ -257,8 +227,6 @@ fn an_answer_nobody_fetches_is_dropped_and_the_bulb_returns_to_its_channel() {
     let mut net = Net::new();
     let n = net.join_node();
     let (short, port) = (net.nodes[n].short(), net.nodes[n].id);
-    // outside commissioning mode a proxy has nothing to deliver to devices (Table 23): the
-    // frame is dropped, and no node of the network can send the bulb off its channel with one
     net.coord.gp_response(short, 20, 0, 0xF3, &[0x10]);
     net.run(100);
     assert_eq!(net.air.borrow().ports[port].channel, 11);
@@ -266,7 +234,6 @@ fn an_answer_nobody_fetches_is_dropped_and_the_bulb_returns_to_its_channel() {
     gpd.channel_request();
     net.run(100);
     assert!(net.air.borrow().timed.is_empty());
-    // in commissioning mode it waits on the channel the sink names, for five seconds
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     net.coord.gp_response(short, 20, 0, 0xF3, &[0x10]);
@@ -280,10 +247,6 @@ fn an_answer_nobody_fetches_is_dropped_and_the_bulb_returns_to_its_channel() {
     assert!(net.air.borrow().timed.is_empty());
 }
 
-// ------------------------------------------------------------ the proxy table
-
-/// The distinct NWK frames a bulb sent under another source address (an alias; a broadcast is
-/// sent more than once): (destination, radius, sequence number).
 fn alias_frames(net: &Net, n: usize, alias: u16) -> Vec<(u16, u8, u8)> {
     net.sent_by(net.nodes[n].id, 0)
         .iter()
@@ -299,7 +262,6 @@ fn a_device_can_have_several_sinks_and_lose_them_one_by_one() {
     let mut net = Net::new();
     let n = net.join_node();
     let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
-    // the coordinator wants the frames by unicast, and its group 0x0B84 wants them too
     net.coord.gp_pair(&Pairing::new(SWITCH, 3).secured(4, Some(KEY), 100));
     let mut group = Pairing::new(SWITCH, 2).secured(4, Some(KEY), 100);
     group.group = 0x0B84;
@@ -313,7 +275,6 @@ fn a_device_can_have_several_sinks_and_lose_them_one_by_one() {
         assert_eq!(u16::from_le_bytes([p[0], p[1]]) & 0x38, 1 << 3 | 1 << 5, "also unicast, also commissioned group");
     }
     assert_eq!(net.coord.group_rx, vec![(0x2345, 0x0B84)]);
-    // the group no longer wants them
     group.add_sink = false;
     net.coord.gp_pair(&group);
     net.run(200);
@@ -321,7 +282,6 @@ fn a_device_can_have_several_sinks_and_lose_them_one_by_one() {
     net.run(1_000);
     assert_eq!(gp_frames(&net, 0x00).len(), 3);
     assert_eq!(net.coord.group_rx.len(), 1);
-    // nor does the coordinator: with the last sink the device leaves the table
     let mut unicast = Pairing::new(SWITCH, 3);
     unicast.add_sink = false;
     net.coord.gp_pair(&unicast);
@@ -335,7 +295,6 @@ fn a_device_can_have_several_sinks_and_lose_them_one_by_one() {
     let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &by_id);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x11, seq, 0x0B, 0x8B, 0, 0xFF, 0]);
-    // "remove the device" is a short command: options and the device, nothing else
     net.coord.gp_pair(&Pairing::new(SWITCH, 3).secured(4, Some(KEY), 200));
     net.run(200);
     gpd.counter = 300;
@@ -357,13 +316,11 @@ fn groupcasts_go_out_under_the_alias_and_radius_the_sink_assigned() {
     let mut net = Net::new();
     let n = net.join_node();
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
-    // the group derived from the device (its alias, 0x2345), sent under an assigned alias, three hops far
     let mut derived = Pairing::new(SWITCH, 1);
     derived.group = 0x2345;
     derived.alias = Some(0x1234);
     derived.radius = Some(3);
     net.coord.gp_pair(&derived);
-    // and a group of the sink's choosing, with its own alias
     let mut chosen = Pairing::new(SWITCH, 2);
     chosen.group = 0x0B84;
     chosen.alias = Some(0x0777);
@@ -374,10 +331,8 @@ fn groupcasts_go_out_under_the_alias_and_radius_the_sink_assigned() {
     assert_eq!(net.coord.group_rx, vec![(0x1234, 0x2345), (0x0777, 0x0B84)]);
     let got = gp_frames(&net, 0x00);
     assert_eq!(u16::from_le_bytes([got[0].1[0], got[0].1[1]]) & 0x38, 1 << 4 | 1 << 5, "also derived group, also commissioned group");
-    // to everyone who listens; the derived group under the device's sequence number, the chosen one nine below
     assert_eq!(alias_frames(&net, n, 0x1234), vec![(0xFFFD, 3, gpd.seq())]);
     assert_eq!(alias_frames(&net, n, 0x0777), vec![(0xFFFD, 3, gpd.seq().wrapping_sub(9))]);
-    // without an assigned alias the derived one is used
     let mut plain = Pairing::new(0x0000_FFFE, 2);
     plain.group = 0x0B84;
     net.coord.gp_pair(&plain);
@@ -385,7 +340,6 @@ fn groupcasts_go_out_under_the_alias_and_radius_the_sink_assigned() {
     let mut odd = Gpd::new(&net.air, 0x0000_FFFE, None);
     odd.send(0x22, &[]);
     net.run(1_000);
-    // 0xFFFE is not an address: low half xor high half is no better, so eight less
     assert_eq!(net.coord.group_rx.last(), Some(&(0xFFF6, 0x0B84)));
 }
 
@@ -400,7 +354,6 @@ fn the_proxy_table_can_be_read_back() {
     second.seq_cap = true;
     net.coord.gp_pair(&second);
     net.run(200);
-    // what the table should say of the first: active, valid, a unicast sink, security in use
     let mut first = vec![0x58, 0x40];
     first.extend_from_slice(&SWITCH.to_le_bytes());
     first.push(0x03 | 4 << 2);
@@ -409,9 +362,7 @@ fn the_proxy_table_can_be_read_back() {
     first.push(1);
     first.extend_from_slice(&COORD_EXT.to_le_bytes());
     first.extend_from_slice(&[0x00, 0x00, 0xFF]);
-    // of the second: active, valid, numbers its frames, a commissioned group, with the derived alias
     let second = vec![0x38, 0x01, 0x42, 0, 0, 0, 0, 0, 0, 0, 1, 0x84, 0x0B, 0xFF, 0xFF, 0xFF];
-    // by device
     let mut by_id = vec![0x00];
     by_id.extend_from_slice(&SWITCH.to_le_bytes());
     let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &by_id);
@@ -419,14 +370,12 @@ fn the_proxy_table_can_be_read_back() {
     let mut want = vec![0x11, seq, 0x0B, 0x00, 2, 0xFF, 1];
     want.extend_from_slice(&first);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), want);
-    // by index: from the start, both fit
     let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 0]);
     net.run(100);
     let mut want = vec![0x11, seq, 0x0B, 0x00, 2, 0, 2];
     want.extend_from_slice(&first);
     want.extend_from_slice(&second);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), want);
-    // from the second on; past the end
     let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 1]);
     net.run(100);
     let mut want = vec![0x11, seq, 0x0B, 0x00, 2, 1, 1];
@@ -435,7 +384,6 @@ fn the_proxy_table_can_be_read_back() {
     let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 2]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x11, seq, 0x0B, 0x8B, 2, 2, 0]);
-    // the same table as an attribute, with the cluster's other attributes
     let seq = net.coord.gp_unicast(short, 0x08, 0x00, &[0x11, 0x00]);
     net.run(100);
     let mut want = vec![0x10, seq, 0x01, 0x11, 0x00, 0x00, 0x43, (first.len() + second.len()) as u8, 0];
@@ -454,14 +402,12 @@ fn the_proxy_table_can_be_read_back() {
     want.extend_from_slice(&[0xFD, 0xFF, 0x00, 0x21, 0x02, 0x00]);
     want.extend_from_slice(&[0x05, 0x00, 0x86]);
     assert_eq!(net.coord.last_zcl(short, GP, 0x01).unwrap(), want);
-    // the table is read-only; a command meant for sinks is declined
     let seq = net.coord.gp_unicast(short, 0x08, 0x02, &[0x10, 0x00, 0x20, 9]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x04).unwrap(), vec![0x10, seq, 0x04, 0x88, 0x10, 0x00]);
     let seq = net.coord.gp_unicast(short, 0x01, 0x0A, &[0x08, 0]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x0A, 0x81]);
-    // the table survives a power cut
     net.power_cycle(n);
     net.run(2_000);
     let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 1]);
@@ -471,14 +417,11 @@ fn the_proxy_table_can_be_read_back() {
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), want);
 }
 
-// ------------------------------------------------------------ keys and security levels
-
 #[test]
 fn shared_keys_come_from_the_pairing_the_cluster_attribute_or_the_network() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // key type 1, no key in the pairing: the network key, and frames that say "shared key"
     net.coord.gp_pair(&Pairing::new(SWITCH, 3).secured(1, None, 100));
     net.run(200);
     let mut gpd = Gpd::new(&net.air, SWITCH, Some(NWK_KEY));
@@ -488,12 +431,10 @@ fn shared_keys_come_from_the_pairing_the_cluster_attribute_or_the_network() {
     let got = gp_frames(&net, 0x00);
     assert_eq!(got.len(), 1);
     assert_eq!((u16::from_le_bytes([got[0].1[0], got[0].1[1]]) >> 8) & 7, 1, "key type: network key");
-    // the same frame claiming an individual key does not fit the pairing
     gpd.individual = true;
     gpd.send(0x22, &[]);
     net.run(200);
     assert_eq!(gp_frames(&net, 0x00).len(), 1);
-    // key type 2 (a key shared by all devices), not in the pairing: unknown until the sink sets the attribute
     let other = 0x0000_0099;
     net.coord.gp_pair(&Pairing::new(other, 3).secured(2, None, 100));
     net.run(200);
@@ -510,7 +451,6 @@ fn shared_keys_come_from_the_pairing_the_cluster_attribute_or_the_network() {
     gpd.send(0x22, &[]);
     net.run(200);
     assert_eq!(gp_frames(&net, 0x00).len(), 2);
-    // the attribute is kept over a power cut
     net.power_cycle(n);
     net.run(2_000);
     let seq = net.coord.gp_unicast(short, 0x08, 0x00, &[0x20, 0x00, 0x21, 0x00]);
@@ -518,7 +458,6 @@ fn shared_keys_come_from_the_pairing_the_cluster_attribute_or_the_network() {
     let mut want = vec![0x10, seq, 0x01, 0x20, 0x00, 0x00, 0x18, 0x02, 0x21, 0x00, 0x00, 0xF1];
     want.extend_from_slice(&KEY);
     assert_eq!(net.coord.last_zcl(short, GP, 0x01).unwrap(), want);
-    // in commissioning mode a device nobody paired yet, secured with the shared key, is read here
     let mut new = Gpd::new(&net.air, 0x0000_0777, Some(KEY));
     new.individual = false;
     net.coord.gp_commissioning_mode(true, true);
@@ -527,10 +466,8 @@ fn shared_keys_come_from_the_pairing_the_cluster_attribute_or_the_network() {
     net.run(200);
     let got = gp_frames(&net, 0x04);
     let p = &got.last().unwrap().1;
-    // security level 3, key type 2, processed; the command in the clear
     assert_eq!(u16::from_le_bytes([p[0], p[1]]), 3 << 4 | 2 << 6 | 1 << 11);
     assert_eq!(&p[10..12], &[0x22, 0]);
-    // one with a key of its own is passed on as it came: flagged, with its MIC at the end
     let mut private = Gpd::new(&net.air, 0x0000_0888, Some([0x5A; 16]));
     private.send(0x22, &[]);
     net.run(200);
@@ -558,7 +495,6 @@ fn frames_that_are_only_authenticated_are_checked_too() {
     assert_eq!(got.len(), 1);
     assert_eq!((u16::from_le_bytes([got[0].1[0], got[0].1[1]]) >> 6) & 3, 2);
     assert_eq!(&got[0].1[10..13], &[0x30, 1, 0x55]);
-    // the same frame with another payload byte: the MIC no longer fits
     let sent = net.sent_by(gpd.port, 0).last().unwrap().clone();
     let mut forged = sent[7..].to_vec();
     let at = forged.len() - 5;
@@ -567,7 +503,6 @@ fn frames_that_are_only_authenticated_are_checked_too() {
     gpd.send_raw(&forged);
     net.run(200);
     assert_eq!(gp_frames(&net, 0x00).len(), 1);
-    // an encrypted frame where the pairing says "authenticated": the level must match
     gpd.level = 3;
     gpd.send(0x30, &[0x55]);
     net.run(200);
@@ -586,7 +521,6 @@ fn unsecured_devices_that_number_their_frames_cannot_be_replayed_at_once() {
     gpd.send(0x22, &[]);
     net.run(200);
     assert_eq!(gp_frames(&net, 0x00).len(), 1);
-    // the same frame again, long after the device's own repeats
     net.run(5_000);
     let again = net.sent_by(gpd.port, 0).last().unwrap().clone();
     net.air.borrow_mut().transmit(gpd.port, &again);
@@ -597,8 +531,6 @@ fn unsecured_devices_that_number_their_frames_cannot_be_replayed_at_once() {
     assert_eq!(gp_frames(&net, 0x00).len(), 2);
 }
 
-// ------------------------------------------------------------ devices with an IEEE address
-
 const SENSOR: u64 = 0x0011_2233_4455_FFFE;
 
 #[test]
@@ -607,7 +539,6 @@ fn a_device_known_by_its_ieee_address_is_served_like_the_others() {
     let n = net.join_node();
     let (short, port) = (net.nodes[n].short(), net.nodes[n].id);
     let mut gpd = Gpd::with_ieee(&net.air, SENSOR, 5, None);
-    // commissioning: the notification names the device by address and endpoint
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     gpd.send(0xE0, &commissioning());
@@ -618,7 +549,6 @@ fn a_device_known_by_its_ieee_address_is_served_like_the_others() {
     assert_eq!(&p[2..10], &SENSOR.to_le_bytes());
     assert_eq!(p[10], 5);
     assert_eq!(p[15], 0xE0);
-    // paired with a key; its frames are encrypted under its address
     let mut pairing = Pairing::new(0, 3).secured(4, Some(KEY), 100);
     pairing.ieee = Some((SENSOR, 5));
     net.coord.gp_pair(&pairing);
@@ -634,13 +564,11 @@ fn a_device_known_by_its_ieee_address_is_served_like_the_others() {
     assert_eq!(p[10], 5);
     assert_eq!(&p[11..15], &gpd.counter.to_le_bytes());
     assert_eq!(&p[15..17], &[0x22, 0]);
-    // another endpoint of the device is not paired
     gpd.ieee = Some((SENSOR, 6));
     gpd.send(0x22, &[]);
     net.run(200);
     assert_eq!(gp_frames(&net, 0x00).len(), 1);
     gpd.ieee = Some((SENSOR, 5));
-    // its table entry
     let mut by_id = vec![0x02];
     by_id.extend_from_slice(&SENSOR.to_le_bytes());
     by_id.push(5);
@@ -648,11 +576,9 @@ fn a_device_known_by_its_ieee_address_is_served_like_the_others() {
     net.run(100);
     let entry = net.coord.last_zcl(short, GP, 0x0B).unwrap();
     assert_eq!(&entry[3..7], &[0x00, 1, 0xFF, 1]);
-    // (active, valid, a unicast sink, heard here, security in use)
     assert_eq!(&entry[7..9], &[0x5A, 0x44]);
     assert_eq!(&entry[9..17], &SENSOR.to_le_bytes());
     assert_eq!(entry[17], 5);
-    // the sink's answer (in commissioning mode again) is addressed to the device, not broadcast
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     net.coord.gp_response_to(short, 11, Some((SENSOR, 5)), 0, 0xF0, &[0x00]);
@@ -670,7 +596,6 @@ fn a_device_known_by_its_ieee_address_is_served_like_the_others() {
     assert_eq!(&frame[13..], &[0x8C, 0x82, 5, 0xF0, 0x00]);
     net.coord.gp_commissioning_mode(false, true);
     net.run(100);
-    // its alias: the low two bytes of the address are not usable, so mixed with the next two
     let mut group = Pairing::new(0, 2).secured(4, Some(KEY), gpd.counter);
     group.ieee = Some((SENSOR, 5));
     group.group = 0x0B84;
@@ -682,8 +607,6 @@ fn a_device_known_by_its_ieee_address_is_served_like_the_others() {
     assert_eq!(net.coord.group_rx.last(), Some(&(0xFFFE ^ 0x4455, 0x0B84)));
 }
 
-// ------------------------------------------------------------ commissioning mode
-
 #[test]
 fn commissioning_mode_tunnels_what_a_sink_can_use_and_nothing_else() {
     let mut net = Net::new();
@@ -692,26 +615,21 @@ fn commissioning_mode_tunnels_what_a_sink_can_use_and_nothing_else() {
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     let count = |net: &Net| gp_frames(net, 0x04).len();
-    // a device that commissions itself marks every frame; its data frames are what the sink pairs on
     gpd.auto_commissioning = true;
     gpd.send(0x22, &[]);
     net.run(200);
     assert_eq!(count(&net), 1);
-    // such a device has no business sending Commissioning
     gpd.send(0xE0, &commissioning());
     net.run(200);
     assert_eq!(count(&net), 1);
     gpd.auto_commissioning = false;
-    // frames meant for devices, overheard from another proxy
     gpd.send_raw(&[0x0D, 0xF3, 0x10]);
     net.run(200);
     gpd.send(0xF0, &[0x00]);
     net.run(200);
-    // a channel request must be a maintenance frame
     gpd.send(0xE3, &[0x85]);
     net.run(200);
     assert_eq!(count(&net), 1);
-    // only the sink that opened commissioning mode can close it
     let closing = [0x19, 0x77, 0x02, 0x00];
     let aps = net.coord.aps_frame(0x08, 242, 0x0021, 0xA1E0, 242, &closing);
     let mut h = net.coord.header(0, 0xFFFD, 30);
@@ -729,9 +647,6 @@ fn commissioning_mode_tunnels_what_a_sink_can_use_and_nothing_else() {
     assert_eq!(count(&net), 2);
 }
 
-/// When (in ms after `since`, the moment of the device's frame) the bulb first put on the air a
-/// NWK data frame to the coordinator from its own address (`alias` `None`), or a broadcast
-/// under an alias address with the given NWK sequence number.
 fn sent_after(net: &Net, n: usize, since: u32, alias: Option<(u16, u8)>) -> Option<u32> {
     let air = net.air.borrow();
     let port = net.nodes[n].id;
@@ -752,7 +667,6 @@ fn sent_after(net: &Net, n: usize, since: u32, alias: Option<(u16, u8)>) -> Opti
         .map(|e| e.0 - since)
 }
 
-/// The APS frame inside a NWK frame of the network.
 fn aps_of(frame: &[u8]) -> Vec<u8> {
     let p = &frame[9..];
     let (h, hl) = nwk::Header::parse(p).unwrap();
@@ -767,15 +681,11 @@ const ALIAS: u16 = 0x2345;
 
 #[test]
 fn commissioning_notifications_wait_as_the_specification_says() {
-    // GP Basic A.3.6.3.1 and A.3.9.1 steps 6b, 12e: Dmin_u = 5 ms when the device does not
-    // listen for an answer; Dmin_b = 32 ms when it does and the notification is a unicast;
-    // by broadcast gppTunnelingDelay = Dmin_b and 0, 32, 64 or 96 ms by the link quality.
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
     let (pg, pn) = (gpd.port, net.nodes[n].id);
-    // by unicast to the sink: 5 ms, or 32 ms; however well or badly the device is heard
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     for (lqi, listens, want) in [(255u8, false, 5), (255, true, 32), (40, false, 5), (40, true, 32)] {
@@ -789,7 +699,6 @@ fn commissioning_notifications_wait_as_the_specification_says() {
         net.run(300);
         assert_eq!(sent_after(&net, n, t, None), Some(want), "unicast, link quality {lqi}, listens: {listens}");
     }
-    // by broadcast under the alias
     net.coord.gp_commissioning_mode(true, false);
     net.run(100);
     for (lqi, listens, want) in [(255u8, false, 5), (40, false, 5), (255, true, 32), (150, true, 64), (100, true, 96), (40, true, 128)] {
@@ -803,19 +712,16 @@ fn commissioning_notifications_wait_as_the_specification_says() {
         net.run(300);
         assert_eq!(sent_after(&net, n, t, Some((ALIAS, gpd.seq().wrapping_sub(12)))), Some(want), "broadcast, link quality {lqi}, listens: {listens}");
     }
-    // a channel request always asks for an answer; its notification has no device, hence no alias but 0x0007
     let t = net.now() + 1;
     gpd.channel_request();
     net.run(300);
     assert_eq!(sent_after(&net, n, t, Some((0x0007, gpd.seq().wrapping_sub(12)))), Some(128));
-    // the proxy the sink picked to answer the device does not wait for the others
     net.coord.gp_response(short, 11, SWITCH, 0xF0, &[0x00]);
     net.run(100);
     let t = net.now() + 1;
     gpd.send_and_listen(0xE0, &[0x02, 0x23]);
     net.run(300);
     assert_eq!(sent_after(&net, n, t, Some((ALIAS, gpd.seq().wrapping_sub(12)))), Some(32));
-    // a new commissioning session starts without a proxy picked
     net.coord.gp_commissioning_mode(true, false);
     net.run(100);
     let t = net.now() + 1;
@@ -827,8 +733,6 @@ fn commissioning_notifications_wait_as_the_specification_says() {
 
 #[test]
 fn notifications_of_a_paired_device_wait_as_the_specification_says() {
-    // GP Basic A.3.5.2.3: by groupcast after Dmin_u, or after gppTunnelingDelay when the device
-    // listens for an answer; by lightweight unicast after Dmin
     let mut net = Net::new();
     let n = net.join_node();
     let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
@@ -842,8 +746,6 @@ fn notifications_of_a_paired_device_wait_as_the_specification_says() {
     net.run(300);
     let group_seq = |gpd: &Gpd| Some((ALIAS, gpd.seq().wrapping_sub(9)));
     assert_eq!((sent_after(&net, n, t, None), sent_after(&net, n, t, group_seq(&gpd))), (Some(5), Some(5)));
-    // the device listens (its receive window is 20 to 25 ms after its frame): the unicast after
-    // 32 ms, the groupcast later the worse the device is heard
     for (lqi, groupcast) in [(255u8, 32), (150, 64), (40, 128)] {
         net.air.borrow_mut().link(gpd.port, net.nodes[n].id, lqi);
         let t = net.now() + 1;
@@ -852,13 +754,10 @@ fn notifications_of_a_paired_device_wait_as_the_specification_says() {
         assert_eq!((sent_after(&net, n, t, None), sent_after(&net, n, t, group_seq(&gpd))), (Some(32), Some(groupcast)), "link quality {lqi}");
     }
     assert_eq!(gp_frames(&net, 0x00).len(), 8, "each frame once to the sink and once to its group");
-    // a Commissioning frame in operation: forwarded as one that asks for no answer, after Dmin_u
     let t = net.now() + 1;
     gpd.send_secured_and_listen(0xE0, &[0x02, 0x00]);
     net.run(300);
     assert_eq!((sent_after(&net, n, t, None), sent_after(&net, n, t, group_seq(&gpd))), (Some(5), Some(5)));
-    // a pairing that goes while its frame waits takes the frame with it, also when the entry
-    // goes to another device meanwhile: that device's sink is not sent this one's frame
     let before = gp_frames(&net, 0x00).len();
     gpd.send(0x22, &[]);
     net.run(2);
@@ -868,7 +767,6 @@ fn notifications_of_a_paired_device_wait_as_the_specification_says() {
     net.coord.gp_pair(&Pairing::new(0x0000_0042, 3));
     net.run(300);
     assert_eq!(gp_frames(&net, 0x00).len(), before);
-    // a GP Response sent to the bulb alone outside commissioning mode: dropped without a word
     let short = net.nodes[n].short();
     let mut response = vec![0x00];
     response.extend_from_slice(&short.to_le_bytes());
@@ -886,27 +784,21 @@ fn of_two_proxies_the_better_placed_one_tunnels_a_broadcast_notification() {
     let a = net.join_node();
     let b = net.join_node();
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
-    // the first bulb hears the device badly, the second well
     net.air.borrow_mut().link(gpd.port, net.nodes[a].id, 100);
     net.coord.gp_commissioning_mode(true, false);
     net.run(1_000);
-    // a frame after which the device listens: the proxies take turns by how well they heard it
     gpd.send_and_listen(0xE0, &[0x02, 0x23]);
     net.run(2_000);
     assert_eq!(gp_frames(&net, 0x04).len(), 1);
-    // the broadcast under the device's alias: the second bulb originated it, the first only relayed it
     let alias = |net: &Net, n: usize| alias_frames(net, n, ALIAS);
     assert_eq!(alias(&net, b).first(), Some(&(0xFFFD, 30, gpd.seq().wrapping_sub(12))));
     assert!(alias(&net, a).iter().all(|f| f.1 == 29), "the first bulb only relays: {:?}", alias(&net, a));
-    // the link field: (RSSI + 110) / 2, and the quality class
     let p = &gp_frames(&net, 0x04)[0].1;
     assert_eq!(p[p.len() - 1], ((-15 + 110) / 2) as u8 | 3 << 6);
-    // under the alias the APS counter is the alias sequence number too (A.3.6.3.3)
     let sent = net.sent_by(net.nodes[b].id, 0);
     let frame = sent.iter().find(|f| f.len() > 30 && f[0] & 7 == 1 && f[13..15] == ALIAS.to_le_bytes() && f[15] == 30).unwrap();
     let aps = aps_of(frame);
     assert_eq!(&aps[..8], &[0x08, 242, 0x21, 0x00, 0xE0, 0xA1, 242, gpd.seq().wrapping_sub(12)]);
-    // a frame the device does not listen after: both after Dmin_u, and still one notification
     gpd.send(0x22, &[]);
     net.run(2_000);
     assert_eq!(gp_frames(&net, 0x04).len(), 2);
@@ -917,7 +809,6 @@ fn the_fullest_table_entry_survives_a_power_cut() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // a device with an IEEE address, two sinks, the derived group under an assigned alias and two groups more
     let base = || {
         let mut p = Pairing::new(0, 3).secured(4, Some(KEY), 100);
         p.ieee = Some((SENSOR, 5));
@@ -946,10 +837,8 @@ fn the_fullest_table_entry_survives_a_power_cut() {
     net.coord.gp_unicast(short, 0x19, 0x0B, &by_id);
     net.run(100);
     let before = net.coord.last_zcl(short, GP, 0x0B).unwrap()[3..].to_vec();
-    // options: IEEE address; active, valid; unicast sinks, derived group, commissioned groups; assigned alias; security
     assert_eq!(&before[..6], &[0x00, 1, 0xFF, 1, 0xDA, 0x61]);
     assert_eq!(before.len(), 4 + 2 + 9 + 2 + 1 + 4 + 16 + 1 + 20 + 1 + 8 + 1);
-    // a third sink and a third group do not fit: the pairing is turned down and the entry stays as it was
     let mut third = base();
     third.sink = (0x0099_8877_6655_4433, 0x5555);
     net.coord.gp_pair(&third);
@@ -963,8 +852,6 @@ fn the_fullest_table_entry_survives_a_power_cut() {
     assert_eq!(&after[3..], &before[..]);
 }
 
-// ------------------------------------------------------------ the receive window, and who may open it
-
 #[test]
 fn of_channel_requests_sent_in_a_row_only_the_one_the_device_listens_after_is_answered() {
     let mut net = Net::new();
@@ -975,18 +862,14 @@ fn of_channel_requests_sent_in_a_row_only_the_one_the_device_listens_after_is_an
     net.run(100);
     net.coord.gp_response(short, 11, 0, 0xF3, &[0x10]);
     net.run(100);
-    // In a maintenance frame the auto-commissioning bit says "no receive window after this
-    // one" (GP Basic A.1.4.1.2): the device sends more requests first. The answer stays queued.
     gpd.send_raw(&[0x4D, 0xE3, 0x85]);
     net.run(100);
     gpd.send_raw(&[0x4D, 0xE3, 0x85]);
     net.run(100);
     assert!(net.air.borrow().timed.is_empty());
-    // both were tunnelled to the sink all the same, as requests that ask for an answer
     let got = gp_frames(&net, 0x04);
     assert_eq!(got.len(), 2);
     assert_eq!(got[1].1[0] & 0x08, 0x08);
-    // the last of the row: now the device listens
     let t_us = (net.now() + 1).wrapping_mul(1000);
     gpd.channel_request();
     net.run(100);
@@ -1010,35 +893,27 @@ fn frames_that_are_not_a_devices_to_send_open_no_receive_window() {
     net.run(100);
     let answers = |net: &Net| net.air.borrow().timed.len();
     let tunnelled = |net: &Net| gp_frames(net, 0x04).len();
-    // a command for devices under the device's identifier (another proxy's answer, overheard):
-    // dropped by the stub, the queued answer stays (GP Basic A.1.5.2.2)
     gpd.send_and_listen(0xF0, &[0x00]);
     net.run(200);
     gpd.send_and_listen(0xF3, &[0x10]);
     net.run(200);
     assert_eq!((answers(&net), tunnelled(&net)), (0, 0));
-    // the same hidden under encryption, with the right key: seen once decrypted
     gpd.send_secured_and_listen(0xF0, &[0x00]);
     net.run(200);
     assert_eq!((answers(&net), tunnelled(&net)), (0, 0));
-    // a protected frame that fails its check (a forgery: anybody can write the identifier)
-    // is reported to the sink, but opens no window
     let key = gpd.key.replace([0x11; 16]);
     gpd.send_secured_and_listen(0x22, &[]);
     net.run(200);
     gpd.key = key;
     assert_eq!((answers(&net), tunnelled(&net)), (0, 1));
-    // "I commission myself" and "I listen for an answer" in one frame: no such frame (A.1.4.1.2)
     gpd.auto_commissioning = true;
     gpd.send_and_listen(0x22, &[]);
     net.run(200);
     gpd.auto_commissioning = false;
     assert_eq!((answers(&net), tunnelled(&net)), (0, 1));
-    // the device itself, protected as paired: answered
     gpd.send_secured_and_listen(0x22, &[]);
     net.run(200);
     assert_eq!((answers(&net), tunnelled(&net)), (1, 2));
-    // reserved source identifiers are nobody's (A.1.4.1.4)
     for id in [0xFFFF_FFF9u32, 0xFFFF_FFFE, 0xFFFF_FFFF] {
         let mut odd = Gpd::new(&net.air, id, None);
         odd.send(0x22, &[]);
@@ -1056,8 +931,6 @@ fn a_frame_that_could_not_be_checked_is_reported_with_the_key_class_the_frame_na
     let mut net = Net::new();
     net.join_node();
     let mut gpd = Gpd::new(&net.air, SWITCH, Some([0x11; 16]));
-    // paired with an individual key (type 4); the device comes back with frames under a
-    // shared key the proxy does not have
     net.coord.gp_pair(&Pairing::new(SWITCH, 3).secured(4, Some(KEY), 100));
     net.run(200);
     net.coord.gp_commissioning_mode(true, true);
@@ -1067,8 +940,6 @@ fn a_frame_that_could_not_be_checked_is_reported_with_the_key_class_the_frame_na
         let p = &got.last().unwrap().1;
         u16::from_le_bytes([p[0], p[1]])
     };
-    // GP Basic A.3.3.4.3: security processing failed; level as in the frame; key type 0b000
-    // for a frame that says "shared key", 0b100 for one that says "individual key", whatever the table has
     gpd.individual = false;
     gpd.send(0xE2, &[]);
     net.run(200);
@@ -1077,14 +948,11 @@ fn a_frame_that_could_not_be_checked_is_reported_with_the_key_class_the_frame_na
     gpd.send(0xE2, &[]);
     net.run(200);
     assert_eq!(options(&net), 3 << 4 | 4 << 6 | 1 << 9 | 1 << 11);
-    // a frame that checks out says the type of the key it was checked with
     gpd.key = Some(KEY);
     gpd.send(0xE2, &[]);
     net.run(200);
     assert_eq!(options(&net), 3 << 4 | 4 << 6 | 1 << 11);
 }
-
-// ------------------------------------------------------------ Device_annce
 
 #[test]
 fn a_sink_that_announces_a_new_address_gets_the_frames_there() {
@@ -1101,14 +969,12 @@ fn a_sink_that_announces_a_new_address_gets_the_frames_there() {
         by_id.extend_from_slice(&SWITCH.to_le_bytes());
         net.coord.gp_unicast(short, 0x19, 0x0B, &by_id);
         net.run(100);
-        // options, source identifier, then the sink list
         net.coord.last_zcl(short, GP, 0x0B).unwrap()[7 + 6..].to_vec()
     };
     let mut want = vec![1];
     want.extend_from_slice(&sink_ext.to_le_bytes());
     want.extend_from_slice(&[0x21, 0x43, 0xFF]);
     assert_eq!(sinks(&mut net), want);
-    // Device_annce of the sink under another address (GP Basic A.3.5.2.3)
     let mut annce = vec![0x22, 0x43];
     annce.extend_from_slice(&sink_ext.to_le_bytes());
     annce.push(0x8E);
@@ -1116,7 +982,6 @@ fn a_sink_that_announces_a_new_address_gets_the_frames_there() {
     net.run(200);
     want[9..11].copy_from_slice(&[0x22, 0x43]);
     assert_eq!(sinks(&mut net), want);
-    // kept over a power cut; and a pairing that names the sink with its new address adds no second sink
     net.power_cycle(n);
     net.run(2_000);
     assert_eq!(sinks(&mut net), want);
@@ -1125,7 +990,6 @@ fn a_sink_that_announces_a_new_address_gets_the_frames_there() {
     net.run(200);
     want[9..11].copy_from_slice(&[0x23, 0x43]);
     assert_eq!(sinks(&mut net), want);
-    // somebody else's announcement changes nothing
     let mut annce = vec![0x99, 0x43];
     annce.extend_from_slice(&0x0011_2233_4455_0000u64.to_le_bytes());
     annce.push(0x8E);
@@ -1149,7 +1013,6 @@ fn a_zigbee_device_with_the_address_of_an_alias_is_told_to_take_another() {
         annce.push(0x80);
         net.coord.zdo(0xFFFD, 0x0013, &annce);
     };
-    // Device_annce frames the bulb originated under the alias: (ms after `since`, NWK sequence number, APS frame)
     let from_alias = |net: &Net, since: u32| -> Vec<(u32, u8, Vec<u8>)> {
         let air = net.air.borrow();
         air.log
@@ -1158,12 +1021,10 @@ fn a_zigbee_device_with_the_address_of_an_alias_is_told_to_take_another() {
             .map(|(at, _, f)| (at - since, f[16], aps_of(f)))
             .collect()
     };
-    // an address that is nobody's alias: nothing
     let t = net.now();
     announce(&mut net, 0x2346);
     net.run(500);
     assert!(from_alias(&net, t).is_empty());
-    // in commissioning mode: nothing (GP Basic A.3.6.3.4.1)
     net.coord.gp_commissioning_mode(true, true);
     net.run(100);
     let t = net.now();
@@ -1172,9 +1033,6 @@ fn a_zigbee_device_with_the_address_of_an_alias_is_told_to_take_another() {
     assert!(from_alias(&net, t).is_empty());
     net.coord.gp_commissioning_mode(false, true);
     net.run(100);
-    // A device announces itself with the address the switch's frames are sent under
-    // (A.3.5.2.3): a Device_annce from that address, for that address and no IEEE address,
-    // NWK sequence number 0 and APS counter 0 (A.3.6.3.4.2), within Dmin..Dmax
     let t = net.now() + 1;
     announce(&mut net, ALIAS);
     net.run(500);
@@ -1186,7 +1044,6 @@ fn a_zigbee_device_with_the_address_of_an_alias_is_told_to_take_another() {
     assert_eq!(&aps[..8], &[0x08, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00]);
     assert_eq!(&aps[9..], &[0x45, 0x23, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
     assert!(sent.iter().all(|s| s.2[8] == aps[8]), "one announcement (and its repeats)");
-    // the alias is not given up: the switch's frames still go out under it
     let mut gpd = Gpd::new(&net.air, SWITCH, None);
     gpd.send(0x22, &[]);
     net.run(500);
@@ -1199,8 +1056,6 @@ fn a_bulb_whose_address_is_announced_for_an_alias_takes_another() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
-    // A sink or another proxy announces a Green Power device's alias (GP Basic A.3.6.3.4.2: no
-    // IEEE address), and it is this bulb's address: the alias stays, the bulb moves (R22 2.4.4.2)
     let mut annce = short.to_le_bytes().to_vec();
     annce.extend_from_slice(&[0xFF; 8]);
     annce.push(0x00);
@@ -1212,7 +1067,6 @@ fn a_bulb_whose_address_is_announced_for_an_alias_takes_another() {
     let seq = net.coord.zcl(now, 0x0006, 0x01, 0x00, &[]);
     net.run(200);
     assert_eq!(net.coord.last_zcl(now, 0x0006, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
-    // an alias that is not its address is none of its business
     let mut annce = (now + 1).to_le_bytes().to_vec();
     annce.extend_from_slice(&[0xFF; 8]);
     annce.push(0x00);
@@ -1221,14 +1075,11 @@ fn a_bulb_whose_address_is_announced_for_an_alias_takes_another() {
     assert_eq!(net.nodes[n].short(), now);
 }
 
-// ------------------------------------------------------------ reading a table that does not fit one frame
-
 #[test]
 fn a_proxy_table_too_long_for_a_frame_is_read_entry_by_entry_and_in_order() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // three entries: 39, 39 and 16 bytes
     net.coord.gp_pair(&Pairing::new(SWITCH, 3).secured(4, Some(KEY), 100));
     net.coord.gp_pair(&Pairing::new(SWITCH + 1, 3).secured(4, Some(KEY), 200));
     let mut third = Pairing::new(0x0000_0042, 2);
@@ -1236,8 +1087,6 @@ fn a_proxy_table_too_long_for_a_frame_is_read_entry_by_entry_and_in_order() {
     third.seq_cap = true;
     net.coord.gp_pair(&third);
     net.run(300);
-    // by index (GP Basic A.3.4.4.2): whole entries, in the order of the table, as many as fit one
-    // frame: the first alone, not the first and the third
     let ids = |rsp: &[u8]| -> Vec<u32> {
         let mut out = vec![];
         let mut at = 7;
@@ -1265,13 +1114,9 @@ fn a_proxy_table_too_long_for_a_frame_is_read_entry_by_entry_and_in_order() {
         }
     }
     assert_eq!(seen, vec![SWITCH, SWITCH + 1, 0x42], "a reader that goes on where the last answer ended gets every entry");
-    // the ProxyTable attribute (A.3.4.2.2.1) is the whole table or nothing: INSUFFICIENT_SPACE
-    // when it does not fit one unfragmented frame
     let seq = net.coord.gp_unicast(short, 0x08, 0x00, &[0x11, 0x00, 0x10, 0x00]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x01).unwrap(), vec![0x10, seq, 0x01, 0x11, 0x00, 0x89, 0x10, 0x00, 0x00, 0x20, 5]);
-    // "who has an entry for this device?", asked of every proxy (A.3.4.4.2.1): the one that has
-    // answers, the others keep quiet
     let from_bulb = |net: &Net| net.coord.zcl_rx.iter().filter(|(s, c, f)| *s == short && *c == GP && f[2] == 0x0B).count();
     let before = from_bulb(&net);
     let mut by_id = vec![0x00];

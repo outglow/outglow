@@ -1,10 +1,3 @@
-//! Speed of the emulator on one image: boots a node and runs it alone for a
-//! given simulated time, then prints the wall time and the final state digest
-//! (cycles, pc, registers, an FNV-1a hash of SRAM), so that two builds can be
-//! compared for speed and for identical results.
-//!
-//!   cargo run --release -p zbnode --example bench -- image.bin [link_shift_hex] [ms] [cpi]
-
 use std::time::Instant;
 
 use zbnode::{Node, RunEvent};

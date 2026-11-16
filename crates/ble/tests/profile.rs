@@ -1,5 +1,3 @@
-//! The attribute table and the AwoX mesh profile, from the app's side.
-
 mod sim;
 
 use ble::crypto::{crc8_6c, tl_aes_encrypt};
@@ -35,7 +33,6 @@ fn logged_in(identity: ble::Identity) -> Rig {
     rig
 }
 
-/// A command in the stock firmware's block format (emulator/awox_mesh.py).
 fn block_packet(key: &[u8; 16], kind: u8, payload: &[u8]) -> Vec<u8> {
     let mut plain = [0u8; 16];
     plain[1] = payload.len() as u8;
@@ -48,8 +45,6 @@ fn block_packet(key: &[u8; 16], kind: u8, payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn the_test_client_builds_what_the_python_clients_build() {
-    // vectors from crates/outglow/src/flash/protocol.rs and emulator/awox_mesh.py for the
-    // address a4:c1:38:11:22:33, random 01..08, device random 11..18
     let mut rig = Rig::new(DIMMABLE);
     rig.key = Some(hex("3c048be01d5756b9cfb9c7e0798f7871").try_into().unwrap());
     assert_eq!(rig.command_packet(0xffff, OP_POWER, &[1]), hex("010100b70d84582bbda555b855c3e6ca18ec3e5a"));
@@ -69,10 +64,8 @@ fn the_test_client_builds_what_the_python_clients_build() {
 #[test]
 fn a_login_packet_from_the_python_client_is_accepted() {
     let mut rig = connected(DIMMABLE);
-    // awox_ota.login_packet("unpaired", secure_password(mac), 01..08)
     rig.write(PAIR, &hex("0c0102030405060708df7376b1f81f686e"));
     assert_eq!(rig.read(PAIR)[0], 0x0d);
-    // ... and with "1234"
     rig.write(PAIR, &hex("0c010203040506070801a3567c6b987afd"));
     assert_eq!(rig.read(PAIR)[0], 0x0d);
 }
@@ -80,7 +73,6 @@ fn a_login_packet_from_the_python_client_is_accepted() {
 #[test]
 fn services_and_characteristics_sit_at_the_stock_handles() {
     let mut rig = connected(DIMMABLE);
-    // primary services
     let rsp = rig.att(&[0x10, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28]);
     assert_eq!(rsp, [0x11, 6, 0x01, 0x00, 0x06, 0x00, 0x00, 0x18, 0x07, 0x00, 0x0f, 0x00, 0x0a, 0x18]);
     let rsp = rig.att(&[0x10, 0x10, 0x00, 0xff, 0xff, 0x00, 0x28]);
@@ -92,7 +84,6 @@ fn services_and_characteristics_sit_at_the_stock_handles() {
     let rsp = rig.att(&[0x10, 0x2f, 0x00, 0xff, 0xff, 0x00, 0x28]);
     assert_eq!(rsp, [0x01, 0x10, 0x2f, 0x00, 0x0a], "nothing after it");
 
-    // characteristics of the mesh service: (declaration handle, properties, value handle, short id)
     let mut found = vec![];
     let mut start = 0x10u16;
     loop {
@@ -117,11 +108,9 @@ fn services_and_characteristics_sit_at_the_stock_handles() {
         [(0x11, 0x1a, 0x12, 0x11), (0x14, 0x0e, 0x15, 0x12), (0x17, 0x0a, 0x18, 0x13), (0x1a, 0x06, 0x1b, 0x15), (0x1d, 0x0a, 0x1e, 0x14)]
     );
 
-    // descriptors
     assert_eq!(rig.att(&[0x04, 0x13, 0x00, 0x13, 0x00]), [0x05, 0x01, 0x13, 0x00, 0x02, 0x29]);
     assert_eq!(rig.read(0x16), b"cmd");
     assert_eq!(rig.read(0x1c), b"OTA2");
-    // the whole table, one format per response
     let rsp = rig.att(&[0x04, 0x01, 0x00, 0xff, 0xff]);
     assert_eq!(rsp[..2], [0x05, 0x01]);
     assert_eq!(rsp.len(), 2 + 5 * 4, "five 16-bit entries fit the default MTU");
@@ -129,7 +118,6 @@ fn services_and_characteristics_sit_at_the_stock_handles() {
     assert_eq!(rsp[..4], [0x05, 0x02, 0x12, 0x00], "a 128-bit entry goes alone");
     assert_eq!(rsp.len(), 2 + 18);
     assert_eq!(rig.att(&[0x04, 0x2f, 0x00, 0xff, 0xff]), [0x01, 0x04, 0x2f, 0x00, 0x0a]);
-    // 16-bit entries stop where the first 128-bit one would follow
     let rsp = rig.att(&[0x04, 0x0f, 0x00, 0xff, 0xff]);
     assert_eq!(rsp, [0x05, 0x01, 0x0f, 0x00, 0x27, 0x2a, 0x10, 0x00, 0x00, 0x28, 0x11, 0x00, 0x03, 0x28]);
 }
@@ -142,9 +130,7 @@ fn device_information_reads_like_the_stock() {
     assert_eq!(rig.read(0x0b), b"AwoX");
     assert_eq!(rig.read(0x0d), b"ESMLFzm_w6_TW");
     assert_eq!(rig.read(0x0f), b"4.63");
-    // by type: the device name
     assert_eq!(rig.att(&[0x08, 0x01, 0x00, 0xff, 0xff, 0x00, 0x2a]), [&[0x09, 10, 0x03, 0x00][..], b"unpaired"].concat());
-    // primary service by its UUID
     assert_eq!(rig.att(&[0x06, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28, 0x0a, 0x18]), [0x07, 0x07, 0x00, 0x0f, 0x00]);
 }
 
@@ -160,7 +146,6 @@ fn requests_that_cannot_be_served_get_the_right_error() {
     assert_eq!(rig.att(&[0x12, 0x13, 0x00, 0x01, 0x00, 0x00]), [0x01, 0x12, 0x13, 0x00, 0x0d], "a client configuration of three bytes");
     assert_eq!(rig.att(&[0x0c, 0x0b, 0x00, 0x09, 0x00]), [0x01, 0x0c, 0x0b, 0x00, 0x07], "blob offset past the end");
     assert_eq!(rig.att(&[0x0c, 0x0b, 0x00, 0x02, 0x00]), [0x0d, b'o', b'X']);
-    // a command is never answered, even when it cannot be served
     rig.central().send_att(&[0x52, 0x0b, 0x00, 0x41]);
     rig.run(300);
     assert!(rig.central().att.is_empty());
@@ -169,7 +154,6 @@ fn requests_that_cannot_be_served_get_the_right_error() {
 #[test]
 fn requests_of_the_wrong_length_are_invalid() {
     let mut rig = connected(DIMMABLE);
-    // Vol 3 Part F 3.3: Invalid PDU, handle 0x0000, for a request shorter or longer than its format
     for (request, what) in [
         (&[0x04, 0x01, 0x00, 0xff, 0xff, 0x00][..], "Find Information, 6 octets"),
         (&[0x04, 0x01, 0x00, 0xff][..], "Find Information, 4 octets"),
@@ -180,7 +164,6 @@ fn requests_of_the_wrong_length_are_invalid() {
     ] {
         assert_eq!(rig.att(request), [0x01, request[0], 0x00, 0x00, 0x04], "{what}");
     }
-    // Read By Type and Read By Group Type with a type of 3, 4, 15 or 17 octets
     for n in [3, 4, 15, 17] {
         for opcode in [0x08, 0x10] {
             let mut request = vec![opcode, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28];
@@ -188,7 +171,6 @@ fn requests_of_the_wrong_length_are_invalid() {
             assert_eq!(rig.att(&request), [0x01, opcode, 0x00, 0x00, 0x04], "{opcode:#04x} with a type of {n} octets");
         }
     }
-    // the requests of the right length right after
     assert_eq!(rig.att(&[0x0a, 0x0b, 0x00]), b"\x0bAwoX");
     assert_eq!(rig.att(&[0x02, 0x17, 0x00]), [0x03, 64, 0]);
 }
@@ -197,15 +179,11 @@ fn requests_of_the_wrong_length_are_invalid() {
 fn a_larger_mtu_gives_longer_responses_in_fragments() {
     let mut rig = connected(DIMMABLE);
     assert_eq!(rig.att(&[0x02, 247, 0]), [0x03, 64, 0]);
-    // three 16-bit characteristic declarations of 7 bytes fit 23; with 64 all four of Device Information
     let rsp = rig.att(&[0x08, 0x07, 0x00, 0x0f, 0x00, 0x03, 0x28]);
     assert_eq!(rsp.len(), 2 + 4 * 7);
-    // 15 entries of four bytes: more than two link layer packets
     let rsp = rig.att(&[0x04, 0x01, 0x00, 0xff, 0xff]);
     assert_eq!(rsp.len(), 2 + 15 * 4);
-    // 16-bit and 128-bit UUIDs never share a response, however much room there is
     assert_eq!(rig.att(&[0x04, 0x0f, 0x00, 0xff, 0xff]).len(), 2 + 3 * 4);
-    // a client that asks for less than the minimum still gets 23
     assert_eq!(rig.att(&[0x02, 10, 0]), [0x03, 64, 0]);
     assert_eq!(rig.att(&[0x04, 0x01, 0x00, 0xff, 0xff]).len(), 2 + 5 * 4);
 }
@@ -225,7 +203,6 @@ fn light_commands_work_after_login_and_changes_are_notified() {
     assert!(rig.login(b"unpaired", &Rig::secure_password()));
     rig.enable_status();
     rig.run(400);
-    // 0xdc: address, 0, mode, brightness 1..=127, temperature
     let first = rig.statuses();
     assert_eq!(first.len(), 1, "one notification when status is enabled");
     assert_eq!(first[0].0, 0xdc);
@@ -247,10 +224,8 @@ fn light_commands_work_after_login_and_changes_are_notified() {
     rig.command(OP_STATUS, &[0x10]);
     let s = rig.statuses();
     assert_eq!(s.len(), 1);
-    // 0xdb: mode, brightness, temperature right after the vendor id
     assert_eq!((s[0].0, &s[0].1[..3]), (0xdb, &[1, 127, 64][..]));
 
-    // a change from elsewhere (Zigbee) is notified too
     rig.bulb.handle(bulb_core::Command::Off);
     rig.run(400);
     assert_eq!(rig.statuses().last().unwrap().1[2], 0);
@@ -269,7 +244,6 @@ fn brightness_while_off_does_not_turn_the_light_on() {
 #[test]
 fn commands_need_a_login_the_right_key_and_a_new_number() {
     let mut rig = connected(DIMMABLE);
-    // not logged in: the client's key is anything
     rig.key = Some([7; 16]);
     rig.command(OP_POWER, &[0]);
     assert!(rig.is_on(), "no command before the login");
@@ -279,7 +253,6 @@ fn commands_need_a_login_the_right_key_and_a_new_number() {
     rig.command(OP_POWER, &[0]);
     assert!(rig.is_on(), "a command under another key is ignored");
     rig.key = good;
-    // one bit of the checksum wrong
     let mut damaged = rig.command_packet(0xffff, OP_POWER, &[0]);
     damaged[3] ^= 0x01;
     rig.write(COMMAND, &damaged);
@@ -290,7 +263,6 @@ fn commands_need_a_login_the_right_key_and_a_new_number() {
     rig.run(300);
     assert!(!rig.is_on());
     rig.command(OP_POWER, &[1]);
-    // the same packet again (same sequence number) is a repeat
     let again = rig.command_packet(0xffff, OP_POWER, &[0]);
     rig.write(COMMAND, &again);
     rig.write(COMMAND, &again);
@@ -305,7 +277,6 @@ fn commands_need_a_login_the_right_key_and_a_new_number() {
 #[test]
 fn commands_are_addressed() {
     let mut rig = logged_in(DIMMABLE);
-    // the bulb's address is the low byte of its address until the app assigns one
     for (dst, taken) in [(0x0000u16, true), (0x0033, true), (0x0034, false), (0x8001, false), (0xffff, true)] {
         rig.bulb.handle(bulb_core::Command::On);
         let packet = rig.command_packet(dst, OP_POWER, &[0]);
@@ -313,7 +284,6 @@ fn commands_are_addressed() {
         rig.run(300);
         assert_eq!(!rig.is_on(), taken, "destination {dst:#06x}");
     }
-    // 0xe0 assigns an address, kept in flash
     rig.command(0xe0, &[0x21, 0x00]);
     rig.bulb.handle(bulb_core::Command::On);
     let packet = rig.command_packet(0x0021, OP_POWER, &[0]);
@@ -350,12 +320,10 @@ fn the_stock_block_format_and_the_apps_zcl_tunnel_are_understood() {
         rig.write(COMMAND, &block_packet(&key, kind, payload));
         rig.run(400);
     };
-    // the mesh's own opcodes in a block
     send(&mut rig, 2, &[OP_POWER, 0x60, 0x01, 0]);
     assert!(!rig.is_on());
     send(&mut rig, 2, &[OP_POWER, 0x60, 0x01, 1]);
     assert!(rig.is_on());
-    // ZCL: On/Off, Level (Move to Level with On/Off), Color Control (Move to Color Temperature)
     send(&mut rig, 0, &[0xff, 0xff, 0x01, 0x06, 0x00, 0]);
     assert!(!rig.is_on());
     send(&mut rig, 0, &[0x00, 0x00, 0x01, 0x06, 0x00, 1]);
@@ -364,22 +332,18 @@ fn the_stock_block_format_and_the_apps_zcl_tunnel_are_understood() {
     assert_eq!(rig.level(), 64);
     send(&mut rig, 0, &[0xff, 0xff, 0x01, 0x00, 0x03, 0x0a, 0x2c, 0x01, 0, 0]);
     assert_eq!(rig.bulb.state().color_temp, 300);
-    // another bulb's address, and a group that is not "everyone"
     send(&mut rig, 0, &[0x00, 0x34, 0x01, 0x06, 0x00, 0]);
     send(&mut rig, 1, &[0x80, 0x01, 0x01, 0x06, 0x00, 0]);
     assert!(rig.is_on());
     send(&mut rig, 1, &[0xff, 0xff, 0x01, 0x06, 0x00, 0]);
     assert!(!rig.is_on());
-    // the app's status request: answered with the app's own status (`the_app_reads_its_own_status`)
     rig.statuses();
     send(&mut rig, 2, &[0x0a, 0, 0]);
     let (s, other) = rig.app_statuses();
     assert_eq!((s.len(), other), (1, 0));
-    // a block under another key is not a command
     rig.write(COMMAND, &block_packet(&[9; 16], 0, &[0xff, 0xff, 0x01, 0x06, 0x00, 1]));
     rig.run(300);
     assert!(!rig.is_on());
-    // nor is one whose inner checksum is wrong
     let mut plain = [0u8; 16];
     plain[1] = 6;
     plain[2..8].copy_from_slice(&[0xff, 0xff, 0x01, 0x06, 0x00, 1]);
@@ -401,10 +365,8 @@ fn pairing_sets_a_new_network_that_survives_a_restart() {
     assert_ne!(rig.read(PAIR)[0], 0x07);
     rig.write(PAIR, &[&[4u8][..], &tl_aes_encrypt(&key, &pad(b"EgloTest"))].concat());
     assert_ne!(rig.read(PAIR)[0], 0x07, "the name alone is not a network");
-    // name and password are enough (the app pairs Zigbee bulbs without an LTK) ...
     rig.write(PAIR, &[&[5u8][..], &tl_aes_encrypt(&key, &pad(b"s3cret"))].concat());
     assert_eq!(rig.read(PAIR)[0], 0x07, "name and password arrived");
-    // ... and an LTK after them is taken too
     rig.write(PAIR, &[&[6u8][..], &tl_aes_encrypt(&key, &pad(b"0123456789abcdef"))].concat());
     assert_eq!(rig.read(PAIR)[0], 0x07, "all three parts arrived");
     assert_eq!(rig.read(0x03), b"EgloTest", "the device name is the network name");
@@ -419,7 +381,6 @@ fn pairing_sets_a_new_network_that_survives_a_restart() {
         let adv = c.advertisements.last().unwrap();
         assert_eq!(adv[15..17], [9, 0x09]);
         assert_eq!(&adv[17..25], b"EgloTest", "advertised under the new name");
-        // the scan response is the AwoX data block, the same before and after pairing
         assert_eq!(c.scan_responses.last().unwrap()[9], 0xff);
     }
     rig.connect();
@@ -470,22 +431,18 @@ fn nothing_is_notified_until_the_app_asks() {
 fn notifications_can_be_enabled_the_standard_way_alone() {
     let mut rig = connected(DIMMABLE);
     assert!(rig.login(b"unpaired", b"1234"));
-    // a generic client: only the client characteristic configuration
     rig.write(0x13, &[1, 0]);
     rig.run(400);
     assert_eq!(rig.statuses().len(), 1);
-    // the app's switch on top changes nothing
     rig.write(0x12, &[1]);
     rig.run(400);
     assert!(rig.statuses().is_empty());
     rig.command(OP_POWER, &[0]);
     assert_eq!(rig.statuses().last().unwrap().1[2], 0);
-    // both off again
     rig.write(0x13, &[0, 0]);
     rig.write(0x12, &[0]);
     rig.command(OP_POWER, &[1]);
     assert!(rig.central().notifications.is_empty());
-    // the app's way alone (as on the stock)
     rig.write(0x12, &[1]);
     rig.run(400);
     assert_eq!(rig.statuses().len(), 1);
@@ -495,21 +452,16 @@ fn notifications_can_be_enabled_the_standard_way_alone() {
 fn the_client_configuration_keeps_only_the_bits_the_characteristic_has() {
     let mut rig = connected(DIMMABLE);
     assert!(rig.login(b"unpaired", b"1234"));
-    // the status characteristic notifies and does not indicate: the
-    // Indication bit (and every bit above) is taken, not kept
     for (written, kept) in [([2u8, 0u8], [0u8, 0u8]), ([3, 0], [1, 0]), ([0xFF, 0xFF], [1, 0]), ([1, 0], [1, 0]), ([0, 0], [0, 0])] {
         rig.write(0x13, &written);
         assert_eq!(rig.read(0x13), kept, "{written:02x?}");
     }
-    // what the loop turned on has gone out
     rig.run(400);
     rig.statuses();
-    // the Indication bit alone turns nothing on
     rig.write(0x13, &[2, 0]);
     rig.command(OP_POWER, &[0]);
     rig.run(400);
     assert!(rig.central().notifications.is_empty());
-    // with the Notification bit beside it, notifications as before
     rig.write(0x13, &[3, 0]);
     rig.run(400);
     assert_eq!(rig.statuses().len(), 1);
@@ -518,7 +470,6 @@ fn the_client_configuration_keeps_only_the_bits_the_characteristic_has() {
 #[test]
 fn an_l2cap_header_split_over_two_packets_is_put_together() {
     let mut rig = connected(DIMMABLE);
-    // Read Request for handle 0x0b: 03 00 04 00 | 0a 0b 00, cut inside the header
     rig.central().send_fragments(&[&[0x03, 0x00, 0x04][..], &[0x00, 0x0a, 0x0b, 0x00]]);
     rig.run(300);
     assert_eq!(rig.central().att.pop_front().unwrap(), b"\x0bAwoX");
@@ -527,14 +478,12 @@ fn an_l2cap_header_split_over_two_packets_is_put_together() {
 #[test]
 fn a_frame_that_does_not_match_its_length_is_discarded() {
     let mut rig = connected(DIMMABLE);
-    // Read Request for handle 0x0b with six octets more than the Length field (Vol 3 Part A 7.2.2)
     rig.central().send_fragments(&[&[0x03, 0x00, 0x04, 0x00, 0x0a][..], &[0x0b, 0x00, 0x0a, 0x03, 0x00, 0, 0, 0, 0]]);
     rig.run(300);
     assert!(rig.central().att.is_empty(), "surplus octets in the continuation");
     rig.central().send_fragments(&[&[0x03, 0x00, 0x04, 0x00, 0x0a, 0x0b, 0x00, 0x00][..]]);
     rig.run(300);
     assert!(rig.central().att.is_empty(), "surplus octets in the start fragment");
-    // too few octets, then a new frame: only the new one counts
     rig.central().send_fragments(&[&[0x03, 0x00, 0x04, 0x00, 0x0a][..]]);
     assert_eq!(rig.att(&[0x0a, 0x0b, 0x00]), b"\x0bAwoX");
     rig.run(300);
@@ -544,21 +493,17 @@ fn a_frame_that_does_not_match_its_length_is_discarded() {
 #[test]
 fn a_signalling_packet_over_the_signalling_mtu_is_rejected() {
     let mut rig = connected(DIMMABLE);
-    // 124 octets: code 0x1c, identifier 0x61, 120 octets of data (Vol 3 Part A 4)
     let mut command = vec![0x1c, 0x61, 120, 0x00];
     command.extend(0..120u8);
     rig.central().send_l2cap(5, &command);
     rig.run(300);
-    // Command Reject, "signalling MTU exceeded", MTUsig 64
     assert_eq!(rig.central().signaling, [vec![0x01, 0x61, 0x04, 0x00, 0x01, 0x00, 64, 0]]);
-    // one that fits is understood (or not) as a whole
     rig.central().signaling.clear();
     let mut command = vec![0x1c, 0x62, 60, 0x00];
     command.extend(0..60u8);
     rig.central().send_l2cap(5, &command);
     rig.run(300);
     assert_eq!(rig.central().signaling, [vec![0x01, 0x62, 0x02, 0x00, 0x00, 0x00]]);
-    // an attribute request of that size is too long for our MTU: dropped, and nothing else lost
     let mut request = vec![0x12, 0x15, 0x00];
     request.extend([0u8; 100]);
     rig.central().send_att(&request);
@@ -570,7 +515,6 @@ fn a_signalling_packet_over_the_signalling_mtu_is_rejected() {
 #[test]
 fn pairing_needs_a_login() {
     let mut rig = connected(DIMMABLE);
-    // encrypted with the key of no session
     for (op, value) in [(4u8, *b"EgloTest\0\0\0\0\0\0\0\0"), (5, *b"s3cret\0\0\0\0\0\0\0\0\0\0"), (6, *b"0123456789abcdef")] {
         rig.write(PAIR, &[&[op][..], &tl_aes_encrypt(&[0; 16], &value)].concat());
     }
@@ -585,7 +529,6 @@ fn a_new_connection_starts_logged_out() {
     rig.central().terminate();
     rig.run(300);
     rig.connect();
-    // the old session key no longer works
     rig.command(OP_POWER, &[0]);
     assert!(rig.is_on());
     rig.run(600);
@@ -593,9 +536,6 @@ fn a_new_connection_starts_logged_out() {
     assert_eq!(rig.read(STATUS).len(), 20);
 }
 
-/// The status the AwoX HomeControl app reads, as the stock firmware sends it
-/// (`emulator/rs/scenarios/src/sims/app_colour.rs` recorded it from the stock
-/// images of the dimmable, tunable and colour lamps; docs/stock-colour.md).
 fn app_status(product: u16, flags: u8, level: u8, mireds: u16, hue: u8, sat: u8) -> [u8; 19] {
     let mut d = [0u8; 19];
     d[2] = 0x01;
@@ -620,7 +560,6 @@ fn the_app_reads_its_own_status() {
         let (s, other) = rig.app_statuses();
         assert_eq!(s, vec![app_status(identity.product, 0x01, 254, mireds, 0xFF, 0xFF)], "{}", identity.model);
         assert_eq!(other, 0);
-        // every command is answered with it, and nothing of the mesh's own comes to this central
         rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x06, 0x00, 0]));
         rig.run(400);
         let (s, other) = rig.app_statuses();
@@ -640,14 +579,11 @@ fn the_apps_colour_its_animation_and_its_status() {
     let tunnel = |cluster: u16, zcl: &[u8]| [&[0x00, 0x00, 0x01, cluster as u8, (cluster >> 8) as u8][..], zcl].concat();
     send(&mut rig, 2, &[0x0a, 0, 0], 400);
     assert_eq!(rig.app_statuses().0, vec![app_status(0x2096, 0x01, 254, 333, 0xFF, 0xFF)], "white, as a new bulb");
-    // colour as the app sends it: Move to Hue and Saturation (h * 254 / 360, s * 254), 0.2 s
     send(&mut rig, 0, &tunnel(0x0300, &[0x06, 84, 254, 2, 0]), 600);
     let (s, other) = rig.app_statuses();
     assert_eq!((s.last().copied(), other), (Some(app_status(0x2096, 0x03, 254, 0xFFFF, 84, 254)), 0));
-    // the colour brightness is the level
     send(&mut rig, 0, &tunnel(0x0008, &[0x04, 128, 2, 0, 0, 0, 0]), 600);
     assert_eq!(rig.app_statuses().0.last().unwrap()[13], 128);
-    // the animation: Enhanced Move Hue up at 0x0C00 a second; said when it starts, not as it turns
     send(&mut rig, 0, &tunnel(0x0300, &[0x41, 1, 0x00, 0x0C]), 400);
     let (s, _) = rig.app_statuses();
     assert_eq!(s.last().unwrap()[12], 0x07, "on, colour, turning");
@@ -657,19 +593,16 @@ fn the_apps_colour_its_animation_and_its_status() {
     let (s, _) = rig.app_statuses();
     let hue = s[0][16];
     assert!((140..=150).contains(&hue), "asked, it says where the hue is: {hue}");
-    // the app stops it with Stop Move Step
     send(&mut rig, 0, &tunnel(0x0300, &[0x47, 0, 0, 0]), 400);
     let (s, _) = rig.app_statuses();
     assert_eq!(s.last().unwrap()[12], 0x03, "stopped");
     rig.run(2000);
     send(&mut rig, 2, &[0x0a, 0, 0], 400);
     assert_eq!(rig.app_statuses().0[0][16], s.last().unwrap()[16], "and stays where it stopped");
-    // xy shows no hue and saturation; white shows its mireds
     send(&mut rig, 0, &tunnel(0x0300, &[0x07, 0xd7, 0xa3, 0x7b, 0x54, 2, 0]), 600);
     assert_eq!(rig.app_statuses().0.last().unwrap()[12..18], [0x01, 128, 0xFF, 0xFF, 0xFF, 0xFF]);
     send(&mut rig, 0, &tunnel(0x0300, &[0x0a, 0x2f, 0x01, 2, 0]), 600);
     assert_eq!(rig.app_statuses().0.last().unwrap()[12..18], [0x01, 128, 0x2f, 0x01, 0xFF, 0xFF]);
-    // the candle mode (Level command 0x10) is not a level; Toggle is
     send(&mut rig, 0, &tunnel(0x0008, &[0x10, 1, 1]), 400);
     assert_eq!(rig.level(), 128);
     send(&mut rig, 0, &tunnel(0x0006, &[0x02]), 400);
@@ -679,9 +612,6 @@ fn the_apps_colour_its_animation_and_its_status() {
 
 #[test]
 fn the_apps_zigbee_installation_pairs_and_is_told_it_is_done() {
-    // AwoX HomeControl, ZigbeeMeshController: name and password without an
-    // LTK, read 0x07, then the network to join (0x03) and its key (0x04),
-    // 17 and 18 octets of payload, and wait for the 0x83 notification
     let mut rig = logged_in(DIMMABLE);
     let key = rig.key.unwrap();
     rig.enable_status();
@@ -705,8 +635,6 @@ fn the_apps_zigbee_installation_pairs_and_is_told_it_is_done() {
         v.extend_from_slice(&whole[head..]);
         v
     };
-    // the key's write is 21 octets: more than ATT_MTU 23 leaves for a value,
-    // so the phone raises the MTU first (Android writes at most MTU - 3)
     assert_eq!(rig.att(&[0x02, 247, 0]), [0x03, 64, 0]);
     rig.central().notifications.clear();
     let network = [0x03, 0x14, 0x31, 0x32, 0x36, 0x35, 0x34, 0x33, 0x32, 0x31, 0xc1, 0xa4, 0, 0, 0, 0, 0];
@@ -722,15 +650,12 @@ fn the_apps_zigbee_installation_pairs_and_is_told_it_is_done() {
     assert_eq!(done.len(), 2, "a 0x83 notification for each: {all:?}");
     assert!(done.iter().all(|n| n.len() >= 3 + 17), "17 octets and more after the handle");
 
-    // from now on the status says "installed by the app" (0x60), which the
-    // app reads back to keep the bulb usable
     rig.central().notifications.clear();
     rig.write(COMMAND, &long(&[0x0a, 0x00, 0x00]));
     rig.run(600);
     let (statuses, _) = rig.app_statuses();
     assert!(!statuses.is_empty(), "a status in answer to the app's request");
     assert!(statuses.iter().all(|d| d[18] == 0x60), "provision state 0x60: {statuses:?}");
-    // and so does the scan response, also after a restart
     rig.central().terminate();
     let mut rig = rig.restart();
     rig.central().scan = true;
@@ -747,8 +672,6 @@ fn the_apps_status_comes_when_the_stock_firmware_s_does() {
     rig.write(COMMAND, &block_packet(&key, 2, &[0x0a, 0, 0]));
     rig.run(400);
     rig.app_statuses();
-    // brightness 254 -> 128 over 0.2 s: one status some 90 ms after the command, where the
-    // fade has got to, and one when it is over (the stock lamp: 191, then 128)
     rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x08, 0x00, 0x04, 128, 2, 0, 0, 0, 0]));
     rig.run(60);
     assert_eq!(rig.app_statuses().0.len(), 0, "not yet");

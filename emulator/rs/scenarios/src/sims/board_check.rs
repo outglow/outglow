@@ -1,21 +1,3 @@
-//! Every board of the Rust firmware against the stock firmware of that board
-//! (docs/stock-profiles.md): the same profile (`crate::profile`) taken of our
-//! image (target/tc32-<board>/bulb-tc32.bin, `cargo xtask build
-//! --board <name>`) and compared with the stock one in analysis/profiles/.
-//!
-//! Checks per board: the pins and PWM channels, the PWM period, the outputs
-//! over the level sweep and the colour temperature sweep, hue and saturation,
-//! level at red and the four xy points (within one PWM step), the colour
-//! temperature range, the hardware version in Basic, the light of a
-//! factory-new bulb after On.
-//!
-//! One deviation is ours on purpose: the sweeps send Move to Level with
-//! On/Off, and at level 1 (MinLevel) ZCL 8 turns the light off, which the
-//! stock firmware does not; level 1 is shown apart.
-//!
-//! `cargo sims -- board_check [--cpi N]`; the boards run in parallel. The
-//! example `board_check` does the same with --only, --build and --out.
-
 use super::{SimCtx, SimDef};
 use crate::profile::{board_check, default_jobs, Opts};
 use crate::session::{Stop, R};
@@ -25,7 +7,6 @@ pub fn def() -> SimDef {
 }
 
 fn run(cx: &mut SimCtx) -> R<()> {
-    // every board's image first (cargo xtask build --all): without them, skipped
     let missing: Vec<String> = crate::profile::boards()
         .map_err(Stop::Error)?
         .into_iter()

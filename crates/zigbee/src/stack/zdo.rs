@@ -1,6 +1,3 @@
-//! ZigBee Device Object: the server side of the ZDP requests a coordinator
-//! and other nodes send to a router, and the few requests this node makes.
-
 use super::aps::{ENDPOINT, PROFILE_HA, PROFILE_WILDCARD, PROFILE_ZDO};
 use super::parent::CAP_FFD;
 use super::{Binding, Stack, ROUTE_ACTIVE, ROUTE_FREE};
@@ -10,7 +7,6 @@ use crate::nwk;
 use crate::util::{Buf, Reader};
 
 const SUCCESS: u8 = 0x00;
-/// INV_REQUESTTYPE.
 const INVALID_REQUEST: u8 = 0x80;
 const DEVICE_NOT_FOUND: u8 = 0x81;
 const INVALID_EP: u8 = 0x82;
@@ -18,7 +14,6 @@ const NOT_ACTIVE: u8 = 0x83;
 const NOT_SUPPORTED: u8 = 0x84;
 const NO_ENTRY: u8 = 0x88;
 const TABLE_FULL: u8 = 0x8C;
-/// NWK status of an NLME-LEAVE.request for a device that is not a child.
 const UNKNOWN_DEVICE: u8 = 0xC8;
 
 const NWK_ADDR_REQ: u16 = 0x0000;
@@ -39,15 +34,10 @@ const MGMT_LEAVE_REQ: u16 = 0x0034;
 const MGMT_PERMIT_JOINING_REQ: u16 = 0x0036;
 const MGMT_NWK_UPDATE_REQ: u16 = 0x0038;
 const RESPONSE: u16 = 0x8000;
-/// Children listed in one Parent_annce (sequence number and count, then 8
-/// bytes each, in an APS payload that needs no fragmentation) and in one
-/// Parent_annce_rsp (and a status).
 const PARENT_ANNCE_CHILDREN: usize = (super::frag::SINGLE_MAX - 2) / 8;
 const PARENT_ANNCE_RSP_CHILDREN: usize = (super::frag::SINGLE_MAX - 3) / 8;
 
-/// Stack compliance revision reported in the node descriptor (R22).
 const STACK_REVISION: u16 = 22;
-/// Largest APS payload in one frame; longer ones are fragmented.
 const MAX_FRAME: u16 = 82;
 
 impl<H: Hal> Stack<H> {
@@ -65,10 +55,6 @@ impl<H: Hal> Stack<H> {
                 self.address_seen(short, ext);
                 self.learn_address(ext, short);
                 self.gp_device_announced(short, ext);
-                // A child that announces itself under another address has a
-                // new parent. (One that kept its address and announced itself
-                // through another router was given up when the frame came in:
-                // `on_nwk`, R22 3.6.2.3.)
                 if let Some(i) = self.child_by_ext(ext) {
                     if self.children[i].short != short {
                         self.remove_child(i);
@@ -88,17 +74,11 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Builds the response to a request; `None` when there is nothing to say
-    /// (a broadcast that is not about us, a malformed frame).
     fn zdo_request(&mut self, cluster: u16, mut r: Reader, unicast: bool, rsp: &mut Buf) -> Option<()> {
         let me = self.nib.short;
         match cluster {
             NWK_ADDR_REQ | IEEE_ADDR_REQ => {
-                // Answered for this node and for its end-device children: a
-                // child that sleeps cannot answer for itself (R22 2.4.3.1.1,
-                // 2.4.3.1.2).
                 let by_ext = cluster == NWK_ADDR_REQ;
-                // (what is not asked for is what the answer says of an address not known)
                 let (ext, short) = if by_ext { (r.u64()?, 0xFFFF) } else { (u64::MAX, r.u16()?) };
                 let request_type = r.u8()?;
                 let start = r.u8()? as usize;
@@ -111,12 +91,10 @@ impl<H: Hal> Stack<H> {
                 let (status, ext, short) = match (found, request_type) {
                     (None, _) => (DEVICE_NOT_FOUND, ext, short),
                     (Some((ext, short)), 0) => (SUCCESS, ext, short),
-                    // the extended response is about this node and lists its end devices
                     (Some(_), 1) => (SUCCESS, self.ext, me),
                     (Some(found), _) if by_ext => (INVALID_REQUEST, found.0, found.1),
                     (Some(_), _) => (INVALID_REQUEST, self.ext, me),
                 };
-                // an error is for the one who asked this node, not for everyone who asked everyone
                 if status != SUCCESS && !unicast {
                     return None;
                 }
@@ -124,7 +102,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u64(ext);
                 rsp.u16(short);
                 if status == SUCCESS && request_type == 1 {
-                    // NumAssocDev; StartIndex and the list only if there are any
                     let count_at = rsp.len();
                     rsp.u8(0);
                     if self.end_devices().next().is_some() {
@@ -141,7 +118,6 @@ impl<H: Hal> Stack<H> {
             NODE_DESC_REQ | POWER_DESC_REQ | ACTIVE_EP_REQ | SIMPLE_DESC_REQ => {
                 let about = r.u16()?;
                 if about != me {
-                    // we keep no descriptors of other nodes
                     if !unicast {
                         return None;
                     }
@@ -156,8 +132,8 @@ impl<H: Hal> Stack<H> {
                     NODE_DESC_REQ => {
                         rsp.u8(SUCCESS);
                         rsp.u16(me);
-                        rsp.u8(0x01); // router, no complex or user descriptor
-                        rsp.u8(0x40); // 2.4 GHz
+                        rsp.u8(0x01);
+                        rsp.u8(0x40);
                         rsp.u8(mac::CAPABILITY_ROUTER);
                         rsp.u16(self.identity.manufacturer_code);
                         rsp.u8(MAX_FRAME as u8);
@@ -169,7 +145,6 @@ impl<H: Hal> Stack<H> {
                     POWER_DESC_REQ => {
                         rsp.u8(SUCCESS);
                         rsp.u16(me);
-                        // always on, mains available, mains in use, level 100 %
                         rsp.u16(0xC110);
                     }
                     ACTIVE_EP_REQ => {
@@ -191,7 +166,6 @@ impl<H: Hal> Stack<H> {
                             return Some(());
                         }
                         if let Some(o) = super::objects::object(endpoint) {
-                            // one server cluster, no client clusters
                             rsp.u8(SUCCESS);
                             rsp.u16(me);
                             rsp.u8(10);
@@ -205,12 +179,9 @@ impl<H: Hal> Stack<H> {
                             return Some(());
                         }
                         if endpoint != ENDPOINT {
-                            // an error is for the one who asked this node (R22 2.4.4.1)
                             if !unicast {
                                 return None;
                             }
-                            // 0 and 255 are no endpoints to ask about; any
-                            // other is one that is not in use here (R22 2.4.4.2.5)
                             rsp.u8(if matches!(endpoint, 0x00 | 0xFF) { INVALID_EP } else { NOT_ACTIVE });
                             rsp.u16(me);
                             rsp.u8(0);
@@ -236,8 +207,6 @@ impl<H: Hal> Stack<H> {
             MATCH_DESC_REQ => {
                 let about = r.u16()?;
                 let profile = r.u16()?;
-                // the endpoints with one of the input clusters asked for (bit
-                // 0: the light's, bits 1..: the objects', in order)
                 let mut matched = 0u16;
                 for _ in 0..r.u8()? {
                     let c = r.u16()?;
@@ -250,7 +219,6 @@ impl<H: Hal> Stack<H> {
                         }
                     }
                 }
-                // our endpoints have no client clusters, so the request's output list cannot match
                 if !((about == me || nwk::is_broadcast(about)) && (profile == PROFILE_HA || profile == PROFILE_WILDCARD)) {
                     matched = 0;
                 }
@@ -270,8 +238,6 @@ impl<H: Hal> Stack<H> {
                 }
             }
             BIND_REQ | UNBIND_REQ => {
-                // a binding is asked of one node: a broadcast request is
-                // not processed (R22 2.4.3.2.2, 2.4.3.2.3)
                 if !unicast {
                     return None;
                 }
@@ -322,7 +288,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u8(0);
                 let mut count = 0;
                 for index in start..(start + 3).min(neighbors + children) {
-                    // (address, short, type, receiver on, relationship, depth, link quality)
                     let (ext, short, device, rx_on, relation, depth, lqi) = if index < neighbors {
                         let n = self.neighbors.iter().filter(|n| n.used).nth(index)?;
                         let relation = if n.short == self.nib.parent { 0 } else { 2 };
@@ -335,7 +300,7 @@ impl<H: Hal> Stack<H> {
                     rsp.u64(ext);
                     rsp.u16(short);
                     rsp.u8(device | rx_on << 2 | relation << 4);
-                    rsp.u8(2); // whether it permits joining: unknown
+                    rsp.u8(2);
                     rsp.u8(depth);
                     rsp.u8(lqi);
                     count += 1;
@@ -386,12 +351,10 @@ impl<H: Hal> Stack<H> {
                 rsp.set(count_at, count);
             }
             MGMT_LEAVE_REQ => {
-                // a leave request sent to everyone is dropped (R22 3.6.1.10.3.1 step 1)
                 if !unicast {
                     return None;
                 }
                 let who = r.u64()?;
-                // (bit 6: remove children; bit 7: rejoin)
                 let flags = r.u8().unwrap_or(0);
                 if who == 0 || who == self.ext {
                     rsp.u8(SUCCESS);
@@ -399,8 +362,6 @@ impl<H: Hal> Stack<H> {
                     self.leave_at = Some(now.wrapping_add(500));
                     self.leave_rejoin = flags & 0x80 != 0;
                 } else if let Some(i) = self.child_by_ext(who) {
-                    // one of our children is to go: it is sent the Leave
-                    // (R22 2.4.3.3.5, 3.6.1.10.2)
                     self.dismiss_child(i, (flags & 0x80) >> 2 | (flags & 0x40) << 1);
                     rsp.u8(SUCCESS);
                 } else {
@@ -408,7 +369,6 @@ impl<H: Hal> Stack<H> {
                 }
             }
             MGMT_PERMIT_JOINING_REQ => {
-                // (255 means 254 since joining can no longer be left open for good: R22 2.4.3.3.7)
                 let seconds = r.u8()?.min(0xFE);
                 let now = self.hal.now_ms();
                 self.permit_until = match seconds {
@@ -425,7 +385,6 @@ impl<H: Hal> Stack<H> {
                 let duration = r.u8()?;
                 match duration {
                     0xFE => {
-                        // channel change: follow once the request has reached everyone
                         let update_id = r.u8()?;
                         let channel = channels.trailing_zeros() as u8;
                         if (11..=26).contains(&channel) {
@@ -436,13 +395,11 @@ impl<H: Hal> Stack<H> {
                         return None;
                     }
                     0xFF => {
-                        // new network manager
                         self.nib.update_id = r.u8()?;
                         self.manager = r.u16()?;
                         return None;
                     }
                     0..=5 => {
-                        // energy scan of the listed channels, answered with a Mgmt_NWK_Update_notify
                         if !unicast {
                             return None;
                         }
@@ -482,7 +439,6 @@ impl<H: Hal> Stack<H> {
         let status = r.u8()?;
         match cluster & !RESPONSE {
             MATCH_DESC_REQ if status == SUCCESS => {
-                // the only thing we look for is the OTA server
                 r.skip(2)?;
                 if r.u8()? >= 1 {
                     let endpoint = r.u8()?;
@@ -498,8 +454,6 @@ impl<H: Hal> Stack<H> {
                 if revision >= 21 {
                     self.tclk_advance(3);
                 } else {
-                    // an older Trust Center: the default link key stays,
-                    // and the exchange counts as done (BDB 10.2.5 step 5)
                     self.nib.tclk_state = 3;
                     self.store_network();
                     self.tclk_step = 0;
@@ -512,7 +466,6 @@ impl<H: Hal> Stack<H> {
                 self.learn_address(ext, short);
             }
             PARENT_ANNCE if status == SUCCESS => {
-                // these end devices have been heard by another router since: they are its children
                 for _ in 0..r.u8()? {
                     let ext = r.u64()?;
                     if let Some(i) = self.child_by_ext(ext) {
@@ -527,7 +480,6 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    /// The end devices that are this router's children.
     fn end_devices(&self) -> impl Iterator<Item = &super::parent::Child> {
         self.children.iter().filter(|c| c.used && c.joined && c.capability & CAP_FFD == 0)
     }
@@ -537,11 +489,6 @@ impl<H: Hal> Stack<H> {
         since != 0 && since < 0x8000_0000
     }
 
-    /// Parent_annce: after a restart, the end devices this router still has
-    /// in its table, for the other routers to claim those that moved.
-    /// As many as fit go in one message; for the rest the timer starts
-    /// again, and the next message takes up where this one stopped, without
-    /// the children heard meanwhile (R22 2.4.3.1.12).
     pub(crate) fn parent_announce(&mut self) {
         let mut p = Buf::new();
         p.u8(self.next_zdo_seq());
@@ -554,7 +501,6 @@ impl<H: Hal> Stack<H> {
             let c = self.children[i];
             if c.used && c.capability & super::parent::CAP_FFD == 0 && !self.child_alive(i) {
                 if count == PARENT_ANNCE_CHILDREN {
-                    // the rest in another message, after another wait
                     self.parent_annce_from = i;
                     let now = self.hal.now_ms();
                     let wait = super::join::PARENT_ANNCE_BASE_MS + self.hal.random() % super::join::PARENT_ANNCE_JITTER_MS;
@@ -573,11 +519,6 @@ impl<H: Hal> Stack<H> {
         self.aps_data(nwk::BROADCAST_ROUTERS, 0, PARENT_ANNCE, PROFILE_ZDO, 0, p.as_slice());
     }
 
-    /// Another router, back after a restart, lists the end devices it takes
-    /// for its children. Those that have been polling us since we came up
-    /// are ours, and we say so. (One we have not heard yet either stays in
-    /// both tables: after a power cut every router asks this at once.)
-    /// (More than fit in one response go in more, at once: R22 2.4.3.1.12.)
     fn on_parent_announce(&mut self, src: u16, seq: u8, mut r: Reader) -> Option<()> {
         if src == self.nib.short {
             return Some(());
@@ -616,7 +557,6 @@ impl<H: Hal> Stack<H> {
         self.zdo_seq
     }
 
-    /// Announces this node's addresses to everyone listening.
     pub(crate) fn device_announce(&mut self) {
         let mut p = Buf::new();
         p.u8(self.next_zdo_seq());
@@ -626,20 +566,16 @@ impl<H: Hal> Stack<H> {
         self.aps_data(nwk::BROADCAST_RX_ON, 0, DEVICE_ANNCE, PROFILE_ZDO, 0, p.as_slice());
     }
 
-    /// Asks all routers and the coordinator to permit joining for `seconds`
-    /// (Mgmt_Permit_Joining_req, TC_Significance 1; R22 2.4.3.3.7).
     pub(crate) fn zdo_permit_joining_request(&mut self, seconds: u8) {
         let seq = self.next_zdo_seq();
         self.aps_data(nwk::BROADCAST_ROUTERS, 0, MGMT_PERMIT_JOINING_REQ, PROFILE_ZDO, 0, &[seq, seconds, 0x01]);
     }
 
-    /// Asks the Trust Center for its node descriptor (for its stack revision).
     pub(crate) fn zdo_node_desc_request(&mut self) {
         let seq = self.next_zdo_seq();
         self.aps_data(0x0000, 0, NODE_DESC_REQ, PROFILE_ZDO, 0, &[seq, 0x00, 0x00]);
     }
 
-    /// Asks the network for the short address of an EUI-64.
     pub(crate) fn zdo_nwk_addr_request(&mut self, ext: u64) {
         let mut p = Buf::new();
         p.u8(self.next_zdo_seq());
@@ -659,7 +595,6 @@ impl<H: Hal> Stack<H> {
         self.addr_next = self.addr_next.wrapping_add(1);
     }
 
-    /// Short address of an EUI-64, if known.
     pub(crate) fn resolve(&self, ext: u64) -> Option<u16> {
         if ext == self.nib.tc_ext {
             return Some(0x0000);

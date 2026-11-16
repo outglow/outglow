@@ -1,8 +1,3 @@
-//! Zigbee security primitives on top of AES-128: CCM* with a 4-byte MIC
-//! (security level 5, the only one Zigbee PRO uses), the Matyas-Meyer-Oseas
-//! hash and the keyed hash that derives the key-transport, key-load and
-//! verify-key hashes from a link key (ZigBee spec 05-3474, annexes A and B).
-
 use crate::aes::Aes128;
 
 pub const MIC_LEN: usize = 4;
@@ -13,17 +8,14 @@ fn xor_block(x: &mut [u8; 16], data: &[u8]) {
     }
 }
 
-/// CBC-MAC over the length-prefixed additional data and the message.
 fn ccm_tag(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], msg: &[u8]) -> [u8; 16] {
     let mut x = [0u8; 16];
-    // B0: flags (Adata, M = 4, L = 2), nonce, message length
     x[0] = (if aad.is_empty() { 0 } else { 0x40 }) | (((MIC_LEN as u8 - 2) / 2) << 3) | 1;
     x[1..14].copy_from_slice(nonce);
     x[14] = (msg.len() >> 8) as u8;
     x[15] = msg.len() as u8;
     aes.encrypt(&mut x);
     if !aad.is_empty() {
-        // first block: 2-byte length, then up to 14 bytes of data
         let first = aad.len().min(14);
         x[0] ^= (aad.len() >> 8) as u8;
         x[1] ^= aad.len() as u8;
@@ -62,9 +54,6 @@ fn ccm_crypt(aes: &Aes128, nonce: &[u8; 13], msg: &mut [u8]) {
     }
 }
 
-/// Encrypts `buf[..len]` in place and writes the MIC into
-/// `buf[len..len + 4]`. Returns the new length, or `None` when the MIC does
-/// not fit.
 pub fn ccm_encrypt(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], len: usize) -> Option<usize> {
     if buf.len() < len + MIC_LEN {
         return None;
@@ -78,8 +67,6 @@ pub fn ccm_encrypt(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], buf: &mut [u8], l
     Some(len + MIC_LEN)
 }
 
-/// Decrypts `buf` (ciphertext followed by the MIC) in place. Returns the
-/// plaintext length when the MIC verifies.
 pub fn ccm_decrypt(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], buf: &mut [u8]) -> Option<usize> {
     let len = buf.len().checked_sub(MIC_LEN)?;
     ccm_crypt(aes, nonce, &mut buf[..len]);
@@ -96,8 +83,6 @@ pub fn ccm_decrypt(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], buf: &mut [u8]) -
     }
 }
 
-/// Matyas-Meyer-Oseas hash with AES-128 over the concatenation of `parts`
-/// (total length below 8 KiB, which is all Zigbee asks of it).
 pub fn mmo_hash(parts: &[&[u8]]) -> [u8; 16] {
     let mut h = [0u8; 16];
     let mut block = [0u8; 16];
@@ -121,7 +106,6 @@ pub fn mmo_hash(parts: &[&[u8]]) -> [u8; 16] {
             }
         }
     }
-    // padding: 0x80, zeros, 16-bit big-endian bit length in the last two bytes
     block[fill] = 0x80;
     fill += 1;
     if fill > 14 {
@@ -141,9 +125,6 @@ pub fn mmo_hash(parts: &[&[u8]]) -> [u8; 16] {
     h
 }
 
-/// HMAC with the MMO hash (FIPS 198 construction, block size 16).
-/// CRC-16/X-25 (as in the 802.15.4 FCS, but started at 0xFFFF and
-/// inverted at the end): the checksum that ends an install code.
 pub fn crc16_x25(data: &[u8]) -> u16 {
     let mut crc = 0xFFFFu16;
     for b in data {
@@ -155,8 +136,6 @@ pub fn crc16_x25(data: &[u8]) -> u16 {
     !crc
 }
 
-/// The link key an install code stands for: the hash of the code with its
-/// checksum. `code` is the code without the checksum.
 pub fn install_code_key(code: &[u8]) -> [u8; 16] {
     mmo_hash(&[code, &crc16_x25(code).to_le_bytes()])
 }
@@ -180,11 +159,8 @@ mod tests {
         (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
 
-    // Reference values computed with PyCryptodome (emulator/zigbee_coord.py).
-
     #[test]
     fn install_code_gives_the_key_of_the_published_example() {
-        // the example of the Base Device Behavior specification: code, checksum, key
         let code = hex("83FED3407A939723A5C639B26916D505");
         assert_eq!(crc16_x25(&code), 0xB5C3);
         assert_eq!(install_code_key(&code).to_vec(), hex("66B6900981E1EE3CA4206B6B861C02BB"));

@@ -1,6 +1,3 @@
-//! Link Layer, advertising: PDU formats and advertising events (Core 5.4 Vol 6
-//! Part B 2.3, 4.4.2); emulator/spec_ble/ll_adv_pdu.py.
-
 use crate::ble::harness::{hx, BleSession, LinkOpts};
 use crate::ble::BleTest;
 use crate::py;
@@ -84,9 +81,6 @@ fn rev(a: &[u8]) -> Vec<u8> {
 }
 
 fn adv_pdu_header(s: &mut BleSession) -> R<String> {
-    // 2.3 Figure 2.5: header = PDU Type(4) RFU(1) ChSel(1) TxAdd(1) RxAdd(1) Length(8); fields a PDU type
-    // does not define are reserved (Vol 1 Part E 2.4.1: zero when sent). 2.3.1.1 Figure 2.6: ADV_IND
-    // payload = AdvA (6) + AdvData (0-31), so Length is 6..37; RxAdd is not defined for ADV_IND.
     let pk = s.wait_adv(9, 6000.0, Some(0.0), 0)?;
     if pk.is_empty() {
         return Err(Stop::Inconclusive("no ADV_IND seen".into()));
@@ -118,9 +112,6 @@ fn adv_pdu_header(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_adva(s: &mut BleSession) -> R<String> {
-    // 2.3.1.1: "The AdvA field shall contain the advertiser's public or random device address as indicated
-    // by TxAdd." 1.3.2 Table 1.2: the two most significant bits of a random address select the sub-type;
-    // 0b10 is reserved.
     let pk = s.wait_adv(12, 6000.0, Some(0.0), 0)?;
     if pk.len() < 6 {
         return Err(Stop::Inconclusive(format!("only {} ADV_IND seen", pk.len())));
@@ -138,8 +129,6 @@ fn adv_adva(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_chsel(s: &mut BleSession) -> R<String> {
-    // 2.3.1.1: "The ChSel field ... shall be set to 1 if the advertiser supports the LE Channel Selection
-    // Algorithm #2 feature". Table 4.7: bit 14, sent to the peer ("Y": set correctly).
     let pk = s.wait_adv(3, 4000.0, Some(0.0), 0)?;
     if pk.is_empty() {
         return Err(Stop::Inconclusive("no ADV_IND seen".into()));
@@ -169,8 +158,6 @@ fn adv_chsel(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_one_per_channel(s: &mut BleSession) -> R<String> {
-    // 4.4.2.2: "At most one PDU shall be sent on each used advertising channel index". Events are told
-    // apart by time: packets closer than 10 ms belong to one event (4.4.2.3), events are >= 20 ms apart.
     let pk = s.wait_adv(60, 12000.0, Some(0.0), 0)?;
     if pk.len() < 30 {
         return Err(Stop::Inconclusive(format!("only {} ADV_IND seen", pk.len())));
@@ -203,9 +190,6 @@ fn adv_one_per_channel(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_spacing(s: &mut BleSession) -> R<String> {
-    // 4.4.2.3: "The time between the beginning of two consecutive ADV_IND PDUs within an advertising event
-    // shall be less than or equal to 10 ms." An event that uses fewer than three channels is allowed; an
-    // event split by a gap over 10 ms shows up as two short events much closer than advInterval (>= 20 ms).
     let pk = s.wait_adv(90, 15000.0, Some(0.0), 0)?;
     if pk.len() < 30 {
         return Err(Stop::Inconclusive(format!("only {} ADV_IND seen", pk.len())));
@@ -229,9 +213,6 @@ fn adv_spacing(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_interval(s: &mut BleSession) -> R<String> {
-    // 4.4.2.2.1: T_advEvent = advInterval + advDelay. With N events the spread of T_advEvent cannot exceed
-    // 10 ms, the smallest cannot be under 20 ms, and some multiple of 0.625 ms must fit under all of them
-    // with every T_advEvent within 10 ms above it. A delay drawn per event makes the intervals differ.
     let n = 160;
     s.until(200000.0, 500.0, |s| {
         let a = s.adv(0.0, false);
@@ -283,8 +264,6 @@ fn adv_interval(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_only_adv_ind(s: &mut BleSession) -> R<String> {
-    // 2.3: "The PDU Types marked as Reserved for Future Use shall not be sent". With no scanner and no
-    // initiator on the air there is nothing to answer, so no SCAN_RSP either (4.4.2.3: SCAN_RSP is a reply).
     s.run(6000.0)?;
     let mut kinds: Vec<(u8, i64)> = Vec::new();
     for p in s.adv(0.0, false) {

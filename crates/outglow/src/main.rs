@@ -1,6 +1,3 @@
-//! `outglow`: flash a bulb over Bluetooth, read its diagnostics and black box
-//! through Zigbee2MQTT, inspect firmware images.
-
 use clap::{Parser, Subcommand};
 
 mod diag;
@@ -16,14 +13,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Bluetooth: scan, probe, flash an image (first install from the original firmware, or an update)
+    #[doc = " Bluetooth: scan, probe, flash an image (first install from the original firmware, or an update)"]
     #[command(subcommand)]
     Ble(flash::Ble),
-    /// Diagnostics of a bulb running Outglow, through Zigbee2MQTT (MQTT)
+    #[doc = " Diagnostics of a bulb running Outglow, through Zigbee2MQTT (MQTT)"]
     Diag(diag::DiagArgs),
-    /// The black box of a bulb running Outglow, through Zigbee2MQTT (MQTT)
+    #[doc = " The black box of a bulb running Outglow, through Zigbee2MQTT (MQTT)"]
     Box(diag::BoxArgs),
-    /// What an image is: board, version, header and CRC check
+    #[doc = " What an image is: board, version, header and CRC check"]
     Image(image::ImageArgs),
 }
 

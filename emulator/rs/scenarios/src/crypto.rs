@@ -1,34 +1,21 @@
-//! Zigbee security primitives for the scenario coordinator and the sniffer:
-//! AES-CCM* at security level 5 (MIC-32), the Matyas-Meyer-Oseas hash and
-//! HMAC-MMO (Zigbee R22 4.5 and B.6).
-//!
-//! Deliberately independent of `crates/zigbee`: the AES block cipher is the
-//! one of tc32emu (a port of tc32-devtools go/ble/aes128), so a mutation of
-//! the firmware's crypto can never change the coordinator's crypto too.
-
 use tc32emu::aes128;
 
-/// MIC length of security level 5.
 pub const MIC_LEN: usize = 4;
 
-/// CCM* encryption: ciphertext || MIC-32.
 pub fn ccm_encrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], payload: &[u8]) -> Vec<u8> {
     aes128::ccm(key, nonce, aad, payload, MIC_LEN)
 }
 
-/// CCM* decryption of `body` (ciphertext || MIC-32); None when the MIC is wrong.
 pub fn ccm_decrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], body: &[u8]) -> Option<Vec<u8>> {
     if body.len() < MIC_LEN {
         return None;
     }
     let (ct, mic) = body.split_at(body.len() - MIC_LEN);
-    // CTR with the same counter blocks as the encryption: A_i = 01 || nonce || i (L = 2)
     let mut plain = Vec::with_capacity(ct.len());
     for (k, chunk) in ct.chunks(16).enumerate() {
         let s = aes128::encrypt(key, &ctr_block(nonce, k + 1));
         plain.extend(chunk.iter().zip(s.iter()).map(|(c, s)| c ^ s));
     }
-    // recompute the whole thing and compare: the MIC is over the plaintext
     let again = aes128::ccm(key, nonce, aad, &plain, MIC_LEN);
     if again[..ct.len()] == *ct && again[ct.len()..] == *mic {
         Some(plain)
@@ -39,14 +26,13 @@ pub fn ccm_decrypt(key: &[u8; 16], nonce: &[u8; 13], aad: &[u8], body: &[u8]) ->
 
 fn ctr_block(nonce: &[u8; 13], i: usize) -> [u8; 16] {
     let mut b = [0u8; 16];
-    b[0] = 0x01; // L - 1 with L = 2
+    b[0] = 0x01;
     b[1..14].copy_from_slice(nonce);
     b[14] = (i >> 8) as u8;
     b[15] = i as u8;
     b
 }
 
-/// Matyas-Meyer-Oseas hash on AES-128 (Zigbee B.6), for messages shorter than 2^16 bits.
 pub fn mmo_hash(data: &[u8]) -> [u8; 16] {
     let mut m = data.to_vec();
     m.push(0x80);
@@ -65,7 +51,6 @@ pub fn mmo_hash(data: &[u8]) -> [u8; 16] {
     h
 }
 
-/// HMAC-MMO (Zigbee B.1.4) with a 16-byte key.
 pub fn hmac_mmo(key: &[u8; 16], msg: &[u8]) -> [u8; 16] {
     let mut inner: Vec<u8> = key.iter().map(|k| k ^ 0x36).collect();
     inner.extend_from_slice(msg);
@@ -85,7 +70,6 @@ mod tests {
 
     const TCLK: [u8; 16] = *b"ZigBeeAlliance09";
 
-    // vectors from emulator/zigbee_coord.py (pycryptodome)
     #[test]
     fn key_transport_and_key_load_keys() {
         assert_eq!(hmac_mmo(&TCLK, &[0x00]).to_vec(), h("4bab0f173e1434a2d572e1c1ef478782"));
@@ -116,7 +100,6 @@ mod tests {
     }
 }
 
-/// SHA-256 (FIPS 180-4), for the AwoX "unpaired" mesh password of the BLE tests.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
@@ -167,7 +150,6 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-/// Telink's aes_att_encryption: AES-128 on the reversed bytes of key and data.
 pub fn telink_aes(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
     let mut k = *key;
     k.reverse();

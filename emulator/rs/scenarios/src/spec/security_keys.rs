@@ -1,11 +1,3 @@
-//! Keys (R22 4.3.1, 4.4, 4.6.3.4, 4.7.3.10; BDB 3.0.1 10.2.5). Every test has a
-//! session of its own, because each one changes the key material of the network.
-//! The Trust Center side of the key update is written from 4.6.3.4.1: Transport
-//! Key with sequence number N+1 (unicast under the key-transport key of the
-//! device's link key, or broadcast with NWK security only and an all-zero
-//! destination field), then Switch Key broadcast to 0xFFFD without APS security.
-//! Ported from emulator/spec/security_keys.py.
-
 use super::{SessionDef, Test};
 use crate::air::{Air, NodeId};
 use crate::coord::Coord;
@@ -128,7 +120,6 @@ fn tc(s: &mut Session) -> (&mut Coord, &mut Air) {
     (&mut w.coord, &mut w.air)
 }
 
-/// Python's `sorted(set(xs))` printed.
 fn sorted_set(xs: &[Option<u8>]) -> String {
     let mut v: Vec<u8> = xs.iter().flatten().copied().collect();
     v.sort();
@@ -141,7 +132,6 @@ fn sorted_set(xs: &[Option<u8>]) -> String {
     format!("[{}]", parts.join(", "))
 }
 
-/// Key sequence numbers of the secured NWK frames the bulb sent since the mark, in order.
 fn bulb_key_seq(s: &mut Session, since: usize) -> Vec<Option<u8>> {
     s.frames(since, DUT, |f| f.nwk.as_ref().is_some_and(|n| n.secured))
         .iter()
@@ -149,12 +139,10 @@ fn bulb_key_seq(s: &mut Session, since: usize) -> Vec<Option<u8>> {
         .collect()
 }
 
-/// Is a Read Attributes from the Trust Center (under its current key) answered?
 fn probe(s: &mut Session, max_ms: f64) -> R<bool> {
     Ok(s.read(0x0000, &[0x0000], max_ms)?.is_some())
 }
 
-/// Asks once a second for up to total_ms; the time until the first answer or None.
 fn probe_for(s: &mut Session, total_ms: f64) -> R<Option<f64>> {
     let t0 = s.now();
     while s.now() - t0 < total_ms {
@@ -166,12 +154,8 @@ fn probe_for(s: &mut Session, total_ms: f64) -> R<Option<f64>> {
     Ok(None)
 }
 
-/// Makes the bulb transmit (it relays a broadcast of the Trust Center), so that the
-/// key it uses for its own frames shows.
 fn provoke(s: &mut Session, ms: f64) -> R<usize> {
     let i = s.mark();
-    // A broadcast nobody passed on goes again, as a coordinator sends it
-    // (R22 3.6.5): the bulb may have been on BLE for the one copy.
     for _ in 0..3 {
         s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(3));
         s.run(ms)?;
@@ -211,7 +195,6 @@ fn tclk_counter_restart(s: &mut Session) -> R<String> {
             if left.is_empty() { "" } else { " and then left the network" }
         ),
     )?;
-    // the new key is really in use: a command under it, again with a low counter, is acted on
     let (dut, ext, lk) = (s.dut_short, s.dut_ext, s.tclk());
     let (c, air) = tc(s);
     let mut body = vec![0x05, 0x01];
@@ -304,7 +287,6 @@ fn key_update_unicast(s: &mut Session) -> R<String> {
 
 fn key_update_counter_restart(s: &mut Session) -> R<String> {
     for _ in 0..40 {
-        // raise the Trust Center's counter under the old key
         s.w.coord.st.fc_out += 50;
     }
     if !probe(s, 1500.0)? {
@@ -369,7 +351,7 @@ fn implicit_switch(s: &mut Session) -> R<String> {
         )));
     }
     use_key(s, NEW_KEY, 1, false);
-    let dt = probe_for(s, 8000.0)?; // frames under the new key, no Switch Key
+    let dt = probe_for(s, 8000.0)?;
     let i = provoke(s, 1200.0)?;
     let seqs = bulb_key_seq(s, i);
     expect(
@@ -408,7 +390,6 @@ fn key_from_stranger(s: &mut Session) -> R<String> {
     st.tx_aps_cmd(air, dut, &body, None, &Tx::new());
     s.run(800.0)?;
     for _ in 0..2 {
-        // two copies, so that a lost broadcast cannot pass the test
         let (st, air) = s.w.st(r2);
         let ctr = nx(&mut st.aps_ctr);
         let a = aps_cmd(ctr, &[0x09, 1], false, None, 2);
@@ -417,7 +398,7 @@ fn key_from_stranger(s: &mut Session) -> R<String> {
     }
     s.w.air.keys.set_nwk(1, evil);
     let i = s.mark();
-    s.run(17000.0)?; // long enough for a Link Status of the bulb
+    s.run(17000.0)?;
     let seqs = bulb_key_seq(s, i);
     let ok = probe(s, 1500.0)? || probe(s, 1500.0)?;
     expect(

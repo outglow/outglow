@@ -1,9 +1,3 @@
-//! `cargo xtask toolchain`: the llvm-tc32 compiler `cargo xtask build` needs,
-//! downloaded from this repository's releases (the toolchain workflow
-//! publishes it) into the user's cache:
-//! `~/.cache/outglow/llvm-tc32-<commit>` (`$XDG_CACHE_HOME` if set).
-//! `cargo xtask build` finds it there without TC32_LLVM.
-
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -11,15 +5,14 @@ use anyhow::{bail, Context, Result};
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// download again even if it is there
+    #[doc = " download again even if it is there"]
     #[arg(long)]
     force: bool,
-    /// only print the bin directory (empty when not installed)
+    #[doc = " only print the bin directory (empty when not installed)"]
     #[arg(long)]
     print_path: bool,
 }
 
-/// The llvm-tc32 commit this repository builds with.
 pub fn commit() -> String {
     include_str!("../llvm-tc32.ref").trim().to_string()
 }
@@ -31,7 +24,6 @@ fn cache() -> PathBuf {
     base.join("outglow")
 }
 
-/// The bin directory of the downloaded compiler.
 pub fn installed_bin() -> PathBuf {
     let short: String = commit().chars().take(7).collect();
     cache().join(format!("llvm-tc32-{short}")).join("bin")

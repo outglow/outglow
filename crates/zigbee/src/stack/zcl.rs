@@ -1,7 +1,3 @@
-//! ZCL: the foundation commands and the server clusters of a dimmable light
-//! (Basic, Identify, Groups, On/Off, Level Control), with attribute
-//! reporting through the binding table.
-
 use bulb_core::command::{Command, HueDirection, PowerOnBehavior};
 
 use super::aps::{ENDPOINT, PROFILE_HA};
@@ -21,23 +17,14 @@ pub(crate) const LEVEL: u16 = 0x0008;
 pub(crate) const COLOR: u16 = 0x0300;
 
 pub(crate) const DIAGNOSTICS: u16 = 0x0B05;
-/// Touchlink Commissioning: the commands that matter arrive inter-PAN
-/// (`touchlink.rs`); on the endpoint the cluster shows that the device is a
-/// touchlink target, and answers the two list requests.
 pub(crate) const TOUCHLINK: u16 = 0x1000;
-/// The bulb's own settings, a manufacturer cluster (code `Identity::manufacturer_code`)
-/// on firmware with BLE: 0x0000 BLE mode (`BleMode`), 0x0001 BLE window in
-/// minutes, 0x0002 whether BLE is running now. Frames may carry the
-/// manufacturer code or not.
 pub(crate) const SETTINGS: u16 = 0xFC5F;
 
-/// Server clusters of the light endpoint; the tunable-white bulb has Color Control too.
 const CLUSTERS: [u16; 8] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, DIAGNOSTICS, TOUCHLINK];
 const CLUSTERS_TW: [u16; 9] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK];
 const CLUSTERS_BLE: [u16; 9] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, DIAGNOSTICS, TOUCHLINK, SETTINGS];
 const CLUSTERS_TW_BLE: [u16; 10] =
     [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK, SETTINGS];
-/// With motion sensing: Occupancy Sensing and its manufacturer cluster as well.
 #[cfg(feature = "sense")]
 const CLUSTERS_SENSE: [u16; 10] = [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, DIAGNOSTICS, TOUCHLINK, OCCUPANCY, SENSE];
 #[cfg(feature = "sense")]
@@ -49,24 +36,16 @@ const CLUSTERS_BLE_SENSE: [u16; 11] =
 #[cfg(feature = "sense")]
 const CLUSTERS_TW_BLE_SENSE: [u16; 12] =
     [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK, SETTINGS, OCCUPANCY, SENSE];
-/// The Color Control Options a bulb starts with: "execute if off".
 pub(crate) const COLOR_OPTIONS_DEFAULT: u8 = EXECUTE_IF_OFF;
-/// Level Control Options bit: the colour temperature follows the level.
 const COUPLE_COLOR_TEMP: u8 = 0x02;
-/// Home Automation device identifiers.
 const DEVICE_DIMMABLE_LIGHT: u16 = 0x0101;
 const DEVICE_COLOR_TEMPERATURE_LIGHT: u16 = 0x010C;
 const DEVICE_EXTENDED_COLOR_LIGHT: u16 = 0x010D;
-/// Color Control of a colour bulb: hue and saturation, xy, colour temperature (as the stock: no enhanced hue, no loop).
 const COLOR_CAPABILITIES_FULL: u16 = 0x0019;
-/// The colour commands of a colour bulb, beside those of the colour temperature.
 const COLOR_COMMANDS_FULL: [u8; 14] = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x47, 0x4B, 0x4C];
 
 const SUCCESS: u8 = 0x00;
 const MALFORMED_COMMAND: u8 = 0x80;
-/// The one status for a command this device does not have. ZCL revision 8
-/// retired the separate ones for general and for manufacturer-specific
-/// commands (0x82 to 0x84), and DUPLICATE_EXISTS (0x8A) in favour of SUCCESS.
 const UNSUP_COMMAND: u8 = 0x81;
 const UNSUPPORTED_ATTRIBUTE: u8 = 0x86;
 const INVALID_FIELD: u8 = 0x85;
@@ -89,7 +68,6 @@ const T_STRING: u8 = 0x42;
 
 const READ_ATTRIBUTES: u8 = 0x00;
 const READ_ATTRIBUTES_RSP: u8 = 0x01;
-/// Options attribute and the options fields of commands: act while the light is off.
 const EXECUTE_IF_OFF: u8 = 0x01;
 const WRITE_ATTRIBUTES: u8 = 0x02;
 const WRITE_ATTRIBUTES_UNDIVIDED: u8 = 0x03;
@@ -108,25 +86,18 @@ const DISCOVER_COMMANDS_GENERATED: u8 = 0x13;
 const DISCOVER_ATTRIBUTES_EXTENDED: u8 = 0x15;
 const DISCOVER_ATTRIBUTES_EXTENDED_RSP: u8 = 0x16;
 
-/// Frame control of a response: server to client, no default response wanted.
 const FC_GLOBAL_RSP: u8 = 0x18;
 const FC_CLUSTER_RSP: u8 = 0x19;
 
 pub(crate) const CLUSTER_REVISION: u16 = 0xFFFD;
-/// ZCLVersion: the revision of the cluster library this follows.
 const ZCL_VERSION: u8 = 8;
-/// GenericDeviceType of the Lighting & Occupancy device specification: an LED bulb.
 const GENERIC_TYPE_LED_BULB: u8 = 0x05;
-/// The lowest level (MinLevel): where a command "with On/Off" turns the light off.
 const MIN_LEVEL: u8 = bulb_core::LEVEL_MIN;
-/// `Scene::omitted`: the extension field sets a scene may be without.
 pub(crate) const SCENE_NO_ON_OFF: u8 = 0x01;
 pub(crate) const SCENE_NO_LEVEL: u8 = 0x02;
 pub(crate) const SCENE_NO_COLOR: u8 = 0x04;
-/// Rate of a Move command that leaves the rate to the device, in levels per second.
 const DEFAULT_MOVE_RATE: u32 = 50;
 
-/// Every attribute of every cluster, in ascending order per cluster.
 const ATTRIBUTES: [(u16, u16, u8); 60] = [
     (BASIC, 0x0000, T_U8),
     (BASIC, 0x0001, T_U8),
@@ -190,9 +161,6 @@ const ATTRIBUTES: [(u16, u16, u8); 60] = [
     (SETTINGS, CLUSTER_REVISION, T_U16),
 ];
 
-/// Whether a command acts on a light that is off: the Options attribute,
-/// with the bits the command's own OptionsMask names taken from its
-/// OptionsOverride. Older senders leave the two fields out.
 fn execute_if_off(attribute: u8, r: &mut Reader) -> bool {
     let (mask, over) = match (r.u8(), r.u8()) {
         (Some(mask), Some(over)) => (mask, over),
@@ -201,14 +169,12 @@ fn execute_if_off(attribute: u8, r: &mut Reader) -> bool {
     (attribute & !mask | over & mask) & EXECUTE_IF_OFF != 0
 }
 
-/// Which endpoint a command came to, and the manufacturer code it carried.
 #[derive(Clone, Copy)]
 struct Ctx {
     ep: u8,
     mfr: Option<u16>,
 }
 
-/// Appends a number as wide as its type.
 fn put_number(out: &mut Long, ty: u8, v: u32) {
     let n = match ty {
         0x08 | 0x10 | 0x18 | 0x20 | 0x28 | 0x30 => 1,
@@ -218,7 +184,6 @@ fn put_number(out: &mut Long, ty: u8, v: u32) {
     out.bytes(&v.to_le_bytes()[..n]);
 }
 
-/// Attributes a Write Attributes command may set.
 fn writable(cluster: u16, id: u16) -> bool {
     matches!(
         (cluster, id),
@@ -230,7 +195,6 @@ fn writable(cluster: u16, id: u16) -> bool {
     )
 }
 
-/// The cluster commands this light takes (`generated` false) or sends.
 fn commands(cluster: u16, generated: bool) -> &'static [u8] {
     match (cluster, generated) {
         (BASIC, false) => &[0x00],
@@ -252,7 +216,6 @@ fn attribute_type(cluster: u16, id: u16) -> Option<u8> {
     ATTRIBUTES.iter().find(|a| a.0 == cluster && a.1 == id).map(|a| a.2)
 }
 
-/// Encoded size of a value of a ZCL data type, as far as writes may carry it.
 fn value_len(ty: u8, r: &Reader) -> Option<usize> {
     match ty {
         0x08 | 0x10 | 0x18 | 0x20 | 0x28 | 0x30 => Some(1),
@@ -268,13 +231,10 @@ fn value_len(ty: u8, r: &Reader) -> Option<usize> {
     }
 }
 
-/// Analog types have a "reportable change" in reporting configurations;
-/// discrete ones (booleans, bitmaps, enumerations, strings) do not.
 fn is_analog(ty: u8) -> bool {
     matches!(ty, 0x20..=0x2F | 0x38..=0x3A | 0xE0..=0xE2)
 }
 
-/// Index of the reporting entry of a reportable attribute.
 fn report_index(cluster: u16, id: u16) -> Option<usize> {
     match (cluster, id) {
         (ON_OFF, 0x0000) => Some(REPORT_ON_OFF),
@@ -284,34 +244,24 @@ fn report_index(cluster: u16, id: u16) -> Option<usize> {
     }
 }
 
-/// The light's settings as the On/Off, Level Control and Color Control
-/// clusters show them (`Stack::light_settings`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LightSettings {
-    /// StartUpOnOff (0 off, 1 on, 2 toggle, 0xFF previous).
     pub start_up_on_off: u8,
-    /// StartUpCurrentLevel (0xFF previous).
     pub start_up_level: u8,
-    /// Options of Level Control (bit 0 execute if off, bit 1 the colour
-    /// temperature follows the level) and of Color Control (None: no Color
-    /// Control).
     pub level_options: u8,
     pub color_options: Option<u8>,
-    /// StartUpColorTemperatureMireds (0xFFFF previous) and the physical range.
     pub start_up_color_temperature: u16,
     pub ct_min: u16,
     pub ct_max: u16,
     pub global_scene_control: bool,
     pub on_time: u16,
     pub off_wait_time: u16,
-    /// RemainingTime of Level Control, tenths of a second.
     pub remaining_tenths: u16,
     pub min_level: u8,
     pub max_level: u8,
 }
 
 impl<H: Hal> Stack<H> {
-    /// Server clusters of the light endpoint.
     pub(crate) fn in_clusters(&self) -> &'static [u16] {
         #[cfg(feature = "sense")]
         if self.identity.sense {
@@ -340,7 +290,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// The light's settings (`LightSettings`).
     pub fn light_settings(&mut self) -> LightSettings {
         let tw = self.identity.color_temperature;
         LightSettings {
@@ -360,13 +309,10 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Writes the Options attribute of Level Control, as a write from the
-    /// network would; false (and nothing changed) for bits this light has no use for.
     pub fn set_level_options(&mut self, options: u8) -> bool {
         self.write_options(LEVEL, options)
     }
 
-    /// The same for Color Control; false also on a light without it.
     pub fn set_color_options(&mut self, options: u8) -> bool {
         self.write_options(COLOR, options)
     }
@@ -380,7 +326,6 @@ impl<H: Hal> Stack<H> {
         true
     }
 
-    /// Server clusters of one of our endpoints.
     pub(crate) fn clusters_of(&self, ep: u8) -> &'static [u16] {
         match objects::object(ep) {
             Some(o) => core::slice::from_ref(&o.cluster),
@@ -409,8 +354,6 @@ impl<H: Hal> Stack<H> {
             let (lqi, rssi) = self.rx_signal;
             self.hal.zcl_received(src, cluster, cmd, fc, lqi, rssi);
         }
-        // server-to-client frames: the OTA server talking to our OTA client;
-        // anything else answers a client this node does not have
         if fc & 0x08 != 0 {
             if cluster == super::ota::OTA && fc & 0x07 == 0x01 {
                 let _ = self.on_ota(src, src_ep, unicast, cmd, r);
@@ -419,18 +362,14 @@ impl<H: Hal> Stack<H> {
         }
         let mut rsp = Long::new();
         let queued = self.cmds.iter().filter(|c| c.is_some()).count();
-        // the manufacturer's attributes and command are in the Diagnostics cluster of the light's endpoint
         let diag_mfr = manufacturer == Some(self.identity.manufacturer_code) && cluster == DIAGNOSTICS && ep == ENDPOINT;
-        // the settings cluster takes frames with our code, or without one
         let settings = cluster == SETTINGS && self.identity.ble && ep == ENDPOINT
             && manufacturer.is_none_or(|c| c == self.identity.manufacturer_code);
         let ours = diag_mfr || settings;
-        // and so does the manufacturer cluster of the motion sensing
         #[cfg(feature = "sense")]
         let ours = ours
             || (cluster == SENSE && self.sense_cluster(ep, cluster) && manufacturer.is_none_or(|c| c == self.identity.manufacturer_code));
         let status = if manufacturer.is_some() && !ours {
-            // no other manufacturer's commands or attributes here, whatever the code
             Some(UNSUP_COMMAND)
         } else if !self.clusters_of(ep).contains(&cluster) {
             Some(UNSUPPORTED_CLUSTER)
@@ -444,32 +383,25 @@ impl<H: Hal> Stack<H> {
                 Some(UNSUP_COMMAND)
             }
         } else if ep != ENDPOINT {
-            // the object clusters have no commands of their own
             Some(UNSUP_COMMAND)
         } else {
             match self.zcl_cluster(cluster, cmd, r, seq, unicast, &mut rsp) {
                 Some(status) => status,
                 None => {
-                    // fields missing: what was begun of a response is not one
                     rsp.clear();
                     Some(MALFORMED_COMMAND)
                 }
             }
         };
         if !rsp.is_empty() {
-            // The responses of cluster commands answer unicasts. Three commands
-            // are answered however they came, when there is something to say:
-            // they ask who is identifying, who is in a group, who has scenes.
             let asks_everyone = matches!((cluster, cmd), (IDENTIFY, 0x01) | (GROUPS_CLUSTER, 0x02) | (SCENES_CLUSTER, 0x06));
             if unicast || fc & 3 == 0 || asks_everyone {
                 self.aps_data(src, src_ep, cluster, PROFILE_HA, ep, rsp.as_slice());
             }
         } else if let Some(status) = status {
-            // a default response answers unicasts only, and a success only when asked for
             if unicast && (status != SUCCESS || fc & 0x10 == 0) {
                 let mut f = Buf::new();
                 match manufacturer {
-                    // to a manufacturer-specific command it is manufacturer-specific too
                     Some(code) => {
                         f.u8(FC_GLOBAL_RSP | 0x04);
                         f.u16(code);
@@ -477,8 +409,6 @@ impl<H: Hal> Stack<H> {
                     None => f.u8(FC_GLOBAL_RSP),
                 }
                 f.bytes(&[seq, DEFAULT_RSP, cmd, status]);
-                // What the command did to the light comes first: the answer
-                // goes once the firmware has taken the command (`send_deferred`).
                 if self.cmds.iter().filter(|c| c.is_some()).count() > queued {
                     self.defer_reply(src, src_ep, cluster, f.as_slice());
                 } else {
@@ -488,10 +418,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Keeps the default response to a command for the light until the
-    /// firmware has taken the command and changed the light, so that the
-    /// answer does not report a change that has not happened yet. One is
-    /// kept at a time: an earlier one still waiting goes first.
     fn defer_reply(&mut self, dst: u16, dst_ep: u8, cluster: u16, payload: &[u8]) {
         self.send_deferred();
         if payload.len() > super::DEFERRED_MAX {
@@ -503,7 +429,6 @@ impl<H: Hal> Stack<H> {
         self.deferred = Some(super::Deferred { dst, dst_ep, cluster, secured: self.reply_secured, len: payload.len() as u8, data });
     }
 
-    /// Sends the response kept by `defer_reply`, if any.
     pub(crate) fn send_deferred(&mut self) {
         let Some(d) = self.deferred.take() else {
             return;
@@ -513,25 +438,18 @@ impl<H: Hal> Stack<H> {
         self.reply_secured = secured;
     }
 
-    // ------------------------------------------------------------ attributes
-
-    /// Appends the value of an attribute (without its type).
     fn attribute_value(&mut self, cluster: u16, id: u16, out: &mut Long) {
         let string = |out: &mut Long, s: &str| {
             out.u8(s.len() as u8);
             out.bytes(s.as_bytes());
         };
         match (cluster, id) {
-            // the highest revision in each cluster's history in ZCL revision 8; cluster
-            // 0x0008 of a light is Level Control for Lighting, which stands at 2
             (_, CLUSTER_REVISION) => out.u16(match cluster {
                 SETTINGS => 1,
                 IDENTIFY | ON_OFF | LEVEL => 2,
                 _ => 3,
             }),
-            // DeviceEnabled
             (BASIC, 0x0012) => out.u8(1),
-            // MinLevel, MaxLevel
             (LEVEL, 0x0002) => out.u8(1),
             (LEVEL, 0x0003) => out.u8(254),
             (BASIC, 0x0000) => out.u8(ZCL_VERSION),
@@ -540,13 +458,10 @@ impl<H: Hal> Stack<H> {
             (BASIC, 0x0003) => out.u8(self.identity.hw_version),
             (BASIC, 0x0004) => string(out, self.identity.manufacturer),
             (BASIC, 0x0005) => string(out, self.identity.model),
-            // DateCode: the date of manufacture is not known to the firmware
             (BASIC, 0x0006) => string(out, ""),
             (BASIC, 0x0007) => out.u8(0x01),
-            // GenericDeviceClass: lighting; GenericDeviceType
             (BASIC, 0x0008) => out.u8(0x00),
             (BASIC, 0x0009) => out.u8(GENERIC_TYPE_LED_BULB),
-            // ProductCode, ProductURL: none
             (BASIC, 0x000A | 0x000B) => out.u8(0),
             (BASIC, 0x4000) => string(out, self.identity.sw_build),
             (IDENTIFY, 0x0000) => {
@@ -572,18 +487,15 @@ impl<H: Hal> Stack<H> {
             (COLOR, 0x0002) => out.u16(self.remaining_tenths(self.color_until)),
             (COLOR, 0x0010) => out.u8(0),
             (COLOR, 0x0007) => out.u16(self.light.color_temp),
-            // colour mode and enhanced colour mode: colour temperature
             (COLOR, 0x0008 | 0x4001) => out.u8(self.light.color_mode),
             (COLOR, 0x0000) => out.u8(self.light.hue),
             (COLOR, 0x0001) => out.u8(self.light.sat),
             (COLOR, 0x0003) => out.u16(self.light.x),
             (COLOR, 0x0004) => out.u16(self.light.y),
             (COLOR, 0x000F) => out.u8(self.color_options),
-            // capabilities: colour temperature only
             (COLOR, 0x400A) => out.u16(if self.identity.color { COLOR_CAPABILITIES_FULL } else { 0x0010 }),
             (COLOR, 0x400B) => out.u16(self.identity.ct_min),
             (COLOR, 0x400C) => out.u16(self.identity.ct_max),
-            // CoupleColorTempToLevelMinMireds: no coupling below the coldest white
             (COLOR, 0x400D) => out.u16(self.identity.ct_min),
             (COLOR, 0x4010) => out.u16(self.light.startup_color_temp),
             (SETTINGS, 0x0000) => out.u8(self.ble_mode.to_u8()),
@@ -593,8 +505,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// What stands against writing a value to an attribute, in the order
-    /// the checks are to be made; SUCCESS if nothing does.
     fn write_status(&self, cluster: u16, id: u16, ty: u8, value: &[u8]) -> u8 {
         let Some(expected) = attribute_type(cluster, id).filter(|_| self.has_attribute(cluster, id)) else {
             return UNSUPPORTED_ATTRIBUTE;
@@ -608,8 +518,6 @@ impl<H: Hal> Stack<H> {
         let v = value.iter().rev().fold(0u16, |v, b| v << 8 | *b as u16);
         let valid = match (cluster, id) {
             (ON_OFF, 0x4003) => matches!(v, 0 | 1 | 2 | 0xFF),
-            // Options: only "execute if off" is something this light can do,
-            // and a tunable one can have the colour temperature follow the level
             (LEVEL, 0x000F) if self.identity.color_temperature => v & !(EXECUTE_IF_OFF | COUPLE_COLOR_TEMP) as u16 == 0,
             (LEVEL | COLOR, 0x000F) => v & !EXECUTE_IF_OFF as u16 == 0,
             (LEVEL, 0x0011) => v != 0,
@@ -625,7 +533,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Writes a value that `write_status` found nothing against.
     fn attribute_write(&mut self, cluster: u16, id: u16, value: &[u8]) {
         let v = value.iter().rev().fold(0u16, |v, b| v << 8 | *b as u16);
         match (cluster, id) {
@@ -684,12 +591,6 @@ impl<H: Hal> Stack<H> {
         self.push_command(Command::Identify { times: seconds.min(255) as u8 });
     }
 
-    // ------------------------------------------------------------ endpoints
-    //
-    // The light's endpoint keeps its table (`ATTRIBUTES`); the Diagnostics
-    // cluster (`diag.rs`, with the manufacturer's attributes under our
-    // code) and the object endpoints (`objects.rs`) answer from theirs.
-
     fn type_of(&self, c: Ctx, cluster: u16, id: u16) -> Option<u8> {
         let mfr = c.mfr.is_some();
         if let Some(o) = objects::object(c.ep) {
@@ -705,7 +606,6 @@ impl<H: Hal> Stack<H> {
         if self.sense_cluster(c.ep, cluster) {
             return sense::attribute(cluster, id).map(|a| a.0);
         }
-        // under our code only the settings cluster's own attributes
         if (mfr && cluster != SETTINGS) || !self.has_attribute(cluster, id) {
             None
         } else {
@@ -713,13 +613,10 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Attributes of the table only a colour bulb has: the hue, the
-    /// saturation and CIE x, y of Color Control.
     fn has_attribute(&self, cluster: u16, id: u16) -> bool {
         self.identity.color || !(cluster == COLOR && matches!(id, 0x0000 | 0x0001 | 0x0003 | 0x0004))
     }
 
-    /// The attributes of a cluster of an endpoint, from `start` on, at most `max` (id, type).
     fn list_of(&self, c: Ctx, cluster: u16, start: u16, mut each: impl FnMut(u16, u8) -> bool) {
         let mut a = [(0u16, 0u8); 10];
         if let Some(o) = objects::object(c.ep) {
@@ -788,13 +685,10 @@ impl<H: Hal> Stack<H> {
             || sense
     }
 
-    /// The colour of a colour bulb is reported like the attributes outside the
-    /// light's three (`objects::XReport`): hue, saturation, x, y, the mode.
     pub(crate) fn colour_reportable(&self, cluster: u16, id: u16) -> bool {
         self.identity.color && cluster == COLOR && matches!(id, 0x0000 | 0x0001 | 0x0003 | 0x0004 | 0x0008)
     }
 
-    /// Appends the value of an attribute of an endpoint (without its type).
     fn value_of(&mut self, c: Ctx, cluster: u16, id: u16, out: &mut Long) {
         if let Some(o) = objects::object(c.ep) {
             let single = |out: &mut Long, v: f32| out.u32(v.to_bits());
@@ -806,7 +700,6 @@ impl<H: Hal> Stack<H> {
                 objects::A_MAX_PRESENT => single(out, o.max),
                 objects::A_MIN_PRESENT => single(out, o.min),
                 objects::A_RESOLUTION => single(out, o.resolution),
-                // endpoint 8 cannot show "BLE off" (settings cluster 0xFC5F): out of service then
                 objects::A_OUT_OF_SERVICE => out.u8((o.value == objects::Value::BleWindow && self.ble_mode == super::BleMode::Off) as u8),
                 objects::A_STATUS_FLAGS => out.u8(0),
                 objects::A_PRESENT_VALUE => {
@@ -819,7 +712,6 @@ impl<H: Hal> Stack<H> {
                 }
                 objects::A_ENGINEERING_UNITS => out.u16(o.units.unwrap_or(0)),
                 objects::A_APPLICATION_TYPE => out.u32(o.app_type.unwrap_or(0)),
-                // revision 1 of all three clusters (3.14.2.1, 3.14.3.1, 3.14.6.1)
                 CLUSTER_REVISION => out.u16(1),
                 _ => {}
             }
@@ -890,8 +782,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// A report of one attribute outside the light's three to the bindings
-    /// of its cluster on its endpoint.
     pub(crate) fn send_report(&mut self, ep: u8, cluster: u16, mfr: bool, attr: u16, ty: u8, value: u32) {
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         let mut f = Long::new();
@@ -908,7 +798,6 @@ impl<H: Hal> Stack<H> {
         self.send_to_bindings(ep, cluster, f.as_slice());
     }
 
-    /// Sends a ZCL frame to every binding of a cluster of one of our endpoints.
     fn send_to_bindings(&mut self, ep: u8, cluster: u16, frame: &[u8]) {
         let now = self.hal.now_ms();
         for b in self.bindings {
@@ -920,19 +809,13 @@ impl<H: Hal> Stack<H> {
             } else if let Some(short) = self.resolve(b.dst) {
                 self.aps_data(short, b.dst_ep, cluster, PROFILE_HA, ep, frame);
             } else if due(now, self.addr_query_at) {
-                // unknown destination: ask for its address, report next time
                 self.addr_query_at = now.wrapping_add(10_000);
                 self.zdo_nwk_addr_request(b.dst);
             }
         }
     }
 
-    // ------------------------------------------------------------ foundation
-
-    /// Handles a global command. Returns the status for a default response,
-    /// or `None` when `rsp` holds a response of its own (or none is due).
     fn zcl_global(&mut self, c: Ctx, cluster: u16, cmd: u8, mut r: Reader, seq: u8, rsp: &mut Long) -> Option<u8> {
-        // a response to a manufacturer-specific command is manufacturer-specific too
         let header = |rsp: &mut Long, id: u8| match c.mfr {
             Some(code) => {
                 rsp.u8(FC_GLOBAL_RSP | 0x04);
@@ -945,8 +828,6 @@ impl<H: Hal> Stack<H> {
             READ_ATTRIBUTES => {
                 header(rsp, READ_ATTRIBUTES_RSP);
                 while let Some(id) = r.u16() {
-                    // a record is at most 5 bytes and a 32-character string,
-                    // or a 64-byte page of a diagnostics table
                     let table = cluster == DIAGNOSTICS && self.type_of(c, cluster, id) == Some(diag::T_OCTETS);
                     #[cfg(feature = "sense")]
                     let table = table || self.sense_long(cluster, id);
@@ -967,8 +848,6 @@ impl<H: Hal> Stack<H> {
             }
             WRITE_ATTRIBUTES | WRITE_ATTRIBUTES_UNDIVIDED | WRITE_ATTRIBUTES_NO_RSP => {
                 header(rsp, WRITE_ATTRIBUTES_RSP);
-                // Undivided: all records or none. They are checked first, and
-                // written in a second pass if nothing stood against any.
                 let undivided = cmd == WRITE_ATTRIBUTES_UNDIVIDED;
                 let records = r;
                 let mut failed = false;
@@ -1013,7 +892,6 @@ impl<H: Hal> Stack<H> {
                 let mut failed = false;
                 while let (Some(direction), Some(id)) = (r.u8(), r.u16()) {
                     let status = if direction != 0 {
-                        // how often we should expect reports from the other side: nothing to do
                         if r.skip(2).is_none() {
                             break;
                         }
@@ -1022,7 +900,6 @@ impl<H: Hal> Stack<H> {
                         let (Some(ty), Some(min_s), Some(max_s)) = (r.u8(), r.u16(), r.u16()) else {
                             break;
                         };
-                        // analog types carry a reportable change, discrete ones do not
                         let change = if is_analog(ty) {
                             value_len(ty, &r).and_then(|n| r.take(n)).map(|v| v.iter().rev().fold(0u32, |a, b| a << 8 | *b as u32))
                         } else {
@@ -1038,12 +915,10 @@ impl<H: Hal> Stack<H> {
                             None => UNSUPPORTED_ATTRIBUTE,
                             Some(_) if light.is_none() && !other => UNREPORTABLE_ATTRIBUTE,
                             Some(t) if t != ty => INVALID_DATA_TYPE,
-                            // a maximum interval below the minimum is no interval (0: no periodic reports)
                             Some(_) if max_s != 0 && max_s < min_s && max_s != 0xFFFF => INVALID_VALUE,
                             Some(_) => match light {
                                 Some(i) => {
                                     let e = &mut self.reports[i];
-                                    // maximum 0 with minimum 0xFFFF: back to the configuration out of the box
                                     (e.min_s, e.max_s, e.change) = if (min_s, max_s) == (0xFFFF, 0) {
                                         super::REPORT_DEFAULTS[i]
                                     } else {
@@ -1076,9 +951,6 @@ impl<H: Hal> Stack<H> {
                 while let (Some(direction), Some(id)) = (r.u8(), r.u16()) {
                     let ty = self.type_of(c, cluster, id);
                     let light = if c.ep == ENDPOINT && c.mfr.is_none() { report_index(cluster, id) } else { None };
-                    // (min, max, change) of what is configured; an attribute
-                    // that is reportable but has no configuration reads as
-                    // reporting off
                     let config = match (direction, ty, light) {
                         (0, Some(_), Some(i)) => Some((self.reports[i].min_s, self.reports[i].max_s, self.reports[i].change as u32)),
                         (0, Some(_), None) if self.reportable_at(c, cluster, id) => Some(
@@ -1134,7 +1006,6 @@ impl<H: Hal> Stack<H> {
                     rsp.u16(id);
                     rsp.u8(ty);
                     if extended {
-                        // readable; writable; reportable
                         rsp.u8(0x01 | (self.writable_at(c, cluster, id) as u8) << 1 | (self.reportable_at(c, cluster, id) as u8) << 2);
                     }
                 }
@@ -1152,7 +1023,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u8(1);
                 let mut left = max;
                 let list: &[u8] = match (c.mfr, c.ep == ENDPOINT) {
-                    // the one manufacturer-specific command (Diagnostics)
                     #[cfg(feature = "sense")]
                     (Some(_), _) if cluster == SENSE => &[],
                     (Some(_), _) if cmd == DISCOVER_COMMANDS_RECEIVED => &[diag::CMD_CLEAR],
@@ -1175,12 +1045,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    // ------------------------------------------------------------ clusters
-
-    /// Handles a cluster command. Outer `None`: the payload was too short.
-    /// A response left in `rsp` is sent to a unicast's sender only, but for
-    /// the three commands `on_zcl` names: those clear it themselves when a
-    /// command that was not a unicast is not to be answered.
     fn zcl_cluster(&mut self, cluster: u16, cmd: u8, mut r: Reader, seq: u8, unicast: bool, rsp: &mut Long) -> Option<Option<u8>> {
         let header = |rsp: &mut Long, id: u8| rsp.bytes(&[FC_CLUSTER_RSP, seq, id]);
         let status = match (cluster, cmd) {
@@ -1197,7 +1061,6 @@ impl<H: Hal> Stack<H> {
                 }
                 SUCCESS
             }
-            // Reset to Factory Defaults: the attributes, not the network or the tables
             (BASIC, 0x00) => {
                 self.level_options = 0;
                 self.color_options = COLOR_OPTIONS_DEFAULT;
@@ -1233,8 +1096,6 @@ impl<H: Hal> Stack<H> {
             }
             (GROUPS_CLUSTER, 0x00 | 0x05) => {
                 let group = r.u16()?;
-                // Add Group If Identifying has no response of its own: how
-                // it went is the status of the default response
                 if cmd == 0x05 {
                     return Some(Some(if self.identify_until.is_none() { SUCCESS } else { self.group_add(group) }));
                 }
@@ -1274,8 +1135,6 @@ impl<H: Hal> Stack<H> {
                     }
                 }
                 rsp.set(count_at, count);
-                // asked of a group or of everyone, a list that names none of
-                // this endpoint's groups is not answered
                 if !unicast && asked != 0 && count == 0 {
                     rsp.clear();
                 }
@@ -1300,8 +1159,6 @@ impl<H: Hal> Stack<H> {
                 self.scenes_remove(|s| s.group != 0);
                 SUCCESS
             }
-            // Get Group Identifiers Request, Get Endpoint List Request: this light
-            // keeps no such lists (they belong to controllers); empty answers
             (TOUCHLINK, 0x41 | 0x42) => {
                 let start = r.u8()?;
                 header(rsp, cmd);
@@ -1326,12 +1183,8 @@ impl<H: Hal> Stack<H> {
                 }
                 SUCCESS
             }
-            // Off with Effect: what the light looked like becomes the global
-            // scene, once per "on" period (the effect itself is a plain fade)
             (ON_OFF, 0x40) => {
                 let (effect, variant) = (r.u8()?, r.u8()?);
-                // delayed all off: fade in 0.8 s; no fade; dim down first, then a slow fade.
-                // dying light: a short flare up, then out in a second
                 let fade_ms = match (effect, variant) {
                     (0, 1) => 0,
                     (0, 2) => 12_800,
@@ -1353,7 +1206,6 @@ impl<H: Hal> Stack<H> {
                 }
                 SUCCESS
             }
-            // On with Recall Global Scene: back to that look, unless the light was turned on since
             (ON_OFF, 0x41) => {
                 if !self.global_scene_control {
                     self.global_scene_control = true;
@@ -1367,7 +1219,6 @@ impl<H: Hal> Stack<H> {
                 }
                 SUCCESS
             }
-            // On with Timed Off: on for a while, then off and deaf to this command for a while
             (ON_OFF, 0x42) => {
                 let control = r.u8()?;
                 let on_time = r.u16()?;
@@ -1381,7 +1232,6 @@ impl<H: Hal> Stack<H> {
                     self.on_time = self.on_time.max(on_time);
                     self.off_wait = off_wait;
                     self.scene_valid = false;
-                    // like every command that turns the light on
                     self.global_scene_control = true;
                     self.push_command(Command::On);
                 }
@@ -1390,12 +1240,8 @@ impl<H: Hal> Stack<H> {
             }
             (LEVEL, 0x00..=0x07) => {
                 let with_on_off = cmd >= 0x04;
-                // "With On/Off" the light goes off when the level comes down
-                // to the lowest there is: level 0 to the light, which keeps
-                // the level it had for when it is next turned on.
                 let lowest = if with_on_off { 0 } else { MIN_LEVEL };
                 let to_level = |level: i32| if with_on_off && level <= MIN_LEVEL as i32 { 0 } else { level.clamp(MIN_LEVEL as i32, 254) as u8 };
-                // without On/Off the level of a light that is off is its remembered one
                 let current = if self.light.on || !with_on_off { self.light.level as i32 } else { 0 };
                 let command = match cmd & 3 {
                     0 => {
@@ -1420,7 +1266,6 @@ impl<H: Hal> Stack<H> {
                         let time = r.u16()?;
                         let wanted = if up { current + size } else { current - size };
                         let reached = wanted.clamp(lowest as i32, 254);
-                        // a step that ends at the limit takes proportionally less time
                         let ms = if time == 0xFFFF || size == 0 { 0 } else { time as u32 * 100 * (reached - current).unsigned_abs() / size as u32 };
                         Command::MoveToLevel { level: to_level(reached), transition_ms: ms }
                     }
@@ -1432,8 +1277,6 @@ impl<H: Hal> Stack<H> {
                         self.on_off_set(level != 0);
                     }
                     if let (Command::MoveToLevel { level, transition_ms }, true) = (command, self.level_options & COUPLE_COLOR_TEMP != 0) {
-                        // the colour temperature follows the level: coldest at
-                        // full brightness, warmest at the lowest
                         if level != 0 && self.identity.color_temperature {
                             let (lo, hi) = (self.identity.ct_min as u32, self.identity.ct_max as u32);
                             let mireds = (hi - (level as u32 - 1) * (hi - lo) / 253) as u16;
@@ -1442,8 +1285,6 @@ impl<H: Hal> Stack<H> {
                     }
                     self.push_command(command);
                 } else if execute_if_off(self.level_options, &mut r) {
-                    // without On/Off a light that is off stays off; with "execute
-                    // if off" it takes the level for when it is next turned on
                     if let Command::MoveToLevel { level, .. } = command {
                         self.scene_valid = false;
                         self.push_command(Command::SetLevelWhileOff(level));
@@ -1456,10 +1297,6 @@ impl<H: Hal> Stack<H> {
         Some(if rsp.is_empty() { Some(status) } else { None })
     }
 
-    /// A command of another cluster than On/Off (a level command "with
-    /// On/Off", a scene) sets OnOff. Turned on by whatever command, the
-    /// light is no longer as the global scene has it, and with no timed-on
-    /// period running nothing is left to guard; turned off, the period is over.
     fn on_off_set(&mut self, on: bool) {
         if on {
             self.global_scene_control = true;
@@ -1471,7 +1308,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// The colour of the light, for a scene.
     fn scene_colour(&self) -> super::SceneColour {
         let l = &self.light;
         super::SceneColour { mode: l.color_mode, hue: l.hue, sat: l.sat, x: l.x, y: l.y }
@@ -1490,9 +1326,6 @@ impl<H: Hal> Stack<H> {
         self.scenes.iter().position(|s| s.used && s.group == group && s.id == id)
     }
 
-    /// What stands against the group a Scenes command names: it must be a
-    /// group identifier, or 0 for scenes without a group (INVALID_VALUE),
-    /// and a group this endpoint is in (INVALID_FIELD).
     fn scene_group_status(&self, group: u16) -> u8 {
         if group > 0xFFF7 {
             INVALID_VALUE
@@ -1503,7 +1336,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Stores a scene; the status for the response.
     fn scene_put(&mut self, scene: Scene) -> u8 {
         let status = self.scene_group_status(scene.group);
         if status != SUCCESS {
@@ -1520,14 +1352,10 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Brings the light to a stored scene, over the scene's own transition
-    /// time or the given one. A cluster the scene has no field set for stays
-    /// as it is.
     fn scene_recall(&mut self, i: usize, transition_ms: Option<u32>) {
         let s = self.scenes[i];
         let ms = transition_ms.unwrap_or(s.transition as u32 * 1000 + s.tenths as u32 * 100);
         let has = |set: u8| s.omitted & set == 0;
-        // on or off once the scene is in effect
         let on = if has(SCENE_NO_ON_OFF) { s.on } else { self.light.on };
         if has(SCENE_NO_ON_OFF) {
             self.on_off_set(s.on);
@@ -1547,15 +1375,12 @@ impl<H: Hal> Stack<H> {
         }
         match (on, has(SCENE_NO_LEVEL)) {
             (true, true) => self.push_command(Command::MoveToLevel { level: s.level, transition_ms: ms }),
-            // on, at the level the light has
             (true, false) if !self.light.on => self.push_command(Command::On),
-            // off: the level is taken for when the light is next turned on
             (false, true) => self.push_command(Command::SetLevelWhileOff(s.level)),
             _ => {}
         }
     }
 
-    /// On: with the level OnLevel names, if it names one.
     fn light_on(&mut self) {
         self.scene_valid = false;
         self.global_scene_control = true;
@@ -1575,9 +1400,6 @@ impl<H: Hal> Stack<H> {
         self.push_command(Command::Off);
     }
 
-    /// OnTime and OffWaitTime count down in tenths of a second: the light
-    /// goes off when its time is up, and then ignores On with Timed Off
-    /// until the wait is over.
     pub(crate) fn on_off_timers(&mut self, now: u32) {
         if !due(now, self.on_tick_at) {
             return;
@@ -1597,7 +1419,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Time left until `until`, in tenths of a second.
     fn remaining_tenths(&mut self, until: u32) -> u16 {
         let left = until.wrapping_sub(self.hal.now_ms());
         if left >= 0x8000_0000 {
@@ -1607,14 +1428,11 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Scenes cluster commands.
     fn zcl_scenes(&mut self, cmd: u8, mut r: Reader, seq: u8, unicast: bool, rsp: &mut Long) -> Option<Option<u8>> {
         rsp.bytes(&[FC_CLUSTER_RSP, seq, cmd]);
-        // Copy Scene: one scene, or all scenes of a group, to another group
         if cmd == 0x42 {
             let all = r.u8()? & 0x01 != 0;
             let (from, from_id, to, to_id) = (r.u16()?, r.u8()?, r.u16()?, r.u8()?);
-            // neither group may be out of range, then neither unknown
             let (s_from, s_to) = (self.scene_group_status(from), self.scene_group_status(to));
             let mut status = match (s_from, s_to) {
                 (INVALID_VALUE, _) | (_, INVALID_VALUE) => INVALID_VALUE,
@@ -1643,18 +1461,14 @@ impl<H: Hal> Stack<H> {
         let group = r.u16()?;
         let group_status = self.scene_group_status(group);
         let known_group = group_status == SUCCESS;
-        // the enhanced commands give the transition time in tenths of a second
         let enhanced = cmd & 0x40 != 0;
         match cmd & !0x40 {
-            // Add Scene: transition time, a name, then extension field sets
             0x00 => {
                 let id = r.u8()?;
                 let time = r.u16()?;
                 let (transition, tenths) = if enhanced { (time / 10, (time % 10) as u8) } else { (time, 0) };
                 let name = r.u8()?;
                 r.skip(if name == 0xFF { 0 } else { name as usize })?;
-                // the scene is what the command gives of it: a field set that is
-                // not there, or stops short of the attribute, leaves that out
                 let mut scene = Scene {
                     used: true,
                     group,
@@ -1678,13 +1492,10 @@ impl<H: Hal> Stack<H> {
                             scene.level = (*level).clamp(1, 254);
                             scene.omitted &= !SCENE_NO_LEVEL;
                         }
-                        // x, y, enhanced hue, saturation, loop active, direction, time, the colour
-                        // temperature, then the enhanced colour mode (ZCL 8 3.7.2.4.2.2)
                         (COLOR, d) if d.len() >= 13 => {
                             scene.color_temp = u16::from_le_bytes([d[11], d[12]]);
                             if self.identity.color {
                                 let u = |i: usize| u16::from_le_bytes([d[i], d[i + 1]]);
-                                // without the mode: the colour temperature of a scene that has one, else xy
                                 let mode = match d.get(13) {
                                     Some(&m) if m <= 2 => m,
                                     _ if scene.color_temp != 0 => 2,
@@ -1702,7 +1513,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u16(group);
                 rsp.u8(id);
             }
-            // View Scene
             0x01 => {
                 let id = r.u8()?;
                 let found = self.scene_index(group, id);
@@ -1717,7 +1527,6 @@ impl<H: Hal> Stack<H> {
                     let s = self.scenes[i];
                     rsp.u16(if enhanced { s.transition.saturating_mul(10).saturating_add(s.tenths as u16) } else { s.transition });
                     rsp.u8(0);
-                    // the field sets the scene has
                     if s.omitted & SCENE_NO_ON_OFF == 0 {
                         rsp.u16(ON_OFF);
                         rsp.bytes(&[1, s.on as u8]);
@@ -1745,7 +1554,6 @@ impl<H: Hal> Stack<H> {
                     }
                 }
             }
-            // Remove Scene
             0x02 if !enhanced => {
                 let id = r.u8()?;
                 let found = self.scene_index(group, id);
@@ -1761,7 +1569,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u16(group);
                 rsp.u8(id);
             }
-            // Remove All Scenes of a group
             0x03 if !enhanced => {
                 if known_group {
                     self.scenes_remove(|s| s.group == group);
@@ -1769,7 +1576,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u8(group_status);
                 rsp.u16(group);
             }
-            // Store Scene: the light as it is now
             0x04 if !enhanced => {
                 let id = r.u8()?;
                 let (transition, tenths) = self.scene_index(group, id).map_or((0, 0), |i| (self.scenes[i].transition, self.scenes[i].tenths));
@@ -1794,7 +1600,6 @@ impl<H: Hal> Stack<H> {
                 rsp.u16(group);
                 rsp.u8(id);
             }
-            // Recall Scene, optionally with a transition time in tenths of a second
             0x05 if !enhanced => {
                 let id = r.u8()?;
                 rsp.clear();
@@ -1813,7 +1618,6 @@ impl<H: Hal> Stack<H> {
                 self.scene_valid = true;
                 return Some(Some(SUCCESS));
             }
-            // Get Scene Membership
             0x06 if !enhanced => {
                 rsp.u8(group_status);
                 rsp.u8(self.scenes.iter().filter(|s| !s.used).count() as u8);
@@ -1828,7 +1632,6 @@ impl<H: Hal> Stack<H> {
                     }
                     rsp.set(count_at, count);
                 }
-                // asked of a group or of everyone, only a device with a scene of the group answers
                 if !unicast && count == 0 {
                     rsp.clear();
                 }
@@ -1841,20 +1644,16 @@ impl<H: Hal> Stack<H> {
         Some(None)
     }
 
-    /// Color Control commands, as far as a colour temperature light has them.
     fn zcl_color(&mut self, cmd: u8, mut r: Reader) -> Option<Option<u8>> {
         let (lo, hi) = (self.identity.ct_min, self.identity.ct_max);
         let current = self.light.color_temp;
         let time_ms = |tenths: u16| if tenths == 0xFFFF { 0 } else { tenths as u32 * 100 };
-        // limits a Move or Step command may give (0 = the physical limit)
         let bounds = |min: u16, max: u16| (if min == 0 { lo } else { min.clamp(lo, hi) }, if max == 0 { hi } else { max.clamp(lo, hi) });
         let l = self.light;
         let hue_sat = |hue: u8, sat: u8, direction: HueDirection, transition_ms: u32| Command::MoveToHueSaturation { hue, sat, direction, transition_ms };
-        // a move at a rate: to the end of the range, as long as it takes at that rate
         let at_rate = |distance: u32, rate: u32| distance * 1000 / rate.max(1);
         let command = match cmd {
             _ if cmd <= 0x09 && !self.identity.color => return Some(Some(UNSUP_COMMAND)),
-            // Move to Hue: hue, direction, transition time
             0x00 => {
                 let hue = r.u8()?;
                 let dir = HueDirection::from_u8(r.u8()?);
@@ -1864,8 +1663,6 @@ impl<H: Hal> Stack<H> {
                 };
                 hue_sat(hue, l.sat, dir, time_ms(time))
             }
-            // Move Hue: 0 stop, 1 up, 3 down, at a rate in steps per second. ZCL has
-            // it go on until stopped; here it is one turn of the hue circle.
             0x01 => {
                 let mode = r.u8()?;
                 let rate = r.u8()? as u32;
@@ -1877,7 +1674,6 @@ impl<H: Hal> Stack<H> {
                     _ => return Some(Some(INVALID_FIELD)),
                 }
             }
-            // Step Hue: 1 up, 3 down, a step, a transition time in tenths (one byte)
             0x02 => {
                 let mode = r.u8()?;
                 let step = r.u8()? as i16;
@@ -1889,7 +1685,6 @@ impl<H: Hal> Stack<H> {
                 };
                 hue_sat(hue as u8, l.sat, dir, time_ms(time))
             }
-            // Move to Saturation
             0x03 => {
                 let sat = r.u8()?;
                 let time = r.u16()?;
@@ -1898,7 +1693,6 @@ impl<H: Hal> Stack<H> {
                 }
                 hue_sat(l.hue, sat, HueDirection::Shortest, time_ms(time))
             }
-            // Move Saturation: 0 stop, 1 up, 3 down, at a rate in steps per second
             0x04 => {
                 let mode = r.u8()?;
                 let rate = r.u8()? as u32;
@@ -1910,7 +1704,6 @@ impl<H: Hal> Stack<H> {
                     _ => return Some(Some(INVALID_FIELD)),
                 }
             }
-            // Step Saturation
             0x05 => {
                 let mode = r.u8()?;
                 let step = r.u8()?;
@@ -1922,7 +1715,6 @@ impl<H: Hal> Stack<H> {
                 };
                 hue_sat(l.hue, sat, HueDirection::Shortest, time_ms(time))
             }
-            // Move to Hue and Saturation: the hue the shortest way
             0x06 => {
                 let hue = r.u8()?;
                 let sat = r.u8()?;
@@ -1932,15 +1724,12 @@ impl<H: Hal> Stack<H> {
                 }
                 hue_sat(hue, sat, HueDirection::Shortest, time_ms(time))
             }
-            // Move to Color: CIE x, y
             0x07 => {
                 let x = r.u16()?;
                 let y = r.u16()?;
                 let time = r.u16()?;
                 Command::MoveToXy { x, y, transition_ms: time_ms(time) }
             }
-            // Move Color: rates of x and y per second; both move until the first
-            // reaches the end of the range (0..=0xFEFF)
             0x08 => {
                 let rx = r.u16()? as i16 as i32;
                 let ry = r.u16()? as i16 as i32;
@@ -1959,7 +1748,6 @@ impl<H: Hal> Stack<H> {
                     Command::MoveToXy { x: to(l.x, rx), y: to(l.y, ry), transition_ms: ms }
                 }
             }
-            // Step Color: steps of x and y, a transition time
             0x09 => {
                 let sx = r.u16()? as i16 as i32;
                 let sy = r.u16()? as i16 as i32;
@@ -1967,15 +1755,12 @@ impl<H: Hal> Stack<H> {
                 let to = |c: u16, s: i32| (c as i32 + s).clamp(0, 0xFEFF) as u16;
                 Command::MoveToXy { x: to(l.x, sx), y: to(l.y, sy), transition_ms: time_ms(time) }
             }
-            // Move to Color Temperature
             0x0A => {
                 let mireds = r.u16()?;
                 let time = r.u16()?;
                 Command::MoveToColorTemperature { mireds: mireds.clamp(lo, hi), transition_ms: time_ms(time) }
             }
-            // Stop Move Step: the colour's own stop; the level is not its to stop
             0x47 => Command::StopColorTransition,
-            // Move Color Temperature: 0 stop, 1 up (warmer), 3 down, at a rate in mireds per second
             0x4B => {
                 let mode = r.u8()?;
                 let rate = r.u16()?;
@@ -1992,7 +1777,6 @@ impl<H: Hal> Stack<H> {
                     _ => return Some(Some(INVALID_FIELD)),
                 }
             }
-            // Step Color Temperature
             0x4C => {
                 let mode = r.u8()?;
                 let step = r.u16()?;
@@ -2007,8 +1791,6 @@ impl<H: Hal> Stack<H> {
             }
             _ => return Some(Some(UNSUP_COMMAND)),
         };
-        // like the level commands without On/Off: nothing happens while the light
-        // is off, unless "execute if off" is set; then the colour is taken at once
         if self.light.on {
             self.scene_valid = false;
             self.push_command(command);
@@ -2029,8 +1811,6 @@ impl<H: Hal> Stack<H> {
         Some(Some(SUCCESS))
     }
 
-    /// What a command that names one group finds: not a group identifier
-    /// (INVALID_VALUE), not a group of this endpoint (NOT_FOUND), or SUCCESS.
     fn group_status(&self, group: u16) -> u8 {
         if !(0x0001..=0xFFF7).contains(&group) {
             INVALID_VALUE
@@ -2044,7 +1824,6 @@ impl<H: Hal> Stack<H> {
     fn group_add(&mut self, group: u16) -> u8 {
         match self.group_status(group) {
             NOT_FOUND => {}
-            // out of range; or a member already, which is as good as added
             status => return status,
         }
         if let Some(i) = self.groups.iter().position(|g| *g == 0) {
@@ -2056,9 +1835,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    // ------------------------------------------------------------ reporting
-
-    /// Sends attribute reports that are due to the bound destinations.
     pub(crate) fn report_timers(&mut self, now: u32) {
         if self.state != State::Up {
             return;

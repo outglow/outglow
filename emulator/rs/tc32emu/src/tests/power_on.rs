@@ -1,4 +1,3 @@
-// power_on_test.go
 use crate::{Flash, Machine, FLASH_MEM};
 
 #[test]
@@ -14,7 +13,6 @@ fn power_on_analog() {
     m.reset(-1, false).unwrap();
     assert_eq!(&m.analog[0x3A..0x3D], &[0x12, 0x34, 0x56], "after a reset");
     assert_eq!(&m.analog[0x35..0x3A], &defaults, "after a reset: 0x35-0x39");
-    // A new power-on on the same flash.
     let fl = std::mem::replace(&mut m.flash, Flash::new(0x1000));
     let m = Machine::new(fl, -1, 1).unwrap();
     assert!(m.analog[0x3C] == 0x0F && m.analog[0x3A] == 0, "a new power-on");

@@ -1,8 +1,3 @@
-//! The ZCL side of the motion sensing scenarios: the clusters and attributes
-//! of Occupancy Sensing (0x0406) and the manufacturer cluster 0xFC5E, reads,
-//! writes and reports through the coordinator, checks in the Python
-//! scripts' format.
-
 use super::{Sim, SimCtx};
 use crate::py;
 use crate::session::R;
@@ -23,7 +18,6 @@ pub(super) const A_ZONE: u16 = 0xFF43;
 pub(super) const A_LINE: u16 = 0xFF46;
 pub(super) const QUANTUM: f64 = 0.25;
 
-/// `x and x.hex()` of an optional bytes value inside an f-string.
 pub(super) fn hexo(v: &Option<Vec<u8>>) -> String {
     match v {
         None => "None".into(),
@@ -57,7 +51,6 @@ impl Sense {
         self.s.run_until(max_ms, 20.0, cond)
     }
 
-    /// A ZCL frame (optionally with a manufacturer code); the first response's body or None; 3 attempts.
     pub(super) fn zcl(&mut self, short: u16, cluster: u16, cmd: u8, payload: &[u8], manu: Option<u16>, specific: bool) -> R<Option<Vec<u8>>> {
         let want = if specific {
             0x0B
@@ -96,7 +89,6 @@ impl Sense {
         Ok(None)
     }
 
-    /// An attribute value as bytes (without the type), or None.
     pub(super) fn read(&mut self, short: u16, cluster: u16, attr: u16, manu: Option<u16>) -> R<Option<Vec<u8>>> {
         let b = self.zcl(short, cluster, 0x00, &attr.to_le_bytes(), manu, false)?;
         let Some(b) = b else { return Ok(None) };
@@ -119,7 +111,6 @@ impl Sense {
         Ok(b.is_some_and(|b| b.first() == Some(&0x00)))
     }
 
-    /// Attribute values from reports from `short` after `since`.
     pub(super) fn reports(&self, short: u16, cluster: u16, attr: u16, since: f64) -> Vec<(f64, i64)> {
         let mut out = Vec::new();
         for r in &self.s.w.coord.zcl_rsp {

@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The AES block (aes.go).
-
 use crate::aes128;
 use crate::machine::Machine;
 

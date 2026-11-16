@@ -1,8 +1,3 @@
-//! One receiver's detector fed from channel models: probes 5 per second
-//! with the firmware's ±12 % jitter, ordinary frames on top, a tick every
-//! 10 ms (the firmware's main loop comes round far more often; the detector
-//! only needs to see time pass between frames).
-
 #![allow(dead_code)]
 
 use super::model::{Channel, Rng};
@@ -11,11 +6,9 @@ use sense::Core;
 pub struct Sender {
     pub src: u16,
     pub ch: Channel,
-    /// The sender's light change counter, as its probes carry it.
     pub chg: u8,
     pub probe_ms: u32,
     next_probe: u32,
-    /// Ordinary frames per second besides the probes.
     pub frames_per_s: f64,
 }
 
@@ -30,7 +23,6 @@ pub struct Room {
     pub t: u32,
     pub g: Rng,
     pub senders: Vec<Sender>,
-    /// (time, mask) whenever the mask of ON lines changed.
     pub log: Vec<(u32, u16)>,
     pub mask: u16,
     pub step: u32,
@@ -46,7 +38,6 @@ impl Room {
         r
     }
 
-    /// Runs for `ms`.
     pub fn run(&mut self, ms: u32) {
         let end = self.t + ms;
         while self.t < end {
@@ -80,13 +71,11 @@ impl Room {
         m
     }
 
-    /// Records the empty room for `seconds`, as a write of attribute 0x0003 does.
     pub fn calibrate(&mut self, seconds: u16) {
         self.core.cal_start(self.t, seconds);
         self.run(seconds as u32 * 1000 + 100);
     }
 
-    /// Times at which some line went ON.
     pub fn ons(&self) -> Vec<u32> {
         let mut prev = 0u16;
         let mut out = vec![];

@@ -1,12 +1,3 @@
-//! Groups and Scenes clusters of a light (ZCL rev 8 clauses 3.6 and 3.7; ZLO
-//! device specification 15-0014-05 clause 7.2.2 for the commands a dimmable
-//! light must accept), ported from emulator/spec/zcl_groups_scenes.py.
-//!
-//! Status values are those of ZCL8: a duplicate Add Group is SUCCESS
-//! (DUPLICATE_EXISTS 0x8a is retired), a scene command for a group the
-//! endpoint is not in is INVALID_FIELD. The light is observed on the PWM
-//! output and through the On/Off and Level attributes.
-
 use std::collections::HashMap;
 
 use super::misc_ota_gp::py_hex_list;
@@ -32,12 +23,10 @@ const G1: u16 = 0x1001;
 const G2: u16 = 0x1002;
 const G_ABSENT: u16 = 0x2ABC;
 
-// ------------------------------------------------------------------ helpers
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Python's repr of a float.
 pub fn py_float(x: f64) -> String {
     if x.is_finite() && x.fract() == 0.0 && x.abs() < 1e16 {
         format!("{x:.1}")
@@ -46,7 +35,6 @@ pub fn py_float(x: f64) -> String {
     }
 }
 
-/// Python's `round(x, 1)`.
 pub fn round1(x: f64) -> f64 {
     format!("{x:.1}").parse().unwrap()
 }
@@ -74,8 +62,6 @@ fn hb(a: u16, b: u8) -> Vec<u8> {
     v
 }
 
-/// True when, since the mark, a unicast frame of the Trust Center went through
-/// a whole round of MAC retries without an acknowledgement.
 fn air_disturbed(s: &mut Session, since: usize, lost: usize) -> bool {
     if s.w.coord.st.no_ack.len() > lost {
         return true;
@@ -89,8 +75,6 @@ fn air_disturbed(s: &mut Session, since: usize, lost: usize) -> bool {
     seen.values().any(|n| *n > 4)
 }
 
-/// A test that fails while a request of the Trust Center went unacknowledged
-/// for a whole round of MAC retries is run once more (the `T` wrapper).
 fn retry(s: &mut Session, f: fn(&mut Session) -> R<String>) -> R<String> {
     let lost = s.w.coord.st.no_ack.len();
     let since = s.mark();
@@ -123,7 +107,6 @@ fn text(f: &Option<CapFrame>) -> String {
     format!("{} command {:#04x} payload {}", if z.specific { "cluster" } else { "general" }, z.cmd, hex(&z.payload))
 }
 
-/// A cluster command that has a response command with the same identifier; returns its payload.
 fn rsp(s: &mut Session, cluster: u16, cmd: u8, payload: &[u8], what: &str, o: Tx) -> R<Vec<u8>> {
     let f = s.zcl(cluster, cmd, payload, o)?;
     expect(f.is_some(), format!("no response to {what}"))?;
@@ -132,8 +115,6 @@ fn rsp(s: &mut Session, cluster: u16, cmd: u8, payload: &[u8], what: &str, o: Tx
     Ok(z.payload)
 }
 
-/// A broadcast or groupcast request for which an answer is expected, repeated
-/// before 'no answer' is concluded.
 fn ask_broadcast(s: &mut Session, cluster: u16, cmd: u8, payload: &[u8], o: Tx) -> R<Option<CapFrame>> {
     let mut f = None;
     for _ in 0..3 {
@@ -154,7 +135,6 @@ fn default_status(f: &Option<CapFrame>) -> Option<u8> {
     None
 }
 
-// ---- Groups helpers
 fn add_group(s: &mut Session, gid: u16, name: &[u8]) -> R<Vec<u8>> {
     let mut pl = hb(gid, name.len() as u8);
     pl.extend_from_slice(name);
@@ -169,7 +149,6 @@ fn remove_group(s: &mut Session, gid: u16) -> R<Vec<u8>> {
     rsp(s, GROUPS, 0x03, &gid.to_le_bytes(), &format!("Remove Group {gid:#06x}"), Tx::new())
 }
 
-/// (capacity, [group ids]) from Get Group Membership.
 fn membership_with(s: &mut Session, ask: &[u16], o: Tx) -> R<(u8, Vec<u16>)> {
     let mut pl = vec![ask.len() as u8];
     for g in ask {
@@ -184,7 +163,6 @@ fn membership(s: &mut Session) -> R<(u8, Vec<u16>)> {
     membership_with(s, &[], Tx::new())
 }
 
-/// No scenes, no groups, not identifying.
 fn clean(s: &mut Session) -> R<()> {
     if s.has_cluster(SCENES)? {
         let (_, groups) = membership(s)?;
@@ -193,7 +171,6 @@ fn clean(s: &mut Session) -> R<()> {
         }
         for g in [G1, G2] {
             if !groups.contains(&g) {
-                // leftovers of a group that was removed with its scenes still stored
                 s.zcl(GROUPS, 0x00, &hb(g, 0), Tx::new().max_ms(600.0))?;
                 s.zcl(SCENES, 0x03, &g.to_le_bytes(), Tx::new().max_ms(600.0))?;
             }
@@ -206,7 +183,6 @@ fn clean(s: &mut Session) -> R<()> {
     Ok(())
 }
 
-/// Runs `body`, then `clean` (Python try/finally: an error of clean replaces the body's result).
 fn cleaned<T>(s: &mut Session, body: impl FnOnce(&mut Session) -> R<T>) -> R<T> {
     let r = body(s);
     clean(s)?;
@@ -221,7 +197,6 @@ fn need_group(s: &mut Session, gid: u16) -> R<()> {
     Ok(())
 }
 
-// ---- light helpers
 fn set_level(s: &mut Session, level: u8) -> R<()> {
     s.zcl(LEVEL, 0x04, &[level, 0, 0], Tx::new().ddr().max_ms(300.0))?;
     s.run(500.0)
@@ -238,7 +213,6 @@ fn is_int(v: &V, x: i64) -> bool {
     v.as_ref().and_then(|v| v.int()) == Some(x)
 }
 
-/// `{v:#06x}` of an integer attribute value.
 fn hx6(v: &V) -> R<String> {
     match v.as_ref().and_then(|v| v.int()) {
         Some(i) => Ok(format!("{i:#06x}")),
@@ -246,7 +220,6 @@ fn hx6(v: &V) -> R<String> {
     }
 }
 
-/// (OnOff attribute, CurrentLevel attribute, light on per PWM, duty in %).
 fn state(s: &mut Session) -> R<(V, V, bool, f64)> {
     let on = s.value(ONOFF, 0x0000)?;
     let lvl = s.value(LEVEL, 0x0000)?;
@@ -262,7 +235,6 @@ fn py_bool(b: bool) -> &'static str {
     }
 }
 
-// ------------------------------------------------------------------ Groups
 fn group_add(s: &mut Session) -> R<String> {
     s.need_cluster(GROUPS)?;
     clean(s)?;
@@ -469,7 +441,6 @@ fn groupcast(s: &mut Session) -> R<String> {
         let mut f = None;
         let mut off = false;
         for _ in 0..3 {
-            // a single groupcast copy can be lost on the air
             f = s.zcl(ONOFF, 0x00, &[], gc(G1))?;
             s.run(500.0)?;
             off = !s.light().on;
@@ -494,7 +465,6 @@ fn group_cmds_broadcast(s: &mut Session) -> R<String> {
         let mut f = None;
         let mut groups = Vec::new();
         for _ in 0..3 {
-            // a single broadcast copy can be lost on the air
             f = s.zcl(GROUPS, 0x00, &hb(G2, 0), bc())?;
             groups = membership(s)?.1;
             if groups.contains(&G2) || f.is_some() {
@@ -595,7 +565,6 @@ fn group_membership_broadcast(s: &mut Session) -> R<String> {
     })
 }
 
-// ------------------------------------------------------------------ Scenes
 fn ext_onoff(on: bool) -> Vec<u8> {
     let mut v = ONOFF.to_le_bytes().to_vec();
     v.extend_from_slice(&[1, if on { 1 } else { 0 }]);
@@ -628,13 +597,11 @@ fn add_scene1(s: &mut Session, gid: u16, sid: u8, transition: u16, ext: &[u8]) -
     add_scene(s, gid, sid, transition, ext, b"", false)
 }
 
-/// What a View Scene Response says.
 struct ViewScene {
     status: u8,
     g: u16,
     sc: u8,
     tr: Option<u16>,
-    /// extension field sets in the order of the response
     sets: Vec<(u16, Vec<u8>)>,
     raw: Vec<u8>,
 }
@@ -691,7 +658,6 @@ fn remove_scene(s: &mut Session, gid: u16, sid: u8) -> R<Vec<u8>> {
     rsp(s, SCENES, 0x02, &hb(gid, sid), &format!("Remove Scene {gid:#06x}/{sid}"), Tx::new())
 }
 
-/// (status, capacity, group, scenes or None, raw payload) from Get Scene Membership.
 fn scene_membership(s: &mut Session, gid: u16) -> R<(u8, u8, u16, Option<Vec<u8>>, Vec<u8>)> {
     let p = rsp(s, SCENES, 0x06, &gid.to_le_bytes(), &format!("Get Scene Membership {gid:#06x}"), Tx::new())?;
     expect(p.len() >= 4, format!("Get Scene Membership Response payload {}", hex(&p)))?;
@@ -1122,7 +1088,6 @@ fn scene_recall_transition(s: &mut Session) -> R<String> {
         let d_hi = duty(s);
         let p = add_scene1(s, G1, 10, 4, &cat(ext_onoff(true), ext_level(20)))?;
         expect(p[0] == SUCCESS, format!("Add Scene: status {}", st(Some(p[0]))))?;
-        // reference: where does the scene end up (no transition)?
         recall(s, G1, 10, Some(0), 1500.0, Tx::new().ddr().max_ms(300.0))?;
         let d_lo = duty(s);
         if (d_hi - d_lo).abs() < 5.0 {
@@ -1299,7 +1264,6 @@ fn scene_copy(s: &mut Session) -> R<String> {
     })
 }
 
-// ------------------------------------------------------------------ registry
 macro_rules! wrapped {
     ($($w:ident => $f:ident),* $(,)?) => {
         $(fn $w(s: &mut Session) -> R<String> { retry(s, $f) })*

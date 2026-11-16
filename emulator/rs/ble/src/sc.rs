@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The LE Secure Connections functions (sc.go): P-256, AES-CMAC, f4, f5, f6,
-//! g2, the values in on-air octet order (least significant first).
-//!
-//! Go uses crypto/elliptic; here P-256 is plain Jacobian double-and-add on
-//! tc32emu's BigUint. The results are the curve's, so they are the same.
-
 use std::cmp::Ordering;
 use std::sync::OnceLock;
 
@@ -32,7 +25,6 @@ fn curve() -> &'static Curve {
     })
 }
 
-/// The order of the P-256 group (P256Order).
 pub fn p256_order() -> BigUint {
     curve().n.clone()
 }
@@ -61,7 +53,6 @@ fn jdouble(q: &Jac) -> Jac {
     if q.z.is_zero() || q.y.is_zero() {
         return Jac { x: BigUint::zero(), y: BigUint::from_u64(1), z: BigUint::zero() };
     }
-    // a = -3: M = 3(X - Z^2)(X + Z^2)
     let zz = mmul(&q.z, &q.z);
     let m = mmul(&small(3), &mmul(&msub(&q.x, &zz), &madd(&q.x, &zz)));
     let yy = mmul(&q.y, &q.y);
@@ -102,7 +93,6 @@ fn jadd(p: &Jac, q: &Jac) -> Jac {
     Jac { x: x3, y: y3, z: z3 }
 }
 
-/// k * (x, y) in affine coordinates; (0, 0) for the point at infinity (as Go).
 fn scalar_mult(x: &BigUint, y: &BigUint, k: &BigUint) -> (BigUint, BigUint) {
     let base = Jac { x: x.clone(), y: y.clone(), z: BigUint::from_u64(1) };
     let mut acc = Jac { x: BigUint::zero(), y: BigUint::from_u64(1), z: BigUint::zero() };
@@ -136,12 +126,10 @@ pub fn reversed(b: &[u8]) -> Vec<u8> {
     b.iter().rev().copied().collect()
 }
 
-/// An integer from its on-air octets (least significant first).
 pub fn le_to_big(b: &[u8]) -> BigUint {
     BigUint::from_bytes_be(&reversed(b))
 }
 
-/// n on-air octets of x (FillBytes: panics when it does not fit).
 pub fn big_to_le(x: &BigUint, n: usize) -> Vec<u8> {
     let words = x.to_words((n + 3) / 4);
     let mut le = Vec::with_capacity(n);
@@ -155,7 +143,6 @@ pub fn big_to_le(x: &BigUint, n: usize) -> Vec<u8> {
     le
 }
 
-/// priv * G, x then y, 64 octets.
 pub fn public_key(private: &BigUint) -> Vec<u8> {
     let c = curve();
     let (x, y) = scalar_mult(&c.gx, &c.gy, private);
@@ -164,7 +151,6 @@ pub fn public_key(private: &BigUint) -> Vec<u8> {
     out
 }
 
-/// Whether a public key in PDU form is a point of the curve.
 pub fn on_curve(pk: &[u8]) -> bool {
     if pk.len() != 64 {
         return false;
@@ -172,7 +158,6 @@ pub fn on_curve(pk: &[u8]) -> bool {
     is_on_curve(&le_to_big(&pk[..32]), &le_to_big(&pk[32..]))
 }
 
-/// The x coordinate of priv * pk, 32 on-air octets.
 pub fn dhkey(private: &BigUint, pk: &[u8]) -> Vec<u8> {
     let (x, y) = (le_to_big(&pk[..32]), le_to_big(&pk[32..64]));
     if !is_on_curve(&x, &y) {
@@ -195,7 +180,6 @@ fn cmac_shift(k: &[u8]) -> [u8; 16] {
     out
 }
 
-/// RFC 4493: the key and the message as written, the MAC most significant octet first.
 pub fn aes_cmac(key: &[u8], m: &[u8]) -> Vec<u8> {
     let k1 = cmac_shift(&aes128::encrypt(key, &[0u8; 16]));
     let k2 = cmac_shift(&k1);
@@ -229,14 +213,12 @@ pub fn f4(u: &[u8], v: &[u8], x: &[u8], z: u8) -> Vec<u8> {
     reversed(&aes_cmac(&reversed(x), &m))
 }
 
-/// A1 or A2 of f5 and f6: the address type, then the 6 octets most significant first.
 pub fn addr7(addr_type: i64, addr: &[u8]) -> Vec<u8> {
     let mut out = vec![addr_type as u8];
     out.extend(reversed(addr));
     out
 }
 
-/// MacKey and LTK (on-air order).
 pub fn f5(w: &[u8], n1: &[u8], n2: &[u8], a1: &[u8], a2: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let t = aes_cmac(&SC_SALT, &reversed(w));
     let mut body = b"btle".to_vec();
@@ -270,7 +252,6 @@ pub fn g2(u: &[u8], v: &[u8], x: &[u8], y: &[u8]) -> u32 {
     u32::from_be_bytes([mac[12], mac[13], mac[14], mac[15]]) % 1000000
 }
 
-/// AuthReq, OOB flag, IO capability of a Pairing Request or Response.
 pub fn iocap_of(pdu: &[u8]) -> Vec<u8> {
     vec![pdu[3], pdu[2], pdu[1]]
 }

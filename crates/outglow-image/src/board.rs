@@ -1,32 +1,18 @@
-//! Which board an image is for.
-//!
-//! An Outglow image carries `outglow-board:<model>-<hardware revision>`
-//! (crates/bulb-tc32/src/board.rs). An original image carries its model name
-//! as a C string and its hardware revision as the only "4.6x" in it.
-
 use crate::find;
 
-/// A board Outglow is built for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Known {
-    /// `<model>-<hardware revision>`
     pub name: &'static str,
-    /// Device Information model number of the original firmware
     pub model: &'static str,
-    /// Device Information hardware revision
     pub hw_revision: &'static str,
-    /// the product id in the original firmware's BLE advertisement
     pub ble_product: u16,
-    /// the Zigbee model id Outglow reports (outglow-dimm, -tw, ...)
     pub kind: &'static str,
-    /// the Zigbee OTA image type of the board
     pub image_type: u16,
 }
 
 include!("boards_table.rs");
 
 pub const TAG: &[u8] = b"outglow-board:";
-/// The tag of images built before the project was named Outglow (versions 0.x).
 pub const LEGACY_TAG: &[u8] = b"open-eglo-board:";
 pub const KINDS: [&str; 5] = ["outglow-rgbtw", "outglow-rgbw", "outglow-dimm", "outglow-tw", "outglow-ebf"];
 
@@ -38,14 +24,12 @@ pub fn by_model(model: &str, hw_revision: &str) -> Option<&'static Known> {
     BOARDS.iter().find(|b| b.model == model && b.hw_revision == hw_revision)
 }
 
-/// The board tag of an Outglow image: `<model>-<revision>`.
 pub fn tag(image: &[u8]) -> Option<String> {
     let at = find(image, TAG).map(|i| i + TAG.len()).or_else(|| find(image, LEGACY_TAG).map(|i| i + LEGACY_TAG.len()))?;
     let rest = &image[at..];
     let end = rest.iter().position(|&c| !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c == b'.'))
         .unwrap_or(rest.len());
     let name = std::str::from_utf8(&rest[..end]).ok()?;
-    // <model>-<d>.<dd>
     let (model, rev) = name.rsplit_once('-')?;
     let ok = !model.is_empty()
         && rev.len() >= 3
@@ -55,9 +39,6 @@ pub fn tag(image: &[u8]) -> Option<String> {
     ok.then(|| name.to_string())
 }
 
-/// The Zigbee model id an Outglow image reports: the first `outglow-<kind>`
-/// in it (strings in the image may follow each other without a separator).
-/// Images of versions 0.x said `open-eglo-<kind>`; the kind is the same.
 pub fn kind(image: &[u8]) -> Option<&'static str> {
     for prefix in [&b"outglow-"[..], &b"open-eglo-"[..]] {
         let mut from = 0;
@@ -72,7 +53,6 @@ pub fn kind(image: &[u8]) -> Option<&'static str> {
     None
 }
 
-/// Who made an image and which board it is for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Identity {
     Outglow { board: String },
@@ -91,8 +71,6 @@ impl Identity {
     }
 }
 
-/// The revisions "4.6x" standing alone in an image (not part of a longer
-/// number), each once.
 fn revisions(image: &[u8]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for i in 0..image.len().saturating_sub(3) {
@@ -112,7 +90,6 @@ fn revisions(image: &[u8]) -> Vec<String> {
     out
 }
 
-/// The board of an image, Outglow's or the original firmware's.
 pub fn identify(image: &[u8]) -> Result<Identity, String> {
     if let Some(board) = tag(image) {
         return Ok(Identity::Outglow { board });
@@ -149,7 +126,6 @@ mod tests {
     fn the_first_kind_in_the_image() {
         assert_eq!(kind(b"x outglow-rgbtw\0"), Some("outglow-rgbtw"));
         assert_eq!(kind(b"x outglow-board:A-4.60 outglow-dimmoutglow-tw"), Some("outglow-dimm"));
-        // images of versions 0.x
         assert_eq!(kind(b"x open-eglo-board:A-4.60 open-eglo-tw\0"), Some("outglow-tw"));
         assert_eq!(tag(b"x open-eglo-board:ESMLFzm_w6_Dimm-4.63\0").as_deref(), Some("ESMLFzm_w6_Dimm-4.63"));
     }

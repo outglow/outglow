@@ -1,7 +1,3 @@
-//! GAP service of a GATT server: Device Name and Appearance (Core 5.4 Vol 3
-//! Part C 12, 12.1, 12.2, 3.2.2; Core Specification Supplement 11 Part A 1.2);
-//! emulator/spec_ble/gatt_gap_service.py.
-
 use crate::ble::harness::{hx, parse_ad, BleSession, Gatt, LinkOpts, Service};
 use crate::ble::util::{describe, full_value, link, some, table, value, MTU};
 use crate::ble::BleTest;
@@ -81,8 +77,6 @@ fn gap(g: &Gatt) -> R<Vec<Service>> {
 }
 
 fn gap_service(s: &mut BleSession) -> R<String> {
-    // 12: exactly one GAP service; Tables 12.1/12.2: Device Name and Appearance mandatory; 12.1/12.2: one
-    // instance of each characteristic.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let sv = gap(&g)?;
@@ -103,8 +97,6 @@ fn gap_service(s: &mut BleSession) -> R<String> {
 }
 
 fn gap_device_name(s: &mut BleSession) -> R<String> {
-    // 12.1: UTF-8, readable without authentication or authorization when discoverable, 0 to 248 octets;
-    // discoverable: Flags with LE Limited or LE General Discoverable Mode.
     let adv = s.wait_adv(1, 5000.0, None, 0)?;
     let flags: Vec<u8> = match adv.first() {
         Some(p) => parse_ad(p.data()).0.into_iter().find(|(t, _)| *t == 0x01).map(|(_, v)| v).unwrap_or_default(),
@@ -122,7 +114,6 @@ fn gap_device_name(s: &mut BleSession) -> R<String> {
         )));
     }
     let (v, complete) = full_value(s, c.value, MTU)?;
-    // Python builds the message (and so sends the second read) before it looks at the condition
     let again = s.att(&read_req(c.value))?;
     expect(
         v.is_some(),
@@ -151,7 +142,6 @@ fn gap_device_name(s: &mut BleSession) -> R<String> {
 }
 
 fn gap_appearance(s: &mut BleSession) -> R<String> {
-    // 12.2: readable without authentication or authorization, 2 octets.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let c = g.char_uuid(&APPEARANCE).cloned();
@@ -168,7 +158,6 @@ fn gap_appearance(s: &mut BleSession) -> R<String> {
 }
 
 fn gap_name_advertised(s: &mut BleSession) -> R<String> {
-    // CSS Part A 1.2.1: the Local Name equals the device name, or is its beginning when shortened.
     s.address()?;
     let adv = s.wait_adv(1, 5000.0, None, 0)?;
     if adv.is_empty() {

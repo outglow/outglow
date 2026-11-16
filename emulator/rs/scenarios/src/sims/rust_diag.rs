@@ -1,10 +1,3 @@
-//! The Rust firmware's diagnostics and settings on the emulated chip (the
-//! host tests in crates/zigbee/tests/diagnostics.rs run the stack alone):
-//! the reset cause after a power-on, a watchdog and a software reset, the
-//! counters a warm restart keeps (the `.noinit` RAM), NumberOfResets over
-//! power cycles, the object endpoints, and the BLE window: BLE silent once
-//! the set minutes after the start are over, back after a power cycle.
-
 use super::{SimCtx, SimDef};
 use crate::frames::ZclValue;
 use crate::session::{Session, SessionOpts, Stop, R};
@@ -49,7 +42,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     s.run(3000.0)?;
     let t = |s: &Session| s.now();
 
-    // power-on
     let m = read(&mut s, true, &[0x5001, 0x5002, 0x5000])?;
     let n0 = read(&mut s, false, &[0x0000])?[0].unwrap_or(-1);
     cx.check(t(&s), "after power-on: reset cause power-on, no watchdog resets, uptime counted", m[0] == Some(0) && m[1] == Some(0)
@@ -60,7 +52,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     s.run(1500.0)?;
     let rx0 = read(&mut s, false, &[0x0102])?[0].unwrap_or(0);
 
-    // watchdog reset: counted, the counters kept
     s.w.soft_reset(true).map_err(emu)?;
     s.run(5000.0)?;
     let m = read(&mut s, true, &[0x5001, 0x5002])?;
@@ -69,7 +60,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
              && v[0] == Some(n0 + 1) && v[1].is_some_and(|x| x >= rx0),
              &format!("cause {:?}, watchdog resets {:?}, NumberOfResets {:?}, MacRxUcast {rx0} -> {:?}", m[0], m[1], v[0], v[1]));
 
-    // software reset
     s.w.soft_reset(false).map_err(emu)?;
     s.run(5000.0)?;
     let m = read(&mut s, true, &[0x5001, 0x5002])?;
@@ -77,7 +67,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     cx.check(t(&s), "software reset: cause software, the watchdog count unchanged", m[0] == Some(2) && m[1] == Some(1)
              && v[0] == Some(n0 + 2) && v[1].is_some_and(|x| x >= rx0), &format!("cause {:?}, watchdog resets {:?}, NumberOfResets {:?}", m[0], m[1], v[0]));
 
-    // power cut: what the warm starts stored is there
     s.reboot()?;
     s.run(5000.0)?;
     let m = read(&mut s, true, &[0x5001, 0x5002])?;
@@ -85,7 +74,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     cx.check(t(&s), "power cut after them: cause power-on, the counts stored at the warm starts are back", m[0] == Some(0) && m[1] == Some(1)
              && v[0] == Some(n0 + 3) && v[1].is_some_and(|x| x >= rx0), &format!("cause {:?}, NumberOfResets {:?}, MacRxUcast {:?}", m[0], v[0], v[1]));
 
-    // object endpoints: the coordinator is a router neighbour; BLE takes part of the radio's time
     let nb = single(&mut s, 5, 0x000C)?;
     let ble = single(&mut s, 4, 0x000C)?;
     let allow = single(&mut s, 7, 0x0010)?;
@@ -93,10 +81,8 @@ fn run(cx: &mut SimCtx) -> R<()> {
              nb == Some(1.0) && ble.is_some_and(|b| (0.0..=100.0).contains(&b)) && allow == Some(1.0),
              &format!("neighbours {nb:?}, BLE {ble:?} %, allow {allow:?}"));
 
-    // the BLE window: 1 minute
     let f = s.write_with(0x000D, &[(0x0055, 0x39, 1.0f32.to_le_bytes().to_vec())], false, false, Tx::new().ep(8))?;
     let ok = f.and_then(|f| f.zcl()).is_some_and(|z| z.payload == [0x00]);
-    // (the setting goes to the flash in the main loop's next pass: a moment before the power cut)
     s.run(1000.0)?;
     s.reboot()?;
     s.w.air.ble_tx = 0;
@@ -117,11 +103,9 @@ fn run(cx: &mut SimCtx) -> R<()> {
     s.run(10_000.0)?;
     let again = s.w.air.ble_tx;
     cx.check(t(&s), "a power cycle opens the window again (the way back over BLE)", again > 0, &format!("BLE packets in 10 s: {again}"));
-    // back to always on
     s.write_with(0x000D, &[(0x0055, 0x39, 0.0f32.to_le_bytes().to_vec())], false, false, Tx::new().ep(8))?;
     let w = single(&mut s, 8, 0x000D)?;
     cx.check(t(&s), "BLE window back to 0 (always on)", w == Some(0.0), &format!("{w:?}"));
-    // how deep the stacks went over all of it (images from 0x00020004 on)
     let st = read(&mut s, true, &[0x5043, 0x5044])?;
     match (st[0], st[1]) {
         (Some(main), Some(irq)) => {

@@ -1,25 +1,3 @@
-//! Power cuts while the Rust firmware writes its light state: before, during
-//! and right after its page programs and sector erases, sector switches
-//! included, then power back on and the light read from the PWM registers.
-//!
-//! The firmware runs on the debug link as in `rust_fw` (no Zigbee), with
-//! power-on behaviour "previous", and gets brightness changes until the
-//! flash operation a case is about is carried out. A hook on the emulator's
-//! flash sees each program and erase as it is committed, with the sector as
-//! it was before; the case takes the flash at that instant, undoes all, none
-//! or part of the bits that operation changed (a torn program, a half-erased
-//! sector), and the bulb is powered on from that flash. The light must then
-//! be in the state being stored or in the one before it, never the defaults.
-//!
-//! The cut flash is rebuilt from the instant of the operation, so whatever
-//! the emulated firmware does after it is discarded: that is the power cut.
-//!
-//! Images: `--image bin=... --image elf=...` (default target/tc32/bulb-tc32.*).
-//! A run on the firmware before the two-sector log shows its losses. The
-//! update from that firmware (its log in 0xF0000) is checked with its real
-//! image when `--image from=... --image from_elf=...` are given, else with
-//! records written in its format.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -33,32 +11,20 @@ pub fn def() -> SimDef {
 
 const SECTOR: usize = 0x1000;
 
-/// Which bits of the operation's change stay undone.
 #[derive(Clone, Copy, Debug)]
 enum Cut {
-    /// none were changed: the cut came just before it
     Before,
-    /// all were: the cut came right after it
     After,
-    /// a program with only its first n bytes done
     Bytes(usize),
-    /// random bits of the change done
     Random(u64),
-    /// only the first half of the bytes done (of a program or of the erased sector)
     Half,
 }
 
-/// The operations a case can cut.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Op {
-    /// a sector erase of the log
     Erase,
-    /// a record appended to the active sector (not the first of a sector)
     Append,
-    /// the first record of a sector after a switch (offset 0x10 in this
-    /// firmware's format, 0 in the earlier one's)
     FirstRecord,
-    /// the header of a sector (this firmware only)
     Header,
 }
 
@@ -82,10 +48,8 @@ struct Case {
 
 #[derive(Default)]
 struct Tap {
-    /// the two sectors as they are before the next operation
     shadow: Vec<u8>,
     armed: Option<(Op, Cut)>,
-    /// the flash at the cut, and what was cut
     fired: Option<(Vec<u8>, String)>,
 }
 
@@ -96,7 +60,6 @@ fn rng(seed: &mut u64) -> u8 {
     *seed as u8
 }
 
-/// Watches the flash of `b.node` for the armed case.
 fn install(b: &mut Bulb, tap: &Rc<RefCell<Tap>>) {
     {
         let mut t = tap.borrow_mut();
@@ -135,7 +98,6 @@ fn install(b: &mut Bulb, tap: &Rc<RefCell<Tap>>) {
     }));
 }
 
-/// What the light shows: (on, level, PWM0 compare).
 fn light(b: &Bulb) -> (u8, u8, u32) {
     let s = b.st();
     (s.on, s.level, crate::session::light_of(&b.node).cmp)
@@ -147,7 +109,6 @@ struct Run<'a> {
     tap: Rc<RefCell<Tap>>,
     tb: std::collections::BTreeMap<u32, u32>,
     k: u32,
-    /// (on, level) the firmware reported after the last command
     cur: (u8, u8),
 }
 
@@ -168,7 +129,6 @@ impl Run<'_> {
         }
     }
 
-    /// Powers the bulb on from `flash` and waits for its first report.
     fn power_on(&mut self, flash: &[u8]) -> R<()> {
         self.b.node = Bulb::power_on(flash, &self.b.ev, 0)?;
         self.b.seq = 0;
@@ -179,8 +139,6 @@ impl Run<'_> {
         Ok(())
     }
 
-    /// The next brightness change: a level between 10 and 240 (never the
-    /// default 254), sometimes an Off.
     fn change(&mut self, may_off: bool) -> R<bool> {
         self.k += 1;
         let ok = if may_off && self.k % 7 == 0 {
@@ -197,12 +155,8 @@ impl Run<'_> {
         Ok(ok)
     }
 
-    /// Changes the light until the case's operation is carried out (at most
-    /// `max` changes), cuts the power there and powers on again. Returns the
-    /// light before and after the cut command and the light that came back.
     fn case(&mut self, c: &Case, max: usize) -> R<Option<String>> {
         if self.cur == (1, 254) {
-            // the last case brought the defaults back: away from them first
             self.change(false)?;
         }
         self.tap.borrow_mut().armed = Some((c.op, c.cut));
@@ -246,8 +200,6 @@ impl Run<'_> {
     }
 }
 
-/// A record in the earlier firmware's format (bulb_core::config, version 2):
-/// on, power-on behaviour "previous", startup level "previous", warm white.
 fn legacy_record(level: u8) -> [u8; 8] {
     let mut r = [0x45, 0x02, 0x83, 0xFF, level, 185, 0xFF, 0];
     let mut c = 0u8;
@@ -286,7 +238,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let s = r.b.st();
     r.cur = (s.on, s.level);
     r.check("boots; power-on behaviour set to 'previous'", ok && s.pob == POB_PREVIOUS, "");
-    // away from the defaults (on at 254), so that coming back with them shows
     r.change(false)?;
 
     r.cx.say("cuts in an ordinary change");
@@ -320,7 +271,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         Case { name: "right after the header", op: Op::Header, cut: Cut::After },
     ];
     for c in &cases {
-        // the first erase comes after two sectors' worth of records (one sector in the earlier firmware)
         match r.case(c, 1100)? {
             Some(d) if d.contains("THE DEFAULTS") || d.contains("ANOTHER") => lost += 1,
             Some(_) => {}
@@ -352,16 +302,12 @@ fn run(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-/// The bulb as the earlier firmware leaves it, then this image installed over
-/// it (at 0 and where it is linked), the network store and the rest of the
-/// flash kept.
 fn migrate(r: &mut Run, image: &[u8], fw_offset: usize) -> R<()> {
     let from = r.cx.image("from", "-");
     let from_elf = r.cx.image("from_elf", "-");
     let mut flash;
     let last;
     if from.path.exists() && from_elf.path.exists() {
-        // the earlier firmware itself, from a blank flash
         let old = from.bytes().map_err(Stop::Error)?;
         let elf = std::fs::read(&from_elf.path).map_err(|e| Stop::Error(e.to_string()))?;
         let (addr, _) = syms(&elf).map_err(Stop::Error)?;
@@ -391,7 +337,6 @@ fn migrate(r: &mut Run, image: &[u8], fw_offset: usize) -> R<()> {
     let (on, level, cmp) = light(&r.b);
     r.check("the first power-on after the update: the earlier firmware's last state",
             (on, level) == last && cmp == r.duty_of(last.0, last.1), &format!("on={on} level={level} duty={cmp}"));
-    // cuts in the first store after the update, which moves the log to the other sector
     let cases = [
         Case { name: "update, first store: its record half programmed", op: Op::FirstRecord, cut: Cut::Half },
         Case { name: "update, first store: before the header", op: Op::Header, cut: Cut::Before },

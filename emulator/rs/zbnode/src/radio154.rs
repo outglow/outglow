@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! radio154 (emulator/go/radio154/radio154.go): the IEEE 802.15.4 radio of
-//! the TLSR8258 RF block, plus the TLSR8258 differences from the TLSR8278
-//! machine (Install8258).
-
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
@@ -16,7 +11,6 @@ const STATUS_RX: u8 = 0x01;
 const STATUS_TX: u8 = 0x02;
 const IRQ_SOURCE_RF: u32 = 1 << 13;
 
-/// The 802.15.4 FCS.
 pub fn crc16_kermit(b: &[u8]) -> u16 {
     let mut crc: u16 = 0;
     for &x in b {
@@ -32,16 +26,12 @@ pub fn crc16_kermit(b: &[u8]) -> u16 {
     crc
 }
 
-/// The air time of a PSDU of length n (with FCS).
 pub fn airtime_ms(n: usize) -> f64 {
     ((SHR_PHR + n as i64) * US_PER_BYTE) as f64 / 1000.0
 }
 
-/// The register bytes install_8258's hook acts on (keep in step with it).
 pub const INSTALL_8258_WRITES: [usize; 2] = [0x74F, 0x74C];
 
-/// Install8258: 0x74f reg_system_tick_ctrl starts/stops the system timer,
-/// 0x74c bit 1 is the timer compare interrupt enable.
 pub fn install_8258(next: Option<RegWriteHook>) -> RegWriteHook {
     Rc::new(move |m: &mut Machine, o: usize, size: usize, val: u32| {
         if o <= 0x74F && 0x74F < o + size {
@@ -90,35 +80,20 @@ struct RxAir {
     t0: f64,
     t1: f64,
     ok: bool,
-    /// (fate log only) another frame overlapped it here
     collided: bool,
-    /// (fate log only) why the receiver could not take it at its start
     off: Option<&'static str>,
 }
 
-/// What became of one frame that reached this radio (`Radio154State::rx_log`).
 #[derive(Clone, Debug)]
 pub struct RxFate {
-    /// start and end in this node's time
     pub t0: f64,
     pub t1: f64,
-    /// the frame's last two bytes (its FCS as sent) and length: with `t0`, which frame it was
     pub fcs: u16,
     pub len: usize,
-    /// "received" (handed to the driver), "bad FCS" (handed with a CRC
-    /// error), "collision", "off at start: ..." / "off at end: ..." with
-    /// the reason ("BLE mode", "transmitting", "TX mode", "RX state off",
-    /// "RX disabled"), "other channel" (or "BLE mode" when the radio was
-    /// lent to BLE), "RX DMA off", "too long for the buffer"; "overwritten"
-    /// when the next frame's DMA replaced it before its status bit was cleared
     pub fate: &'static str,
-    /// For a frame handed to the driver: when its "frame received" status
-    /// bit was cleared, and the program counter of the write that did it (the
-    /// interrupt handler that took it, or code that threw it away)
     pub cleared: Option<(f64, u32)>,
 }
 
-/// Why the receiver cannot take a frame now (None: it can).
 fn off_reason(m: &Machine, tx_busy: bool) -> Option<&'static str> {
     let g = &m.regs;
     if !zigbee_mode(m) {
@@ -145,7 +120,6 @@ fn fcs_of(p: &[u8]) -> u16 {
     }
 }
 
-/// A frame on the air.
 #[derive(Clone, Debug)]
 pub struct Frame {
     pub t0: f64,
@@ -161,38 +135,21 @@ pub struct Radio154State {
     rx: BTreeMap<i64, RxAir>,
     rx_id: i64,
     rssi_now: u8,
-    /// Frames transmitted since the driver last collected them.
     pub tx_pending: VecDeque<Frame>,
     pub sent: i64,
     pub received: i64,
-    /// Go's map[string]int; printed sorted (Go's order is random).
     pub dropped: BTreeMap<String, i64>,
     pub collisions: i64,
-    /// Frames handed to the driver with a bad FCS (`inject_bad_fcs`; not in Go).
     pub bad_fcs: i64,
-    /// When set (not in Go): the fate of every frame that reached the radio,
-    /// for diagnostics; nothing else depends on it.
     pub rx_log: Option<Vec<RxFate>>,
-    /// (with `rx_log`) the entry whose "frame received" status is set
     rx_pending: Option<usize>,
-    /// Stop a run as soon as the radio is no longer waiting to transmit
-    /// (`committed`): a run of a scenario's parallel lockstep that must not
-    /// go on once the node can hear the others again.
     pub stop_uncommitted: bool,
-    /// `ZB_TX_LEADS` set: measure the time from TX mode to each frame's start
-    /// (`tx_leads`); nothing else depends on it.
     track_leads: bool,
-    /// (with `track_leads`) when the radio was first seen waiting to transmit
-    /// (time checks come every 32 instructions)
     tx_mode_since: Option<f64>,
-    /// (with `track_leads`) for every frame sent: how long before its start
-    /// the radio was seen waiting in TX mode, µs (None: not seen, it went to
-    /// TX mode and started within one time check)
     pub tx_leads: Vec<Option<f32>>,
 }
 
 impl Drop for Radio154State {
-    /// `ZB_TX_LEADS`: the leads of this node's frames, as a histogram on stderr.
     fn drop(&mut self) {
         if !self.track_leads || self.tx_leads.is_empty() {
             return;
@@ -217,12 +174,6 @@ impl Drop for Radio154State {
     }
 }
 
-/// Waiting to transmit: in 802.15.4 TX mode, deaf to the air, and the frame
-/// not started yet. The drivers switch to TX mode and let the synthesizer
-/// settle (120 µs in the vendor's and the Rust firmware's CSMA path, the
-/// rest of the 160 µs turnaround for an acknowledgement) before they start
-/// the frame, so a node in this state at some moment starts nothing in the
-/// shortest settling time after it, and hears nothing meanwhile.
 fn committed(m: &Machine, s: &Radio154State) -> bool {
     zigbee_mode(m) && m.regs[0xF02] & 0x10 != 0 && !s.tx_busy && s.tx_pending.is_empty()
 }
@@ -261,7 +212,6 @@ impl Radio154 {
         self.0.borrow_mut()
     }
 
-    /// New hooks the radio onto the machine (register hooks, time, interrupt).
     pub fn new(m: &mut Machine) -> Radio154 {
         let r = Radio154(Rc::new(RefCell::new(Radio154State {
             sched: VecDeque::new(),
@@ -335,14 +285,6 @@ impl Radio154 {
         }));
         m.level_sources.push(Rc::new(irq_level));
         let r5 = r.clone();
-        // A reset (a power cut above all) ends whatever the radio was doing:
-        // a frame arriving then is gone with its signal strength, and the
-        // events still scheduled for it (its end, the end of one being sent)
-        // are in the clock that has just started again at zero. Left in
-        // place, a frame cut by a power cycle kept the RSSI register at its
-        // level until another frame ended (the bulb took the channel for
-        // busy and left out three advertising events of four: rust_ble_switch
-        // on CI's image), and a stale end could hand the driver a ghost frame.
         m.reset_hooks.push(Rc::new(move |_m: &mut Machine| {
             let mut s = r5.b();
             s.tx_busy = false;
@@ -353,7 +295,6 @@ impl Radio154 {
         r
     }
 
-    /// Schedules f for time t (simulation ms).
     pub fn at(&self, t: f64, f: EvFn) {
         let mut s = self.b();
         s.seq += 1;
@@ -376,20 +317,15 @@ impl Radio154 {
         }
     }
 
-    /// Waiting to transmit (`committed`): in TX mode, the frame not started yet.
     pub fn committed(&self, m: &Machine) -> bool {
         committed(m, &self.0.borrow())
     }
 
-    /// The time of the nearest event or -1.
     #[allow(dead_code)]
     pub fn next_event(&self) -> f64 {
         self.b().sched.front().map(|e| e.t).unwrap_or(-1.0)
     }
 
-    /// The register bytes reg_read and reg_write may treat other than by
-    /// passing the access on (for tc32emu::RegHookMask; keep in step with
-    /// them): reads, writes.
     pub fn hooked_regs() -> (&'static [usize], &'static [usize]) {
         (&[0x441, 0x448], &[0xF20, 0xF21, 0xC24])
     }
@@ -460,7 +396,7 @@ impl Radio154 {
         let off = m.regs[0xC0C] as usize | (m.regs[0xC0D] as usize) << 8;
         let phr = m.sram[off + 4] as usize;
         if !zigbee_mode(m) {
-            return; // BLE-mode TX DMA is handled by the BLE model
+            return;
         }
         if m.regs[0xF02] & 0x10 == 0 {
             *self.b().dropped.entry("TX outside TX mode".into()).or_insert(0) += 1;
@@ -496,16 +432,10 @@ impl Radio154 {
         );
     }
 
-    /// Schedules a frame from another node: start at t0, end at t1.
     pub fn inject(&self, f: Frame, rssi: i64) {
         self.inject_with(f, rssi, false)
     }
 
-    /// A frame whose FCS the receiver finds wrong (a corrupted frame; not in
-    /// Go): it occupies the air and the receiver like any frame, and if it is
-    /// received, the RX status byte says CRC error (bit 4 clear, so
-    /// `(status & 0x51) != 0x10`), as the TLSR8258's packet status does; the
-    /// driver is the one to drop it.
     pub fn inject_bad_fcs(&self, f: Frame, rssi: i64) {
         self.inject_with(f, rssi, true)
     }
@@ -630,7 +560,6 @@ impl Radio154 {
                 s.rx_pending = s.rx_log.as_ref().map(|l| l.len() - 1);
             }
         }
-        // Go on arm64 fuses this into one FNMSUB: (T1-T0)*1000 - 160, rounded once.
         let since_sfd_us = (f.t1 - f.t0).mul_add(1000.0, -((5 * US_PER_BYTE) as f64));
         let ts = m.stimer_now().wrapping_sub((since_sfd_us * TICKS_PER_US) as u32);
         let mut pkt = Vec::with_capacity(l + 13);
@@ -656,16 +585,12 @@ mod tests {
     use super::*;
     use tc32emu::{Config, Flash};
 
-    /// A power cut while a frame arrives: after the reset the RSSI register
-    /// reads the quiet channel again, and nothing of that frame is left to
-    /// come (its end was scheduled in the clock the reset started again).
     #[test]
     fn reset_mid_frame_forgets_the_frame() {
         let mut fl = Flash::new(Config::env().flash_size);
         fl.mem[8] = 0x4B;
         let mut m = Machine::new(fl, -1, 1).unwrap();
         let r = Radio154::new(&mut m);
-        // tuned to 2405 MHz, channel 11
         m.regs[0x1245] = 37;
         m.regs[0x1244] = 37 << 2;
         assert_eq!(channel(&m), 11);

@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The Go package's environment settings (its package-level variables read
-//! from TC32EMU_* at start-up). Go reads them once, at package init; here they
-//! are read once (the first Config::env()) and copied into each Machine (and
-//! Flash), so that a test can set them per machine instead of mutating a
-//! global, as the Go tests do.
-
 use std::env;
 use std::sync::OnceLock;
 
@@ -52,7 +45,6 @@ fn underscore_ok(s: &str) -> bool {
     saw != b'_'
 }
 
-/// strconv.ParseUint(s, 0, 64).
 pub fn parse_go_uint(s0: &str) -> Option<u64> {
     let mut s = s0.as_bytes();
     if s.is_empty() {
@@ -98,7 +90,6 @@ pub fn parse_go_uint(s0: &str) -> Option<u64> {
     Some(n)
 }
 
-/// strconv.ParseInt(s, 0, 64).
 pub fn parse_go_int(s: &str) -> Option<i64> {
     if s.is_empty() {
         return None;
@@ -119,9 +110,6 @@ pub fn parse_go_int(s: &str) -> Option<i64> {
     Some(if neg { (un as i64).wrapping_neg() } else { un as i64 })
 }
 
-/// sizeFromEnv: a size or count from the environment, def when unset; a
-/// value that does not parse, a negative one, or 0 where the default is not 0
-/// panics with "NAME: value", as the Go package does.
 pub fn size_from_env(name: &str, def: i64) -> i64 {
     let s = env::var(name).unwrap_or_default();
     if s.is_empty() {
@@ -160,50 +148,31 @@ fn mode_from_env(var: &str, names: &[&str]) -> (usize, u32) {
     }
 }
 
-/// The settings the Go package keeps in package variables (and the
-/// per-machine ones NewMachine reads from the environment).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
-    /// SRAMSize (TC32EMU_SRAM_SIZE, default 0x10000).
     pub sram_size: usize,
-    /// FlashSize (TC32EMU_FLASH_SIZE, default FlashMem): the address-map bound.
     pub flash_size: usize,
-    /// SRAMSeed (TC32EMU_SRAM_SEED).
     pub sram_seed: u32,
-    /// TimerCaptureBelow (TC32EMU_TIMER_CAPTURE_BELOW): "stop" or "wrap".
     pub timer_capture_below: String,
-    /// ADCMode, ADCParam (TC32EMU_ADC) and ADCStateHz (TC32EMU_ADC_STATE_HZ).
     pub adc_mode: usize,
     pub adc_param: u32,
     pub adc_state_hz: i64,
-    /// PKEUs (TC32EMU_PKE_US) and PKEPVerUs (TC32EMU_PKE_PVER_US).
     pub pke_us: i64,
     pub pke_pver_us: i64,
-    /// RBGMode, RBGParam (TC32EMU_RBG), K32JitterNs, K32JitterSeed, K32Frozen.
     pub rbg_mode: usize,
     pub rbg_param: u32,
     pub k32_jitter_ns: i64,
     pub k32_jitter_seed: u64,
     pub k32_frozen: bool,
-    /// Read by NewMachine: TC32EMU_ICACHE_MISS, TC32EMU_CYCLE_ACCURATE,
-    /// TC32EMU_PAD_C_PF, TC32EMU_PAD_R_PCT.
     pub icache_miss: i64,
     pub cycle_accurate: bool,
     pub pad_c_pf: i64,
     pub pad_r_pct: i64,
-    /// Read by NewFlash: TC32EMU_FLASH_BEYOND and the busy times
-    /// FlashTppUs, FlashTseUs, FlashTbe32Us, FlashTbe64Us.
     pub flash_beyond: String,
     pub flash_tpp_us: i64,
     pub flash_tse_us: i64,
     pub flash_tbe32_us: i64,
     pub flash_tbe64_us: i64,
-    /// TC32EMU_TICK_OFFSET (default 0): where the system timer starts at
-    /// every reset. Not in Go. Firmware that seeds its random numbers from
-    /// the timer (advertising delays, back-offs, jitter, nonces) draws
-    /// other values, so a scenario runs on another timing of the same
-    /// code, as a change of code layout gives one (`--sweep` of the
-    /// scenario runners). Decimal or 0x hex, taken modulo 2^32.
     pub tick_offset: u32,
 }
 
@@ -301,7 +270,6 @@ impl Config {
         }
     }
 
-    /// The settings from the environment, read once per process.
     pub fn env() -> Config {
         static CFG: OnceLock<Config> = OnceLock::new();
         CFG.get_or_init(Config::from_env).clone()

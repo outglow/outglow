@@ -1,7 +1,3 @@
-//! The BLE conformance tests (emulator/spec_ble/ in Python): the bulb as an LE
-//! peripheral, advertiser and GATT server, driven by a scripted central.
-//! `cargo test -p scenarios --test ble` runs them on every image.
-
 pub mod harness;
 pub mod mesh;
 pub mod runner;
@@ -12,13 +8,10 @@ use harness::BleSession;
 
 use crate::session::R;
 
-/// How a failure counts (`level` in Python).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Level {
     Shall,
-    /// a recommendation: not following it gives NOTE, not FAIL
     Should,
-    /// the failure depends on how an ambiguous clause is read: NOTE too
     Reading,
 }
 
@@ -28,7 +21,6 @@ pub struct BleTest {
     pub doc: &'static str,
     pub clause: &'static str,
     pub req: &'static str,
-    /// a session shared with other tests; "" = a boot of its own
     pub session: &'static str,
     pub run: fn(&mut BleSession) -> R<String>,
     pub mandatory: bool,
@@ -62,7 +54,6 @@ impl BleTest {
     }
 }
 
-/// The BLE tests with the module each comes from (`att_read`, `ll_conn_setup`, ...), in alphabetical order.
 pub fn modules() -> Vec<(&'static str, Vec<BleTest>)> {
     vec![
         ("att_commands", spec::att_commands::tests()),
@@ -90,7 +81,6 @@ pub fn modules() -> Vec<(&'static str, Vec<BleTest>)> {
     ]
 }
 
-/// All BLE tests, modules in alphabetical order (as ble_spec_suite.py loads them).
 pub fn tests() -> Vec<BleTest> {
     modules().into_iter().flat_map(|(_, v)| v).collect()
 }

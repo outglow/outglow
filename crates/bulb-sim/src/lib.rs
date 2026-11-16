@@ -1,10 +1,3 @@
-//! Bulb hardware emulator — substitutes mocks for the HAL traits from `bulb-core`,
-//! so that all the firmware logic can be run and tested on the host, without the chip.
-//!
-//! [`Harness`] ties the mocks to a [`Bulb`] and simulates typical events: the passage
-//! of time, cutting power with the wall switch (reboot) and injecting commands from
-//! the network.
-
 #![forbid(unsafe_code)]
 
 pub mod cut;
@@ -17,15 +10,12 @@ use bulb_core::command::StateReport;
 use bulb_core::hal::{Clock, ConfigStore, Pwm, Radio};
 use bulb_core::{Bulb, Command};
 
-/// PWM mock: remembers the current duty and the full history of changes.
 #[derive(Debug, Clone)]
 pub struct MockPwm {
     pub max: u16,
     pub duty: u16,
     pub history: Vec<u16>,
-    /// Duty of the cold-white channel; `None` on a single-channel bulb.
     pub cold: Option<u16>,
-    /// Red, green and blue of a colour bulb; `None` without them.
     pub rgb: Option<[u16; 3]>,
 }
 
@@ -33,15 +23,12 @@ impl MockPwm {
     pub fn new(max: u16) -> Self {
         MockPwm { max, duty: 0, history: vec![], cold: None, rgb: None }
     }
-    /// A tunable-white bulb: warm channel in `duty`, cold channel in `cold`.
     pub fn tunable(max: u16) -> Self {
         MockPwm { max, duty: 0, history: vec![], cold: Some(0), rgb: None }
     }
-    /// A colour bulb with tunable white beside its red, green and blue.
     pub fn colour(max: u16) -> Self {
         MockPwm { max, duty: 0, history: vec![], cold: Some(0), rgb: Some([0; 3]) }
     }
-    /// Perceived brightness 0.0..=1.0 (duty / max).
     pub fn fraction(&self) -> f32 {
         self.duty as f32 / self.max as f32
     }
@@ -73,7 +60,6 @@ impl Pwm for MockPwm {
     }
 }
 
-/// Clock mock with manually controlled time (shared through `Rc`).
 #[derive(Debug, Clone, Default)]
 pub struct MockClock {
     ms: Rc<RefCell<u64>>,
@@ -97,8 +83,6 @@ impl Clock for MockClock {
     }
 }
 
-/// Non-volatile memory mock. The contents survive a "reboot" (like flash), so we
-/// keep them in an `Rc` to attach the same medium to a new bulb after a power cycle.
 #[derive(Debug, Clone, Default)]
 pub struct MockFlash {
     data: Rc<RefCell<Option<Vec<u8>>>>,
@@ -109,7 +93,6 @@ impl MockFlash {
     pub fn new() -> Self {
         MockFlash::default()
     }
-    /// Handle to the same medium (simulation: flash persists across a power loss).
     pub fn handle(&self) -> MockFlash {
         self.clone()
     }
@@ -135,7 +118,6 @@ impl ConfigStore for MockFlash {
     }
 }
 
-/// Radio mock: a queue of commands to inject + a log of the reports sent.
 #[derive(Debug, Clone, Default)]
 pub struct MockRadio {
     inbox: Rc<RefCell<VecDeque<Command>>>,
@@ -149,7 +131,6 @@ impl MockRadio {
     pub fn handle(&self) -> MockRadio {
         self.clone()
     }
-    /// Inject a command "from the network".
     pub fn send(&self, cmd: Command) {
         self.inbox.borrow_mut().push_back(cmd);
     }
@@ -167,7 +148,6 @@ impl Radio for MockRadio {
     }
 }
 
-/// Ties the mocks to the bulb and simulates environment events.
 pub struct Harness {
     pub bulb: Bulb<MockPwm, MockClock, MockFlash, MockRadio>,
     pub clock: MockClock,
@@ -176,12 +156,10 @@ pub struct Harness {
 }
 
 impl Harness {
-    /// A new bulb on blank flash (first power-on).
     pub fn new() -> Self {
         Self::with_flash(MockFlash::new())
     }
 
-    /// A new tunable-white bulb on blank flash.
     pub fn new_tunable() -> Self {
         Self::with(MockFlash::new(), MockPwm::tunable(1000))
     }
@@ -197,7 +175,6 @@ impl Harness {
         Harness { bulb, clock, flash, radio }
     }
 
-    /// Passage of time with a regular main-loop "tick" every `step_ms`.
     pub fn run_for(&mut self, total_ms: u64, step_ms: u64) {
         let step = step_ms.max(1);
         let mut elapsed = 0;
@@ -209,13 +186,10 @@ impl Harness {
         }
     }
 
-    /// A single loop iteration (receiving commands + advancing the fade).
     pub fn tick(&mut self) {
         self.bulb.tick();
     }
 
-    /// Cutting power with the wall switch and turning it back on: flash persists,
-    /// volatile state is lost, the bulb starts from `boot()` with the remembered configuration.
     pub fn power_cycle(&mut self) {
         let flash = self.flash.handle();
         let radio = MockRadio::new();
@@ -228,7 +202,6 @@ impl Harness {
         self.radio = radio;
     }
 
-    /// Inject a command and process it right away.
     pub fn command(&mut self, cmd: Command) {
         self.radio.send(cmd);
         self.bulb.tick();
@@ -251,7 +224,6 @@ impl Default for Harness {
     }
 }
 
-/// One operation on a [`NorFlash`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlashOp {
     Program { addr: usize, data: Vec<u8> },
@@ -266,21 +238,15 @@ struct NorInner {
     ops: Vec<FlashOp>,
 }
 
-/// NOR flash model for `bulb_core::store::LightLog`: a program clears bits,
-/// an erase sets every bit of a sector. Operations are logged, so a test can
-/// replay them up to any point and cut one short. Clones are handles to the
-/// same medium (it survives a power cycle); [`NorFlash::snapshot`] copies it.
 #[derive(Debug, Clone)]
 pub struct NorFlash {
     inner: Rc<RefCell<NorInner>>,
 }
 
 impl NorFlash {
-    /// Erased flash covering `len` bytes from `base`, erased in `sector`-byte sectors.
     pub fn new(base: usize, len: usize, sector: usize) -> Self {
         NorFlash { inner: Rc::new(RefCell::new(NorInner { base, sector, mem: vec![0xFF; len], ops: Vec::new() })) }
     }
-    /// An independent copy of the medium (with an empty operation log).
     pub fn snapshot(&self) -> NorFlash {
         let mut i = self.inner.borrow().clone();
         i.ops.clear();
@@ -302,7 +268,6 @@ impl NorFlash {
         let i = self.inner.borrow();
         i.mem[addr - i.base]
     }
-    /// Sets bytes as they are, whatever was there (preparing a test).
     pub fn poke(&self, addr: usize, data: &[u8]) {
         let mut i = self.inner.borrow_mut();
         let o = addr - i.base;
@@ -311,13 +276,9 @@ impl NorFlash {
     pub fn sector_size(&self) -> usize {
         self.inner.borrow().sector
     }
-    /// Carries out `op` completely.
     pub fn apply(&self, op: &FlashOp) {
         self.apply_part(op, |_, _| 0);
     }
-    /// Carries out `op` only partly: of the bits it changes, those set in
-    /// `undone(index, old byte)` (index into the program's data or into the
-    /// sector) keep their old value.
     pub fn apply_part(&self, op: &FlashOp, mut undone: impl FnMut(usize, u8) -> u8) {
         let mut i = self.inner.borrow_mut();
         let base = i.base;
@@ -325,7 +286,6 @@ impl NorFlash {
             FlashOp::Program { addr, data } => {
                 for (k, d) in data.iter().enumerate() {
                     let old = i.mem[addr + k - base];
-                    // cleared bits that stay set
                     let keep = undone(k, old) & old & !d;
                     i.mem[addr + k - base] = (old & d) | keep;
                 }
@@ -334,7 +294,6 @@ impl NorFlash {
                 let s = i.sector;
                 for k in 0..s {
                     let old = i.mem[addr + k - base];
-                    // set bits that stay cleared
                     let keep = undone(k, old) & !old;
                     i.mem[addr + k - base] = 0xFF & !keep;
                 }

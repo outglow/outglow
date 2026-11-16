@@ -1,19 +1,3 @@
-//! Networks of the Rust firmware and the original (stock) firmware together:
-//! the stock firmware is AwoX's own build of Telink's Zigbee stack, an
-//! implementation independent of `crates/zigbee`, so each scenario holds the
-//! Rust bulb against it in one role or the other (parent and child, relay for
-//! each other, neighbours in a mesh, members of one group).
-//!
-//! Images by role: `--image rust=...` (default target/tc32/bulb-tc32.bin) and
-//! `--image stock=...` (default stock/stock-dimm.bin; in `OUTGLOW_STOCK_DIR`,
-//! a checkout of outglow/original-firmware, when it is not in stock/). The
-//! tunable white pair: `--image rust=target/tc32-tw/bulb-tc32.bin --image
-//! stock=stock/stock-tw.bin`. A scenario is skipped when an image is missing.
-//!
-//! The expectations come from the specification (R22, ZCL 8, 802.15.4) and,
-//! where it leaves a choice, from what the stock firmware was measured to do
-//! here; the details of each check say which.
-
 use super::util::{after, command, hex_list, hexo, key_confirmed, onoff, rel, times, verified};
 use super::{node_of, Sim, SimCtx, SimDef};
 use crate::air::NodeId;
@@ -37,7 +21,6 @@ pub fn defs() -> Vec<SimDef> {
 
 pub const QUANTUM: f64 = 0.25;
 
-/// Which firmware a bulb runs.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Fw {
     Rust,
@@ -65,26 +48,18 @@ impl Fw {
     }
 }
 
-/// The image of a role (`--image rust=` / `--image stock=`).
 pub fn image(cx: &SimCtx, fw: Fw) -> Image {
     cx.image(fw.label(), fw.default_image())
 }
 
-/// The factory MAC record at 0xFF000 for a bulb whose varying bytes are `v`:
-/// the BLE MAC little endian with the Telink OUI a4:c1:38 in bytes 3..6 (the
-/// stock firmware keeps only such a record, else it writes its own, the same
-/// in every emulated bulb) and two more bytes.
 pub const fn mac_record(v: [u8; 5]) -> [u8; 8] {
     [v[0], v[1], v[2], 0x38, 0xC1, 0xA4, v[3], v[4] & 0x7F]
 }
 
-/// The IEEE address a bulb makes of its MAC record: bytes 6..8 in front of
-/// the BLE MAC (measured on the stock firmware; the Rust firmware does the same).
 pub const fn ieee_of(_fw: Fw, rec: &[u8; 8]) -> u64 {
     u64::from_le_bytes([rec[6], rec[7], rec[0], rec[1], rec[2], rec[3], rec[4], rec[5]])
 }
 
-/// One emulated bulb of a mixed network.
 #[derive(Clone)]
 pub struct Bulb {
     pub id: NodeId,
@@ -94,10 +69,8 @@ pub struct Bulb {
     pub img: Image,
 }
 
-/// Bulbs to be: (firmware, name, varying MAC bytes).
 pub type Spec = (Fw, &'static str, [u8; 5]);
 
-/// The first bulb owns the schedule; the coordinator on channel 11 with the default key.
 pub fn build(cx: &SimCtx, specs: &[Spec]) -> R<(Sim, Vec<Bulb>)> {
     build_on(cx, Coord::new_plain(11, NWK_KEY), specs)
 }
@@ -124,7 +97,6 @@ pub fn build_on(cx: &SimCtx, coord: Coord, specs: &[Spec]) -> R<(Sim, Vec<Bulb>)
     Ok((s, bulbs))
 }
 
-/// `[(id, name)]` for `finish`.
 pub fn names(b: &[Bulb]) -> Vec<(NodeId, String)> {
     b.iter().map(|x| (x.id, x.name.clone())).collect()
 }
@@ -139,7 +111,6 @@ pub fn describe(b: &[Bulb]) -> String {
     b.iter().map(|x| format!("{} = {} ({})", x.name, x.fw.title(), rel(&x.img))).collect::<Vec<_>>().join("; ")
 }
 
-/// Short addresses in a node's neighbour table (ZDO Mgmt_Lqi, all pages).
 pub fn neighbors(s: &mut Sim, short: u16) -> R<Option<Vec<u16>>> {
     let (mut out, mut start) = (Vec::new(), 0u8);
     loop {
@@ -168,7 +139,6 @@ pub fn neighbors(s: &mut Sim, short: u16) -> R<Option<Vec<u16>>> {
     }
 }
 
-/// Frames sent (MAC) by `by` whose NWK source is `of` (and destination `to`) since `since`.
 pub fn relayed(s: &Sim, by: u16, of: u16, since: f64, to: Option<u16>) -> usize {
     let mut n = 0;
     for f in &s.w.air.frames {
@@ -187,11 +157,6 @@ pub fn relayed(s: &Sim, by: u16, of: u16, since: f64, to: Option<u16>) -> usize 
     n
 }
 
-/// `command`, sent once more when it goes unanswered, as an APS retry would
-/// send it (the coordinator sends without APS acknowledgement). In a chain a
-/// frame of a burst is lost now and then at the MAC: measured, the Rust relay
-/// does not acknowledge a frame that ends while it prepares a transmission of
-/// its own, and the stock sender gives up after one MAC retry.
 pub fn command2(s: &mut Sim, short: u16, cluster: u16, cmd: u8, payload: &[u8], max_ms: f64) -> R<Option<f64>> {
     match command(s, short, cluster, cmd, payload, max_ms)? {
         Some(d) => Ok(Some(d)),
@@ -199,11 +164,8 @@ pub fn command2(s: &mut Sim, short: u16, cluster: u16, cmd: u8, payload: &[u8], 
     }
 }
 
-/// How long a light command is given to take effect: the stock firmware
-/// fades to the new level (about 1 s, measured), the Rust firmware switches at once.
 pub const SETTLE_MS: f64 = 1500.0;
 
-/// A light command (`command`) and the light once it has settled.
 pub fn light_cmd(s: &mut Sim, id: NodeId, short: u16, cluster: u16, cmd: u8, payload: &[u8], max_ms: f64)
                  -> R<(Option<f64>, crate::session::Light)> {
     let dt = command(s, short, cluster, cmd, payload, max_ms)?;
@@ -211,7 +173,6 @@ pub fn light_cmd(s: &mut Sim, id: NodeId, short: u16, cluster: u16, cmd: u8, pay
     Ok((dt, s.light(id)))
 }
 
-/// Many-to-one route request, twice (one broadcast can be lost).
 pub fn concentrator(s: &mut Sim) -> R<()> {
     for _ in 0..2 {
         s.run(400.0)?;
@@ -228,22 +189,10 @@ pub fn records_text(v: &[Vec<u16>]) -> String {
     format!("[{}]", v.iter().map(|x| hex_list(x)).collect::<Vec<_>>().join(", "))
 }
 
-/// An On/Off command to all routers (NWK broadcast 0xFFFD).
 pub fn bcast(s: &mut Sim, cmd: u8) {
     s.w.coord.zcl_send_with(&mut s.w.air, 0xFFFD, 1, 0x0006, cmd, &[], HA, true, true, None, false);
 }
 
-/// An On/Off command to all routers, sent as R22 3.6.5 has the originator
-/// of a broadcast send it: again after nwkPassiveAckTimeout (500 ms in the
-/// Zigbee PRO stack profile), up to nwkMaxBroadcastRetries (2) times, while
-/// its neighbour `relay` has not been heard passing it on. The plain `bcast`
-/// sends once, and in the chain the first stock bulb misses it now and then
-/// (its own BLE advertising, or a frame of the Rust bulb, which the
-/// coordinator cannot hear, over it): the whole chain then misses the
-/// command, whatever the bulbs behind it do. A copy is the same NWK frame
-/// (source, sequence number, APS counter), secured again: the stock bulb
-/// takes no frame whose security frame counter it has seen exceeded, and the
-/// coordinator has sent others since.
 pub fn bcast_acked(s: &mut Sim, cmd: u8, relay: NodeId) -> R<()> {
     let st = &s.w.coord.st;
     let counters = (st.nwk_seq, st.aps_ctr, st.zcl_seq);
@@ -279,19 +228,16 @@ pub fn bcast_acked(s: &mut Sim, cmd: u8, relay: NodeId) -> R<()> {
     Ok(())
 }
 
-/// Waits until every bulb has announced itself; their short addresses.
 pub fn join_all(s: &mut Sim, b: &[Bulb], max_ms: f64) -> R<Option<Vec<u16>>> {
     let exts: Vec<u64> = b.iter().map(|x| x.ext).collect();
     let ok = s.run_until(max_ms, 10.0, |s| exts.iter().all(|e| s.announced(*e).is_some()))?;
     Ok(if ok { Some(exts.iter().map(|e| s.announced(*e).unwrap()).collect()) } else { None })
 }
 
-/// The bulbs' addresses as text, `A=0x1234 B=None`.
 pub fn shorts_text(s: &Sim, b: &[Bulb]) -> String {
     b.iter().map(|x| format!("{}={}", x.name, hexo(s.announced(x.ext)))).collect::<Vec<_>>().join(" ")
 }
 
-/// The last coordinator events, for a failed join.
 pub fn tail_events(s: &Sim, n: usize) -> String {
     let ev: Vec<String> = s.w.coord.events.iter().map(|e| format!("'{}'", e.kind)).collect();
     let devs: Vec<String> =
@@ -304,8 +250,6 @@ pub fn resets_text(s: &Sim, b: &[Bulb]) -> (bool, String) {
     (r.iter().all(|x| *x == 0), b.iter().zip(&r).map(|(x, n)| format!("{}={n}", x.name)).collect::<Vec<_>>().join(" "))
 }
 
-// =================================================================== parent
-
 fn parent_rust(cx: &mut SimCtx) -> R<()> {
     parent(cx, Fw::Rust, Fw::Stock)
 }
@@ -314,18 +258,11 @@ fn parent_stock(cx: &mut SimCtx) -> R<()> {
     parent(cx, Fw::Stock, Fw::Rust)
 }
 
-/// The joiner is out of the coordinator's range from the start, so the only
-/// beacon it can answer is the parent's: beacon with joining allowed once the
-/// network is open, MAC association with the response handed over on the
-/// newcomer's poll (802.15.4 indirect transmission: frame-pending bit in the
-/// ACK of the Data Request), APS Update-Device to the Trust Center (R22
-/// 4.6.3.2), the network key passed on from an APS Tunnel command; then the
-/// joiner's own traffic through its parent.
 fn parent(cx: &mut SimCtx, pfw: Fw, jfw: Fw) -> R<()> {
     let (mut s, b) = build(cx, &[(pfw, "P", [0x01, 0x00, 0x52, 0x00, 0x00]), (jfw, "J", [0x02, 0x00, 0x54, 0x00, 0x00])])?;
     let (p, j) = (b[0].clone(), b[1].clone());
-    s.w.set_t_off(j.id, 8000.0); // the joiner is powered later
-    s.w.air.block(NodeId::Coord, j.id, true); // and never hears the coordinator
+    s.w.set_t_off(j.id, 8000.0);
+    s.w.air.block(NodeId::Coord, j.id, true);
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== parent P: {}; joiner J: {}; channel 11", pfw.title(), jfw.title()));
     cx.say(&format!("   {}", describe(&b)));
@@ -401,22 +338,11 @@ fn parent(cx: &mut SimCtx, pfw: Fw, jfw: Fw) -> R<()> {
     Ok(())
 }
 
-// =================================================================== mesh
-
-/// Each bulb in turn out of the coordinator's range so that all its traffic
-/// goes through the other: unicast routing both ways, Route Records after a
-/// many-to-one route request (R22 3.6.4.5), source-routed frames relayed
-/// (3.6.3.3.2), broadcasts relayed exactly once (3.6.5).
 fn mesh(cx: &mut SimCtx) -> R<()> {
     let (mut s, b) = build(cx, &[(Fw::Rust, "R", [0x01, 0x00, 0x52, 0x00, 0x00]), (Fw::Stock, "S", [0x02, 0x00, 0x54, 0x00, 0x00])])?;
     let (rb, sb) = (b[0].clone(), b[1].clone());
     let (rid, tid) = (rb.id, sb.id);
-    s.w.set_t_off(tid, 900.0); // not both scanning in the same instant
-    // The stock bulb never hears the coordinator: it joins through the Rust
-    // bulb. (A stock bulb whose parent is the coordinator and whose link to it
-    // goes away keeps sending to the coordinator directly, measured for 4
-    // minutes: it does not age its parent out of the neighbour table, so it
-    // cannot be moved behind another router as the Rust bulb is below.)
+    s.w.set_t_off(tid, 900.0);
     s.w.air.block(NodeId::Coord, tid, true);
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== {}; channel 11; S out of the coordinator's range from the start", describe(&b)));
@@ -431,7 +357,7 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     s.run(8000.0)?;
     cx.check(s.now(), "both complete the Trust Center link key exchange", verified(&s) >= 2, "");
 
-    s.run(34000.0)?; // two link status periods
+    s.run(34000.0)?;
     let nr = neighbors(&mut s, r)?;
     let nt = neighbors(&mut s, t)?;
     cx.check(s.now(), "the Rust bulb (S's parent) lists the stock bulb and the coordinator as neighbours",
@@ -445,8 +371,6 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
         if far.id == rid {
             s.w.air.block(NodeId::Coord, near.id, false);
             s.w.air.block(NodeId::Coord, far.id, true);
-            // the Rust bulb forgets the coordinator as a neighbour when its link
-            // status stays away (R22 3.6.1.5: nwkRouterAgeLimit 3 x nwkLinkStatusPeriod 15 s)
             s.run(50000.0)?;
         }
         s.w.coord.st.via.insert(fs, ns);
@@ -460,8 +384,6 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
                  dt.is_some() && off, &after(dt, "no default response"));
         let n = relayed(&s, ns, fs, t0, None);
         cx.check(s.now(), &format!("the {} bulb relayed the {} bulb's frames", near.fw.title(), far.fw.title()), n >= 1, &format!("{n} frame(s)"));
-        // `command2`, as in the chain: a frame of a burst is lost at the MAC
-        // now and then while a bulb's radio is lent to BLE advertising
         let mut tt = Vec::new();
         for _ in 0..6 {
             tt.push(command2(&mut s, fs, 0x0006, 0x02, &[], 3000.0)?);
@@ -490,15 +412,12 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
         s.w.coord.source_routes.remove(&fs);
     }
 
-    // ---- broadcasts (R is out of range now, behind S)
     s.w.coord.st.via.insert(r, t);
     command2(&mut s, r, 0x0006, 0x00, &[], 3000.0)?;
     command2(&mut s, t, 0x0006, 0x00, &[], 3000.0)?;
     s.run(SETTLE_MS)?;
     let was_off = !s.light(rid).on && !s.light(tid).on;
     s.run(300.0)?;
-    // `bcast_acked`, as in the chain: sent again (the same NWK frame) while the
-    // bulb next to the coordinator has not been heard passing it on
     bcast_acked(&mut s, 0x01, tid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
@@ -521,7 +440,6 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-/// `MIXED_DEBUG=1`: the frames since `since`, one line each (MAC and NWK addresses).
 pub fn debug_frames(cx: &mut SimCtx, s: &Sim, b: &[Bulb], since: f64) {
     for f in &s.w.air.frames {
         if f.t0 < since {
@@ -540,13 +458,6 @@ pub fn debug_frames(cx: &mut SimCtx, s: &Sim, b: &[Bulb], since: f64) {
     }
 }
 
-// =================================================================== chain
-
-/// Frames the radio of `x` (the Rust firmware) received and its driver never
-/// took: their "frame received" status was cleared by other code than the
-/// interrupt handler (before a transmission, when the radio was lent to
-/// BLE), or the next frame's DMA overwrote them while interrupts were off.
-/// None when the image has no ELF to tell the handler by.
 fn dropped_by_driver(s: &Sim, x: &Bulb) -> Option<Vec<String>> {
     let (irq, size) = x.img.symbol_sized("irq_handler")?;
     let irq = irq & !1;
@@ -572,11 +483,6 @@ thread_local! {
     static WATCH: std::cell::RefCell<Option<PcLog>> = const { std::cell::RefCell::new(None) };
 }
 
-/// `MIXED_FATES=1`: the radio's fate log on every bulb, and with
-/// `MIXED_HOOKS=name=0xaddr,...` a log of the moments the program of `who`
-/// reaches those addresses (functions of its ELF, from llvm-nm: what it was
-/// doing when a frame was lost); printed by `fates_dump`. Neither changes the
-/// emulated timing.
 fn fates_watch(s: &mut Sim, who: NodeId) {
     let log = fates_watch_on(s, who);
     WATCH.with(|w| *w.borrow_mut() = log);
@@ -590,7 +496,6 @@ fn fates_watch_on(s: &mut Sim, who: NodeId) -> Option<PcLog> {
     }
     let log: PcLog = Default::default();
     for item in std::env::var("MIXED_HOOKS").unwrap_or_default().split(',').filter(|x| !x.is_empty()) {
-        // name=0xaddr, or name=0xaddr:0xram to log the word at a RAM address (and the system timer) too
         let Some((name, addr)) = item.split_once('=') else { continue };
         let (addr, ram) = match addr.split_once(':') {
             Some((a, r)) => (a, u32::from_str_radix(r.trim_start_matches("0x"), 16).ok()),
@@ -614,13 +519,8 @@ fn fates_watch_on(s: &mut Sim, who: NodeId) -> Option<PcLog> {
     Some(log)
 }
 
-/// (`MIXED_FATES`) Every frame from a neighbour that reached `who`'s radio
-/// and was not taken by its interrupt handler, or was taken at `IRQ_PC`
-/// (`MIXED_IRQ_PC=0xaddr`, to leave those out), with what the program did
-/// around it.
 fn fates_dump(cx: &mut SimCtx, s: &Sim, b: &[Bulb], who: NodeId) {
     let Some(pcs) = WATCH.with(|w| w.borrow().clone()) else { return };
-    // MIXED_AIR=from,to (seconds): every frame on the air then
     let window = std::env::var("MIXED_AIR").ok().and_then(|v| v.split_once(',').and_then(|(a, z)| Some((a.parse::<f64>().ok()?, z.parse::<f64>().ok()?))));
     if let Some((a, z)) = window {
         for f in s.w.air.frames.iter().filter(|f| f.t0 >= a * 1000.0 && f.t0 <= z * 1000.0) {
@@ -643,7 +543,6 @@ fn fates_dump(cx: &mut SimCtx, s: &Sim, b: &[Bulb], who: NodeId) {
         NodeId::Bulb(i) => s.w.air.bulbs[i as usize].t_off,
         _ => s.w.air.t_off,
     };
-    // the others: what their radios could not take
     for x in b.iter().filter(|x| x.id != who) {
         let off = match x.id {
             NodeId::Bulb(i) => s.w.air.bulbs[i as usize].t_off,
@@ -693,12 +592,7 @@ fn fates_dump(cx: &mut SimCtx, s: &Sim, b: &[Bulb], who: NodeId) {
     }
 }
 
-/// coordinator - S1 (stock) - R (Rust) - S2 (stock): each hears only its
-/// neighbours in the chain. The bulbs, their addresses; None when a check
-/// already failed (and the scenario is finished).
 fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
-    // the coordinator lets the routers discover a route for its frames, as a
-    // real one does (a route lost while a bulb was off is found again)
     let mut coord = Coord::new_plain(11, NWK_KEY);
     coord.nwk_discover = 1;
     let (mut s, b) = build_on(cx, coord, &[
@@ -711,10 +605,6 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
     s.w.air.block(NodeId::Coord, s2, true);
     s.w.air.block(s1, s2, true);
     s.w.set_t_off(r, 12000.0);
-    // S2 powered at 20 s. (`MIXED_S2_ON=24000` reproduces a loss: S2 sends its
-    // Link Status and 0.4 ms later its Device_annce; the Rust bulb's radio takes
-    // both, but it does not pass the announcement on, and the stock firmware
-    // sends a broadcast once; the coordinator never hears S2 announce itself.)
     s.w.set_t_off(s2, std::env::var("MIXED_S2_ON").ok().and_then(|v| v.parse().ok()).unwrap_or(20000.0));
     if std::env::var_os("MIXED_DEBUG").is_some() {
         for x in &b {
@@ -722,7 +612,6 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
         }
     }
     fates_watch(&mut s, r);
-    // what the Rust bulb's radio does with every frame (`dropped_by_driver`)
     s.w.node(r).radio.b().rx_log.get_or_insert_with(Vec::new);
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== coordinator - S1 - R - S2: {}; channel 11", describe(&b)));
@@ -732,8 +621,6 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
     }
     s.run(300.0)?;
     s.w.coord.permit_joining(&mut s.w.air, 180);
-    // the coordinator sends to a newcomer through the router that reported it,
-    // taking that router for its neighbour; S2's reporter R is not: through S1
     let s1_short = s.announced(b[0].ext).unwrap();
     let end = s.now() + 60000.0;
     while s.now() < end && !b.iter().all(|x| s.announced(x.ext).is_some()) {
@@ -778,10 +665,6 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
     cx.check(s.now(), "R (Rust) joins through S1 and S2 (stock) through R: the Update-Device comes from the parent (R22 4.6.3.2)",
              ur == Some(sh[0]) && us2 == Some(sh[1]),
              &format!("{}; R reported by {}, S2 by {}", shorts_text(&s, &b), hexo(ur), hexo(us2)));
-    // done when each joining node has its Confirm Key, not when the Trust
-    // Center has the Verify Key: a scenario that cuts a relay's power in
-    // between leaves the node behind it without the answer, and that node
-    // gives the network up after its retries (BDB 3.0.1 10.2.5, 8.2 step 12)
     let confirmed = |s: &Sim| -> Vec<bool> { sh.iter().map(|&x| key_confirmed(s, x)).collect() };
     s.run_until(15000.0, 10.0, |s| verified(s) >= 3 && confirmed(s).iter().all(|x| *x))?;
     let got = confirmed(&s);
@@ -789,7 +672,6 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
               each has its Confirm Key (BDB 3.0.1 10.2.5)", verified(&s) >= 3 && got.iter().all(|x| *x),
              &format!("verified link keys: {}; Confirm Key received by {}", verified(&s),
                       b.iter().zip(&got).filter(|x| *x.1).map(|x| x.0.name.as_str()).collect::<Vec<_>>().join(", ")));
-    // the coordinator reaches R and S2 through S1
     s.w.coord.st.via.insert(sh[1], sh[0]);
     s.w.coord.st.via.insert(sh[2], sh[0]);
     Ok((s, b, Some(sh)))
@@ -802,7 +684,6 @@ fn chain(cx: &mut SimCtx) -> R<()> {
         return Ok(());
     };
     let (s1, r, s2) = (sh[0], sh[1], sh[2]);
-    // ---- down and up the chain
     for (k, what) in [(2usize, "S2 (stock, three hops: S1, R)"), (1, "R (Rust, two hops: S1)")] {
         let dt = command2(&mut s, sh[k], 0x0006, 0x00, &[], 5000.0)?;
         s.run(SETTLE_MS)?;
@@ -828,7 +709,6 @@ fn chain(cx: &mut SimCtx) -> R<()> {
     let (down1, up1) = (relayed(&s, s1, 0x0000, t0, Some(s2)), relayed(&s, s1, s2, t0, Some(0x0000)));
     cx.check(s.now(), "both relays carried them both ways (R: Rust, S1: stock)", down >= 6 && up >= 6 && down1 >= 6 && up1 >= 6,
              &format!("R relayed {down} down, {up} up; S1 {down1} down, {up1} up"));
-    // ---- many-to-one: route records (R22 3.6.4.5) and a source route (3.6.3.3.2) over both relays
     let n0 = s.w.coord.route_records.len();
     concentrator(&mut s)?;
     let dt2 = command2(&mut s, s2, 0x0006, 0x02, &[], 3000.0)?;
@@ -844,7 +724,6 @@ fn chain(cx: &mut SimCtx) -> R<()> {
     cx.check(s.now(), "a frame source-routed over S1 and R reaches S2 (each relay takes its turn in the relay list)", dt.is_some() && !l.on,
              &after(dt, "no answer"));
     s.w.coord.source_routes.remove(&s2);
-    // ---- broadcast
     s.run(300.0)?;
     bcast_acked(&mut s, 0x01, b[0].id)?;
     s.run(3000.0)?;
@@ -863,18 +742,6 @@ fn chain(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-/// A router back from a power loss resumes in the network from its NV,
-/// without associating again (R22 3.6.1.4.3: a device that was joined
-/// restores its NIB; BDB 8: no new commissioning), and the routes through
-/// it work again. Phases: the first stock bulb, the Rust bulb's parent, off
-/// for 60 s; the stock bulb behind the Rust bulb off for 30 s.
-///
-/// Not a phase, as the stock firmware does not behave alike from run to run:
-/// the Rust bulb in the middle off for 20 s. The stock bulb behind it then
-/// sometimes gives its parent up for good (it searches every channel with
-/// Beacon Requests every 22 s and does not rejoin through the parent that is
-/// back and answers them, not even after a power cycle of its own); the same
-/// with a stock bulb in the middle (`--image rust=` a stock image).
 fn rejoin(cx: &mut SimCtx) -> R<()> {
     let (mut s, b, sh) = chain_setup(cx)?;
     let Some(sh) = sh else {
@@ -882,7 +749,6 @@ fn rejoin(cx: &mut SimCtx) -> R<()> {
         return Ok(());
     };
     let assoc = |s: &Sim| s.events("association-request").len();
-    // an answer within `max_ms` (Toggles, 3 s each); the seconds it took
     let reach = |s: &mut Sim, short: u16, max_ms: f64| -> R<Option<f64>> {
         let t0 = s.now();
         while s.now() < t0 + max_ms {
@@ -892,7 +758,6 @@ fn rejoin(cx: &mut SimCtx) -> R<()> {
         }
         Ok(None)
     };
-    // a bulb not answering at its address may have joined again under another
     let took = |s: &Sim, x: Option<f64>, j: usize| match x {
         Some(t) => format!("after {t:.1} s"),
         None => match s.announced(b[j].ext).filter(|&a| a != sh[j]) {
@@ -927,17 +792,12 @@ fn rejoin(cx: &mut SimCtx) -> R<()> {
     }
     let leaves = s.events("leave").len();
     cx.check(s.now(), "nobody left the network", leaves == 0, &format!("{leaves} Leave"));
-    // a router that joins again, by association or rejoin, is reported to the Trust Center by its parent
-    // (R22 4.6.3.2); the Leave of a bulb behind another (one hop) never reaches the coordinator
     let again = updates(&s) - u0;
     cx.check(s.now(), "nobody joined again (no Update-Device since the setup)", again == 0, &format!("{again} Update-Device"));
     finish(cx, &s, &b);
     Ok(())
 }
 
-// =================================================================== groups and scenes
-
-/// A ZCL command to a group (APS group addressing, NWK broadcast to 0xFFFD).
 pub fn groupcast(s: &mut Sim, group: u16, cluster: u16, cmd: u8, payload: &[u8]) {
     let c = &mut s.w.coord;
     let seq = crate::station::nx(&mut c.st.zcl_seq);
@@ -952,7 +812,6 @@ pub fn groupcast(s: &mut Sim, group: u16, cluster: u16, cmd: u8, payload: &[u8])
     c.nwk_send_data(&mut s.w.air, 0xFFFD, &aps);
 }
 
-/// A cluster command to one bulb and its response command `rsp` (not a Default Response).
 fn ask(s: &mut Sim, short: u16, cluster: u16, cmd: u8, payload: &[u8], rsp: u8) -> R<Option<Vec<u8>>> {
     let n0 = s.w.coord.zcl_rsp.len();
     s.w.coord.zcl_cmd(&mut s.w.air, short, 1, cluster, cmd, payload);
@@ -961,7 +820,6 @@ fn ask(s: &mut Sim, short: u16, cluster: u16, cmd: u8, payload: &[u8], rsp: u8) 
     Ok(hit(s))
 }
 
-/// ZCL 8 3.6 (Groups) and 3.7 (Scenes) on a group of one Rust and one stock bulb.
 fn group(cx: &mut SimCtx) -> R<()> {
     const G: u16 = 0x0B01;
     let (mut s, b) = build(cx, &[(Fw::Rust, "R", [0x21, 0x00, 0x63, 0x00, 0x00]), (Fw::Stock, "S", [0x22, 0x00, 0x64, 0x00, 0x00])])?;
@@ -1010,8 +868,6 @@ fn group(cx: &mut SimCtx) -> R<()> {
     cx.check(s.now(), "Store Scene 1 of the group: both SUCCESS (ZCL 8 3.7.2.4.4)", st.iter().all(|r| r.as_deref() == Some(&want[..])),
              &st.iter().map(|r| r.as_deref().map(hx).unwrap_or_else(|| "none".into())).collect::<Vec<_>>().join(", "));
     groupcast(&mut s, G, 0x0008, 0x04, &[254, 0, 0]);
-    // the stock firmware answers a stored scene with a blink of its own (measured: about 1 s at the new
-    // level, 1 s at the old one, 1 s off, then the new level); the light is judged once that is over
     let mut seen_off = false;
     for _ in 0..30 {
         s.run(200.0)?;
@@ -1041,11 +897,6 @@ fn group(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-// =================================================================== OTA through a stock router
-
-/// The Rust bulb hears only the stock bulb; the coordinator serves it the
-/// stock image as a .ota of the Rust image type (as `back_to_stock_ota`): every
-/// Query, Image Block and Upgrade End goes through the stock router.
 fn ota_relay(cx: &mut SimCtx) -> R<()> {
     let stock_img = image(cx, Fw::Stock);
     let sbytes = stock_img.bytes().map_err(crate::session::Stop::Error)?;
@@ -1115,10 +966,6 @@ fn ota_relay(cx: &mut SimCtx) -> R<()> {
     Ok(())
 }
 
-// =================================================================== address conflict
-
-/// The bulbs' NWK source addresses on the air (secured frames: NWK source and
-/// the auxiliary header's source IEEE address), the last one of each.
 fn own_shorts(s: &Sim, b: &[Bulb], since: f64) -> Vec<Option<u16>> {
     let mut last: Vec<Option<u16>> = vec![None; b.len()];
     for f in &s.w.air.frames {
@@ -1137,7 +984,7 @@ fn own_shorts(s: &Sim, b: &[Bulb], since: f64) -> Vec<Option<u16>> {
         }
         let src = u16::from_le_bytes([p[4], p[5]]);
         if m.src != Some(src as u64) {
-            continue; // relayed
+            continue;
         }
         let i = 8 + if fcf & 0x0800 != 0 { 8 } else { 0 } + if fcf & 0x1000 != 0 { 8 } else { 0 };
         let Some(ext) = p.get(i + 5..i + 13).map(|x| u64::from_le_bytes(x.try_into().unwrap())) else { continue };
@@ -1148,12 +995,6 @@ fn own_shorts(s: &Sim, b: &[Bulb], since: f64) -> Vec<Option<u16>> {
     last
 }
 
-/// R22 3.6.1.9: two routers with one short address. The Rust bulb joins,
-/// loses power, the stock bulb is given the same address by the coordinator;
-/// the Rust bulb comes back with it from its NV. Whoever detects the
-/// conflict (a frame from its own address with another IEEE address in its
-/// security header), the end state the specification asks for is one
-/// address per device, announced, and both reachable.
 fn conflict(cx: &mut SimCtx) -> R<()> {
     let (mut s, b) = build(cx, &[(Fw::Rust, "R", [0x41, 0x00, 0x67, 0x00, 0x00]), (Fw::Stock, "S", [0x42, 0x00, 0x68, 0x00, 0x00])])?;
     let (rid, sid) = (b[0].id, b[1].id);

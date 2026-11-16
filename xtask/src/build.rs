@@ -1,46 +1,3 @@
-//! `cargo xtask build`: the firmware of a board for the TLSR8258 (TC32 core).
-//!
-//! Stock rustc has no TC32 backend, and TC32 runs ARMv4T Thumb-1 code in its
-//! own encoding. So rustc only goes as far as LLVM bitcode for thumbv4t, and
-//! the llvm-tc32 fork (clang/lld with -mcpu=tc32) generates the TC32 code:
-//!
-//! | step | tool |
-//! |---|---|
-//! | bitcode of every crate | cargo (build-std, `-C linker-plugin-lto`, `--emit=llvm-bc`) |
-//! | one module | llvm-link |
-//! | every function's CPU = tc32, no jump tables | llvm-dis + text replacement |
-//! | TC32 object | clang -mcpu=tc32 -Oz |
-//! | start-up code | clang -mcpu=tc32 boot/start.S |
-//! | ELF | ld.lld -T boot/link.ld --gc-sections |
-//! | flash image | outglow_image::elf |
-//! | image with size and CRC, Zigbee OTA file | outglow_image::{telink, ota} |
-//!
-//! Output in target/tc32 (the dimmable filament bulb), target/tc32-tw (the
-//! tunable white one) or target/tc32-<board in lower case>:
-//! bulb-tc32.elf, .bin (the image as linked), bulb-tc32-ota.bin (with size
-//! and CRC: what goes into the OTA staging area) and bulb-tc32.ota. The
-//! options add their suffix: -noble, -nosense, -trace.
-//!
-//! Needs: llvm-tc32, from `cargo xtask toolchain` (downloaded), or `TC32_LLVM`,
-//! the bin directory of one you built (default ~/oss/llvm-tc32/build/bin); the Rust standard library sources for
-//! build-std (`RUST_LIB_SRC`, set by `nix develop`, else the rust-src component).
-//! rustc is the stable one; RUSTC_BOOTSTRAP=1 lets it take build-std.
-//!
-//! The same image on every machine: rustc's LLVM shapes the bitcode (what
-//! gets inlined, and so the layout and the timing the emulator's tests see),
-//! so the image is built with the rustc of the Nix shell (flake.nix,
-//! `nix develop`), as CI does, and the build warns about any other. And
-//! nothing of where it is built may reach the image: source paths in panic
-//! locations are remapped, and the crates' `-C metadata` (which cargo hashes
-//! from the absolute paths of the crates outside the firmware's workspace
-//! and from the host the build scripts run on; it seeds the symbol and
-//! constant names, whose order is the order of the data in flash) is
-//! replaced by one from the crate name (`rustc_wrapper`).
-//!
-//! `TOUCHLINK_MASTER_KEY` (32 hexadecimal digits, not in this repository):
-//! the image then offers and accepts touchlink key index 4, the one commercial
-//! initiators use; without it, key indices 0 and 15 only.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -52,26 +9,26 @@ const MANUFACTURER: u16 = 0x1141;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// the board (crates/bulb-tc32/boards.tsv), e.g. EGLO_ZM_TW-4.62; default the dimmable filament bulb
+    #[doc = " the board (crates/bulb-tc32/boards.tsv), e.g. EGLO_ZM_TW-4.62; default the dimmable filament bulb"]
     #[arg(long)]
     board: Option<String>,
-    /// all boards of boards.tsv, one after another
+    #[doc = " all boards of boards.tsv, one after another"]
     #[arg(long, conflicts_with = "board")]
     all: bool,
-    /// Zigbee only: no Bluetooth LE (output directory suffix -noble)
+    #[doc = " Zigbee only: no Bluetooth LE (output directory suffix -noble)"]
     #[arg(long)]
     no_ble: bool,
-    /// diagnostics for the emulator's test harness (suffix -trace); not for bulbs
+    #[doc = " diagnostics for the emulator's test harness (suffix -trace); not for bulbs"]
     #[arg(long)]
     trace: bool,
-    /// no motion sensing (suffix -nosense): every image has it otherwise, off
-    /// until switched on (Occupancy Sensing 0x0406, manufacturer cluster 0xFC5E)
+    #[doc = " no motion sensing (suffix -nosense): every image has it otherwise, off"]
+    #[doc = " until switched on (Occupancy Sensing 0x0406, manufacturer cluster 0xFC5E)"]
     #[arg(long)]
     no_sense: bool,
-    /// OTA file version, hexadecimal: MAJOR, MINOR (a byte each), PATCH (16 bits); default $BULB_FILE_VERSION or 01000000 (1.0.0)
+    #[doc = " OTA file version, hexadecimal: MAJOR, MINOR (a byte each), PATCH (16 bits); default $BULB_FILE_VERSION or 01000000 (1.0.0)"]
     #[arg(long)]
     file_version: Option<String>,
-    /// output directory (one board only)
+    #[doc = " output directory (one board only)"]
     #[arg(long, conflicts_with = "all")]
     out_dir: Option<PathBuf>,
 }
@@ -96,23 +53,15 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
-/// The rustc of the Nix shell (flake.lock's nixpkgs: rustc 1.99.0 with LLVM
-/// 21.1.8), which CI builds the images with; with another one (rustup's
-/// 1.99.0 has the same commit but LLVM 23) the image differs. Update with
-/// flake.lock.
 const PINNED_RUSTC: [(&str, &str); 3] =
     [("release", "1.99.0"), ("commit-hash", "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4"), ("LLVM version", "21.1.8")];
 
-/// The version of what the rustc wrapper does to the firmware's crates
-/// (`-C metadata`, link order): raise it with every change, so that no image is
-/// built from a cache made under the old rules.
 const WRAPPER_RULES: u32 = 1;
 
 fn rustc() -> std::ffi::OsString {
     std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())
 }
 
-/// Say which rustc builds the image; warn when it is not the pinned one.
 fn check_rustc() -> Result<()> {
     let vv = tool_output(Command::new(rustc()).arg("-vV"))?;
     let field = |k: &str| vv.lines().find_map(|l| l.strip_prefix(k).and_then(|r| r.strip_prefix(": "))).unwrap_or("?").trim().to_string();
@@ -130,7 +79,6 @@ fn check_rustc() -> Result<()> {
     Ok(())
 }
 
-/// The nixpkgs revision of flake.lock.
 fn locked_nixpkgs(root: &Path) -> Result<String> {
     let lock: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join("flake.lock"))?)?;
     lock["nodes"]["nixpkgs"]["locked"]["rev"].as_str().map(String::from).ok_or_else(|| anyhow!("no nixpkgs revision in flake.lock"))
@@ -145,25 +93,14 @@ fn rust_lib_src(root: &Path) -> Result<PathBuf> {
     if src.join("core").is_dir() {
         return Ok(src);
     }
-    // nixpkgs' rustc has no rust-src component: that of flake.lock's nixpkgs
-    // (`nix develop` sets RUST_LIB_SRC to it)
     let flake = format!("github:NixOS/nixpkgs/{}#rustPlatform.rustLibSrc", locked_nixpkgs(root)?);
     let p = tool_output(Command::new("nix").args(["build", "--no-link", "--print-out-paths", &flake]))
         .context("no Rust standard library sources: run in `nix develop`, or set RUST_LIB_SRC")?;
     Ok(PathBuf::from(p.trim()))
 }
 
-/// Set for the firmware's cargo, whose RUSTC_WRAPPER is this program.
 const WRAPPER_ENV: &str = "OUTGLOW_RUSTC_WRAPPER";
 
-/// As the firmware cargo's RUSTC_WRAPPER (`<this> <rustc> <args>`): every
-/// crate compiled for the target gets `-C metadata=outglow-<crate name>`
-/// in place of cargo's, so that the symbol names (and the order of the
-/// constants in flash, which follows them) do not depend on the directory
-/// the repository is in or on the host (cargo hashes the absolute paths of
-/// path dependencies outside the workspace, and the host of build scripts,
-/// into it). Each crate is in the build once, so the name is unique. File
-/// names (`-C extra-filename`) stay cargo's. None when not the wrapper.
 pub fn rustc_wrapper() -> Option<i32> {
     std::env::var_os(WRAPPER_ENV)?;
     let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
@@ -212,15 +149,12 @@ pub fn run(a: Args) -> Result<()> {
     build(&root, &b, &a, a.out_dir.clone())
 }
 
-/// The default build of one board (Bluetooth, no options) into its default
-/// directory, for other tasks; returns that directory.
 pub fn board_default(board_name: &str) -> Result<PathBuf> {
     let a = Args { board: Some(board_name.into()), all: false, no_ble: false, trace: false, no_sense: false, file_version: None, out_dir: None };
     build(&crate::root(), board_name, &a, None)?;
     Ok(default_dir(&crate::root(), board_name))
 }
 
-/// target/tc32, target/tc32-tw or target/tc32-<board in lower case>.
 pub fn default_dir(root: &Path, board_name: &str) -> PathBuf {
     root.join("target").join(match board_name {
         "ESMLFzm_w6_Dimm-4.63" => "tc32".to_string(),
@@ -235,7 +169,6 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         let names: Vec<&str> = board::BOARDS.iter().map(|b| b.name).collect();
         anyhow!("unknown board {board_name}; the boards: {}", names.join(", "))
     })?;
-    // TC32_LLVM, else the compiler `cargo xtask toolchain` downloaded, else a build in ~/oss/llvm-tc32
     let llvm = std::env::var_os("TC32_LLVM").map(PathBuf::from).unwrap_or_else(|| {
         let cached = crate::toolchain::installed_bin();
         if cached.join("clang").exists() { cached } else { home().join("oss/llvm-tc32/build/bin") }
@@ -279,15 +212,10 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     println!("== touchlink: {}", if key.is_some() { "key index 4 enabled (key given to the build)" } else { "no master key (key indices 0 and 15 only)" });
 
     println!("== rustc -> bitcode ({TARGET}, board {board_name}, OTA image type {:#06x}, version {version})", known.image_type);
-    // (source paths in panic locations relative, so that an image does not
-    // depend on where it was built)
     let rustflags = format!(
         "-C linker-plugin-lto -C force-frame-pointers=no --emit=llvm-bc --remap-path-prefix={}=~ --remap-path-prefix={}=rust --remap-path-prefix={}=outglow",
         home().display(), rust_src.display(), root.display()
     );
-    // The firmware's cargo cache belongs to one rustc and one set of the
-    // wrapper's rules: cargo does not see a change of either (the wrapper
-    // rewrites flags behind its back), and a stale cache gives another image.
     let cache_id = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -327,12 +255,6 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     println!("== bitcode -> TC32 object (llvm-tc32 {})", clang_version.lines().next().unwrap_or(""));
     let release = cargo_dir.join(TARGET).join("release");
     run_tool(Command::new(llvm.join("llvm-ar")).current_dir(&bc_dir).arg("x").arg(release.join("libbulb_tc32.a")))?;
-    // With -C linker-plugin-lto the library's members are bitcode, except
-    // those of compiler_builtins, which rustc always compiles to machine code
-    // (Thumb here). For such a member take the crate's bitcode that
-    // --emit=llvm-bc left beside the rlib (same name and hash).
-    // (in the order of their names without cargo's `-<hash>` file name
-    // suffix, which depends on the paths: `ble.<codegen unit>.rcgu.o`)
     let mut members: Vec<PathBuf> = std::fs::read_dir(&bc_dir)?.filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "o")).collect();
     members.sort_by_key(|p| {
@@ -358,9 +280,6 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     }
     run_tool(Command::new(llvm.join("llvm-link")).args(&modules).arg("-o").arg(out.join("rust.bc")))?;
     run_tool(Command::new(llvm.join("llvm-dis")).arg(out.join("rust.bc")).arg("-o").arg(out.join("rust.thumb.ll")))?;
-    // rustc names its own CPU for the target in every function's attributes,
-    // and those win over clang's -mcpu. Jump tables are off as for all TC32
-    // code (a table dispatch reads PC in a way no vendor code does).
     let ll = retarget(&std::fs::read_to_string(out.join("rust.thumb.ll"))?)?;
     std::fs::write(out.join("rust.ll"), ll)?;
 
@@ -393,12 +312,6 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     Ok(())
 }
 
-/// Every function's `"target-cpu"` becomes tc32, with jump tables off; and
-/// so does the CPU of the module's assembly (the naked functions of
-/// compiler_builtins: `__aeabi_uwrite4` and the like), which rustc as
-/// distributed by rustup names in `module asm(..., target_cpu: "generic")`.
-/// Left as it is, that assembly comes out in Thumb encodings, which TC32
-/// does not run (the first unaligned write crashed the image).
 fn retarget(ll: &str) -> Result<String> {
     let ll = retarget_module_asm(ll)?;
     let ll = ll.as_str();
@@ -420,13 +333,11 @@ fn retarget(ll: &str) -> Result<String> {
     Ok(out)
 }
 
-/// `module asm(... target_cpu: "<cpu>")` becomes `target_cpu: "tc32"`.
 fn retarget_module_asm(ll: &str) -> Result<String> {
     const KEY: &str = "target_cpu: \"";
     let mut out = String::with_capacity(ll.len());
     let mut rest = ll;
     while let Some(i) = rest.find(KEY) {
-        // only in the header of a module asm block
         let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
         let in_header = rest[line_start..i].starts_with("module asm(");
         out.push_str(&rest[..i + KEY.len()]);
@@ -454,12 +365,10 @@ mod tests {
 
     #[test]
     fn retarget_replaces_the_cpu_of_the_module_asm() {
-        // rustup's rustc 1.99.0 (nixpkgs' writes a plain `module asm`)
         let ll = "module asm(target_features: \"+soft-float,+strict-align\", target_cpu: \"generic\")\n    \".thumb\"\n\nattributes #0 = { \"target-cpu\"=\"generic\" }";
         let r = super::retarget(ll).unwrap();
         assert!(r.starts_with("module asm(target_features: \"+soft-float,+strict-align\", target_cpu: \"tc32\")\n"), "{r}");
         assert!(!r.contains("generic"));
-        // a plain module asm stays as it is
         let plain = "module asm\n    \".thumb\"\n\nattributes #0 = { \"target-cpu\"=\"generic\" }";
         assert!(super::retarget(plain).unwrap().starts_with("module asm\n"));
     }

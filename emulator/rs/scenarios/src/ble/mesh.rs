@@ -1,7 +1,3 @@
-//! The AwoX application protocol (Telink light mesh over GATT), only as a means
-//! to make the bulb do something observable in the BLE tests (`MeshApp` of
-//! spec_ble/harness.py with emulator/awox_mesh.py and crates/outglow/src/flash/protocol.rs).
-
 use super::harness::{hx, BleSession};
 use crate::crypto::{sha256, telink_aes};
 use crate::session::{Stop, R};
@@ -11,8 +7,6 @@ const AWOX_SECRET: [u8; 8] = [0x56, 0xE8, 0x50, 0xED, 0xCF, 0xDD, 0x8B, 0x99];
 const VENDOR: [u8; 2] = [0x60, 0x01];
 pub const OP_POWER: u8 = 0xD0;
 
-/// The login's random value. Python draws it from os.urandom; it changes only
-/// the bytes of the login exchange, not what the tests observe.
 const RND8: [u8; 8] = [0x5a, 0x17, 0xc3, 0x8e, 0x21, 0x9b, 0x40, 0xf6];
 
 fn pad16(b: &[u8]) -> [u8; 16] {
@@ -49,7 +43,6 @@ fn crypt(key: &[u8; 16], nonce8: &[u8], payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// 20 octets: sn(3) chk(2) payload(15); payload = dst LE16, op, vendor, parameters.
 pub fn command_packet(key: &[u8; 16], mac_le: &[u8], sn: u32, dest: u16, op: u8, params: &[u8]) -> Vec<u8> {
     let s = &sn.to_le_bytes()[..3];
     let mut nonce = mac_le[..4].to_vec();
@@ -67,7 +60,6 @@ pub fn command_packet(key: &[u8; 16], mac_le: &[u8], sn: u32, dest: u16, op: u8,
     out
 }
 
-/// "unpaired" network password in secure mode; mac6 in display order.
 pub fn secure_password(mac6: &[u8]) -> [u8; 16] {
     let mut m = mac6.to_vec();
     m.extend_from_slice(&AWOX_SECRET);
@@ -85,10 +77,8 @@ fn name_pass(name: &[u8], password: &[u8]) -> [u8; 16] {
     o
 }
 
-/// Mesh login over the attribute protocol and the status notification switch.
 #[derive(Clone, Debug)]
 pub struct MeshApp {
-    /// value handles of ...1911 (status), ...1912 (command), ...1914 (pairing)
     pub h11: u16,
     pub h12: u16,
     pub h14: u16,
@@ -121,7 +111,6 @@ impl MeshApp {
         }
     }
 
-    /// `Tr.write`: Err(text of the OtaError) when the write is not acknowledged.
     fn write(&self, s: &mut BleSession, ch: u8, data: &[u8]) -> R<Result<(), String>> {
         let mut q = vec![0x12];
         q.extend_from_slice(&self.handle(ch).to_le_bytes());
@@ -143,7 +132,6 @@ impl MeshApp {
         }
     }
 
-    /// Logs in as "unpaired" with the secure-mode password.
     pub fn login(mut self, s: &mut BleSession) -> R<MeshApp> {
         let mut mac6 = self.mac_le.clone();
         mac6.reverse();
@@ -166,7 +154,6 @@ impl MeshApp {
         Ok(self)
     }
 
-    /// The application's own notification switch: 0x01 written to the status characteristic.
     pub fn status_on(&self, s: &mut BleSession) -> R<Result<(), String>> {
         self.write(s, 0x11, &[0x01])
     }

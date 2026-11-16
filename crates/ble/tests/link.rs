@@ -1,5 +1,3 @@
-//! Link layer: advertising, connection timing and the central's control procedures.
-
 mod sim;
 
 use ble::LinkState;
@@ -22,7 +20,6 @@ fn advertises_like_the_stock_bulb() {
     rig.central().scan = true;
     rig.run(3050);
     let c = rig.central();
-    // every 300..305 ms
     assert!((10..=11).contains(&c.advertisements.len()), "{} advertising events in 3 s", c.advertisements.len());
     let _ = &c;
     let adv = &c.advertisements[0];
@@ -32,18 +29,13 @@ fn advertises_like_the_stock_bulb() {
         fields(adv),
         [
             (0x01, vec![0x05]),
-            // the GAP service as an incomplete list, as the stock bulb sends it (byte for byte in the emulator)
             (0x02, vec![0x00, 0x18]),
             (0x09, b"unpaired".to_vec()),
-            // AwoX: vendor 0x0160, product, low four bytes of the address
             (0xff, vec![0x60, 0x01, 0xa7, 0x20, 0x33, 0x22, 0x11, 0x38]),
         ]
     );
     let rsp = &c.scan_responses[0];
     assert_eq!(rsp[0], 0x04, "SCAN_RSP");
-    // the stock bulb's scan response: AwoX data of 29 octets, which the app
-    // needs to list the bulb (product, MAC, firmware 3.0.2, mesh address 0,
-    // on at full, no temperature, hue or saturation shown)
     let mut stock = vec![0x60, 0x01, 0xa7, 0x20, 0x33, 0x22, 0x11, 0x38, 0x03, 0x00, 0x02, 0x00, 0x00];
     stock.extend_from_slice(&[0x01, 0xfe, 0xff, 0xff, 0xff, 0xff, 0x04, 0x3f, 0x20, 0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(fields(rsp), [(0xff, stock)]);
@@ -56,8 +48,6 @@ fn the_limited_discoverable_mode_ends_after_180_s() {
     rig.run(179_800);
     let flags = |rig: &Rig| fields(rig.central().advertisements.last().unwrap())[0].clone();
     assert_eq!(flags(&rig), (0x01, vec![0x05]), "limited discoverable from power-up, as the stock");
-    // Vol 3 Part C 9.2.3.2: no longer than T_GAP(lim_adv_timeout) = 180 s; general discoverable after it
-    // (the first event after 180 s comes within one advertising interval, at most 310 ms)
     rig.run(200 + 310);
     assert_eq!(flags(&rig), (0x01, vec![0x06]));
     let n = rig.central().advertisements.len();
@@ -76,11 +66,9 @@ fn follows_the_central_through_the_connection() {
     let c = rig.central();
     assert!(c.served > 90, "{} events served in 3 s at 30 ms", c.served);
     assert_eq!(c.missed, 0, "no event of the central went unanswered");
-    // hop 7 over all channels
     assert_eq!(c.channels[..6], [7, 14, 21, 28, 35, 5]);
     drop(c);
     assert_eq!(rig.ble.borrow().stats.events_skipped, 0);
-    // advertising stops while connected
     let n = rig.central().advertisements.len();
     rig.run(1000);
     assert_eq!(rig.central().advertisements.len(), n);
@@ -102,10 +90,8 @@ fn finds_the_first_packet_anywhere_in_the_transmit_window() {
 
 #[test]
 fn keeps_up_with_a_central_whose_clock_drifts() {
-    // the central claims 250 ppm (SCA 1); this side's own crystal may add 100
     for ppm in [-330, 330] {
         let mut rig = Rig::new(DIMMABLE);
-        // 1 s interval: 330 us of drift between events
         rig.central().params = Params { interval: 800, timeout: 1000, ..Params::default() };
         rig.central().ppm = ppm;
         rig.connect();
@@ -125,7 +111,6 @@ fn a_connection_update_takes_effect_at_its_instant() {
     rig.run(3000);
     let served = rig.central().served;
     assert_eq!(rig.central().missed, 0, "the bulb moved to the new timing with the central");
-    // 100 ms interval now
     rig.run(2000);
     let c = rig.central();
     assert_eq!(c.missed, 0);
@@ -176,14 +161,12 @@ fn a_central_that_went_away_is_dropped_after_the_supervision_timeout() {
 #[test]
 fn a_connection_that_never_starts_is_given_up_after_six_intervals() {
     let mut rig = Rig::new(DIMMABLE);
-    // the CONNECT_IND goes out, but nothing follows
     rig.central().connect = true;
     rig.central().silent = true;
     rig.run(100);
     assert_eq!(rig.state(), LinkState::Connected);
     rig.run(200);
     assert_eq!(rig.state(), LinkState::Advertising, "30 ms interval: gone well before the 5 s supervision timeout");
-    // Vol 6 Part B 4.5.2: lost after six connection events, not in a seventh
     assert_eq!(rig.ble.borrow().stats.events, 6);
 }
 
@@ -192,15 +175,11 @@ fn answers_the_control_procedures_of_a_central() {
     let mut rig = Rig::new(DIMMABLE);
     rig.connect();
     for (request, response) in [
-        // LL_FEATURE_REQ: no optional features
         (vec![0x08, 1, 0, 0, 0, 0, 0, 0, 0], vec![0x09, 0, 0, 0, 0, 0, 0, 0, 0]),
-        // LL_VERSION_IND: Bluetooth 4.2, Telink's company identifier
         (vec![0x0c, 0x0b, 0x0f, 0x00, 0x34, 0x12], vec![0x0c, 0x08, 0x11, 0x02, 0x01, 0x00]),
-        // procedures of features this device does not claim: LL_PING_REQ, LL_LENGTH_REQ, LL_PHY_REQ
         (vec![0x12], vec![0x07, 0x12]),
         (vec![0x14, 251, 0, 0x48, 0x08, 251, 0, 0x48, 0x08], vec![0x07, 0x14]),
         (vec![0x16, 2, 2], vec![0x07, 0x16]),
-        // LL_ENC_REQ: no encryption
         ([&[0x03u8][..], &[0u8; 22][..]].concat(), vec![0x0d, 0x1a]),
     ] {
         rig.central().control.clear();
@@ -220,7 +199,6 @@ fn the_version_is_exchanged_once_and_odd_control_packets_are_refused() {
         rig.run(200);
     }
     assert_eq!(rig.central().control.len(), 1, "one LL_VERSION_IND per connection");
-    // LL_CONNECTION_PARAM_REQ, here of a wrong length: a procedure this device does not have
     rig.central().control.clear();
     rig.central().send_control(&[0x0f; 20]);
     rig.run(200);
@@ -238,7 +216,6 @@ fn asks_for_a_slower_connection_once() {
     {
         let c = rig.central();
         assert_eq!(c.signaling.len(), 1);
-        // Connection Parameter Update Request: 50 ms, no latency, 4 s timeout
         assert_eq!(c.signaling[0][..4], [0x12, 0x01, 0x08, 0x00]);
         assert_eq!(c.signaling[0][4..], [40, 0, 40, 0, 0, 0, 0x90, 0x01]);
     }
@@ -246,7 +223,6 @@ fn asks_for_a_slower_connection_once() {
     rig.run(3000);
     assert_eq!(rig.central().signaling.len(), 1);
 
-    // a central that already uses 50 ms is not asked
     let mut rig = Rig::new(DIMMABLE);
     rig.central().params.interval = 40;
     rig.connect();
@@ -266,15 +242,12 @@ fn refuses_pairing_and_unknown_signaling() {
         assert_eq!(c.smp, [vec![0x05, 0x05]], "Pairing Failed: pairing not supported");
         assert_eq!(c.signaling[0], [0x01, 0x07, 0x02, 0x00, 0x00, 0x00], "Command Reject with the request's identifier");
     }
-    // any other security manager command gets the same answer, a Pairing Failed none
     rig.central().smp.clear();
     rig.central().send_l2cap(6, &[0x0b, 0x01]);
     rig.central().send_l2cap(6, &[0x05, 0x08]);
-    // reserved codes are no commands: ignored
     for code in [0x00, 0x0f, 0x40, 0xff] {
         rig.central().send_l2cap(6, &[code, 0x01, 0x02]);
     }
-    // a request with an odd code (credit based connection), and a response nobody asked for
     rig.central().signaling.clear();
     rig.central().send_l2cap(5, &[0x17, 0x09, 0x0a, 0x00, 0x80, 0x00, 0x40, 0x00, 0x40, 0x00, 0x01, 0x00, 0x40, 0x00]);
     rig.central().send_l2cap(5, &[0x15, 0x0a, 0x0a, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -284,8 +257,6 @@ fn refuses_pairing_and_unknown_signaling() {
     assert_eq!(c.signaling, [vec![0x01, 0x09, 0x02, 0x00, 0x00, 0x00]]);
 }
 
-/// The central queues a change with its instant eight events ahead, and the
-/// bulb hears nothing until `lead` events before that instant.
 fn deaf_until(rig: &mut Rig, lead: u16, change: impl FnOnce(&mut sim::Central)) {
     rig.run(300);
     let instant = {
@@ -303,7 +274,6 @@ fn deaf_until(rig: &mut Rig, lead: u16, change: impl FnOnce(&mut sim::Central)) 
 #[test]
 fn a_change_first_heard_just_before_or_on_its_instant_still_takes_effect() {
     for lead in [1u16, 0] {
-        // new connection parameters: 100 ms interval
         let mut rig = Rig::new(DIMMABLE);
         rig.connect();
         deaf_until(&mut rig, lead, |c| c.update_connection(2, 0, 80, 300, 8));
@@ -315,13 +285,11 @@ fn a_change_first_heard_just_before_or_on_its_instant_still_takes_effect() {
         assert!((28..=32).contains(&(c.served - served)), "lead {lead}: {} events in 3 s", c.served - served);
         drop(c);
 
-        // a new channel map
         let mut rig = Rig::new(DIMMABLE);
         rig.connect();
         deaf_until(&mut rig, lead, |c| c.update_channel_map([0x00, 0xfe, 0x03, 0x00, 0x00], 8));
         rig.run(3000);
         let c = rig.central();
-        // the event the change was heard in may still have been on the old map
         assert!(c.missed <= 1, "lead {lead}: {} events missed after the change", c.missed);
         assert!(c.channels[c.channels.len() - 50..].iter().all(|ch| (9..=17).contains(ch)), "lead {lead}");
     }
@@ -330,7 +298,6 @@ fn a_change_first_heard_just_before_or_on_its_instant_still_takes_effect() {
 #[test]
 fn the_supervision_timeout_starts_over_with_new_parameters() {
     let mut rig = Rig::new(DIMMABLE);
-    // 1 s interval; the new timeout (500 ms) is shorter than that
     rig.central().params = Params { interval: 800, timeout: 600, ..Params::default() };
     rig.connect();
     rig.run(1500);
@@ -344,7 +311,6 @@ fn the_supervision_timeout_starts_over_with_new_parameters() {
 #[test]
 fn a_central_unheard_until_the_window_would_be_half_an_interval_is_dropped() {
     let mut rig = Rig::new(DIMMABLE);
-    // 7.5 ms interval, 20 s timeout: at 350 ppm the window reaches 3.6 ms after about ten seconds
     rig.central().params = Params { interval: 6, timeout: 2000, ..Params::default() };
     rig.connect();
     rig.central().silent = true;
@@ -360,7 +326,6 @@ fn the_bulb_gives_up_its_own_termination_after_the_supervision_timeout() {
     rig.central().params.timeout = 200;
     rig.connect();
     assert!(rig.login(b"unpaired", b"1234"));
-    // a mesh reset makes the bulb end the connection; the central is gone and never acknowledges
     let packet = rig.command_packet(0xffff, 0xe3, &[0]);
     rig.central().send_att(&[&[0x52, 0x15, 0x00][..], &packet].concat());
     rig.run(200);
@@ -385,7 +350,6 @@ fn a_long_name_is_advertised_as_shortened() {
     rig.run(400);
     let c = rig.central();
     assert_eq!(fields(c.advertisements.last().unwrap())[2], (0x08, b"SixteenByteN".to_vec()), "Shortened Local Name");
-    // the scan response carries the AwoX data, not the name
     assert_eq!(fields(c.scan_responses.last().unwrap())[0].0, 0xff);
 }
 
@@ -394,7 +358,6 @@ fn a_busy_main_loop_costs_events_but_not_the_connection() {
     let mut rig = Rig::new(DIMMABLE);
     rig.connect();
     rig.run(500);
-    // a flash erase, a long Zigbee transmission
     rig.stall(200);
     rig.run(1000);
     let missed = rig.central().missed;
@@ -403,7 +366,6 @@ fn a_busy_main_loop_costs_events_but_not_the_connection() {
     assert_eq!(rig.central().missed, missed, "back on the central's channel and time afterwards");
     assert_eq!(rig.state(), LinkState::Connected);
     assert!(rig.ble.borrow().stats.events_skipped >= 5);
-    // and the attribute protocol still works
     assert_eq!(rig.read(0x0b), b"AwoX");
 }
 
@@ -420,9 +382,6 @@ fn a_change_whose_instant_has_passed_ends_the_connection() {
     assert_eq!(rig.state(), LinkState::Advertising);
 }
 
-/// 802.15.4 traffic (`Hal::radio_busy`) from `from` for `ms`: a frame of 2 ms
-/// every `every` ms, or without a pause (`every` 0); the neighbours' with
-/// `neighbours`, the bulb's own without.
 fn zigbee_traffic(rig: &mut Rig, from: u64, ms: u64, every: u64, neighbours: bool) {
     let mut w = rig.world.borrow_mut();
     if every == 0 {
@@ -442,7 +401,6 @@ fn advertised_since(rig: &Rig, t: u64) -> Vec<u64> {
 
 #[test]
 fn advertising_waits_for_a_quiet_moment_of_the_other_radio_user() {
-    // a frame of 2 ms every 20 ms: there is a quiet moment within every advDelay
     let mut rig = Rig::new(DIMMABLE);
     rig.run(1000);
     let t0 = rig.world.borrow().now;
@@ -455,17 +413,12 @@ fn advertising_waits_for_a_quiet_moment_of_the_other_radio_user() {
         assert!(!w.zigbee_busy.iter().any(|&(a, b, _)| (a..b).contains(t)), "an advertising event in the middle of 802.15.4 traffic");
     }
     for p in at.windows(2) {
-        // advInterval + advDelay (Core Vol 6 Part B 4.4.2.2.1), and the main loop's pass
         assert!(p[1] - p[0] <= 310 * MS, "{} ms between two events", (p[1] - p[0]) / MS);
     }
 }
 
 #[test]
 fn an_advertising_event_is_left_out_while_the_neighbours_talk() {
-    // A stock router's Link Status and, 0.4 ms after it, its Device_annce
-    // (sent once) came while an advertising event was due: the radio is not
-    // taken while the neighbours talk, the event waits for the end of its
-    // advDelay and is left out when they go on.
     let mut rig = Rig::new(DIMMABLE);
     rig.run(1000);
     let t0 = rig.world.borrow().now;
@@ -475,8 +428,6 @@ fn an_advertising_event_is_left_out_while_the_neighbours_talk() {
     assert!(!at.iter().any(|t| (t0..t0 + 700 * MS).contains(t)), "no advertising event in 700 ms of the neighbours' traffic");
     assert!(at.first().is_some_and(|t| t - (t0 + 700 * MS) <= 310 * MS), "advertising again within an interval of the end of the traffic");
 
-    // neighbours that never fall silent do not keep the bulb from being
-    // found: at most three events in a row are left out, the fourth goes
     let t1 = rig.world.borrow().now;
     zigbee_traffic(&mut rig, t1, u64::MAX / MS - t1 / MS - 1, 0, true);
     rig.run(3000);
@@ -486,15 +437,12 @@ fn an_advertising_event_is_left_out_while_the_neighbours_talk() {
 
 #[test]
 fn the_bulbs_own_traffic_only_delays_an_advertising_event_within_its_advdelay() {
-    // its own transmissions bring nothing that BLE would take the radio
-    // from: the event goes at the end of its advDelay, every interval
     let mut rig = Rig::new(DIMMABLE);
     rig.run(1000);
     let t0 = rig.world.borrow().now;
     zigbee_traffic(&mut rig, t0, 3000, 0, false);
     rig.run(3000);
     let at = advertised_since(&rig, t0);
-    // (every one at the end of its advDelay: 309 ms apart)
     assert!((9..=11).contains(&at.len()), "{} advertising events in 3 s", at.len());
     for p in at.windows(2) {
         assert!(p[1] - p[0] <= 310 * MS, "{} ms between two events", (p[1] - p[0]) / MS);

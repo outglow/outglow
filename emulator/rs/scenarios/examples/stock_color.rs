@@ -1,16 +1,3 @@
-//! How a stock colour lamp turns Color Control into its LED channels, measured
-//! in the emulator (docs/stock-colour.md, `scenarios::profile`): the outputs
-//! after each command, once settled, over fine sweeps, and the attributes the
-//! bulb reports back. From emulator/rs:
-//!
-//!   cargo run --release -p scenarios --example stock_color -- EGLO_ZM_RGB_TW__4.60 [EGLO_ZM_RGB_W__4.62 ...]
-//!       images of the app (stock/apk/smartlightz/, tools/extract-stock-images.sh) by name
-//!       -> analysis/color/<name>.json
-//!   cargo run --release -p scenarios --example stock_color -- --bin path.bin --out x.json
-//!
-//! Options: --cpi N (3), --sats N... (254 192 128 64 1), --hue-step N (1),
-//! --sat-step N (1), --level-step N (1), --xy-step N (3277).
-
 use std::path::{Path, PathBuf};
 
 use scenarios::profile::{dump, duties_json, file_stem, pool, repo_root, stock_images, Bulb, Duties, COLOR, ON_OFF};
@@ -36,7 +23,6 @@ fn attrs(n: &mut Bulb, ids: &[u16]) -> R<J> {
 
 fn measure(path: &Path, a: &Args) -> R<J> {
     let mut n = Bulb::new(path, a.cpi)?;
-    // join() lets 6 s pass after the Device Announce
     if !n.join()? {
         return Err(scenarios::session::Stop::Fail(format!("{}: did not join", path.display())));
     }
@@ -90,7 +76,6 @@ fn measure(path: &Path, a: &Args) -> R<J> {
         }
     }
     out.push(("xy".into(), J::Arr(xy)));
-    // what the bulb says after each kind of command
     let mut after = Vec::new();
     for name in ["hs 40,200", "xy 0.3,0.6", "ct 250", "hs 200,100", "xy 0.7,0.3"] {
         match name {
@@ -105,7 +90,6 @@ fn measure(path: &Path, a: &Args) -> R<J> {
         after.push((name.to_string(), J::Obj(vec![("outputs".into(), duties_json(&o)), ("attrs".into(), at)])));
     }
     out.push(("attrs".into(), J::Obj(after)));
-    // a transition: hue 0 -> 170 over 2 s, sampled every 100 ms
     n.hs(0, 254, 0)?;
     n.settle()?;
     n.hs(170, 254, 20)?;
@@ -118,7 +102,6 @@ fn measure(path: &Path, a: &Args) -> R<J> {
         trace.push(J::Arr(vec![J::Int(t), duties_json(&d), at]));
     }
     out.push(("transition_hue".into(), J::Arr(trace)));
-    // and colour temperature after colour, colour after colour temperature
     n.ct(300, 0)?;
     out.push(("ct_after_hs".into(), duties_json(&n.settle()?)));
     n.hs(85, 254, 0)?;

@@ -1,13 +1,3 @@
-//! The firmware staging area of the Rust firmware under two update paths
-//! (emulator/rust_staging_sim.py): an image intact over BLE but damaged in
-//! the flash is not marked bootable; a BLE transfer is refused during a
-//! Zigbee download; the Zigbee client does not download during a BLE transfer.
-//!
-//! The Zigbee update is the image's own update image (`bulb-tc32-ota.bin`
-//! next to it) in an OTA file of a later version, so that the scenario needs
-//! no second build; `--image ota=<file.ota>` takes another one, staged as the
-//! `-ota.bin` next to it.
-
 use super::ble_central::{data_packets, discover, end_packet, hx, ok, tel_get, Bench, Transport, OTA, PAIR};
 use super::{node_of, SimCtx, SimDef};
 use crate::air::NodeId;
@@ -31,7 +21,6 @@ fn crc32(data: &[u8]) -> u32 {
     !crc
 }
 
-/// `telink_image.finalize`: marker, size @0x18, CRC (binascii.crc32 ^ 0xFFFFFFFF) appended.
 pub fn finalize(image: &[u8]) -> Vec<u8> {
     let mut fw = image.to_vec();
     if fw[6..8] == [0x5d, 0x02] {
@@ -47,7 +36,6 @@ pub fn finalize(image: &[u8]) -> Vec<u8> {
     fw
 }
 
-/// A well-formed image of a few kilobytes (never started).
 fn small_image(seed: usize) -> Vec<u8> {
     let mut body: Vec<u8> = (0..6000).map(|i| ((i * 31 + seed) & 0xFF) as u8).collect();
     body[8..12].copy_from_slice(b"KNLT");
@@ -85,7 +73,6 @@ fn blocks(b: &Bench) -> usize {
     b.w.coord.ota_log.iter().filter(|(_, k, _)| k == "ota-block").count()
 }
 
-/// The Zigbee OTA file to offer and the image that must end up staged.
 fn zigbee_update(cx: &SimCtx, img: &crate::image::Image) -> R<(Vec<u8>, Vec<u8>)> {
     let read = |p: &str| std::fs::read(p).map_err(|e| Stop::Error(format!("{p}: {e}")));
     if let Some(o) = cx.images.iter().find(|i| i.label == "ota") {
@@ -126,7 +113,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let short = b.w.coord.devices.iter().find(|d| d.announced).unwrap().short;
     b.run(D, 6000.0)?;
 
-    // --- 1. damaged in the flash
     let mut tr = connect(&mut b)?;
     let image = small_image(1);
     send(&mut b, &mut tr, &image, None)?;
@@ -134,7 +120,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     check(cx, "BLE transfer of a small image: all blocks taken", st[0] == 3 && st[1] == 0, &hx(&st[..8.min(st.len())]));
     let staged = b.flash(D, STAGING, image.len());
     check(cx, "staged as sent, bootable mark held back", staged[..8] == image[..8] && staged[8] == 0xFF && staged[9..] == image[9..], "");
-    // one bit of the staged image goes wrong (flash can only clear bits)
     let at = STAGING + 0x400;
     let v = b.flash(D, at, 1)[0];
     b.write_flash(D, at, &[if v & 1 != 0 { v & 0xFE } else { v & 0xFD }]);
@@ -152,7 +137,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.ble_disconnect(D, 3000.0)?;
     b.run(D, 800.0)?;
 
-    // --- 2. BLE transfer running: Zigbee does not download
     b.w.coord.add_ota_file(ota).map_err(Stop::Error)?;
     let mut tr = connect(&mut b)?;
     let image = small_image(2);
@@ -174,7 +158,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.ble_disconnect(D, 3000.0)?;
     b.run(D, 1500.0)?;
 
-    // --- 3. Zigbee download running: BLE is refused
     let n0 = b.w.coord.events.len();
     b.w.coord.image_notify(&mut b.w.air, short, 1);
     let started = until(&mut b, 60000.0, 50.0, |b| blocks(b) - blocks0 >= 20)?;

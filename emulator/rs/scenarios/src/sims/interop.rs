@@ -1,7 +1,3 @@
-//! Light command interop with AwoX stock in the real HomeControl app format
-//! (emulator/interop_sim.py): the same ZCL-tunnel packet (AES-ECB with the
-//! session key, CRC-8/0x6c) is executed by our firmware (BLE=1) and by stock.
-
 use super::ble_central::{discover, fmt_light, login, secure_pw, tel_get, zcl_level, zcl_onoff, Bench, Transport, RND8};
 use super::{SimCtx, SimDef};
 use crate::air::NodeId;
@@ -14,17 +10,10 @@ pub fn def() -> SimDef {
 
 const D: NodeId = NodeId::Dut;
 
-/// The node of an image, linked where the image says: an offset given with
-/// it (`--image role=path@0x6a000`), else its ELF's (`Image::shift`), else
-/// the prologue heuristic that the Python scripts use (they pass no path).
-/// The heuristic alone took some builds of the Rust firmware for linked
-/// elsewhere (the same code with another layout came up without BLE), and
-/// gives the ELF's offset for the C images and the stock (no ELF) as before.
 pub fn node_heuristic(img: &Image, cpi: i64) -> R<zbnode::Node> {
     img.node(cpi).map_err(Stop::Error)
 }
 
-/// `session()`: boot, connect at 30 ms, discover, log in as "unpaired".
 fn session(cx: &SimCtx, img: &Image) -> R<Result<(Bench, u16, [u8; 16]), String>> {
     let node = node_heuristic(img, cx.cpi)?;
     let mut b = Bench::new(node, "dut", false, cx.log());

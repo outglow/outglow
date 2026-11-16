@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! An SPI NOR flash behind the MSPI registers, and the XIP backing store
-//! (flash.go).
-
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -10,17 +6,13 @@ use crate::config::Config;
 use crate::error::{emu_err, Error};
 use crate::machine::FLASH_MEM;
 
-/// Flash.OnWrite: (op, addr, n) as a page program or an erase is carried out
-/// ("program", "erase") or refused by the block protection ("protected").
 pub type OnWriteFn = Rc<dyn Fn(&str, usize, usize)>;
 
-/// One entry of Flash.log.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlashOp {
     pub op: String,
     pub addr: i64,
     pub len: i64,
-    /// Status writes: the bytes after the command, hex.
     pub data: String,
 }
 
@@ -30,7 +22,6 @@ impl FlashOp {
     }
 }
 
-/// A protected address range, first to last inclusive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct ProtectedAddrs {
     pub first: i64,
@@ -38,57 +29,40 @@ pub struct ProtectedAddrs {
 }
 
 pub struct Flash {
-    /// FlashMem bytes, whatever the part's size.
     pub mem: Vec<u8>,
-    /// The part's size: what lies at or above it is refused.
     pub size: usize,
-    /// The address of the byte last clocked out if the part does not have it, else -1.
     pub beyond: i64,
-    /// "stop", "ff" or "wrap" (TC32EMU_FLASH_BEYOND).
     pub beyond_mode: String,
     pub jedec: [u8; 3],
     pub mid: i64,
-    /// SFDP data; empty for a part without (Go nil).
     pub sfdp: Vec<u8>,
     pub part: i64,
-    /// The 16-bit status register.
     pub status: i64,
     pub uid: Vec<u8>,
     pub(crate) wel: bool,
     pub(crate) cs_low: bool,
     pub(crate) tx: Vec<u8>,
     pub rx: u8,
-    /// Command byte -> count.
     pub commands: HashMap<u8, i64>,
     pub dpd: bool,
-    /// When WIP clears: the machine's cycle count, 0 when idle.
     pub busy_until: i64,
-    /// Go's `machine != nil`: a Machine owns this flash (then `now`/`hz`
-    /// are its Cycles and CPUHz, which the Machine keeps up to date before it
-    /// calls in).
     pub(crate) attached: bool,
     pub(crate) now: i64,
     pub(crate) hz: i64,
     pub log: Vec<FlashOp>,
-    /// Go OnWrite, called at once (it does not see the machine; a machine
-    /// owner who needs it uses Machine::on_flash_write).
     pub on_write: Option<OnWriteFn>,
-    /// FlashTppUs, FlashTseUs, FlashTbe32Us, FlashTbe64Us (package variables in Go).
     pub tpp_us: i64,
     pub tse_us: i64,
     pub tbe32_us: i64,
     pub tbe64_us: i64,
-    /// The writes committed since the machine last looked (for Machine::on_flash_write).
     pub(crate) wrote_events: Vec<(&'static str, usize, usize)>,
 }
 
 impl Flash {
-    /// NewFlash: an erased flash, a part of size bytes with the default IDs (a Puya P25Q80).
     pub fn new(size: usize) -> Flash {
         Flash::new_jedec(size, [0x85, 0x60, 0x14])
     }
 
-    /// NewFlashJedec.
     pub fn new_jedec(size: usize, jedec: [u8; 3]) -> Flash {
         let cfg = Config::env();
         let mut f = Flash {
@@ -121,7 +95,6 @@ impl Flash {
             wrote_events: Vec::new(),
         };
         if size < FLASH_MEM && jedec[2] == 0x14 {
-            // bits.Len(uint(size)) - 1
             let len = (usize::BITS - size.leading_zeros()) as i64;
             f.jedec[2] = (len - 1) as u8;
         }
@@ -130,7 +103,6 @@ impl Flash {
         f
     }
 
-    /// Select drives chip select: low = selected. Deselecting commits the command.
     pub fn select(&mut self, low: bool) -> Result<(), Error> {
         let mut err = Ok(());
         if self.cs_low && !low {
@@ -143,7 +115,6 @@ impl Flash {
         err
     }
 
-    /// SetSFDP gives the part SFDP data.
     pub fn set_sfdp(&mut self, data: Vec<u8>) {
         self.sfdp = data;
         self.part = self.mid;
@@ -152,7 +123,6 @@ impl Flash {
         }
     }
 
-    /// SPIBusy: a transaction that an XIP access would cut.
     pub fn spi_busy(&self) -> bool {
         if self.tx.len() > 1 {
             return true;
@@ -166,14 +136,12 @@ impl Flash {
         false
     }
 
-    /// Abort: a chip reset takes the chip select high without a commit.
     pub fn abort(&mut self) {
         self.cs_low = false;
         self.tx.clear();
         self.beyond = -1;
     }
 
-    /// The bytes sent in the transaction under way (Go f.tx).
     pub fn tx(&self) -> &[u8] {
         &self.tx
     }
@@ -182,8 +150,6 @@ impl Flash {
         self.cs_low
     }
 
-    /// Busy: a program or erase with a busy time still running (at the cycle
-    /// count the owning machine last gave).
     pub fn busy(&mut self) -> bool {
         if self.busy_until == 0 {
             return false;
@@ -195,7 +161,6 @@ impl Flash {
         false
     }
 
-    /// BusyLeftUs: the busy time left, in microseconds.
     pub fn busy_left_us(&self) -> f64 {
         (self.busy_until.wrapping_sub(self.now).wrapping_mul(1_000_000)) as f64 / self.hz as f64
     }
@@ -218,7 +183,6 @@ impl Flash {
         Ok(())
     }
 
-    /// Clock sends one byte and returns the byte clocked in.
     pub fn clock(&mut self, b: u8) -> Result<u8, Error> {
         if !self.cs_low {
             return Ok(0xFF);
@@ -388,7 +352,6 @@ impl Flash {
         Ok(())
     }
 
-    /// ProtectedRange: (range, protected, listed).
     pub fn protected_range(&self) -> (ProtectedAddrs, bool, bool) {
         let t = match flash_protection().get(&self.part) {
             Some(t) => t,
@@ -401,7 +364,6 @@ impl Flash {
         }
     }
 
-    /// Protected: any of the n bytes at addr lies in the protected range.
     pub fn protected(&self, addr: i64, n: i64) -> bool {
         let (r, protected, _) = self.protected_range();
         protected && addr <= r.last && addr + n - 1 >= r.first

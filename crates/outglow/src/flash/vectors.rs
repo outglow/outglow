@@ -1,17 +1,6 @@
-//! `outglow ble vectors [image]`: reference values for the browser flasher's
-//! tests (site/test/awox-ota.test.ts), as JSON on stdout.
-//!
-//! Without an image a deterministic synthetic one is built: 5000 bytes from
-//! Python's `random.Random(1).getrandbits(8)` (the generator the earlier
-//! Python reference script used, so the output is the same byte for byte),
-//! `KNLT` at 0x08, an Outglow board tag at 0x100, finalized with the Telink
-//! header and CRC.
-
 use super::protocol::{crc16_modbus, data_packet, end_packet, erase_packet, hex, login_packet, packet_count, secure_password};
 use outglow_image::telink;
 
-/// MT19937 seeded the way CPython's `random.seed(n)` seeds it for a small
-/// non-negative integer (`init_by_array([n])`).
 struct Mt {
     s: [u32; 624],
     i: usize,
@@ -66,7 +55,6 @@ impl Mt {
         y ^ (y >> 18)
     }
 
-    /// `getrandbits(8)`
     fn byte(&mut self) -> u8 {
         (self.next_u32() >> 24) as u8
     }
@@ -102,7 +90,6 @@ fn packets(img: &[u8], idx: &[usize], d: usize) -> String {
     format!("{{{}}}", items.join(", "))
 }
 
-/// The JSON, formatted as Python's `json.dump` does (", " and ": ").
 pub fn json(img: &[u8]) -> String {
     let n = packet_count(img.len(), 16);
     let mut idx = vec![0, 1, 2, n / 2, n.saturating_sub(2), n.saturating_sub(1)];
@@ -143,7 +130,6 @@ mod tests {
 
     #[test]
     fn python_random_1() {
-        // random.Random(1): getrandbits(32) x3, then the synthetic image's digest
         let mut mt = Mt::new(1);
         assert_eq!([mt.next_u32(), mt.next_u32(), mt.next_u32()], PY_U32);
         assert_eq!(hex(&Sha256::digest(json(&synthetic()).as_bytes())), PY_JSON_SHA256);
@@ -157,8 +143,6 @@ mod tests {
         assert_eq!(base64(b"foo"), "Zm9v");
     }
 
-    // from Python 3.11: random.Random(1).getrandbits(32) three times, and the
-    // SHA-256 of what the earlier Python reference printed
     const PY_U32: [u32; 3] = [0x2265_b1f5, 0x91b7_584a, 0xd8f1_6adf];
     const PY_JSON_SHA256: &str = "80155ca212f74337ea2d47db1b016b466e21fe2f5593f7d55ebcff4cc11314ec";
 }

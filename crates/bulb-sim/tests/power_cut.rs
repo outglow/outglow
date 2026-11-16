@@ -1,22 +1,3 @@
-//! Power cuts at every point of the light's configuration store
-//! (`bulb_core::store::LightLog`, the one the firmware keeps in 0xF0000 and
-//! 0xF4000) on a NOR flash model.
-//!
-//! Every store is run once and its flash operations recorded; then, for each
-//! operation, the flash is rebuilt as it was just before it and the power is
-//! cut there: before the operation, after it, and part way through it
-//! (`bulb_sim::cut`: a page program with only a prefix of its bytes or bits,
-//! or random bits, done; an erase with half of the sector, random bits or all
-//! but a few bits erased). After each cut the
-//! bulb "boots" on that flash: the record it finds must be the one being
-//! stored or the one before it, never none once a record had been stored.
-//! From many of the cut states the store then carries on through more sector
-//! switches and must still come back with the last record.
-//!
-//! The same harness on the single-sector store of the earlier firmware finds
-//! the two ways it lost the state: an erase cut short (or a cut between the
-//! erase and the write), and a torn last record.
-
 use bulb_core::config::{Config, BLOCK_LEN};
 use bulb_core::store::LightLog;
 use bulb_core::{Bulb, Command, PowerOnBehavior};
@@ -31,7 +12,6 @@ fn medium(size: usize) -> NorFlash {
     NorFlash::new(A, B + size - A, size)
 }
 
-/// Distinct records, each different from the one before.
 fn states(n: usize, seed: usize) -> Vec<Rec> {
     (0..n)
         .map(|i| {
@@ -47,11 +27,9 @@ fn states(n: usize, seed: usize) -> Vec<Rec> {
         .collect()
 }
 
-/// A store under test, as the bulb sees it after a boot on a flash.
 trait Store {
     fn boot(f: &NorFlash) -> Self;
     fn store(&mut self, r: &Rec);
-    /// What `Bulb::boot` would take: the record if it decodes.
     fn load(&self) -> Option<Rec>;
 }
 
@@ -67,9 +45,6 @@ impl Store for LightLog<NorFlash> {
     }
 }
 
-/// The earlier firmware's store (crates/bulb-tc32/src/board.rs before the
-/// two sectors): 8-byte records in one sector, the last slot that is not
-/// erased is loaded, the sector is erased when full and then written.
 struct OldStore {
     f: NorFlash,
     next: usize,
@@ -119,14 +94,9 @@ impl Store for OldStore {
 struct Report {
     cuts: usize,
     recoveries: usize,
-    /// (what was being stored, operation, cut, what came back)
     lost: Vec<String>,
 }
 
-/// Stores `recs` one by one on `f` (which may already hold something whose
-/// record is `prev`), cutting the power at every operation of every store.
-/// From the cuts of every `recover_every`-th store (and of every store that
-/// erases) the store carries on with `recover` more records.
 fn run<S: Store>(f: &NorFlash, mut prev: Option<Rec>, recs: &[Rec], recover_every: usize, recover: usize) -> Report {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut rep = Report::default();
@@ -179,7 +149,6 @@ fn assert_safe(rep: &Report, min_cuts: usize) {
 
 #[test]
 fn small_sectors_every_cut_and_recovery() {
-    // 128-byte sectors: seven records each, a switch every seventh store
     let f = medium(0x80);
     let rep = run::<LightLog<NorFlash>>(&f, None, &states(80, 0), 1, 24);
     assert_safe(&rep, 5000);
@@ -188,14 +157,12 @@ fn small_sectors_every_cut_and_recovery() {
 
 #[test]
 fn real_sectors_every_cut() {
-    // 4 KB sectors as on the bulb: 255 records each; 600 stores switch three times
     let f = medium(0x1000);
     let rep = run::<LightLog<NorFlash>>(&f, None, &states(600, 0), 50, 300);
     assert_safe(&rep, 20_000);
     assert!(rep.recoveries > 500);
 }
 
-/// Old-format records in the first sector, as the earlier firmware left them.
 fn legacy(f: &NorFlash, n: usize) -> Vec<Rec> {
     let recs = states(n, 500);
     for (k, r) in recs.iter().enumerate() {
@@ -211,7 +178,6 @@ fn after_the_earlier_firmware_its_last_record_counts_until_the_first_store() {
         let old = legacy(&f, n);
         let rep = run::<LightLog<NorFlash>>(&f, old.last().copied(), &states(300, 0), 25, 300);
         assert_safe(&rep, 5000);
-        // the first store went to the other sector; the old log was erased at the next switch
         assert_ne!(f.byte(B), 0xFF);
     }
 }
@@ -220,7 +186,6 @@ fn after_the_earlier_firmware_its_last_record_counts_until_the_first_store() {
 fn a_torn_last_record_of_the_earlier_firmware_is_skipped() {
     let f = medium(0x1000);
     let old = legacy(&f, 40);
-    // the 41st record cut short: half of its bytes
     let torn = states(1, 9)[0];
     f.poke(A + 40 * BLOCK_LEN, &[torn[0], torn[1], torn[2], torn[3], 0xFF, 0xFF, 0xFF, 0xFF]);
     let s = <LightLog<NorFlash> as Store>::boot(&f);
@@ -229,7 +194,6 @@ fn a_torn_last_record_of_the_earlier_firmware_is_skipped() {
 
 #[test]
 fn the_earlier_single_sector_store_loses_the_state() {
-    // the same harness finds both faults of the store this one replaces
     let f = medium(0x80);
     let rep = run::<OldStore>(&f, None, &states(60, 0), 1, 0);
     let erase = rep.lost.iter().filter(|l| l.contains("Erase")).count();
@@ -248,10 +212,8 @@ fn one_program_per_change_and_an_erase_only_every_255_changes() {
     f.clear_ops();
     for r in &recs {
         s.store(r);
-        // an unchanged record is not written again
         s.store(r);
     }
-    // a switch writes the record and the header; it erases the sector unless it is blank
     let headers = f.ops().iter().filter(|o| matches!(o, FlashOp::Program { addr, .. } if *addr == A || *addr == B)).count();
     assert_eq!(headers, 1 + (recs.len() - 1) / 255);
     assert_eq!(f.programs(), recs.len() + headers);
@@ -260,8 +222,6 @@ fn one_program_per_change_and_an_erase_only_every_255_changes() {
 
 #[test]
 fn the_bulb_comes_back_after_cuts_during_commands() {
-    // the whole firmware core on the model: cut at a random point of a
-    // random command's writes, power on again from there
     let f = medium(0x1000);
     let mut rng = Rng(12345);
     let boot = |f: &NorFlash| Bulb::boot(MockPwm::new(1000), MockClock::new(), LightLog::new(f.clone(), [A, B], 0x1000), MockRadio::new());
@@ -297,7 +257,6 @@ fn the_bulb_comes_back_after_cuts_during_commands() {
         if !same(&before) && !same(&after) {
             lost.push(format!("command #{k} {cmd:?}, cut {label}: {back:?}, before {before:?}, after {after:?}"));
         }
-        // carry on from the cut, as the bulb would
         f.poke(A, &read_all(cut, A, B + 0x1000 - A));
         bulb = boot(&f);
     }

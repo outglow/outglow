@@ -1,8 +1,3 @@
-//! The image x BLE test runner (`ble_spec_suite.py`): one booted bulb per
-//! (image, session); between the tests of a session the connection is dropped
-//! and the bulb must advertise again; a test that loses the bulb ends the
-//! session and the next test boots a new one.
-
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -13,7 +8,6 @@ use crate::image::Image;
 use crate::runner::{drive, parse_args_with, repo_root, selected, Args, Outcome, TestMeta, Verdict, NOT_STARTED};
 use crate::session::Stop;
 
-/// The stock firmware and the Rust firmware.
 pub fn default_images() -> Vec<Image> {
     let r = repo_root();
     vec![
@@ -72,7 +66,6 @@ fn run_group(image: &Image, session: &str, tests: &[&BleTest], cpi: i64, verbose
             }
         }
         if !lost && k + 1 < tests.len() {
-            // the next test of the session starts from an advertising bulb
             let ss = s.as_mut().unwrap();
             if ss.drop_link(6000.0).and_then(|_| ss.adv_reply_clear()).is_err() {
                 lost = true;
@@ -139,7 +132,6 @@ pub fn run(a: &Args, on: &mut dyn FnMut(&Outcome)) -> Vec<Outcome> {
     out
 }
 
-/// The `ble` test binary's main.
 pub fn main_with(argv: &[String]) -> i32 {
     if let Some(code) = crate::runner::sweep_main(argv, "ble-spec") {
         return code;

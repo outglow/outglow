@@ -1,25 +1,3 @@
-//! `cargo xtask index`: the Zigbee2MQTT OTA index and the web flasher's
-//! release list from built images.
-//!
-//!     cargo xtask index --version 0.2.5 target/tc32*/bulb-tc32.ota \
-//!         [--index ota/index.json] [--site site/public/firmware.json] [--assets DIR]
-//!
-//! For each Zigbee OTA file it reads the header (manufacturer code, image
-//! type, file version, header string), finds the board from the image's
-//! `outglow-board:` tag and writes an entry in the format of
-//! github.com/Koenkk/zigbee-OTA with the URL where the release puts the file:
-//! `<base-url>/<tag>/outglow-<board>-<version>.ota`.
-//!
-//! The Bluetooth image next to it (`bulb-tc32-ota.bin`) goes into the
-//! flasher's release list (`--site`) under the URL the website serves it from,
-//! `firmware/<tag>/outglow-<board>-<version>-ota.bin` (release assets carry no
-//! CORS headers, so a browser cannot download them from GitHub directly).
-//!
-//! `--assets DIR` copies both files under those names into DIR, ready to be
-//! uploaded to the release. Entries of other versions already in the index
-//! are kept (one of the same image type and file version is replaced), so
-//! the index can list earlier releases for downgrades.
-
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -31,28 +9,28 @@ const REPO: &str = "https://github.com/outglow/outglow";
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// bulb-tc32.ota files (one per board)
+    #[doc = " bulb-tc32.ota files (one per board)"]
     #[arg(required = true)]
     ota: Vec<PathBuf>,
-    /// release version, e.g. 0.2.5
+    #[doc = " release version, e.g. 0.2.5"]
     #[arg(long)]
     version: String,
-    /// release tag (default v<version>)
+    #[doc = " release tag (default v<version>)"]
     #[arg(long)]
     tag: Option<String>,
-    /// the Zigbee2MQTT index to update (default ota/index.json of the repository)
+    #[doc = " the Zigbee2MQTT index to update (default ota/index.json of the repository)"]
     #[arg(long)]
     index: Option<PathBuf>,
-    /// the web flasher's release list to update (e.g. site/public/firmware.json)
+    #[doc = " the web flasher's release list to update (e.g. site/public/firmware.json)"]
     #[arg(long)]
     site: Option<PathBuf>,
-    /// directory to copy the release assets into
+    #[doc = " directory to copy the release assets into"]
     #[arg(long)]
     assets: Option<PathBuf>,
-    /// release notes for Zigbee2MQTT and the flasher
+    #[doc = " release notes for Zigbee2MQTT and the flasher"]
     #[arg(long, default_value = "")]
     notes: String,
-    /// where release assets are downloaded from
+    #[doc = " where release assets are downloaded from"]
     #[arg(long, default_value_t = format!("{REPO}/releases/download"))]
     base_url: String,
 }
@@ -70,7 +48,6 @@ fn load(path: &PathBuf, default: Value) -> Result<Value> {
 }
 
 pub(crate) fn today() -> String {
-    // civil date from the Unix day (Howard Hinnant's algorithm), no dependency for one date
     let days = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0) as i64;
     let z = days + 719_468;
     let era = z.div_euclid(146_097);

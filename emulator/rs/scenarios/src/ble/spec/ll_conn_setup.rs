@@ -1,6 +1,3 @@
-//! Link Layer, connection setup and supervision (Core 5.4 Vol 6 Part B 4.5.2,
-//! 4.5.3, 4.5.5, 4.5.12); emulator/spec_ble/ll_conn_setup.py.
-
 use std::collections::BTreeSet;
 
 use crate::ble::harness::{csa1, unhx, BleSession, LinkOpts};
@@ -60,12 +57,10 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// The channel map of the link (`lk.opts["chm"]`).
 pub fn link_chm(s: &BleSession) -> Vec<u8> {
     unhx(&s.lk().opts.kv.iter().find(|(k, _)| k == "chm").map(|(_, v)| v.clone()).unwrap_or_default())
 }
 
-/// `w for _, _, w in misses` as texts.
 pub fn miss_texts(s: &mut BleSession) -> R<Vec<String>> {
     Ok(s.misses(0)?.into_iter().map(|m| m.2).collect())
 }
@@ -74,7 +69,6 @@ pub fn tail(v: &[String], n: usize) -> &[String] {
     &v[v.len().saturating_sub(n)..]
 }
 
-/// `str` of a list of (int, int, int) tuples.
 pub fn triples(v: &[(i64, i64, i64)]) -> String {
     py::list(v.iter().map(|(a, b, c)| py::tuple([a.to_string(), b.to_string(), c.to_string()])))
 }
@@ -89,8 +83,6 @@ fn connected_event(s: &mut BleSession, ev: i64, max_ms: f64, step: f64) -> R<boo
 }
 
 fn first_packet_window(s: &mut BleSession) -> R<String> {
-    // 4.5.3 / 4.5.5: the peripheral listens for the first packet within the transmit window. Positions
-    // are 30 us inside the window edges.
     let cases = [(0, 1, 0.03), (0, 1, 1.22), (0, 2, 2.47), (5, 3, 0.03), (5, 3, 3.72), (24, 8, 0.03), (24, 8, 5.0),
                  (24, 8, 9.97), (13, 4, 2.5)];
     let mut missed = Vec::new();
@@ -137,8 +129,6 @@ fn first_packet_window(s: &mut BleSession) -> R<String> {
 }
 
 fn second_window(s: &mut BleSession) -> R<String> {
-    // 4.5.5: a subsequent transmit window connInterval later, on the next data channel, connEventCount + 1.
-    // The central stays silent in events 0 and 1 and sends its first packet late in the window of event 2.
     let o = LinkOpts::new().set("interval", 24).set("timeout", 200).set("winoffset", 3).set("winsize", 4).set("anchor", "4.0");
     s.connect_with(o, false, 8000.0)?;
     s.silent(Some(0))?;
@@ -161,9 +151,8 @@ fn second_window(s: &mut BleSession) -> R<String> {
     let p = s.lk().pdus[0].clone();
     expect(p.event == 2, format!("first answer in event {}, the central's first packet was in event 2", p.event))?;
     expect(p.ch == exp[2], format!("answer on data channel {}; the third event of hop 7 uses channel {}", p.ch, exp[2]))?;
-    // the event counter: a channel map change with an instant counted from event 0 of the CONNECT_IND
     s.wait_event(6, None)?;
-    let chm = [0x0f, 0x00, 0x00, 0xf0, 0x00]; // channels 0-3 and 28-31
+    let chm = [0x0f, 0x00, 0x00, 0xf0, 0x00];
     s.channel_map(&chm, 14)?;
     s.wait_event(22, None)?;
     s.link_run(5.0)?;
@@ -192,9 +181,7 @@ fn second_window(s: &mut BleSession) -> R<String> {
 }
 
 fn six_events(s: &mut BleSession) -> R<String> {
-    // 4.5.2: a connection not established after 6 connection events shall be considered lost; the timer
-    // can expire after 4, 5 or 6 events. The central sends the CONNECT_IND and then nothing.
-    let iv = 40i64; // 50 ms
+    let iv = 40i64;
     let o = LinkOpts::new().set("interval", iv).set("timeout", 600).set("winoffset", 0).set("winsize", 2);
     s.connect_with(o, false, 8000.0)?;
     s.silent(Some(0))?;
@@ -259,7 +246,6 @@ fn six_events(s: &mut BleSession) -> R<String> {
 }
 
 fn sent_at(sent: &[(i64, f64)], ev: i64) -> Option<f64> {
-    // dict(lk.sent()): the last entry of an event wins
     sent.iter().rev().find(|(e, _)| *e == ev).map(|(_, t)| *t)
 }
 
@@ -268,13 +254,10 @@ fn type_error() -> Stop {
 }
 
 fn supervision_timeout(s: &mut BleSession) -> R<String> {
-    // 4.5.2: the connection is lost when T_LLconnSupervision reaches connSupervisionTimeout; 4.5.12: no
-    // further packets on the data channels afterwards.
-    let (iv, to) = (24i64, 150i64); // 30 ms, 1.5 s
+    let (iv, to) = (24i64, 150i64);
     let ivms = iv as f64 * 1.25;
     s.connect(LinkOpts::new().set("interval", iv).set("timeout", to))?;
     s.wait_event(10, None)?;
-    // part 1: silence shorter than the timeout
     let k = s.event()?;
     s.silent(Some(k + 1))?;
     let sent = s.sent()?;
@@ -296,7 +279,6 @@ fn supervision_timeout(s: &mut BleSession) -> R<String> {
             tail(&m, 2).join("; ")
         ),
     )?;
-    // part 2: silence longer than the timeout
     let k = s.event()?;
     s.silent(Some(k + 1))?;
     let t_last = sent_at(&s.sent()?, k).ok_or_else(|| Stop::Error(format!("KeyError: {k}")))?;
@@ -339,12 +321,7 @@ fn supervision_timeout(s: &mut BleSession) -> R<String> {
 }
 
 fn peripheral_latency(s: &mut BleSession) -> R<String> {
-    // 4.5.5: active in every event until a packet with NESN = 1 arrives; 4.5.1: listen at least once within
-    // each supervision timeout.
     let (lat, iv, to) = (4i64, 24i64, 100i64);
-    // Up to three connections: one whose event 0 or 1 the bulb lost to its
-    // Zigbee side (`lost_to_154`, a beacon request of the network steering
-    // just then) says nothing about latency.
     let mut tries = 0;
     let got = loop {
         tries += 1;

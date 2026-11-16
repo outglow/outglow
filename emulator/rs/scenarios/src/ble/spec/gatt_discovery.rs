@@ -1,7 +1,3 @@
-//! GATT: the service, characteristic and descriptor structure as the discovery
-//! procedures show it (Core 5.4 Vol 3 Part G 3.1, 3.2, 3.3, 4.4-4.7, 7);
-//! emulator/spec_ble/gatt_discovery.py.
-
 use crate::ble::harness::{att_error, hx, BleSession, LinkOpts, CID_SMP};
 use crate::ble::util::{describe, error_problem, link, read_all, some, table, value};
 use crate::ble::{BleTest, Level};
@@ -127,7 +123,6 @@ fn hexes(it: impl IntoIterator<Item = u16>) -> String {
     py::list(it.into_iter().map(|h| py::hexq(h as u64)))
 }
 
-/// Discover All Primary Services (4.4.1): ((start, end, uuid), problems).
 #[allow(clippy::type_complexity)]
 fn primary(s: &mut BleSession) -> R<(Vec<(u16, u16, Vec<u8>)>, Vec<String>)> {
     let (mut out, mut bad, mut start): (Vec<(u16, u16, Vec<u8>)>, Vec<String>, u32) = (Vec::new(), Vec::new(), 1);
@@ -164,8 +159,6 @@ fn primary(s: &mut BleSession) -> R<(Vec<(u16, u16, Vec<u8>)>, Vec<String>)> {
 }
 
 fn primary_services(s: &mut BleSession) -> R<String> {
-    // 4.4.1 / 3.1: service declarations, End Group Handle = last attribute of the definition (0xFFFF
-    // allowed for the last), the service UUID as value, every attribute in a service definition.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let vals = read_all(s)?;
@@ -228,8 +221,6 @@ fn primary_services(s: &mut BleSession) -> R<String> {
 }
 
 fn service_by_uuid(s: &mut BleSession) -> R<String> {
-    // 4.4.2: ATT_FIND_BY_TYPE_VALUE_RSP returns the handle ranges of the service definitions; complete with
-    // Attribute Not Found or an End Group Handle of 0xFFFF.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (groups, mut bad) = primary(s)?;
@@ -238,7 +229,6 @@ fn service_by_uuid(s: &mut BleSession) -> R<String> {
     }
     let last_start = groups.last().unwrap().0;
     let last_handle = g.last_handle();
-    // the last service of the device may end at its last attribute or at 0xFFFF (4.4.1, 4.4.2)
     let norm = |r: &[(u16, u16)]| -> Vec<(u16, u16)> {
         r.iter().map(|(a, b)| (*a, if *b == 0xFFFF && *a == last_start { last_handle } else { *b })).collect()
     };
@@ -297,7 +287,6 @@ fn service_by_uuid(s: &mut BleSession) -> R<String> {
 }
 
 fn char_declaration_value(s: &mut BleSession) -> R<String> {
-    // 3.3.1, Table 3.4: Properties + Value Handle + UUID; readable without authentication or authorization.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let vals = read_all(s)?;
@@ -320,8 +309,6 @@ fn char_declaration_value(s: &mut BleSession) -> R<String> {
 }
 
 fn char_definition(s: &mut BleSession) -> R<String> {
-    // 3.3 / 3.3.2: the Characteristic Value declaration immediately follows the declaration, with the UUID
-    // and handle the declaration names; 3.1: inside the service definition.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let hs: Vec<u16> = g.attrs.keys().copied().collect();
@@ -368,8 +355,6 @@ fn char_definition(s: &mut BleSession) -> R<String> {
 }
 
 fn chars_of_service(s: &mut BleSession) -> R<String> {
-    // 4.6.1: ATT_READ_BY_TYPE_REQ with «Characteristic» over the service's range; complete with Attribute
-    // Not Found or a handle equal to the Ending Handle.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (mut bad, mut notes) = (Vec::new(), Vec::new());
@@ -434,8 +419,6 @@ fn chars_of_service(s: &mut BleSession) -> R<String> {
 }
 
 fn descriptors(s: &mut BleSession) -> R<String> {
-    // 4.7.1: ATT_FIND_INFORMATION_REQ from value + 1 to the end of the characteristic; 3.3.3.1-3.3.3.4: each
-    // of 0x2900-0x2903 at most once; Table 3.5: Extended Properties / Broadcast need their descriptor.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (mut bad, mut n) = (Vec::new(), 0usize);
@@ -517,8 +500,6 @@ fn descriptors(s: &mut BleSession) -> R<String> {
 }
 
 fn uuid_grouping(s: &mut BleSession) -> R<String> {
-    // 3.1 / 3.3.1 (should): 16-bit and 128-bit UUIDs listed sequentially. Grouped = the sequence of UUID
-    // sizes, in handle order, changes at most once.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let changes = |sizes: &[usize]| sizes.windows(2).filter(|w| w[0] != w[1]).count();
@@ -544,8 +525,6 @@ fn uuid_grouping(s: &mut BleSession) -> R<String> {
 }
 
 fn included_services(s: &mut BleSession) -> R<String> {
-    // 4.5.1: ATT_READ_BY_TYPE_REQ with «Include» over the service's range; Attribute Not Found with the
-    // starting handle (Part F 3.4.4.1) where there are none.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (mut bad, mut n) = (Vec::new(), 0usize);
@@ -582,8 +561,6 @@ fn included_services(s: &mut BleSession) -> R<String> {
 }
 
 fn service_gatt(s: &mut BleSession) -> R<String> {
-    // 7: one primary GATT service holding the characteristics of section 7; 7.1: Service Changed with
-    // properties 0x20, a CCCD, a value neither readable nor writable, one instance.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let vals = read_all(s)?;
@@ -608,9 +585,6 @@ fn service_gatt(s: &mut BleSession) -> R<String> {
     let sc: Vec<_> = g.chars.iter().filter(|c| c.uuid[..] == 0x2A05u16.to_le_bytes()).collect();
     if sc.is_empty() {
         let what = if gs.is_empty() { "no GATT service and no" } else { "a GATT service without" };
-        // Part G 2.5.2: only a bonded client keeps its attribute cache beyond the connection. The table of
-        // these bulbs changes only with a firmware update, which ends the connection; a server that does not
-        // pair has no client whose cache such a change could leave stale.
         s.poll()?;
         let n0 = s.lk().frames.len();
         s.l2cap(CID_SMP, &[0x01, 0x03, 0x00, 0x01, 0x10, 0x00, 0x01])?;

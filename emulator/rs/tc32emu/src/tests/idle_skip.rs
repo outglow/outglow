@@ -1,4 +1,3 @@
-// idle_skip_test.go
 use std::cell::RefCell;
 use std::rc::Rc;
 

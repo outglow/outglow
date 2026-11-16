@@ -1,18 +1,12 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The random number generator's sources and the 32 kHz timer's jitter (rbg.go).
-
 use crate::error::{emu_err, Error};
 use crate::machine::{Machine, M32};
 
-/// RBGModes: the sources TC32EMU_RBG names and register 0xfff4 numbers.
 pub const RBG_MODES: &[&str] = &["lcg", "healthy", "stuck", "biased", "cycle", "attacker", "never"];
 
-/// 1000 / 32768, exact in binary.
 pub(crate) const K32_PERIOD_MS: f64 = 1000.0 / 32768.0;
 const K32_JITTER_SPAN: i64 = 4096;
 const K32_SUM4_SD: f64 = 37837.2264;
 
-/// splitmix64: one step, the next state and the 64-bit output.
 #[inline]
 pub(crate) fn splitmix64(state: u64) -> (u64, u64) {
     let state = state.wrapping_add(0x9E3779B97F4A7C15);
@@ -111,7 +105,6 @@ impl Machine {
             if n > K32_JITTER_SPAN {
                 let skip = n - K32_JITTER_SPAN;
                 self.k32_count += skip;
-                // Go on arm64 fuses this into one FMADDD (rbg.go:167).
                 self.k32_next = (skip as f64).mul_add(K32_PERIOD_MS, self.k32_next);
             }
             while t >= self.k32_next {

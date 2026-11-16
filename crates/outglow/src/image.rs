@@ -1,10 +1,8 @@
-//! `outglow image <file>`: what a firmware image or Zigbee OTA file is.
-
 use outglow_image::{board, ota, telink};
 
 #[derive(clap::Args)]
 pub struct ImageArgs {
-    /// a Bluetooth image (…-ota.bin), a flash image (.bin) or a Zigbee OTA file (.ota)
+    #[doc = " a Bluetooth image (…-ota.bin), a flash image (.bin) or a Zigbee OTA file (.ota)"]
     pub file: std::path::PathBuf,
 }
 

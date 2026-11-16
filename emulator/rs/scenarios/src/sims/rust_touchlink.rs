@@ -1,24 +1,3 @@
-//! Touchlink: the Rust firmware as a target next to the stock firmware's
-//! (Telink's touchlink target as AwoX built it; once rust_touchlink_sim.py
-//! against the C firmware).
-//!
-//! Two bulbs, Rust and stock, first on the coordinator's network. An initiator
-//! written here scans, asks for the device information, makes them identify,
-//! hands them a new network (Network Join Router), resets them to factory new
-//! and asks each to start a network (Network Start); the answers are compared
-//! field by field and what each does afterwards is watched on the air.
-//!
-//! Keys (ZLL 1.0 8.7.5): each bulb is sent the network key under the best key
-//! index both sides have: 4 (the touchlink master key) when the bulb offers
-//! it and the key is at hand, else 15 (the certification key) or 0 (the
-//! development key). The master key is not in this repository:
-//! `TOUCHLINK_MASTER_KEY` (32 hex digits), else it is read from the stock
-//! image (the dimmable and tunable white images keep it at a recognisable
-//! place). A Rust image built without it offers 0 and 15 only.
-//!
-//! Images: `--image rust=...` (default target/tc32/bulb-tc32.bin) and
-//! `--image stock=...` (default stock/stock-dimm.bin).
-
 use super::touchlink::{encrypted_key, nwk_decrypt, TOUCHLINK, ZLL_PROFILE};
 use super::mixed::{ieee_of, mac_record, Fw};
 use super::{node_of, Sim, SimCtx, SimDef};
@@ -34,12 +13,8 @@ pub fn def() -> SimDef {
 }
 
 const QUANTUM: f64 = 0.25;
-/// Scan requests per discovery on a channel: as on an initiator's first
-/// primary channel (BDB 3.0.1 8.6, step 3).
 const SCAN_REQUESTS: usize = 5;
-/// bdbcTLScanTimeBaseDuration: the wait for responses after each scan request.
 const SCAN_WAIT_MS: f64 = 250.0;
-/// macMaxFrameRetries, and the time from one copy of a unicast to the next.
 const MAC_RETRIES: usize = 3;
 const MAC_RETRY_MS: f64 = 5.0;
 const REC_R: [u8; 8] = mac_record([0x01, 0x00, 0x52, 0x00, 0x00]);
@@ -60,16 +35,13 @@ fn new_short(name: &str) -> u16 {
     }
 }
 
-/// The scripted initiator: inter-PAN frames out; what it heard is read back from the air.
 struct Ini {
     id: NodeId,
     mac_seq: u8,
     zcl_seq: u8,
-    /// (air time it was set, channel)
     chans: Vec<(f64, i64)>,
 }
 
-/// A Scan Response's fields in the Python dict's order.
 #[derive(Clone, Debug)]
 struct ScanRsp(Vec<(&'static str, u64)>);
 
@@ -117,7 +89,6 @@ struct Ctx {
     c2: Option<usize>,
     transaction: u32,
     master: Option<[u8; 16]>,
-    /// key index used with each bulb ("R", "T")
     index: Vec<(&'static str, u8)>,
 }
 
@@ -163,7 +134,6 @@ impl Ctx {
         ch
     }
 
-    /// `Initiator.rx`: (t1, source ext, ZCL command, payload after it) of the touchlink frames it received.
     fn rx(s: &Sim, chans: &[(f64, i64)], id: NodeId) -> Vec<(f64, u64, u8, Vec<u8>)> {
         let mut out = Vec::new();
         for f in &s.w.air.frames {
@@ -191,13 +161,11 @@ impl Ctx {
         Self::rx(&self.s, &self.ini.chans, self.ini.id)
     }
 
-    /// A touchlink command: broadcast (dst None) or to one device.
     fn send(&mut self, dst: Option<u64>, cmd: u8, payload: &[u8], delay_ms: f64) {
         let psdu = self.frame(dst, cmd, payload);
         self.put(psdu, delay_ms);
     }
 
-    /// The PSDU of a touchlink command, with the next MAC and ZCL sequence numbers.
     fn frame(&mut self, dst: Option<u64>, cmd: u8, payload: &[u8]) -> Vec<u8> {
         self.ini.zcl_seq = self.ini.zcl_seq.wrapping_add(1);
         self.ini.mac_seq = self.ini.mac_seq.wrapping_add(1);
@@ -213,26 +181,16 @@ impl Ctx {
         with_fcs(&mpdu)
     }
 
-    /// Puts a PSDU on the air `delay_ms` from now.
     fn put(&mut self, psdu: Vec<u8>, delay_ms: f64) {
         let t0 = self.s.w.air.now() + delay_ms;
         let t1 = t0 + airtime_us(psdu.len()) / 1000.0;
         self.s.w.air.at(t0, Ev::Node(self.ini.id, StationEv::Transmit { psdu, t0, t1 }));
     }
 
-    /// Whether `who` acknowledged MAC sequence number `seq` since `since`.
     fn acked(&self, who: NodeId, seq: u8, since: f64) -> bool {
         self.s.w.air.frames.iter().any(|f| f.t0 >= since && f.who == who && f.psdu.len() == 5 && f.psdu[0] & 7 == 2 && f.psdu[2] == seq)
     }
 
-    /// A unicast to one bulb ("R" or "T") as the initiator's MAC sends it
-    /// (802.15.4-2006 7.5.6.4): the same frame again while it is not
-    /// acknowledged, macMaxFrameRetries (3) times at most, a few
-    /// milliseconds apart (the acknowledgement wait and a backoff). Either
-    /// bulb's receiver is off for about 2 ms every 300 ms while its radio
-    /// is lent to a BLE advertising event; a request sent once was lost
-    /// whenever its moment fell into one (with the Rust image that moment
-    /// moves with the code's layout). Whether it was acknowledged.
     fn send_mac(&mut self, name: &str, cmd: u8, payload: &[u8]) -> R<bool> {
         let who = if name == "R" { self.r } else { self.t };
         let psdu = self.frame(Some(ext_of(name)), cmd, payload);
@@ -248,10 +206,6 @@ impl Ctx {
         Ok(false)
     }
 
-    /// A unicast to one bulb ("R" or "T"), sent again while it is not
-    /// acknowledged, three times at most, as an initiator's MAC retries: the
-    /// stock bulb's receiver is off now and then while its radio is on BLE.
-    /// Runs `wait_ms` after each. Whether it was acknowledged.
     fn send_acked(&mut self, name: &str, cmd: u8, payload: &[u8], wait_ms: f64) -> R<bool> {
         let who = if name == "R" { self.r } else { self.t };
         for _ in 0..3 {
@@ -265,18 +219,6 @@ impl Ctx {
         Ok(false)
     }
 
-    /// Touchlink device discovery on one channel (BDB 3.0.1 8.6, steps 2
-    /// and 3): one new transaction identifier for all of it, up to
-    /// `requests` scan requests with it, bdbcTLScanTimeBaseDuration
-    /// (0.25 s) after each, until the wanted bulbs have answered; the
-    /// responses to any of them. A target answers the transaction once: the
-    /// stock one (Telink's target) ignores a scan request with the
-    /// transaction it has answered, and while it is not factory new also
-    /// one with a new transaction, until its transaction timer
-    /// (bdbcTLInterPANTransIdLifetime, 8 s) has run out. So the bulbs must
-    /// not be asked to answer one and the same request: a bulb whose radio
-    /// was lent to a BLE advertising event as the first request went by
-    /// answers the next one.
     fn discover(&mut self, channel: i64, want: &[&str], requests: usize) -> R<Vec<(&'static str, ScanRsp)>> {
         self.set_channel(channel);
         self.transaction += 1;
@@ -296,7 +238,6 @@ impl Ctx {
                 if u32::from_le_bytes(p[0..4].try_into().unwrap()) != self.transaction {
                     continue;
                 }
-                // the latest response of a bulb: the one whose response identifier it keeps
                 let d = ScanRsp::parse(&p);
                 match got.iter_mut().find(|(k, _)| *k == w) {
                     Some(e) => e.1 = d,
@@ -310,9 +251,6 @@ impl Ctx {
         Ok(got)
     }
 
-    /// Scans on a channel as an initiator scans its first primary channel
-    /// (five scan requests, `discover`) until the wanted bulbs have answered
-    /// within one discovery, `tries` discoveries at most; their responses.
     fn scan(&mut self, channel: i64, want: &[&str], tries: usize) -> R<Vec<(&'static str, ScanRsp)>> {
         for _ in 0..tries {
             let got = self.discover(channel, want, SCAN_REQUESTS)?;
@@ -324,7 +262,6 @@ impl Ctx {
         Ok(Vec::new())
     }
 
-    /// A request to one bulb (with MAC retries, `send_mac`), and its response.
     fn request(&mut self, name: &str, cmd: u8, payload: &[u8], rsp_cmd: u8, wait: f64) -> R<Option<Vec<u8>>> {
         let t0 = self.now();
         let mut pl = self.transaction.to_le_bytes().to_vec();
@@ -340,12 +277,10 @@ impl Ctx {
         self.index.iter().find(|(k, _)| *k == name).map(|x| x.1).unwrap_or(4)
     }
 
-    /// The network key as sent under the bulb's key index.
     fn enc_key(&self, name: &str, rid: u32) -> [u8; 16] {
         let t = self.transaction;
         match self.key_index(name) {
             0 => {
-                // development key: the transport key is "PhLi" | transaction | "CLSN" | response (ZLL 8.7.5.2.3)
                 let mut k = [0u8; 16];
                 k[..4].copy_from_slice(b"PhLi");
                 k[4..8].copy_from_slice(&t.to_be_bytes());
@@ -364,7 +299,7 @@ impl Ctx {
         p.push(self.key_index(name));
         p.extend_from_slice(&key);
         if !start {
-            p.push(1); // network update identifier
+            p.push(1);
         }
         p.push(NEW_CHANNEL as u8);
         p.extend_from_slice(&NEW_PAN.to_le_bytes());
@@ -391,12 +326,6 @@ impl Ctx {
         p
     }
 
-    /// Scans the channels until the bulb answers; its scan response (the initiator stays on that channel).
-    /// Scans as a touchlink initiator does (BDB 8.4): five requests on the
-    /// first primary channel, then one on each of the other primary channels,
-    /// then the secondary ones, round after round. A factory-new bulb looking
-    /// for a network to join leaves its channel for a couple of seconds at a
-    /// time; one request per channel in turn kept landing in those passes.
     fn find(&mut self, name: &'static str, tries: usize) -> R<Option<ScanRsp>> {
         const CH: [i64; 20] = [11, 11, 11, 11, 11, 15, 20, 25, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24, 26];
         for i in 0..tries {
@@ -409,7 +338,6 @@ impl Ctx {
         Ok(None)
     }
 
-    /// Finds the bulb, sends the request built for the scan's response identifier.
     fn ask(&mut self, name: &'static str, cmd: u8, payload_for: &dyn Fn(&Ctx, u32) -> Vec<u8>, rsp_cmd: u8)
            -> R<(Option<ScanRsp>, Option<Vec<u8>>)> {
         for _ in 0..8 {
@@ -450,13 +378,8 @@ fn rsp_dict(pairs: &[(&str, bool)]) -> String {
     format!("{{{}}}", pairs.iter().map(|(k, v)| format!("'{k}': {}", if *v { "True" } else { "False" })).collect::<Vec<_>>().join(", "))
 }
 
-/// The touchlink certification key (ZLL 1.0 8.7.5.2.3, key index 15).
 const CERT_KEY: [u8; 16] = [0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF];
 
-/// The touchlink master key: `TOUCHLINK_MASTER_KEY`, else where the stock
-/// dimmable and tunable white images keep it (16 bytes between the end of an
-/// attribute table, `fd ff 21 01 .. .. 0a 00`, and `98 3a 00 00 0f 01 19 00`;
-/// found once in each). (where it came from, key)
 pub fn master_key(stock: &std::path::Path) -> (String, Option<[u8; 16]>) {
     if let Ok(h) = std::env::var("TOUCHLINK_MASTER_KEY") {
         let b: Vec<u8> = (0..h.len() / 2).filter_map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()).collect();
@@ -510,7 +433,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     c.s.w.coord.permit_join = Some(false);
     c.run(1000.0)?;
 
-    // ---- scan
     let got = c.scan(11, &["R", "T"], 12)?;
     if !cx.check(c.now(), "both answer a scan from close by", got.len() == 2, &format!("{} responses", got.len())) {
         return Ok(());
@@ -563,13 +485,11 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     cx.say(&format!("     (profile of the sub-device: Rust {:#06x}, as in its simple descriptor; stock {:#06x})",
                     rr.g("profile"), tt.g("profile")));
 
-    // ---- device information
     let ri = c.request("R", 0x02, &[0], 0x03, 600.0)?;
     let ti = c.request("T", 0x02, &[0], 0x03, 600.0)?;
     let mut ok = ri.is_some() && ti.is_some();
     let mut detail = String::new();
     if let (Some(ri), Some(ti)) = (&ri, &ti) {
-        // transaction, sub-devices, start index, record count; record: IEEE, endpoint, profile, device, version, groups, sort
         ok = ri[..7] == ti[..7] && ri[7..15] == EXT_R.to_le_bytes() && ti[7..15] == EXT_T.to_le_bytes() && ri[15..16] == ti[15..16]
             && ri[18..] == ti[18..];
         let hx = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
@@ -577,7 +497,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     }
     cx.check(c.now(), "Device Information Response: the same record but for the profile, each with its own IEEE address", ok, &detail);
 
-    // ---- identify
     let before = (c.s.light(c.r).duty, c.s.light(c.t).duty);
     for name in ["R", "T"] {
         let mut pl = c.transaction.to_le_bytes().to_vec();
@@ -603,7 +522,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     cx.check(c.now(), "and it returns to its light afterwards", (after_r - before.0).abs() < 1.0,
              &format!("{:.1} % -> {:.1} %", before.0, after_r));
 
-    // ---- on a network with a Trust Center nobody is taken away
     let got = c.scan(11, &["R", "T"], 12)?;
     if !cx.check(c.now(), "a second scan (new transaction)", got.len() == 2, "") {
         return Ok(());
@@ -639,7 +557,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     cx.check(c.now(), "Reset to Factory New Request there: both stay and still answer the coordinator", rsp.iter().all(|x| x.1),
              &rsp_dict(&rsp));
 
-    // ---- out of the box: the coordinator sends both away and lets nobody back in
     for name in ["R", "T"] {
         let sh = shortn(name);
         let mut pl = vec![0u8; 8];
@@ -649,7 +566,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     }
     c.run(3000.0)?;
 
-    // ---- the stock bulb starts the network, the Rust bulb joins it
     let mut c2 = Coord::new_plain(NEW_CHANNEL, NEW_KEY);
     c2.set_network(NEW_CHANNEL, NEW_PAN, INI_EXT, NEW_EXT_PAN, NEW_KEY, Some(false), 0x0001);
     let id2 = c.s.w.add_coord(c2);
@@ -699,7 +615,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     }
     cx.check(c.now(), "both take a command on the new network and answer it", rsp.iter().all(|x| x.1), &rsp_dict(&rsp));
 
-    // ---- the two are neighbors: each one's link status lists the other
     let link_status_of = |s: &Sim, w: NodeId, since: f64| -> Vec<u16> {
         let mut listed = Vec::new();
         for f in &s.w.air.frames {
@@ -728,9 +643,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
         }
         listed
     };
-    // Link Status every 15 s: one of them may be lost (the stock bulb's
-    // radio in BLE mode for its advertising just then, over other starts of
-    // the system timer), so up to four periods
     let t0 = c.now();
     let (r, t) = (c.r, c.t);
     let both = |s: &Sim| link_status_of(s, r, t0).contains(&new_short("T")) && link_status_of(s, t, t0).contains(&new_short("R"));
@@ -749,7 +661,6 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
     cx.check(c.now(), "each one's link status lists the other as a neighbor", lr.contains(&new_short("T")) && lt.contains(&new_short("R")),
              &format!("{{'R': {}, 'T': {}}}", hs(&lr), hs(&lt)));
 
-    // ---- on the touchlink network: described alike, and reset is obeyed
     let got = c.scan(NEW_CHANNEL, &["R", "T"], 12)?;
     if cx.check(c.now(), "both answer a scan on the new network's channel", got.len() == 2, "") {
         let (rr, tt) = (gr(&got, "R"), gr(&got, "T"));
@@ -773,18 +684,12 @@ fn body(cx: &mut SimCtx, c: &mut Ctx) -> R<()> {
                  fresh(&fr) && fresh(&ft), &format!("{{'R': {}, 'T': {}}}", show(&fr), show(&ft)));
     }
 
-    // ---- the Rust bulb starts a network of its own choosing
     let (_d, rsp) = c.ask("R", 0x10, &|cx: &Ctx, rid| cx.open_start(rid), 0x11)?;
     if let Some(r) = &rsp {
         let mut ok = r[4] == 0 && start_t.as_ref().is_some_and(|s| s.len() == r.len());
         let (st, epid, ch, pan) = (r[4], u64::from_le_bytes(r[5..13].try_into().unwrap()), r[14], u16::from_le_bytes([r[15], r[16]]));
         ok = ok && epid != 0 && (11..=26).contains(&ch) && pan != 0 && pan != 0xFFFF;
         let detail = format!("status {st}, extended PAN {epid:#018x}, channel {ch}, PAN {pan:#06x}; response as long as the stock's");
-        // is it there? a beacon request on that channel, sent when the air
-        // is free (the scripted initiator has no CSMA-CA: one that came
-        // 0.03 ms after the end of the bulb's own Link Status found its
-        // radio still turning round from sending, over other starts of the
-        // system timer), and again up to twice, as a scan would
         c.run(1500.0)?;
         c.set_channel(ch as i64);
         let mut beacons: Vec<(u64, u64, u64)> = Vec::new();

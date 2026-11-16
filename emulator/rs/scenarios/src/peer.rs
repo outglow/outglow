@@ -1,8 +1,3 @@
-//! Scripted nodes next to the bulb (`Peer` and `EndDevice` in
-//! emulator/spec/harness.py): a router identity that answers MAC
-//! acknowledgements and otherwise does only what the test asks, and a sleepy
-//! end device that joins through the bulb by MAC association and polls it.
-
 use crate::air::{Air, Ev, NodeId};
 use crate::frames::{ext_bytes, mac_build, BCAST_RXON};
 use crate::session::{CapFrame, Session, R};
@@ -16,15 +11,11 @@ pub enum PeerEv {
 pub struct Peer {
     pub st: Station,
     pub name: String,
-    /// acknowledge frames addressed to us
     pub auto_ack: bool,
-    /// the frame-pending bit of our acknowledgements
     pub ack_pending: bool,
     pub ls_period: Option<f64>,
-    /// the neighbours of our Link Status (None: the bulb)
     pub ls_neighbours: Option<Vec<u16>>,
     dut_short: u16,
-    /// an end device: its capability information
     pub cap: u8,
     pub joined: bool,
 }
@@ -65,8 +56,6 @@ impl Peer {
         air.at(t, Ev::Peer(i, PeerEv::LinkStatus));
     }
 
-    /// Broadcasts Link Status every period (R22 3.6.3.4.1), listing `neighbours`
-    /// (default: the bulb) with cost 1 in both directions.
     pub fn start_link_status(&mut self, air: &mut Air, period_ms: f64, neighbours: Option<Vec<u16>>) {
         self.ls_period = Some(period_ms);
         self.ls_neighbours = neighbours;
@@ -78,7 +67,6 @@ impl Peer {
     }
 }
 
-/// The bulb's beacon as a scanning node reads it (`parse_beacon`).
 #[derive(Clone, Debug)]
 pub struct Beacon {
     pub frame: CapFrame,
@@ -115,7 +103,6 @@ pub fn parse_beacon(f: &CapFrame) -> Beacon {
         epid: None,
         update_id: None,
     };
-    // superframe (2), GTS (1), pending addresses (1), then the NWK beacon payload (R22 3.6.7)
     let q = p.get(4..).unwrap_or(&[]);
     if q.len() >= 15 {
         b.protocol_id = Some(q[0]);
@@ -130,17 +117,14 @@ pub fn parse_beacon(f: &CapFrame) -> Beacon {
     b
 }
 
-/// What a poll got back (`EndDevice.poll`).
 #[derive(Clone, Debug, Default)]
 pub struct Poll {
     pub acked: bool,
     pub pending: bool,
-    /// the frames the parent sent to us after the acknowledgement
     pub frames: Vec<CapFrame>,
     pub t: f64,
 }
 
-/// What a join through the bulb produced (`EndDevice.join`).
 #[derive(Clone, Debug, Default)]
 pub struct EdJoin {
     pub ok: bool,
@@ -155,7 +139,6 @@ pub struct EdJoin {
     pub timeout: Option<EdTimeout>,
 }
 
-/// An End Device Timeout Response (R22 3.4.12).
 #[derive(Clone, Debug)]
 pub struct EdTimeout {
     pub status: u8,
@@ -175,7 +158,6 @@ impl Session {
         &mut self.w.peers[idx(p)]
     }
 
-    /// Attaches a scripted node; `hears`: the nodes in its range (None: everyone).
     pub fn add_peer(&mut self, name: &str, ext: u64, short: Option<u16>, hears: Option<&[&str]>) -> NodeId {
         let id = NodeId::Peer(self.w.peers.len() as u8);
         let c = &self.w.coord.st;
@@ -210,7 +192,6 @@ impl Session {
         id
     }
 
-    /// The node goes silent and deaf (it stays attached, blocked from everyone).
     pub fn remove_peer(&mut self, p: NodeId) {
         let ids: Vec<NodeId> = self.w.air.nodes.clone();
         let pr = self.peer(p);
@@ -232,8 +213,6 @@ impl Session {
         World2 { air: &mut self.w.air, peers: &mut self.w.peers }
     }
 
-    /// A second router identity that already holds the network key. With
-    /// `link_status` it announces the bulb as its neighbour (every 15 s).
     pub fn router(&mut self, name: &str, ext: u64, short: u16, hears: Option<&[&str]>, link_status: bool) -> NodeId {
         let p = self.add_peer(name, ext, Some(short), hears);
         self.w.air.keys.learn(Some(short), Some(ext));
@@ -243,12 +222,10 @@ impl Session {
         p
     }
 
-    /// `router("r2", 0x00124B00BB000002, 0x2B02, hears=("dut",))`
     pub fn router2(&mut self) -> NodeId {
         self.router("r2", 0x00124B00BB000002, 0x2B02, Some(&["dut"]), true)
     }
 
-    /// A scripted end device; opens the network first (Mgmt_Permit_Joining_req through the Trust Center).
     pub fn end_device(&mut self, name: &str, ext: u64, cap: u8, permit: bool) -> R<NodeId> {
         if permit && !self.note::<bool>("permit_open").unwrap_or(false) {
             self.w.coord.permit_joining(&mut self.w.air, 254);
@@ -258,18 +235,16 @@ impl Session {
         Ok(self.new_end_device(name, ext, cap))
     }
 
-    /// An end device without opening the network (`EndDevice(s, name, ext, cap)`).
     pub fn new_end_device(&mut self, name: &str, ext: u64, cap: u8) -> NodeId {
         let p = self.add_peer(name, ext, None, Some(&["dut"]));
         let dut = self.dut_short;
         let pr = self.peer(p);
         pr.cap = cap;
         pr.st.ed_parent = Some(dut);
-        pr.st.ed_initiator = false; // until an End Device Timeout Response is received
+        pr.st.ed_initiator = false;
         p
     }
 
-    /// Beacon Request from a peer; the bulb's beacon or None.
     pub fn beacon_request(&mut self, p: NodeId, wait_ms: f64) -> R<Option<Beacon>> {
         let i = self.mark();
         let (st, air) = self.w.st(p);
@@ -280,7 +255,6 @@ impl Session {
         Ok(f.map(|f| parse_beacon(&f)))
     }
 
-    /// The bulb's beacon in answer to a Beacon Request from a scanning node (None: no beacon).
     pub fn beacon(&mut self) -> R<Option<Beacon>> {
         let sc = match self.note::<NodeId>("scanner") {
             Some(p) => p,
@@ -298,8 +272,6 @@ impl Session {
         Ok(None)
     }
 
-    // ---------------------------------------------------------- end device
-    /// A MAC command from an end device (to its parent by default); returns its MAC sequence number.
     #[allow(clippy::too_many_arguments)]
     pub fn ed_mac_cmd(&mut self, p: NodeId, payload: &[u8], dst: Option<u16>, src_ext: bool, span: Option<u16>, ar: bool,
                       dpan: Option<u16>, dmode: u8) -> u8 {
@@ -316,8 +288,6 @@ impl Session {
         seq
     }
 
-    /// MAC Data Request to the parent: the pending bit of the acknowledgement
-    /// and the frames the parent then sent to us.
     pub fn ed_poll(&mut self, p: NodeId, wait_ms: f64, src_ext: bool) -> R<Poll> {
         let i = self.mark();
         let seq = self.ed_mac_cmd(p, &[0x04], None, src_ext, None, true, None, 2);
@@ -344,8 +314,6 @@ impl Session {
         Ok(res)
     }
 
-    /// Association through the bulb, the network key from the Trust Center via
-    /// the bulb, Device_annce (`EndDevice.join`).
     pub fn ed_join(&mut self, p: NodeId, timeout: Option<u8>, annce: bool) -> R<EdJoin> {
         let mut r = EdJoin::default();
         for _ in 0..4 {
@@ -365,7 +333,7 @@ impl Session {
         let i0 = self.mark();
         let cap = self.peer(p).cap;
         self.ed_mac_cmd(p, &[0x01, cap], None, true, Some(0xFFFF), true, None, 2);
-        self.run(500.0)?; // macResponseWaitTime before asking for the response
+        self.run(500.0)?;
         let pl = self.ed_poll(p, 60.0, true)?;
         r.poll_pending = Some(pl.pending);
         let Some(rsp) = pl.frames.iter().find(|f| f.mac_cmd() == Some(0x02)).cloned() else {
@@ -389,7 +357,6 @@ impl Session {
         self.peer(p).st.short = Some(short);
         self.w.air.keys.learn(Some(short), Some(ext));
         r.short = Some(short);
-        // the network key: an unsecured NWK frame from the parent carrying the APS Transport Key
         let mut key = None;
         for _ in 0..12 {
             let pl = self.ed_poll(p, 60.0, false)?;
@@ -438,7 +405,6 @@ impl Session {
         st.tx_zdo(air, BCAST_RXON, 0x0013, &body, &Tx::new().mac_dst(parent).ar(true));
     }
 
-    /// End Device Timeout Request (R22 3.4.11); the response or None.
     pub fn ed_timeout_request(&mut self, p: NodeId, enumv: u8, config: u8, wait_ms: f64) -> R<Option<EdTimeout>> {
         let i = self.mark();
         let parent = self.peer(p).st.ed_parent.unwrap_or(0);
@@ -465,15 +431,12 @@ impl Session {
         Ok(None)
     }
 
-    /// NWK Leave from the device itself: request = 0, so the destination is
-    /// 0xFFFD, radius 1 (R22 3.4.4.2); handed to the parent as a MAC unicast.
     pub fn ed_leave(&mut self, p: NodeId, rejoin: bool) {
         let opts = if rejoin { 0x20 } else { 0 };
         let (st, air) = self.w.st(p);
         st.tx_nwk_cmd(air, BCAST_RXON, &[0x04, opts], &Tx::new().radius(1));
     }
 
-    /// NWK Rejoin Request to the parent (R22 3.4.6); the Rejoin Response frame or None.
     pub fn ed_rejoin_request(&mut self, p: NodeId, secure: bool, wait_ms: f64) -> R<Option<CapFrame>> {
         let i = self.mark();
         let pr = self.peer(p);
@@ -503,8 +466,6 @@ struct World2<'a> {
 }
 
 impl Peer {
-    /// A scripted node that only does what its scenario asks: no acknowledgements,
-    /// no Link Status (the Green Power device of rust_gp_sim.py).
     pub fn bare(st: Station, name: &str) -> Peer {
         Peer {
             st,
@@ -519,8 +480,6 @@ impl Peer {
         }
     }
 
-    /// A scripted node outside a spec session (no bulb address known): it
-    /// acknowledges frames addressed to it and sends only what its owner sends.
     pub fn bare_ack(st: Station, name: &str) -> Peer {
         Peer {
             st,

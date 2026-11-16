@@ -1,10 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The bits of Go's fmt the models' output needs and Rust's formatting does
-//! not give the same way.
-
-/// Go's %v (and %g) of a float64: the shortest digits that read back
-/// (strconv 'g', -1), in %e form when the exponent is < -4 or >= 6, the
-/// exponent with at least 2 digits.
 pub fn g(x: f64) -> String {
     if x.is_nan() {
         return "NaN".into();
@@ -15,7 +8,7 @@ pub fn g(x: f64) -> String {
     if x == 0.0 {
         return if x.is_sign_negative() { "-0".into() } else { "0".into() };
     }
-    let e = format!("{:e}", x); // shortest digits: "-1.2345e-7"
+    let e = format!("{:e}", x);
     let (mant, exp) = e.split_once('e').unwrap();
     let exp: i32 = exp.parse().unwrap();
     let (neg, mant) = match mant.strip_prefix('-') {
@@ -42,7 +35,7 @@ pub fn g(x: f64) -> String {
         out.push_str(&a.to_string());
         return out;
     }
-    let dp = exp + 1; // digits before the point
+    let dp = exp + 1;
     let n = digits.len() as i32;
     if dp <= 0 {
         out.push_str("0.");
@@ -63,7 +56,6 @@ pub fn g(x: f64) -> String {
     out
 }
 
-/// Go's %x of a byte slice (and hex.EncodeToString).
 pub fn hex(b: &[u8]) -> String {
     const D: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(2 * b.len());
@@ -74,7 +66,6 @@ pub fn hex(b: &[u8]) -> String {
     s
 }
 
-/// Go's %.Nf: Rust's {:.N} except for the infinities.
 pub fn f(x: f64, prec: usize) -> String {
     if x.is_infinite() {
         return if x > 0.0 { "+Inf".into() } else { "-Inf".into() };
@@ -82,7 +73,6 @@ pub fn f(x: f64, prec: usize) -> String {
     format!("{:.*}", prec, x)
 }
 
-/// hex.DecodeString: the bytes decoded before an error, and whether there was none.
 pub fn unhex(s: &str) -> (Vec<u8>, bool) {
     let b = s.as_bytes();
     let val = |c: u8| -> Option<u8> {
@@ -112,7 +102,6 @@ pub fn unhex(s: &str) -> (Vec<u8>, bool) {
 mod tests {
     #[test]
     fn go_v_float() {
-        // go: fmt.Printf("%v|", v) for each
         let xs = [0.0, 1.0, 123456.0, 1234567.0, 999999.5, 1e21, 1e20, 0.0001, 0.00001, 12.345, 100000.0, 1000000.0, 2.5e-5, -3.25,
             123456789.123];
         let want = "0|1|123456|1.234567e+06|999999.5|1e+21|1e+20|0.0001|1e-05|12.345|100000|1e+06|2.5e-05|-3.25|1.23456789123e+08|";

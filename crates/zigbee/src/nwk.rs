@@ -1,5 +1,3 @@
-//! Zigbee PRO network layer frame format (ZigBee spec 05-3474, 3.3 and 4.5.1).
-
 use crate::aes::Aes128;
 use crate::crypto;
 use crate::util::{Buf, Reader};
@@ -26,30 +24,24 @@ pub const CMD_TIMEOUT_RESPONSE: u8 = 0x0C;
 
 pub const STATUS_NO_ROUTE: u8 = 0x00;
 pub const STATUS_TREE_LINK_FAILURE: u8 = 0x01;
-/// Non-tree link failure.
 pub const STATUS_LINK_FAILURE: u8 = 0x02;
 pub const STATUS_SOURCE_ROUTE_FAILURE: u8 = 0x0B;
 pub const STATUS_MANY_TO_ONE_FAILURE: u8 = 0x0C;
 pub const STATUS_ADDRESS_CONFLICT: u8 = 0x0D;
 pub const STATUS_UNKNOWN_COMMAND: u8 = 0x13;
 
-/// Zigbee PRO protocol version in the frame control field.
 pub const PROTOCOL_VERSION: u8 = 2;
-/// Default radius: twice nwkMaxDepth (15).
 pub const DEFAULT_RADIUS: u8 = 30;
 
 pub fn is_broadcast(addr: u16) -> bool {
     addr >= 0xFFF8
 }
 
-/// Most relays a source route can list here (limited by what a relay has to
-/// keep while it forwards the frame).
 pub const MAX_RELAYS: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
     pub frame_type: u8,
-    /// Discover route field: 0 suppress, 1 enable.
     pub discover: u8,
     pub security: bool,
     pub dst: u16,
@@ -59,11 +51,7 @@ pub struct Header {
     pub dst_ext: Option<u64>,
     pub src_ext: Option<u64>,
     pub multicast: Option<u8>,
-    /// Source route subframe: relay count, relay index, relay list.
     pub relays: Option<(u8, u8, [u16; MAX_RELAYS])>,
-    /// End Device Initiator: the frame comes straight from an end device
-    /// whose parent keeps a timeout for it. Its parent clears the bit when
-    /// it passes the frame on.
     pub end_device_initiator: bool,
 }
 
@@ -85,7 +73,6 @@ impl Header {
         }
     }
 
-    /// Parses a header; returns it with its length.
     pub fn parse(frame: &[u8]) -> Option<(Header, usize)> {
         let mut r = Reader::new(frame);
         let fc = r.u16()?;
@@ -154,13 +141,8 @@ impl Header {
     }
 }
 
-/// Length of the NWK auxiliary security header: control, frame counter,
-/// source address, key sequence number.
 pub const AUX_LEN: usize = 14;
-/// Security control as transmitted (level zeroed): network key, extended nonce.
 const SC_AIR: u8 = 0x28;
-/// The same with the real level 5 (ENC-MIC-32), as used in the nonce and the
-/// authenticated data.
 const SC_CALC: u8 = 0x2D;
 
 pub(crate) fn nonce(ext: u64, counter: u32, sc: u8) -> [u8; 13] {
@@ -171,9 +153,6 @@ pub(crate) fn nonce(ext: u64, counter: u32, sc: u8) -> [u8; 13] {
     n
 }
 
-/// Secures a frame with the network key. `out` already holds the NWK header
-/// (security bit set) starting at `header_at`; this appends the auxiliary
-/// header, the encrypted payload and the MIC.
 pub fn secure(key: &Aes128, key_seq: u8, ext: u64, counter: u32, out: &mut Buf, header_at: usize, payload: &[u8]) {
     let aux_at = out.len();
     out.u8(SC_CALC);
@@ -191,7 +170,6 @@ pub fn secure(key: &Aes128, key_seq: u8, ext: u64, counter: u32, out: &mut Buf, 
     out.set(aux_at, SC_AIR);
 }
 
-/// Auxiliary header fields of a secured frame.
 #[derive(Debug, Clone, Copy)]
 pub struct Aux {
     pub counter: u32,
@@ -199,19 +177,15 @@ pub struct Aux {
     pub key_seq: u8,
 }
 
-/// Reads the auxiliary header that follows the NWK header at `header_len`.
 pub fn parse_aux(frame: &[u8], header_len: usize) -> Option<Aux> {
     let mut r = Reader::new(frame.get(header_len..)?);
     let sc = r.u8()?;
-    // network key (key id 1) with the extended nonce is the only form in use
     if sc & 0x38 != 0x28 {
         return None;
     }
     Some(Aux { counter: r.u32()?, ext: r.u64()?, key_seq: r.u8()? })
 }
 
-/// Verifies and decrypts a secured frame in place. On success the plaintext
-/// payload is `frame[header_len + AUX_LEN..][..returned length]`.
 pub fn unsecure(key: &Aes128, aux: &Aux, frame: &mut [u8], header_len: usize) -> Option<usize> {
     let body_at = header_len + AUX_LEN;
     if frame.len() < body_at + crypto::MIC_LEN {
@@ -223,14 +197,6 @@ pub fn unsecure(key: &Aes128, aux: &Aux, frame: &mut [u8], header_len: usize) ->
     crypto::ccm_decrypt(key, &nonce(aux.ext, aux.counter, sc), aad, body)
 }
 
-/// Link cost 1..=7 from an average link quality indication: the initial
-/// estimate R22 3.6.3.1 asks for ("the initial cost estimates shall be based
-/// on average LQI"; "a table-driven function may be used"). The table is
-/// Telink's for this radio (its driver, drv_radio.h `ZB_LQI_TO_PATH_COST`,
-/// from tests on the TLSR8258, as the text recommends), on the LQI scale of
-/// the hardware layer (-99 dBm = 0 .. -15 dBm = 255): about -60 dBm and up 1,
-/// -68 2, -76 3, -84 5, weaker 7. Once enough frames have gone to a
-/// neighbor, `cost_from_delivery` takes over for it.
 pub fn cost_from_lqi(lqi: u8) -> u8 {
     match lqi {
         119..=255 => 1,
@@ -241,9 +207,6 @@ pub fn cost_from_lqi(lqi: u8) -> u8 {
     }
 }
 
-/// Link cost from the probability of delivery `p` (0..=65535 for 0..1):
-/// C = min(7, round(1 / p^4)), 7 for p = 0 (R22 3.6.3.1). The thresholds are
-/// where 1 / p^4 crosses 1.5, 2.5, .. 6.5.
 pub fn cost_from_delivery(p: u16) -> u8 {
     match p {
         59218..=65535 => 1,
@@ -262,7 +225,6 @@ mod tests {
 
     #[test]
     fn link_cost_from_the_probability_of_delivery_is_the_formula_of_the_spec() {
-        // C = min(7, round(1 / p^4)), p = 0 gives 7
         for q in 0..=65535u16 {
             let p = q as f64 / 65535.0;
             let expected = if q == 0 { 7 } else { (1.0 / p.powi(4)).round().min(7.0) as u8 };
@@ -272,14 +234,12 @@ mod tests {
 
     #[test]
     fn the_initial_link_cost_follows_the_radio_vendors_table() {
-        // -60 dBm excellent, -68 good, -76 ok, -84 weak (drv_radio.h)
         let lqi = |dbm: i32| (255 * (dbm + 99) / 84) as u8;
         assert_eq!(cost_from_lqi(lqi(-55)), 1);
         assert_eq!(cost_from_lqi(lqi(-65)), 2);
         assert_eq!(cost_from_lqi(lqi(-72)), 3);
         assert_eq!(cost_from_lqi(lqi(-80)), 5);
         assert_eq!(cost_from_lqi(lqi(-90)), 7);
-        // the edges as the vendor's macro has them (lqi > 118 / > 94 / > 69 / > 45)
         assert_eq!((cost_from_lqi(119), cost_from_lqi(118)), (1, 2));
         assert_eq!((cost_from_lqi(95), cost_from_lqi(94)), (2, 3));
         assert_eq!((cost_from_lqi(70), cost_from_lqi(69)), (3, 5));
@@ -316,7 +276,6 @@ mod tests {
     #[test]
     fn secure_then_unsecure_recovers_the_payload() {
         let key = Aes128::new(&[7u8; 16]);
-        // a 3-byte prefix stands for the MAC header in front of the NWK frame
         let mut full = Buf::from_slice(&[0xAA, 0xBB, 0xCC]);
         Header::new(FRAME_CMD, 0xFFFC, 0x7A21, 1, 9).write(&mut full);
         let payload = [0x08, 0x61, 0x00, 0x00, 0x11];
@@ -332,7 +291,6 @@ mod tests {
         frame[..n].copy_from_slice(out.as_slice());
         let plen = unsecure(&key, &aux, &mut frame[..n], 8).unwrap();
         assert_eq!(&frame[8 + AUX_LEN..8 + AUX_LEN + plen], &payload);
-        // a flipped header bit breaks the MIC
         frame[..n].copy_from_slice(out.as_slice());
         frame[6] ^= 1;
         assert!(unsecure(&key, &aux, &mut frame[..n], 8).is_none());

@@ -1,4 +1,3 @@
-// The big-integer helper against u128 arithmetic.
 use crate::bigint::BigUint;
 
 fn to_u128(b: &BigUint) -> u128 {
@@ -45,7 +44,6 @@ fn bigint_against_u128() {
             }
         });
     }
-    // 512-bit by 256-bit: (a*b + r) / b.
     let a = BigUint::from_hex("ffffffff00000001000000000000000000000000fffffffffffffffffffffffe").unwrap();
     let b = BigUint::from_hex("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296").unwrap();
     let r = BigUint::from_hex("1234567").unwrap();

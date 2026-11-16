@@ -1,6 +1,3 @@
-//! A pcap of the 802.15.4 air (`radio154.Pcap`): linktype 195 (IEEE 802.15.4
-//! with FCS), timestamps in simulation time. Opt-in: `Air::pcap`.
-
 use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
@@ -24,7 +21,6 @@ impl Pcap {
         Ok(Pcap { f })
     }
 
-    /// One frame (PSDU with FCS) that started at `ms`.
     pub fn write(&mut self, ms: f64, psdu: &[u8]) -> io::Result<()> {
         let us = (ms * 1000.0) as u64;
         let mut r = Vec::with_capacity(16 + psdu.len());

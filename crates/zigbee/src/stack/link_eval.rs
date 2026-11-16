@@ -1,14 +1,3 @@
-//! How well the link cost (R22 3.6.3.1) and the neighbour aging (3.6.3.4)
-//! do on links that change: the firmware's own `Neighbor` is fed simulated
-//! transmissions, no stack, no radio. Seconds, deterministic.
-//!
-//!   cargo test -p zigbee link_eval -- --nocapture                     # the scorecard
-//!   cargo test -p zigbee link_eval_variants -- --nocapture --ignored  # candidates side by side
-//!
-//! The yardstick is the spec's formula on the true probability of delivery:
-//! `C = min(7, round(1/p^4))`. A frame is up to 4 attempts (1 + 3 MAC
-//! retries), each one a sample, as on the bulb (`mac_transmit`).
-
 extern crate std;
 use std::{boxed::Box, format, println, string::String, vec::Vec};
 
@@ -18,7 +7,6 @@ struct Rng(u64);
 
 impl Rng {
     fn f(&mut self) -> f64 {
-        // xorshift64*
         self.0 ^= self.0 >> 12;
         self.0 ^= self.0 << 25;
         self.0 ^= self.0 >> 27;
@@ -26,14 +14,9 @@ impl Rng {
     }
 }
 
-/// Probability that one attempt (frame + ACK) gets through.
 enum Channel {
     Steady(f64),
-    /// `p0` until frame `at`, then `p1`
     Step(f64, f64, usize),
-    /// Gilbert-Elliott: good `pg`, bad `pb`; `enter` / `leave` per attempt.
-    /// Losses in bursts, as when the radio is lent to BLE or a neighbour
-    /// Wi-Fi burst covers the channel.
     Bursty { pg: f64, pb: f64, enter: f64, leave: f64, bad: bool },
 }
 
@@ -63,7 +46,6 @@ impl Channel {
         rng.f() < p
     }
 
-    /// The long-run probability of delivery at `frame`: what the cost should follow.
     fn truth(&self, frame: usize) -> f64 {
         match self {
             Channel::Steady(p) => *p,
@@ -82,7 +64,6 @@ impl Channel {
     }
 }
 
-/// The spec's cost, `C = min(7, round(1/p^4))`.
 fn ideal(p: f64) -> u8 {
     if p <= 0.0 {
         7
@@ -93,16 +74,13 @@ fn ideal(p: f64) -> u8 {
 
 const MAC_ATTEMPTS: u8 = 4;
 
-/// A way of turning transmissions into a link cost.
 trait Estimator {
     fn sample(&mut self, attempts: u8, ok: bool);
     fn measured(&self) -> bool;
     fn cost(&self) -> u8;
-    /// the estimated probability of delivery, 0..1
     fn p(&self) -> f64;
 }
 
-/// The firmware's: `Neighbor::delivery_sample` and `link_cost`.
 impl Estimator for Neighbor {
     fn sample(&mut self, attempts: u8, ok: bool) {
         self.delivery_sample(attempts, ok)
@@ -118,12 +96,6 @@ impl Estimator for Neighbor {
     }
 }
 
-/// Candidates: the first `warmup` samples counted, then an average of
-/// 1/2^`shift` a sample kept in 16 bits (rounded, no truncation bias), and
-/// optionally hysteresis: the cost moves only when it would move even with
-/// the estimate `margin` closer to where it was. A sample is each attempt on
-/// the air (as the firmware), or with `first_only` the first attempt of each
-/// frame only.
 #[derive(Clone, Copy)]
 struct Params {
     shift: u32,
@@ -148,7 +120,7 @@ struct Candidate {
     k: Params,
     n: u8,
     hits: u8,
-    p: u32, // 0..=65535
+    p: u32,
     cost: u8,
 }
 
@@ -175,7 +147,6 @@ impl Candidate {
             let p = self.p as i64;
             let half = 1i64 << (k.shift - 1);
             let d = target - p;
-            // round half away from zero, so the average can reach 0 and 1
             let step = if d >= 0 { (d + half) >> k.shift } else { -((-d + half) >> k.shift) };
             self.p = (p + step).clamp(0, 65535) as u32;
         }
@@ -216,11 +187,6 @@ impl Estimator for Candidate {
     }
 }
 
-/// The estimator of CTP / Contiki-NG: one sample a frame, the attempts it
-/// took (ETX), `penalty` more when it was not acknowledged at all; an
-/// average of 1/2^`shift` a frame after the first `warmup` frames (their
-/// plain mean). The cost is the spec's of p = 1/ETX, with the same
-/// hysteresis (in p) as the candidates above.
 #[derive(Clone, Copy)]
 struct EtxParams {
     shift: u32,
@@ -239,7 +205,7 @@ struct Etx {
     k: EtxParams,
     frames: u8,
     sum: u32,
-    etx: u32, // x 256
+    etx: u32,
     cost: u8,
 }
 
@@ -291,7 +257,6 @@ impl Estimator for Etx {
     }
 }
 
-/// A point of the grid: either kind of estimator.
 #[derive(Clone, Copy)]
 enum Point {
     Ewma(Params),
@@ -313,7 +278,6 @@ impl Point {
     }
 }
 
-/// One frame through the MAC: attempts until an ACK or 4 in all.
 fn send(n: &mut dyn Estimator, ch: &mut Channel, frame: usize, rng: &mut Rng) -> bool {
     for a in 1..=MAC_ATTEMPTS {
         if ch.attempt(frame, rng) {
@@ -353,7 +317,6 @@ impl Score {
     fn bias(&self) -> f64 {
         self.err_p / self.frames as f64
     }
-    /// median and 90th percentile of the reaction
     fn react(&self) -> (usize, usize) {
         let mut s = self.react.clone();
         s.sort();
@@ -385,10 +348,6 @@ const FRAMES: usize = 1000;
 
 type Make<'a> = &'a dyn Fn() -> Box<dyn Estimator>;
 
-/// Runs an estimator on a channel; scores every frame after the first 16
-/// attempts (before them the cost comes from the LQI, not measured). With a
-/// change at `step_at`, `react` is the frames until the cost is first within
-/// one of the new truth.
 fn run(est: Make, make: &dyn Fn() -> Channel, step_at: Option<usize>) -> Score {
     run_seeds(est, make, step_at, 1..SEEDS + 1)
 }
@@ -473,17 +432,10 @@ fn link_eval_scorecard() {
     println!("\nroute choice, direct vs two hops by the sum of costs (against the lower airtime):");
     println!("  measured costs wrong {wrong:.1}%, mean extra airtime when wrong {regret:.0}%; exact spec costs wrong {wrong_ideal:.1}%");
     aging();
-    // what must not get worse: on clearly good and clearly bad links the
-    // cost is within one of the spec's almost always
     assert!(worst_within1 > 90.0, "within one of the spec cost only {worst_within1:.1}%");
-    // and it holds still: with the hysteresis about 20 changes per 1000
-    // frames on the worst steady link (without, 600)
     assert!(worst_flaps < 50.0, "the cost changed {worst_flaps:.0} times per 1000 frames on a steady link");
 }
 
-/// The candidates side by side: one row each, the scenarios summed up.
-///
-///   cargo test -p zigbee link_eval_variants -- --nocapture --ignored
 #[test]
 #[ignore = "a comparison to read, not a check"]
 fn link_eval_variants() {
@@ -553,16 +505,11 @@ fn link_eval_variants() {
     println!("route wrong: direct vs two hops chosen against the lower airtime; extra air: mean extra airtime when wrong");
 }
 
-/// One estimator scored for the grid: all lower is better.
 #[derive(Clone, Copy, Default)]
 struct Eval {
-    /// cost changes per 1000 frames, links of 0.7..0.9 and the bursty ones
     flaps: f64,
-    /// frames until the cost follows a change (median, mean of 0.98 -> 0.6 and 0.6 -> 0.98)
     react: f64,
-    /// the same, 90th percentile
     react90: f64,
-    /// % of frames with the cost more than one off the spec's, steady links
     miss: f64,
 }
 
@@ -598,19 +545,12 @@ fn evaluate(est: Make, seeds: core::ops::Range<u64>) -> Eval {
     e
 }
 
-/// Every combination of the candidate's parameters, scored on one set of
-/// seeds; the ones nothing beats on all of flaps, reaction and misses at
-/// once (the Pareto front) are scored again on seeds not seen before, and
-/// for their route choice.
-///
-///   cargo test -p zigbee --release link_eval_pareto -- --nocapture --ignored
 #[test]
 #[ignore = "a search to read, not a check"]
 fn link_eval_pareto() {
     let train = 1..101u64;
     let check = 5001..5101u64;
     let mut grid: Vec<Point> = Vec::new();
-    // ETX a frame (CTP, Contiki-NG: weight 0.1 a frame, 12 more for a frame not acknowledged)
     for shift in 1..=5 {
         for m in 0..=20 {
             for penalty in [0u8, 4, 12] {
@@ -620,7 +560,6 @@ fn link_eval_pareto() {
     }
     for shift in 2..=6 {
         for m in 0..=20 {
-            // the first samples matter little (8, 16 and 32 score alike); 16 as the firmware
             for warmup in [16u8] {
                 for first_only in [false, true] {
                     grid.push(Point::Ewma(Params { shift, margin: m as f64 / 100.0, warmup, first_only }));
@@ -676,9 +615,6 @@ fn link_eval_pareto() {
     println!("\nflaps: cost changes per 1000 frames (links 0.7-0.9 and bursty); react: frames until the cost follows a change,");
     println!("median (p90); miss: frames more than one off the spec's cost; ' = on the seeds not used to choose; route: wrong");
     println!("direct-vs-two-hops choices and the extra airtime when wrong");
-    // one way to choose: the calmest that follows a change within N frames and
-    // misses at most M% (on the unseen seeds; a wide hysteresis is calm by
-    // keeping a stale cost, which the cap on misses keeps out)
     println!();
     for max_miss in [100.0, 12.0, 9.0] {
         for limit in [10.0, 15.0, 20.0, 30.0] {
@@ -700,8 +636,6 @@ fn link_eval_pareto() {
     }
 }
 
-/// Expected airtime per delivered frame (attempts per hop, end to end, with
-/// 4 MAC attempts a hop): what the route choice should minimise.
 fn airtime(hops: &[f64]) -> f64 {
     let mut air = 0.0;
     let mut reach = 1.0;
@@ -713,11 +647,6 @@ fn airtime(hops: &[f64]) -> f64 {
     air / reach.max(1e-9)
 }
 
-/// Direct link of `pd` against two hops `p1`, `p2`: the route with the lower
-/// sum of costs after 300 frames on each link (ties to the direct one) versus
-/// the one with the lower airtime. Returns the share chosen wrong (%), the
-/// mean extra airtime when wrong (%), and the share wrong with the exact
-/// spec costs (%), which is the formula's own.
 fn route_choice(est: Make) -> (f64, f64, f64) {
     let ps = [0.99, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4];
     let mut cases = 0;
@@ -758,9 +687,6 @@ fn route_choice(est: Make) -> (f64, f64, f64) {
     )
 }
 
-/// A neighbour heard only by its link status, every 15 s with up to 1 s of
-/// jitter less (as we send ours), each one lost with probability `q`. Our
-/// aging ticks every 15 s; stale after `AGE_LIMIT` periods unheard.
 fn aging() {
     println!("\naging: neighbour that is there, its link status lost with q; stale events per day");
     let day_ms = 24 * 3600 * 1000u64;

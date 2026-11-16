@@ -1,4 +1,3 @@
-// hooks_test.go
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -31,8 +30,6 @@ fn check_hooks() {
     assert_eq!(m.sram_code_end(), 0x400, "SRAM code end with the hook");
 }
 
-/// The Rust hook contract: a hook may call back into the machine and so
-/// reach its own slot again (Go's re-entrant chained hooks).
 #[test]
 fn reentrant_hooks() {
     let mut m = super::rbg_machine();
@@ -41,8 +38,6 @@ fn reentrant_hooks() {
     m.reg_write_hook = Some(Rc::new(move |m: &mut Machine, o: usize, _size: usize, val: u32| {
         s2.set(s2.get() + 1);
         if o == 0x74F {
-            // As radio154.Install8258: the 0x74f write goes on as a 0x74a write
-            // through the whole chain.
             let cur = m.regs[0x74A] as u32 | if val & 1 != 0 { 2 } else { 0 };
             m.reg_write(0x74A, 1, cur)?;
             m.regs[0x74F] = val as u8;

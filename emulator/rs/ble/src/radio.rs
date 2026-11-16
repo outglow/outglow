@@ -1,13 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Radio (radio.go): the TLSR8278 RF block as a BLE peripheral's link layer
-//! drives it.
-//!
-//! The radio is shared (`RadioRef`, an `Rc<RefCell<Radio>>`): the machine's
-//! hooks, the scheduled steps and the centrals all hold it. No borrow of it is
-//! held across a call into the machine or into a peer, since both can come
-//! back into the radio (a register write re-enters the hook chain, a central
-//! schedules its next event).
-
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::rc::Rc;
@@ -29,10 +19,8 @@ pub const CRC2: u32 = 0x10;
 pub const DONE: u32 = 0x20;
 pub const FSMTO: u32 = 0x40;
 pub const FIRSTTO: u32 = 0x400;
-/// TPLL: from the end of the chip's packet to the start of the peer's reply.
 pub const TURNAROUND_MS: f64 = 0.150;
 
-/// The advertising access address as a link layer writes 0x408..0x40b (MSB first).
 pub const ADV_AA: [u8; 4] = [0x8e, 0x89, 0xbe, 0xd6];
 
 pub fn ll_name_of(op: u8) -> Option<&'static str> {
@@ -92,20 +80,14 @@ pub fn att_name_of(op: u8) -> Option<&'static str> {
     })
 }
 
-/// 1M PHY: preamble 1, access address 4, header 2, payload, CRC 3 bytes.
 pub fn airtime_us(pdu: &[u8]) -> i64 {
     (1 + 4 + 2 + pdu[1] as i64 + 3) * 8
 }
 
-/// What the radio needs of a central (Go's Peer, plus the optional
-/// AirLostPeer, AirLostTxPeer and Scanner methods with do-nothing defaults:
-/// Go skips a peer without them, which is what the defaults do).
 pub trait Peer {
-    /// The reply to an ADV_IND (CONNECT_IND), or None.
     fn on_adv(&self, m: &mut Machine, pdu: &[u8], ch: u8) -> Option<Vec<u8>>;
     fn on_connect_sent(&self, m: &mut Machine, pdu: &[u8], t_end: f64);
     fn drop_pdu(&self, m: &mut Machine, pdu: &[u8]) -> bool;
-    /// The next PDU in this event, or None.
     fn on_air(&self, m: &mut Machine, pdu: &[u8], ch: u8, tx_addr: u32) -> Option<Vec<u8>>;
     fn air_lost(&self, _m: &mut Machine, _pdu: &[u8]) {}
     fn air_lost_tx(&self, _m: &mut Machine, _pdu: &[u8]) {}
@@ -116,17 +98,14 @@ pub trait Peer {
 
 pub type PeerRc = Rc<dyn Peer>;
 
-/// Go's interface equality of two peers: the same object.
 pub fn same_peer(a: &PeerRc, b: &PeerRc) -> bool {
     Rc::as_ptr(a) as *const () == Rc::as_ptr(b) as *const ()
 }
 
-/// A peer in Telink's private format (a 2.4G dongle model): the reply payload, or None.
 pub trait TpllPeer {
     fn on_tpll(&self, m: &mut Machine, payload: &[u8], mhz: i64, access_code: &[u8]) -> Option<Vec<u8>>;
 }
 
-/// An open receive window in Telink's private format.
 #[derive(Clone, Debug)]
 pub struct Srx {
     pub t: f64,
@@ -152,7 +131,6 @@ pub struct ScanReq {
     pub pdu: Vec<u8>,
 }
 
-/// A peripheral connection event the link layer scheduled.
 #[derive(Clone, Debug)]
 pub struct Brx {
     pub t: f64,
@@ -164,7 +142,6 @@ pub struct Brx {
     pub nesn: i64,
     pub rx: i64,
     pub f03: u8,
-    /// The last central packet's start and end (ms).
     pub on_air: Option<[f64; 2]>,
 }
 pub type BrxRc = Rc<RefCell<Brx>>;
@@ -194,7 +171,6 @@ pub struct Cmd {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Miss {
     pub ms: f64,
-    /// The BLE channel, or the TPLL frequency in MHz.
     pub ch: i64,
     pub why: String,
 }
@@ -205,7 +181,6 @@ pub struct FifoEntry {
     pub addr: u16,
 }
 impl FifoEntry {
-    /// Go's %+v of the struct.
     pub fn go_plus_v(&self) -> String {
         format!("{{Ms:{} WPtr:{} Addr:{}}}", crate::gofmt::g(self.ms), self.wptr, self.addr)
     }
@@ -217,7 +192,6 @@ pub struct AdvFifo {
     pub rptr: i64,
     pub wptr: i64,
 }
-/// A command the radio did not start because a suspend lost its setup.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RfRefusal {
     pub ms: f64,
@@ -227,7 +201,6 @@ pub struct RfRefusal {
 
 pub type OnAirTxFn = Rc<dyn Fn(f64, u8, u32, Vec<u8>)>;
 
-/// The TLSR8278 RF block model.
 pub struct Radio {
     pub log: Option<Rc<dyn Fn(&str)>>,
     pub central: Option<PeerRc>,
@@ -273,10 +246,8 @@ pub struct Radio {
     pub air_rx_miss: Vec<Miss>,
 }
 
-/// The registers a link layer's radio initialisation writes.
 pub const RF_INIT_REGS: [usize; 26] = [0x12D2, 0x12D3, 0x127B, 0x1279, 0x124A, 0x124B, 0x1254, 0x1255, 0x1256, 0x1257, 0x1276,
     0x134E, 0x134C, 0x401, 0x402, 0x430, 0x460, 0x461, 0x462, 0x463, 0x464, 0x465, 0xF06, 0xF0C, 0xF0E, 0xF10];
-/// The PA power registers.
 pub const RF_POWER_REGS: [usize; 3] = [0x1225, 0x1226, 0x1227];
 
 pub fn rf_suspend_regs() -> Vec<usize> {
@@ -304,12 +275,10 @@ fn irq_level(m: &mut Machine) -> u32 {
     0
 }
 
-/// The shared radio.
 #[derive(Clone)]
 pub struct RadioRef(pub Rc<RefCell<Radio>>);
 
 impl RadioRef {
-    /// A borrow of the radio's state, for a moment.
     pub fn b(&self) -> RefMut<'_, Radio> {
         self.0.borrow_mut()
     }
@@ -321,7 +290,6 @@ impl RadioRef {
         }
     }
 
-    /// NewRadio attaches the model to m.
     pub fn new(m: &mut Machine, log: Option<Rc<dyn Fn(&str)>>) -> RadioRef {
         settings::init();
         let mut rf_power_on = HashMap::new();
@@ -388,7 +356,6 @@ impl RadioRef {
         m.level_sources.push(Rc::new(irq_level));
         let r4 = rr.clone();
         m.reset_hooks.push(Rc::new(move |_m: &mut Machine| r4.on_reset()));
-        // An idle loop jumps to the next timer compare: not past the radio's next step.
         let prev_idle = m.idle_skip_hook.clone();
         let r5 = rr.clone();
         m.idle_skip_hook = Some(Rc::new(move |m: &mut Machine, mut n: i64| {
@@ -410,21 +377,14 @@ impl RadioRef {
         rr
     }
 
-    // ------------------------------------------------------------ time
-
-    /// At runs f at simulated time ms; owner "central" marks the central's
-    /// own steps, which a reset of the machine does not cancel.
     pub fn at(&self, ms: f64, f: SchedFn, owner: &str) {
         let mut r = self.b();
         r.seq += 1;
         let seq = r.seq;
-        // sort.SliceStable by (ms, seq) after an append: the new step goes after
-        // every step with ms <= its own (seq is the largest).
         let pos = r.sched.partition_point(|e| !(ms < e.ms));
         r.sched.insert(pos, Sched { ms, seq, f, central: owner == "central" });
     }
 
-    /// Runs the steps whose time has come.
     pub fn tick(&self, m: &mut Machine) -> Result<(), Error> {
         let now = m.ms();
         loop {
@@ -444,12 +404,10 @@ impl RadioRef {
         Ok(())
     }
 
-    /// The time of the next step, if any.
     pub fn next_step_ms(&self) -> Option<f64> {
         self.b().sched.front().map(|e| e.ms)
     }
 
-    /// The machine was reset: the radio's state and its pending steps go; the central goes on.
     pub fn on_reset(&self) {
         let mut r = self.b();
         r.sched.retain(|e| e.central);
@@ -467,14 +425,10 @@ impl RadioRef {
         r.rf_written.clear();
     }
 
-    /// The system timer value us microseconds ago.
     pub fn ticks_ago(&self, m: &Machine, us: f64) -> u32 {
         m.stimer_now().wrapping_sub((us * TICKS_PER_US) as i64 as u32)
     }
 
-    // ------------------------------------------------------------ registers
-
-    /// Sets bits of the RF IRQ status (0xf20/0xf21).
     pub fn set_status(m: &mut Machine, bits: u32) {
         m.regs[0xF20] |= (bits & 0xFF) as u8;
         m.regs[0xF21] |= (bits >> 8) as u8;
@@ -497,10 +451,6 @@ impl RadioRef {
         }
     }
 
-    /// The register bytes reg_read and reg_write may treat other than by
-    /// passing the access on (for tc32emu::RegHookMask; keep in step with
-    /// them): reads, and writes (None: every write, TC32EMU_SUSPEND_RF=lost).
-    /// Any other write ends in base_write's detached machine write.
     pub fn hooked_regs() -> (Vec<usize>, Option<Vec<usize>>) {
         let read = vec![0x448, 0xC2A, 0xC2B, 0xF22, 0xF23, 0x450, 0x548];
         if settings::suspend_rf() == "lost" {
@@ -589,7 +539,6 @@ impl RadioRef {
         }
     }
 
-    /// Writes through the hooks below the radio, or the machine's own register write.
     pub(crate) fn base_write(&self, m: &mut Machine, o: usize, size: usize, val: u32) -> Result<(), Error> {
         let prev = self.b().prev_write.clone();
         if let Some(p) = prev {
@@ -667,7 +616,7 @@ impl RadioRef {
             r.rf_losses += 1;
         }
         if o == 0x61 && size == 1 && val & 1 != 0 {
-            self.b().brx = None; // RF reset
+            self.b().brx = None;
         }
         if o <= 0xF00 && 0xF00 < o + size {
             let cmd = m.regs[0xF00];
@@ -676,9 +625,6 @@ impl RadioRef {
         Ok(true)
     }
 
-    // ------------------------------------------------------------ commands
-
-    /// The delay from now to the armed RF start tick (0xf16 bit 2 + 0xf18), or 0.006 ms.
     pub(crate) fn start_delay_ms(m: &Machine) -> f64 {
         let rg = &m.regs;
         if rg[0xF16] & 4 == 0 {
@@ -872,7 +818,6 @@ impl RadioRef {
         if let Some(cb) = cb {
             cb(t, ch, le32(&m.regs, 0x408), pdu.clone());
         }
-        // What the chip sends with packets still in the TX FIFO is not documented.
         let tf = tpll_format(m);
         let first_adv_fifo = {
             let mut r = self.b();
@@ -946,7 +891,6 @@ impl RadioRef {
                     }
                     return;
                 }
-                // The DMA streams the header in as the packet arrives; RX status at its end.
                 let me = self.clone();
                 let rsp1 = rsp.clone();
                 self.at(
@@ -963,7 +907,6 @@ impl RadioRef {
         }
     }
 
-    /// The centrals that hear advertising, in the order they answer: Central, then Centrals.
     pub fn offered(&self) -> Vec<PeerRc> {
         let r = self.b();
         let mut out = Vec::new();
@@ -978,7 +921,6 @@ impl RadioRef {
         out
     }
 
-    /// The central of the connection: the one whose CONNECT_IND was sent, while it is still attached, else Central.
     pub fn link_central(&self) -> Option<PeerRc> {
         let cc = self.b().conn_central.clone();
         if let Some(c) = cc {
@@ -1045,9 +987,6 @@ impl RadioRef {
         }
     }
 
-    // ------------------------------------------------------------ connection events
-
-    /// The central starts sending pdu now; false if the peripheral misses it.
     pub fn central_tx(&self, m: &mut Machine, pdu: &[u8], ch: u8, aa: &[u8]) -> bool {
         let t = m.ms();
         let b = {
@@ -1056,8 +995,6 @@ impl RadioRef {
             r.brx.clone()
         };
         let why = match &b {
-            // (in 802.15.4 mode: a combined chip's other radio user had the
-            // radio, or its main loop was away for the whole event)
             None if m.regs[0x404] & 0x03 == 0 => "peripheral not listening (radio in 802.15.4 mode)".to_string(),
             None => "peripheral not listening".to_string(),
             Some(b) => {
@@ -1220,7 +1157,6 @@ impl RadioRef {
         self.at(m.ms() + 0.010, Box::new(move |m| me.end_event(m, &bb)), "radio");
     }
 
-    /// The central's next packet in the event; one lost on air is told to it.
     pub(crate) fn central_next(&self, m: &mut Machine, c: &PeerRc, pdu: &[u8], b: &BrxRc) {
         let (ch, aa) = {
             let bb = b.borrow();
@@ -1246,9 +1182,6 @@ impl RadioRef {
         }
     }
 
-    // ------------------------------------------------------------ TPLL
-
-    /// The air time of a packet with n payload bytes.
     pub fn tpll_airtime_us(m: &Machine, n: usize) -> f64 {
         let rg = &m.regs;
         let mbps = if rg[0x1220] == 0x04 { 2.0 } else { 1.0 };
@@ -1388,9 +1321,6 @@ impl RadioRef {
         Self::set_status(m, RX);
     }
 
-    // ------------------------------------------------------------ air between nodes
-
-    /// The chip hears a packet on channel ch with access address aa now.
     pub fn air_rx_open(&self, m: &Machine, ch: u8, aa: u32) -> bool {
         let rg = &m.regs;
         let r = self.b();
@@ -1404,7 +1334,6 @@ impl RadioRef {
         rg[0x40D] == ch && le32(rg, 0x408) == aa
     }
 
-    /// Another node's packet is on air from t0 to t1 (ms).
     pub fn air_rx(&self, m: &Machine, pdu: Vec<u8>, ch: u8, aa: u32, mut t0: f64, mut t1: f64) {
         let now = m.ms();
         if t0 < now {

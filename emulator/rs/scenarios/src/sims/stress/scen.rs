@@ -1,5 +1,3 @@
-//! The four stress scenarios over the house mesh of `net.rs`.
-
 use super::net::{Flow, Mesh, GROUP};
 use super::{row, Row, StressResult};
 use crate::air::NodeId;
@@ -7,8 +5,6 @@ use crate::frames::airtime_us;
 use crate::session::R;
 use crate::station::Tx;
 
-/// The traffic mix (weights): Z2M-like control and polling of the bulbs,
-/// reports and commands of other routers through the mesh.
 pub const MIX: &[(Flow, u32)] =
     &[(Flow::CmdBulb, 35), (Flow::ReadBulb, 20), (Flow::Report, 20), (Flow::PlugReadBulb, 15), (Flow::CmdPlug, 10)];
 
@@ -18,7 +14,6 @@ fn f1(x: Option<f64>) -> String {
     x.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into())
 }
 
-/// Many-to-one route requests every 30 s from now on, and light traffic so that routes form.
 pub fn warm_up(m: &mut Mesh) -> R<()> {
     m.start_mtorr(30000.0);
     m.phase("warm-up 0.5/s");
@@ -27,10 +22,6 @@ pub fn warm_up(m: &mut Mesh) -> R<()> {
     m.tick(DRAIN)
 }
 
-/// Bulbs whose light does not follow the state command they answered last
-/// (the order the bulb executed them in; routes may reorder what was sent).
-/// Skipped: a bulb with a state command that got no answer (it may or may
-/// not have run it).
 fn light_mismatch(m: &Mesh, since: f64) -> (usize, Vec<String>) {
     let mut checked = 0;
     let mut bad = Vec::new();
@@ -54,7 +45,6 @@ fn light_mismatch(m: &Mesh, since: f64) -> (usize, Vec<String>) {
     (checked, bad)
 }
 
-/// The checks every scenario ends with.
 pub(super) fn final_checks(m: &Mesh, res: &mut StressResult, light: (usize, Vec<String>), churn: bool) {
     let resets = m.resets();
     res.check("no watchdog or software reset of any bulb", resets == 0, format!("{resets} reset(s)"));
@@ -92,8 +82,6 @@ fn merge_light(a: &mut (usize, Vec<String>), b: (usize, Vec<String>)) {
     a.1.extend(b.1);
 }
 
-// ---------------------------------------------------------------------- stress_traffic
-/// The phases of rising traffic; the light checks of them.
 pub fn traffic_phases(m: &mut Mesh) -> R<(usize, Vec<String>)> {
     let rates: &[f64] = if m.cfg.full { &[1.0, 3.0, 6.0, 12.0, 20.0] } else { &[1.0, 4.0, 10.0] };
     let dur = if m.cfg.full { 30000.0 } else { 20000.0 };
@@ -117,8 +105,6 @@ pub fn traffic(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------- stress_noise
-/// Junk frames (bad FCS, 4 ms) back to back from `j` while `on` says so.
 fn jam(m: &mut Mesh, j: NodeId, next: &mut f64, on: &dyn Fn(f64) -> bool) {
     let now = m.now();
     if now < *next || !on(now) {
@@ -126,7 +112,7 @@ fn jam(m: &mut Mesh, j: NodeId, next: &mut f64, on: &dyn Fn(f64) -> bool) {
     }
     let n = 120usize;
     let mut psdu: Vec<u8> = (0..n).map(|k| (k as u32 * 37 + (now as u32) * 11) as u8).collect();
-    psdu[0] = 0x07; // reserved frame type: nobody parses it as a frame
+    psdu[0] = 0x07;
     let fcs = crate::frames::crc16_kermit(&psdu[..n - 2]).to_le_bytes();
     psdu[n - 2] = !fcs[0];
     psdu[n - 1] = fcs[1];
@@ -152,7 +138,6 @@ pub fn noise(m: &mut Mesh, res: &mut StressResult) -> R<()> {
         m.tick(DRAIN)?;
         merge_light(&mut light, light_mismatch(m, t0));
     }
-    // interference bursts over the kitchen and the hall: 200 ms of every 1.5 s, 80 % of frames corrupted
     let rooms = ["kitchen", "hall"];
     let rx: Vec<NodeId> = m.node_of_spot.iter().filter(|(s, _)| rooms.contains(&m.spots[**s].room)).map(|(_, n)| *n).collect();
     let t0 = m.now();
@@ -169,7 +154,6 @@ pub fn noise(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     m.chan.m().bursts.clear();
     m.tick(DRAIN)?;
     merge_light(&mut light, light_mismatch(m, t0));
-    // a jammer in the kitchen: back-to-back junk frames in the same windows (energy: CCA busy, collisions)
     let (kx, ky) = room_centre(m, "kitchen");
     let j = m.add_other("jammer", "kitchen", kx, ky + 0.5, 0xFFFF, 0xFFFF, false);
     let t0 = m.now();
@@ -182,7 +166,6 @@ pub fn noise(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     })?;
     m.tick(DRAIN)?;
     merge_light(&mut light, light_mismatch(m, t0));
-    // a neighbour's network on the same channel next to the hall: 20 frames/s with acknowledgements
     let (hx, hy) = room_centre(m, "hall");
     let a = m.add_other("pan2-a", "hall", hx - 1.0, hy - 1.5, 0x5E55, 0x0001, true);
     let _b = m.add_other("pan2-b", "hall", hx + 1.0, hy - 1.5, 0x5E55, 0x0002, true);
@@ -218,8 +201,6 @@ fn room_centre(m: &Mesh, room: &str) -> (f64, f64) {
     (v.iter().map(|s| s.x).sum::<f64>() / n, v.iter().map(|s| s.y).sum::<f64>() / n)
 }
 
-// ---------------------------------------------------------------------- stress_churn
-/// The first answer from bulb `short` to a request sent at or after `t`: ms after `t`.
 fn first_ok_after(m: &Mesh, short: u16, t: f64) -> Option<f64> {
     m.msgs
         .iter()
@@ -229,7 +210,6 @@ fn first_ok_after(m: &Mesh, short: u16, t: f64) -> Option<f64> {
         .map(|a| a - t)
 }
 
-/// Read Attributes to each of `targets` (bulb indices) in turn, one every `period` ms.
 fn probing<'a>(targets: Vec<usize>, period: f64) -> impl FnMut(&mut Mesh) -> R<()> + 'a {
     let mut next = 0.0;
     let mut k = 0usize;
@@ -258,7 +238,6 @@ fn shorts_text(m: &Mesh, v: &[u16]) -> String {
         .join(" ")
 }
 
-/// Bulbs that lie beyond `gone` as seen from the coordinator (their every path crosses it).
 fn beyond(m: &Mesh, gone: &[NodeId]) -> Vec<usize> {
     let coord_spot = *m.node_of_spot.iter().find(|(_, n)| **n == NodeId::Coord).unwrap().0;
     let gone_spots: Vec<usize> = m.node_of_spot.iter().filter(|(_, n)| gone.contains(n)).map(|(s, _)| *s).collect();
@@ -277,8 +256,6 @@ fn beyond(m: &Mesh, gone: &[NodeId]) -> Vec<usize> {
     (0..m.bulbs.len()).filter(|b| !reach[m.bulbs[*b].spot] && !gone.contains(&m.bulbs[*b].id)).collect()
 }
 
-/// One churn event: `gone` lose power (bulbs) or go silent (plugs) for `off_ms`, traffic
-/// goes on, the affected bulbs are probed; numbers into `row`.
 fn outage(m: &mut Mesh, res: &mut StressResult, name: &str, gone: &[NodeId], off_ms: f64, after_ms: f64, rate: f64,
           lqi_of: Option<usize>) -> R<Row> {
     let p = m.phase(name);
@@ -297,7 +274,6 @@ fn outage(m: &mut Mesh, res: &mut StressResult, name: &str, gone: &[NodeId], off
     let mut targets: Vec<usize> = cut.clone();
     let others: Vec<usize> = (0..m.bulbs.len()).filter(|b| !cut.contains(b) && !gone_bulbs.contains(b)).collect();
     targets.extend(others.iter().copied());
-    // during the outage: traffic, plus probes of the bulbs behind the gap
     let mut probe = probing(cut.clone(), 1000.0);
     let t_lqi = t_off + off_ms - 8000.0;
     let mut stale = None;
@@ -320,7 +296,6 @@ fn outage(m: &mut Mesh, res: &mut StressResult, name: &str, gone: &[NodeId], off
             done_lqi = true;
         }
     }
-    // power back (bulbs boot again), router back
     let t_on = m.now();
     for id in gone {
         match id {
@@ -333,7 +308,6 @@ fn outage(m: &mut Mesh, res: &mut StressResult, name: &str, gone: &[NodeId], off
     }
     let mut back = gone_bulbs.clone();
     back.extend(cut.iter().copied());
-    // the light 1.5 s after the power came back, before any command could reach it
     m.tick(1500.0)?;
     let lights: Vec<String> =
         gone_bulbs.iter().map(|b| format!("{} {}", m.bulbs[*b].name, if m.light_on(m.bulbs[*b].id) { "on" } else { "off" })).collect();
@@ -351,7 +325,6 @@ fn outage(m: &mut Mesh, res: &mut StressResult, name: &str, gone: &[NodeId], off
     }
     r.extra.push(("RREQ 20 s after off (new/frames)".into(), format!("{}/{}", storm.rreq_new, storm.rreq_frames)));
     r.extra.push(("RREQ 20 s after on (new/frames)".into(), format!("{}/{}", storm_on.rreq_new, storm_on.rreq_frames)));
-    // recovery of each bulb that was off or cut off: first answer to a request sent after power-on
     let mut rec = Vec::new();
     let mut worst: Option<f64> = Some(0.0);
     for b in &back {
@@ -366,7 +339,6 @@ fn outage(m: &mut Mesh, res: &mut StressResult, name: &str, gone: &[NodeId], off
         r.extra.push(("answers again after power-on".into(), rec.join(", ")));
         res.notes.push(format!("{name}: answers again after power-on: {}", rec.join(", ")));
     }
-    // bulbs not affected: did their traffic suffer?
     let ok_others = m
         .msgs
         .iter()
@@ -404,25 +376,20 @@ pub fn churn(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     let rate = 2.0;
     let hall = m.by_name("hall");
     let hall_ix = m.bulb_ix(hall).unwrap();
-    // a scripted router vanishes and returns
     let plug = m.by_name("plug-hall");
     let r = outage(m, res, "plug-hall silent 30 s", &[plug], 30000.0, 15000.0, rate, None)?;
     res.rows.push(r);
-    // a room switched off at the wall, long enough for the neighbour entries to age (3 x 15 s)
     let bedroom: Vec<NodeId> = if full {
         vec![m.by_name("bed1"), m.by_name("bed2"), m.by_name("plug-bed")]
     } else {
         vec![m.by_name("bed"), m.by_name("plug-bed")]
     };
-    // longer than the neighbour ageing of R22 (nwkRouterAgeLimit 3 x 15 s Link Status)
     let off = 60000.0;
     let r = outage(m, res, "bedroom switched off", &bedroom, off, 30000.0, rate, Some(hall_ix))?;
     res.rows.push(r);
-    // the bulb under test power-cycled mid-traffic (3 s without power)
     let r = outage(m, res, "hall power-cycled 3 s", &[hall], 3000.0, 30000.0, rate, None)?;
     res.rows.push(r);
     if full {
-        // the kitchen off: everything beyond the living room is cut off
         let kitchen = vec![m.by_name("kit1"), m.by_name("kit2"), m.by_name("plug-kit")];
         let r = outage(m, res, "kitchen switched off", &kitchen, 30000.0, 40000.0, rate, None)?;
         res.rows.push(r);
@@ -432,8 +399,6 @@ pub fn churn(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------- stress_broadcast
-/// Per group command: (bulbs that switched, spread of their switching times, mean latency).
 fn group_spread(m: &Mesh, t: f64, want: Option<bool>, window: f64) -> (usize, Option<f64>, Option<f64>, usize) {
     let mut lat = Vec::new();
     let mut extra = 0;
@@ -466,7 +431,6 @@ pub fn broadcast(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     let n = m.bulbs.len();
     let joined = m.join_group()?;
     res.notes.push(format!("group {GROUP:#06x}: {joined} of {n} bulbs confirmed Add Group"));
-    // Z2M-style group On/Off to every bulb, 3 s apart, no other traffic
     let k = if full { 10 } else { 6 };
     let p = m.phase("group On/Off, quiet");
     let mut stats = Vec::new();
@@ -483,8 +447,6 @@ pub fn broadcast(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     let mut r = row(m, p);
     group_row(&mut r, &stats, n);
     res.rows.push(r);
-    // a storm: every scripted router and the coordinator broadcast to a group no bulb is in
-    // (the bulbs must relay it, not execute it); a group Toggle to the bulbs every 2 s
     let rates: &[f64] = if full { &[2.0, 5.0, 10.0, 25.0] } else { &[3.0, 10.0] };
     for rate in rates {
         let p = m.phase(&format!("group Toggle in a {rate:.0}/s broadcast storm"));
@@ -531,7 +493,6 @@ pub fn broadcast(m: &mut Mesh, res: &mut StressResult) -> R<()> {
                     detail.push(format!("#{i} {}: [{}]", b.name, ch.join(" ")));
                 }
                 if ch.len() > 1 && std::env::var_os("STRESS_ACCOUNT").is_some() {
-                    // the copies of the group command this bulb got just before each change
                     let zseq = m.msgs.iter().filter(|x| x.flow == super::net::Flow::Group).find(|x| (x.t - t).abs() < 1.0).map(|x| x.seq);
                     let first = m.dec.iter().find(|d| d.t0 >= *t && d.aps.as_ref().is_some_and(|a| a.group == Some(super::net::GROUP)) && d.zcl.as_ref().map(|z| z.seq) == zseq).map(|d| d.t0);
                     for (x, _) in m.light_log[k].iter().filter(|(x, _)| *x >= *t && *x < t + w) {
@@ -565,7 +526,6 @@ pub fn broadcast(m: &mut Mesh, res: &mut StressResult) -> R<()> {
         res.check(&format!("a group Toggle in a {rate:.0}/s storm is executed at most once by each bulb (R22 3.6.5 BTT)"),
                   twice == 0, format!("{twice} extra light change(s) over {toggles} toggles x {n} bulbs"));
     }
-    // final state: a group On, then every bulb on
     m.phase("final group On");
     let mi = m.group_cmd(1);
     let t = m.msgs[mi].t;
@@ -580,7 +540,6 @@ pub fn broadcast(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     Ok(())
 }
 
-/// A group command counts as delivered when a bulb switched; its latency is the mean over the bulbs.
 fn mark_group(m: &mut Mesh, mi: usize, s: &(usize, Option<f64>, Option<f64>, usize)) {
     if let Some(mean) = s.2 {
         let t = m.msgs[mi].t;

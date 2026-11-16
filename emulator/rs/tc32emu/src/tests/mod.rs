@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The Go package's tests (tc32emu/*_test.go), ported case by case.
-
 mod adc;
 mod aes128;
 mod analog_log;
@@ -25,7 +22,6 @@ mod xip_slot;
 
 use crate::{Flash, Machine, FLASH_MEM};
 
-/// SHA-256 (FIPS 180-4), for the tests' digests.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
@@ -92,7 +88,6 @@ pub fn unhex(s: &str) -> Vec<u8> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
 }
 
-/// digestU32: SHA-256 of the words little-endian, hex.
 pub fn digest_u32(ws: &[u32]) -> String {
     let mut b = Vec::with_capacity(ws.len() * 4);
     for w in ws {
@@ -101,7 +96,6 @@ pub fn digest_u32(ws: &[u32]) -> String {
     hex(&sha256(&b))
 }
 
-/// rbgMachine: a machine on an erased 1 MB flash with slot 0 bootable.
 pub fn rbg_machine() -> Machine {
     let mut fl = Flash::new(FLASH_MEM);
     fl.mem[8] = 0x4B;
@@ -112,7 +106,6 @@ pub fn rbg_read(m: &mut Machine, o: usize, size: usize) -> u32 {
     m.reg_read(o, size).unwrap()
 }
 
-/// The error's text, or "" (Go errOf / errText).
 pub fn err_text<T>(r: &Result<T, crate::Error>) -> String {
     match r {
         Ok(_) => String::new(),

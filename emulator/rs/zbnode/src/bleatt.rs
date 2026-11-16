@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! bleatt (emulator/go/bleatt/bleatt.go): an ATT script for the BLE central
-//! driven from outside (request queue, response list).
-
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -9,7 +5,6 @@ use std::rc::Rc;
 use ble::{AttScript, Central, CentralRc, ScriptValue};
 use tc32emu::Machine;
 
-/// An ATT response with simulation time.
 pub struct Rsp {
     pub ms: f64,
     pub data: Vec<u8>,
@@ -23,7 +18,6 @@ pub struct Queue {
     started: bool,
 }
 
-/// The shared queue (a local type, so that it can implement ble::AttScript).
 pub struct QueueCell(RefCell<Queue>);
 
 impl QueueCell {
@@ -42,7 +36,6 @@ pub fn new_queue() -> QueueRc {
 }
 
 impl AttScript for QueueCell {
-    /// value is Nil at start, then successive server responses.
     fn next(&self, _c: &mut Central, m: &mut Machine, value: &ScriptValue) -> (Option<Vec<u8>>, bool, bool) {
         let mut q = self.borrow_mut();
         q.started = true;
@@ -62,7 +55,6 @@ impl AttScript for QueueCell {
     }
 }
 
-/// Adds a request; if the script is idle, it kicks it right away.
 pub fn push(q: &QueueRc, c: &CentralRc, m: &mut Machine, req: Vec<u8>) {
     let kick = {
         let mut s = q.borrow_mut();
@@ -79,7 +71,6 @@ pub fn push(q: &QueueRc, c: &CentralRc, m: &mut Machine, req: Vec<u8>) {
     }
 }
 
-/// Connection ready for ATT.
 pub fn started(q: &QueueRc) -> bool {
     q.borrow().started
 }

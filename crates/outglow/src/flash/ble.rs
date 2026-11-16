@@ -1,6 +1,3 @@
-//! The Bluetooth side of `outglow ble`: scanning, connecting through btleplug,
-//! the GATT transport for [`super::protocol`] and the scan/probe/push commands.
-
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -12,7 +9,6 @@ use uuid::Uuid;
 use super::protocol::{self as p, hex, Status, Target, Transport};
 use super::{check_image, fmt_mac, parse_adv, product_model, Ble, AWOX_VENDOR};
 
-/// Device Information characteristics read by `probe`.
 const DEVINFO: [(u16, &str); 4] = [(0x2a24, "model"), (0x2a26, "firmware"), (0x2a27, "hardware"), (0x2a29, "manufacturer")];
 
 fn sig_uuid(short: u16) -> Uuid {
@@ -24,7 +20,6 @@ async fn adapter() -> Result<Adapter> {
     m.adapters().await?.into_iter().next().ok_or_else(|| anyhow!("no Bluetooth adapter"))
 }
 
-/// What an advertisement tells about a device.
 struct Seen {
     p: Peripheral,
     id: String,
@@ -68,7 +63,6 @@ pub async fn scan(seconds: f64) -> Result<()> {
     Ok(())
 }
 
-/// The device whose platform id, address or advertised MAC is `target`.
 async fn find(a: &Adapter, target: &str, seconds: f64) -> Result<Seen> {
     let t = target.to_lowercase();
     a.start_scan(ScanFilter::default()).await?;
@@ -135,7 +129,6 @@ impl Connected {
         }
     }
 
-    /// The Device Information hardware revision (0x2A27).
     async fn revision(&self) -> Result<Option<String>> {
         Ok(self
             .read_uuid(sig_uuid(0x2a27))
@@ -148,8 +141,6 @@ impl Connected {
     }
 }
 
-/// [`Transport`] over btleplug. ...1915 is written without a response when it
-/// allows that (the original firmware: props 0x06), the rest with one.
 struct BtTransport<'a> {
     c: &'a Connected,
     delay: Duration,
@@ -315,8 +306,6 @@ pub async fn push(cmd: Ble) -> Result<()> {
     r
 }
 
-/// (ATT_MTU, block size). Classic 16-byte blocks unless --mtu above 23 or
-/// --chunk: then the idle status tells the handler and its block limit.
 async fn negotiate(c: &Connected, mtu: usize, chunk: Option<usize>) -> Result<(usize, usize)> {
     if mtu <= p::DEFAULT_MTU && chunk.is_none() {
         println!("classic transfer: ATT_MTU {}, 16 B blocks", p::DEFAULT_MTU);

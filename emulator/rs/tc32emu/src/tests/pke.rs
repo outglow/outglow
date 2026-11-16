@@ -1,4 +1,3 @@
-// pke_test.go
 use super::{rbg_machine, rbg_read};
 use crate::bigint::BigUint;
 use crate::pke::*;
@@ -89,7 +88,6 @@ fn pke() {
     assert!(rt == 0 && x == dhkey, "PMUL dA*B");
     let (rt2, x2, y2) = mul(&mut m, &c, &db, &ax, &ay);
     assert!(rt2 == 0 && x2 == dhkey && y2 == y, "PMUL dB*A");
-    // A multiplication by 0 never finishes.
     curve(&mut m, &c);
     m.pke_store(b_slot(0), &gx, 9);
     m.pke_store(b_slot(1), &gy, 9);
@@ -117,7 +115,6 @@ fn pke() {
         "CAL_PRE_MON"
     );
 
-    // Done, its clearing, the time and Stop.
     let mut m = pke_machine();
     curve(&mut m, &c);
     m.pke_store(b_slot(0), &gx, 9);
@@ -145,7 +142,6 @@ fn pke() {
         "Stop does not end the operation with STOP_LOG 1"
     );
 
-    // What is not modelled stops the emulation.
     let mut m = pke_machine();
     curve(&mut m, &c);
     m.pke_store(b_slot(0), &gx, 9);

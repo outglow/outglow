@@ -1,9 +1,3 @@
-//! Address conflicts and channel changes among Outglow bulbs, as the
-//! emulator scenarios addr_conflict_child, _victim and _channel checked them
-//! on the real image (the lab's docs/address-conflicts.md): a neighbouring
-//! router that takes a new address, late copies of the bulb's own broadcast,
-//! a channel change missed while off.
-
 mod sim;
 
 use sim::*;
@@ -12,7 +6,6 @@ use zigbee::stack::State;
 
 const ON_OFF: u16 = 0x0006;
 
-/// A scripted router that hears only the bulb, after an exchange of Link Status.
 fn neighbor(net: &mut Net, n: usize, short: u16) -> Zed {
     let me = net.nodes[n].short();
     let mut z = Zed::router(&net.air, short, me);
@@ -22,13 +15,11 @@ fn neighbor(net: &mut Net, n: usize, short: u16) -> Zed {
     z
 }
 
-/// Moves a scripted router to another address (its radio answers to it).
 fn readdress(z: &mut Zed, short: u16) {
     z.short = short;
     z.air.borrow_mut().ports[z.id].short = short;
 }
 
-/// Network Status 0x0d (address conflict) reports that reached the coordinator: (sender, address).
 fn conflicts(net: &Net) -> Vec<(u16, u16)> {
     net.coord
         .nwk_cmd_rx
@@ -38,7 +29,6 @@ fn conflicts(net: &Net) -> Vec<(u16, u16)> {
         .collect()
 }
 
-/// The bulb's neighbour table, as Mgmt_Lqi_rsp reports it: (address, IEEE address).
 fn neighbor_table(net: &mut Net, n: usize) -> Vec<(u16, u64)> {
     let short = net.nodes[n].short();
     let mut out = Vec::new();
@@ -59,8 +49,6 @@ fn neighbor_table(net: &mut Net, n: usize) -> Vec<(u16, u64)> {
     }
 }
 
-/// An On/Off Toggle from the coordinator to `dst`, handed to the bulb `via`
-/// (the coordinator does not hear `dst`); whether `z` got it.
 fn toggle_through(net: &mut Net, via: u16, z: &mut Zed, dst: u16) -> bool {
     z.drain();
     z.rx.clear();
@@ -72,13 +60,6 @@ fn toggle_through(net: &mut Net, via: u16, z: &mut Zed, dst: u16) -> bool {
     z.rx.iter().any(|(h, p)| h.dst == dst && h.src == 0x0000 && p.ends_with(&[0x01, 0x42, 0x02]))
 }
 
-/// addr_conflict_child: a router next to the bulb (and out of the
-/// coordinator's range) is told of a conflict on its address and takes a new
-/// one while the bulb is on. The bulb learns the new address from its
-/// Device_annce and Link Status, keeps no entry under the old one, and passes
-/// on what is sent to the new address, 70 s, 3, 5 and 10 minutes later. (A
-/// bulb that kept the old entry would look for a route to an address none of
-/// its neighbours answers for, and every frame would be lost.)
 #[test]
 fn a_neighbouring_router_that_takes_a_new_address_is_reached_under_it() {
     let mut net = Net::new();
@@ -93,7 +74,6 @@ fn a_neighbouring_router_that_takes_a_new_address_is_reached_under_it() {
     }
     assert!(neighbor_table(&mut net, n).contains(&(old, r.ext)), "{:x?}", neighbor_table(&mut net, n));
     assert!(toggle_through(&mut net, me, &mut r, old), "through the bulb under the old address");
-    // the coordinator reports the conflict, the router moves and says so
     let o: [u8; 2] = u16::to_le_bytes(old);
     net.coord.nwk_command(0xFFFD, 30, &[nwk::CMD_NETWORK_STATUS, 0x0D, o[0], o[1]]);
     net.run(1_000);
@@ -103,7 +83,6 @@ fn a_neighbouring_router_that_takes_a_new_address_is_reached_under_it() {
     r.link_status(&[(me, 1)]);
     let t_move = net.now();
     net.run(1_000);
-    // at once: the entry follows the device (its IEEE address), none is left under the old address
     let entries: Vec<u16> = neighbor_table(&mut net, n).iter().filter(|e| e.1 == r.ext).map(|e| e.0).collect();
     assert_eq!(entries, vec![new], "right after the move the bulb lists the router as {entries:x?}");
     assert!(toggle_through(&mut net, me, &mut r, new), "right after the move");
@@ -122,12 +101,6 @@ fn a_neighbouring_router_that_takes_a_new_address_is_reached_under_it() {
     assert!(conflicts(&net).iter().all(|c| c.1 != new), "no conflict reported on the new address: {:x?}", conflicts(&net));
 }
 
-/// addr_conflict_victim: the coordinator reports a conflict on the bulb's
-/// address, the bulb moves and announces itself; then a copy of that
-/// announcement comes back 2 to 60 s later, as a stock router relays it late,
-/// with the bulb's IEEE address in the header and without. It is the bulb's
-/// own frame: no conflict report, no new address (R22 3.6.1.9.2 would take it
-/// for another device's broadcast once the broadcast record is gone).
 #[test]
 fn late_copies_of_its_own_announcement_are_no_conflict() {
     let mut net = Net::new();
@@ -167,10 +140,6 @@ fn late_copies_of_its_own_announcement_are_no_conflict() {
     }
 }
 
-/// addr_conflict_channel: two bulbs; the network moves from channel 11 to 25
-/// while B is off, A on follows. B comes back on channel 11 with its old
-/// network, finds it on 25 and rejoins secured with its address: also with the
-/// network closed to new devices, and without a new association.
 #[test]
 fn a_bulb_off_during_a_channel_change_rejoins_on_the_new_channel_while_the_network_is_closed() {
     let mut net = Net::new();

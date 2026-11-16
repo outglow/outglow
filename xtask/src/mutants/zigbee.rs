@@ -1,12 +1,6 @@
-//! The mutations of `cargo test -p zigbee`: (what goes wrong, file under
-//! crates/zigbee/src, text to replace, replacement). Every `old` text must
-//! occur exactly once in its file; after a change to that code the entry is
-//! reported as stale and has to be written anew.
-
 use super::Mutation;
 
 pub const MUTATIONS: &[Mutation] = &[
-    // Diagnostics cluster and object endpoints (tests/diagnostics.rs)
     Mutation {
         name: "DIAG: MAC retries not counted",
         file: "stack/diag.rs",
@@ -1159,7 +1153,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                        if h.src == self.manager {\n                            self.nib.update_id = update_id;\n                        }",
         new: "",
     },
-    // --- application layer against the specification text (docs/zigbee-spec-audit.md, items 30-36)
     Mutation {
         name: "ZCL: Identify Query to everyone not answered",
         file: "stack/zcl.rs",
@@ -1748,15 +1741,12 @@ pub const MUTATIONS: &[Mutation] = &[
         old: " && rsp.len() > 3 && rsp.get(3) == SUCCESS;",
         new: " && rsp.len() > 3;",
     },
-    // ---- R22/BDB audit items 11 to 29 (routing among other makes, joining, security)
-    // ---- item 11
     Mutation {
         name: "NWK: route requests taken from a neighbor that may not hear us",
         file: "stack/net.rs",
         old: "        if !self.neighbor_index(mac_src).is_some_and(|i| self.neighbors[i].out_cost != 0) {\n            return;\n        }\n",
         new: "",
     },
-    // ---- item 12
     Mutation {
         name: "NWK: a failed link is not reported to the source of the frame",
         file: "stack/net.rs",
@@ -1817,7 +1807,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                    if let Some(via) = self.random_router(mac_src, mac_src) {",
         new: "                    if let Some(via) = Some(mac_src) {",
     },
-    // ---- item 13
     Mutation {
         name: "NWK: source route failure names the relay that failed",
         file: "stack/net.rs",
@@ -1836,7 +1825,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                if self.cmds.iter().filter(|c| c.is_some()).count() > queued {",
         new: "                if false {",
     },
-    // ---- routing under load (docs/rust-radio.md, "Routing pod obciazeniem")
     Mutation {
         name: "NWK: a unicast the MAC could not deliver is not tried again",
         file: "stack/net.rs",
@@ -1969,7 +1957,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "            let old = self.held[i].header;\n            self.held_failed(&old, trace::FAIL_EVICTED);",
         new: "            let _ = self.held[i].header;",
     },
-    // ---- item 14
     Mutation {
         name: "NWK: route reply of the destination starts with path cost 0",
         file: "stack/net.rs",
@@ -2024,7 +2011,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                p.u8(0x20 | if h.src_ext.is_some() { 0x10 } else { 0 });",
         new: "                p.u8(0x00);",
     },
-    // ---- item 15
     Mutation {
         name: "NWK: an ordinary route discovery wipes what a concentrator announced",
         file: "stack/net.rs",
@@ -2055,7 +2041,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "            self.routes[i].record_due = no_cache || !settled;",
         new: "            self.routes[i].record_due = true;",
     },
-    // ---- item 16
     Mutation {
         name: "NWK: own route request repeated twice only",
         file: "stack/net.rs",
@@ -2104,9 +2089,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "            if self.seen_before(h.src, h.seq, now, false) != Some(false) {",
         new: "            if self.seen_before(h.src, h.seq, now, true) != Some(false) {",
     },
-    // ('NWK: own broadcasts not remembered when the broadcast table is full': no
-    // longer observable; the echo of our own broadcast is known by its NWK sequence
-    // number (own_late_copy) whether or not the table kept a record of it.)
     Mutation {
         name: "NWK: Link Status frames fill the broadcast table",
         file: "stack/net.rs",
@@ -2125,7 +2107,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "            if !matches!(h.dst, nwk::BROADCAST_ALL | nwk::BROADCAST_RX_ON | nwk::BROADCAST_ROUTERS) {\n                return;\n            }\n",
         new: "",
     },
-    // ---- item 17
     Mutation {
         name: "NWK: commands without the destination IEEE address",
         file: "stack/net.rs",
@@ -2186,7 +2167,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                if nwk::is_broadcast(h.dst) && now.wrapping_sub(self.booted) > BROADCAST_MEMORY_MS {",
         new: "                if nwk::is_broadcast(h.dst) {",
     },
-    // ---- links proven by joining
     Mutation {
         name: "NWK: the link to the parent counts as unknown until its Link Status",
         file: "stack/join.rs",
@@ -2199,7 +2179,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "            if self.children[i].joined {\n                out_cost = nwk::cost_from_lqi(lqi);\n            }",
         new: "",
     },
-    // ---- item 18
     Mutation {
         name: "join: only the best beacon of a scan is tried",
         file: "stack/join.rs",
@@ -2236,7 +2215,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        self.nib.depth = c.beacon.depth.saturating_add(1).min(15);\n        self.join_lqi",
         new: "        self.nib.depth = c.beacon.depth.saturating_add(1);\n        self.join_lqi",
     },
-    // ---- item 19
     Mutation {
         name: "parent: Update Device under the global link key in the encrypted form only",
         file: "stack/parent.rs",
@@ -2249,7 +2227,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        if self.nib.tclk == super::DEFAULT_TCLK {\n            self.aps_command(p.as_slice(), false);\n        }\n",
         new: "        self.aps_command(p.as_slice(), false);\n",
     },
-    // ---- item 20
     Mutation {
         name: "join: no Mgmt_Permit_Joining_req after joining",
         file: "stack/join.rs",
@@ -2286,7 +2263,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        self.aps_data(nwk::BROADCAST_ROUTERS, 0, MGMT_PERMIT_JOINING_REQ, PROFILE_ZDO, 0, &[seq, seconds, 0x01]);",
         new: "        self.aps_data(nwk::BROADCAST_RX_ON, 0, MGMT_PERMIT_JOINING_REQ, PROFILE_ZDO, 0, &[seq, seconds, 0x01]);",
     },
-    // ---- item 21
     Mutation {
         name: "ZDO: a Mgmt_Leave_req sent to everyone is obeyed",
         file: "stack/zdo.rs",
@@ -2317,7 +2293,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                            // an error is for the one who asked this node (R22 2.4.4.1)\n                            if !unicast {\n                                return None;\n                            }\n",
         new: "",
     },
-    // ---- item 22
     Mutation {
         name: "APS: Remove Device naming the router itself is ignored",
         file: "stack/parent.rs",
@@ -2372,7 +2347,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                    rsp.u8(UNKNOWN_DEVICE);",
         new: "                    rsp.u8(SUCCESS);",
     },
-    // ---- item 23
     Mutation {
         name: "join: a failed link key exchange leaves the node on the network",
         file: "stack/join.rs",
@@ -2397,7 +2371,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "                            if key == self.nib.tclk {\n                                self.tclk_refused();\n                                return None;\n                            }\n",
         new: "",
     },
-    // ---- item 24
     Mutation {
         name: "parent: a timeout out of range gets no answer",
         file: "stack/parent.rs",
@@ -2446,7 +2419,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        self.manager = 0x0000;\n        for (r,",
         new: "        for (r,",
     },
-    // ---- item 25
     Mutation {
         name: "parent: a rejoin in the clear is served on a network without a Trust Center",
         file: "stack/parent.rs",
@@ -2459,7 +2431,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        if !secured && self.nib.tc_ext == super::NO_TRUST_CENTER {",
         new: "        if self.nib.tc_ext == super::NO_TRUST_CENTER {",
     },
-    // ---- item 26
     Mutation {
         name: "parent: a rejoin in the clear moves a child to another address",
         file: "stack/parent.rs",
@@ -2496,7 +2467,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        if capability & CAP_RX_ON != 0 || self.child_index(mac_src).is_some() {\n            self.transmit_nwk(mac_src, &rh, &response);\n            return;\n        }",
         new: "        if true {\n            self.transmit_nwk(mac_src, &rh, &response);\n            return;\n        }",
     },
-    // ---- item 24: rejoin
     Mutation {
         name: "join: a refused rejoin is not asked of the next router",
         file: "stack/join.rs",
@@ -2521,7 +2491,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        if h.dst_ext.is_some_and(|e| e != self.ext) || !from_parent {\n            return;\n        }\n",
         new: "",
     },
-    // ---- item 27
     Mutation {
         name: "APS: the link key of networks without a Trust Center opens commands in a network that has one",
         file: "stack/aps.rs",
@@ -2564,7 +2533,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        let from_tc = h.src == 0x0000 && self.nib.tc_ext != super::NO_TRUST_CENTER;",
         new: "        let from_tc = h.src == 0x0000;",
     },
-    // ---- item 29, AP-F9
     Mutation {
         name: "fragments: a transfer of 32 blocks never completes",
         file: "stack/frag.rs",
@@ -2601,7 +2569,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "        if payload.len() > if secure { SINGLE_MAX - SECURITY_OVERHEAD } else { SINGLE_MAX } {",
         new: "        let secure = secure && payload.len() <= SINGLE_MAX - SECURITY_OVERHEAD;\n        if payload.len() > SINGLE_MAX {",
     },
-    // ---- item 33
     Mutation {
         name: "APS: a frame is forgotten before its last retransmission",
         file: "stack/aps.rs",
@@ -2620,7 +2587,6 @@ pub const MUTATIONS: &[Mutation] = &[
         old: "pub(crate) const APS_DUPS: usize = 16;",
         new: "pub(crate) const APS_DUPS: usize = 8;",
     },
-    // ---- later additions
     Mutation {
         name: "NWK: address conflicts reported without the random wait",
         file: "stack/net.rs",

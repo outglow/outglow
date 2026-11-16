@@ -1,7 +1,3 @@
-//! The diagnostics report: what the converter (z2m/outglow.mjs) made of
-//! the Diagnostics cluster and its manufacturer attributes, one state of
-//! Zigbee2MQTT flattened.
-
 use std::fmt::Write;
 
 use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
@@ -10,10 +6,8 @@ use serde_json::{Map, Value};
 
 use super::py;
 
-/// The groups (composites) the converter keeps most values in.
 pub const GROUPS: [&str; 7] = ["network", "radio", "routing", "aps_security", "queues", "bluetooth", "system"];
 
-/// The counters of a `--watch` row.
 pub const COUNTERS: [&str; 35] = [
     "number_of_resets", "persistent_memory_writes", "mac_rx_bcast", "mac_tx_bcast", "mac_rx_ucast", "mac_tx_ucast",
     "mac_tx_ucast_retry", "mac_tx_ucast_fail", "aps_rx_ucast", "aps_tx_ucast_success", "aps_tx_ucast_fail",
@@ -24,8 +18,6 @@ pub const COUNTERS: [&str; 35] = [
     "rssi_80_to_70", "rssi_70_to_60", "rssi_above_60",
 ];
 
-/// A state of Zigbee2MQTT with its keys in the order they came (the raw
-/// view prints them so; nested objects come sorted, as Zigbee2MQTT sends them).
 #[derive(Clone, Default)]
 pub struct State {
     pub keys: Vec<String>,
@@ -71,8 +63,6 @@ impl Serialize for State {
     }
 }
 
-/// One flat view of a state: the groups' values on top as well (new keys
-/// after the others, as Python's `dict.update` puts them).
 pub fn flatten(state: State) -> State {
     let mut s = state.clone();
     for g in GROUPS {
@@ -93,8 +83,6 @@ fn pct(a: f64, b: f64) -> String {
     }
 }
 
-/// The report of state `s`; with `before` (an earlier state of the same
-/// start of the bulb) the counters show how much they grew since.
 pub fn report(s: &Map<String, Value>, before: Option<&Map<String, Value>>) -> String {
     let g = |k: &str| py::get(s, k);
     let d = |k: &str| -> String {
@@ -280,8 +268,6 @@ mod tests {
         serde_json::from_str(text).unwrap()
     }
 
-    /// A made-up state (crates/outglow/src/diag/testdata) and what
-    /// the earlier Python tool (bulb-diag.py) printed of it, with and without an earlier run.
     #[test]
     fn reports_as_the_python_tool() {
         let s = flatten(state(include_str!("testdata/state.json")));

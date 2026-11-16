@@ -1,7 +1,3 @@
-//! The Zigbee stack on this chip: `zigbee::Hal` on the radio, the system
-//! timer and the flash, and the stack as `bulb-core`'s radio link.
-
-
 use bulb_core::command::{Command, StateReport};
 use bulb_core::hal::Radio;
 use zigbee::hal::{HalCounters, NvItem, ResetCause};
@@ -20,41 +16,15 @@ use crate::radio;
 use crate::reg;
 use crate::staging::{self, Owner};
 
-/// The longest round of the main loop since the start, microseconds (`lib.rs`).
 pub static LOOP_MAX_US: Shared<u32> = Shared::new(0);
-/// The system timer tick at which BLE needs the radio next, as of the last
-/// round (None: BLE off): the main loop's wait ends before it (`lib.rs`).
 pub static BLE_NEXT: Shared<Option<u32>> = Shared::new(None);
-/// An advertising event due this soon keeps the Zigbee stack from its
-/// round (`Link::poll`): a frame it began to send then would hold the main
-/// loop past the event's moment. One CSMA-CA attempt of a short frame takes
-/// up to 3.1 ms (a backoff of up to 7 periods, 2.24 ms, the assessment, the
-/// turnaround and a beacon request's 0.5 ms), and the event came 1 to 2 ms
-/// later than advInterval + 10 ms after the one before (Core 5.4 Vol 6
-/// Part B 4.4.2.2.1: the emulator's ll_adv_interval, over other starts of
-/// the system timer, 2 runs of 32), although the advDelay is drawn from
-/// 0 to 9 ms only (`ble::ll`). Frames that come meanwhile wait in the
-/// radio's queue (16 places), acknowledged. A longer frame begun just
-/// before, or one sent again for want of an acknowledgement, can still make
-/// an event late; connection events are taken as they come (`ble::ll`,
-/// LEAD), a missed one costs nothing but its interval.
 #[cfg(feature = "ble")]
 const ADV_GUARD: u32 = 4_000 * reg::TICKS_PER_US;
-/// The time before BLE's next event that the refresh of the diagnostics
-/// (`diag::Glue::refresh`) needs to run in that round (`Link::poll`).
 #[cfg(feature = "ble")]
 const DIAG_ROOM: u32 = 6_000 * reg::TICKS_PER_US;
-/// The BLE stack's counters as of the last round (for the Diagnostics cluster).
 #[cfg(feature = "ble")]
 static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 });
 
-/// What the bulb says it is. Its own model identifiers, not the stock
-/// bulb's ("ESMLFzm_w6_Dimm", "ESMLFzm_w6_TW"): a coordinator must not take
-/// it for the stock firmware and use a device definition written for that
-/// (Zigbee2MQTT builds one from what the bulb shows instead:
-/// docs/diagnostics.md). One per kind of light, not per board; the hardware
-/// version is the board's revision (63 for 4.63). Over BLE it is still the
-/// stock bulb of its board (`ble.rs`), for the AwoX app.
 const IDENTITY: Identity = Identity {
     manufacturer: "Outglow",
     model: BOARD.kind,
@@ -69,16 +39,12 @@ const IDENTITY: Identity = Identity {
     image_type: IMAGE_TYPE,
     file_version: FILE_VERSION,
     touchlink_master_key: MASTER_KEY,
-    // these bulbs carry no install code
     install_code: None,
     ble: cfg!(feature = "ble"),
     #[cfg(feature = "sense")]
     sense: true,
 };
 
-/// The touchlink master key, if the build was given it: 32 hexadecimal
-/// digits in the environment variable TOUCHLINK_MASTER_KEY. See
-/// `docs/rust-radio.md`; the repository does not contain the key.
 const MASTER_KEY: Option<[u8; 16]> = match option_env!("TOUCHLINK_MASTER_KEY") {
     Some(s) => Some(parse_key(s)),
     None => None,
@@ -102,13 +68,8 @@ const fn parse_key(s: &str) -> [u8; 16] {
     key
 }
 
-/// OTA image type: this firmware's own, one per board, so that no server
-/// hands it an image built for something else. `boot/start.S` puts the same
-/// value into the image header (`cargo xtask build` takes it from the board table).
 pub const IMAGE_TYPE: u16 = BOARD.image_type;
 
-/// Version of this build as the OTA cluster sees it: hexadecimal in the
-/// environment variable BULB_FILE_VERSION at build time (`cargo xtask build` sets it).
 pub const FILE_VERSION: u32 = match option_env!("BULB_FILE_VERSION") {
     Some(s) => parse_hex(s),
     None => 0x0100_0000,
@@ -131,11 +92,8 @@ const fn parse_hex(s: &str) -> u32 {
     v
 }
 
-/// Flash sector with the device's EUI-64, written at the factory.
 const MAC_SECTOR: usize = 0xf_f000;
-/// Telink's address prefix for devices without a factory address.
 const TELINK_OUI: [u8; 3] = [0x38, 0xc1, 0xa4];
-/// Address prefixes Telink stores in Bluetooth order (6-byte MAC first).
 const BLE_ORDER_OUIS: [[u8; 3]; 7] = [
     [0x38, 0xc1, 0xa4],
     [0xd1, 0x19, 0xc4],
@@ -148,19 +106,9 @@ const BLE_ORDER_OUIS: [[u8; 3]; 7] = [
 
 const TICKS_PER_MS: u32 = 16_000;
 
-/// The diagnostic counters kept over a watchdog or software reset: in RAM
-/// that the start-up code leaves alone (`.noinit`, `RETAINED`), behind a
-/// header and a checksum, since after a power-on it holds whatever the chip
-/// woke up with.
-/// The black box's records (`zigbee::stack::blackbox`), outside `Stack`:
-/// all zero, in .bss; the hal takes it.
 static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
 
-/// The `Retained` block: magic, length, checksum (a word each), then the
-/// data. Any bit pattern is a valid value of it, which is what memory the
-/// start-up code leaves alone holds after a power-on (the initialiser here
-/// is not loaded); every access is volatile.
-#[allow(unsafe_code)] // a linker attribute
+#[allow(unsafe_code)]
 #[link_section = ".noinit"]
 static RETAINED: SharedBuf<{ 12 + zigbee::stack::RETAIN_MAX }> = SharedBuf::new([0; 12 + zigbee::stack::RETAIN_MAX]);
 const RETAINED_MAGIC: u32 = 0x4449_4147;
@@ -169,14 +117,11 @@ fn retained_sum(len: u32, data: &[u8]) -> u32 {
     data.iter().fold(0x811C_9DC5u32 ^ len, |h, b| (h ^ *b as u32).wrapping_mul(0x0100_0193))
 }
 
-/// Link quality (and energy level) from a signal strength in dBm, on the
-/// scale Telink's stack uses: -99 dBm and below is 0, -15 dBm and above 255.
 fn lqi_from_rssi(rssi: i32) -> u8 {
     (255 * (rssi.clamp(-99, -15) + 99) / 84) as u8
 }
 
 pub struct Tc32Hal {
-    /// Staging area erased up to this offset during the current download.
     staging_erased: u32,
     nv: Nv,
     ext: u64,
@@ -190,9 +135,6 @@ pub struct Tc32Hal {
 impl Tc32Hal {
     pub fn new() -> Self {
         let mut hal = Tc32Hal { staging_erased: 0, nv: nv::open(), ext: 0, last_tick: reg::tick(), rest: 0, ms: 0, rng: [0; 2], black_box: BLACK_BOX.take_with(|| zigbee::BlackBox::EMPTY) };
-        // Nothing here needs unpredictable numbers (keys come from the Trust
-        // Center, nonces are counters): the generator only spreads backoffs
-        // and jitter, so the timer and whatever the flash holds seed it.
         let mut seed = [0u8; 8];
         flash::read(MAC_SECTOR, &mut seed);
         hal.rng = [
@@ -203,9 +145,6 @@ impl Tc32Hal {
         hal
     }
 
-    /// The EUI-64 from the factory sector, in the layouts Telink's stack
-    /// reads; a blank sector gets a random address under Telink's prefix,
-    /// which is stored so that it stays the same.
     fn read_address(&mut self) -> u64 {
         let mut a = [0u8; 8];
         flash::read(MAC_SECTOR, &mut a);
@@ -229,12 +168,9 @@ impl Tc32Hal {
 }
 
 impl Hal for Tc32Hal {
-    /// The chip's AES block; it checks itself before its first use and
-    /// the stack computes in software if it does not work.
     const AES: Option<zigbee::aes::Engine> = Some(crate::aes::encrypt);
 
     fn now_ms(&mut self) -> u32 {
-        // the timer wraps every 268 s; the main loop calls this far more often
         let tick = reg::tick();
         let ticks = self.rest + tick.wrapping_sub(self.last_tick);
         self.last_tick = tick;
@@ -244,7 +180,6 @@ impl Hal for Tc32Hal {
     }
 
     fn random(&mut self) -> u32 {
-        // multiply-with-carry pair, stirred with the free-running timer
         self.rng[0] = 18000 * (self.rng[0] & 0xffff) + (self.rng[0] >> 16);
         self.rng[1] = 36969 * (self.rng[1] & 0xffff) + (self.rng[1] >> 16);
         ((self.rng[1] << 16).wrapping_add(self.rng[0])) ^ reg::tick()
@@ -296,13 +231,10 @@ impl Hal for Tc32Hal {
     }
 
     fn nv_erase(&mut self) {
-        // The stack stores the frame counters again right after; kept
-        // through, they outlive a power cut in between too.
         self.nv.forget_all_but(NvItem::Counters as u8);
     }
 
     fn ota_begin(&mut self, size: u32) -> bool {
-        // one update at a time: not while an image is coming in over BLE
         if size > staging::SIZE || !staging::claim(Owner::Zigbee) {
             return false;
         }
@@ -314,8 +246,6 @@ impl Hal for Tc32Hal {
         if image_len > staging::SIZE || !staging::claim(Owner::Zigbee) {
             return false;
         }
-        // sectors below the checkpoint hold the image so far; the rest is
-        // erased again as the download reaches it
         self.staging_erased = (image_len + 0xfff) & !0xfff;
         true
     }
@@ -325,8 +255,6 @@ impl Hal for Tc32Hal {
         if end > staging::SIZE || !staging::holds(Owner::Zigbee) {
             return;
         }
-        // sectors are erased as the download reaches them: erasing the whole
-        // area first would keep the radio deaf for seconds
         while self.staging_erased < end {
             let sector = staging::BASE + self.staging_erased as usize;
             if !flash::blank(sector) {
@@ -428,13 +356,11 @@ impl Hal for Tc32Hal {
         if retained_sum(n as u32, &buf[..n]) != r.read32(8) {
             return None;
         }
-        // taken once
         r.write32(0, 0);
         Some(n)
     }
 
     fn ota_activate(&mut self) {
-        // the stack checked the image as it arrived; what the flash holds is checked again here
         staging::activate();
         staging::release(Owner::Zigbee);
     }
@@ -451,40 +377,23 @@ impl Hal for Tc32Hal {
     }
 }
 
-/// The bulb's link to the outside: the Zigbee network, and the debug link
-/// (`link.rs`) for tests and debuggers.
-///
-/// The radio and the stack are started on the first poll, not at
-/// construction: the light must come on first after power-on, and reading
-/// the stores takes a moment.
 pub struct Link {
     stack: Option<Stack<Tc32Hal>>,
-    /// BLE while it runs: the settings cluster says when (`BleMode`), and
-    /// it is started and stopped between its events, which hand the radio
-    /// back each time.
     #[cfg(feature = "ble")]
     ble: Option<ble::Ble<crate::ble::BleHal>>,
-    /// The light as last reported, for a BLE side started later.
     #[cfg(feature = "ble")]
     last_light: Option<StateReport>,
-    /// The window after power-on (`BleMode::Window`) has passed; it does
-    /// not open again until the next power-on.
     #[cfg(feature = "ble")]
     window_over: bool,
-    /// The diagnostic service's values and commands (`diag.rs`).
     #[cfg(feature = "ble")]
     diag: crate::diag::Glue,
     light: Option<StateReport>,
     debug: DebugLink,
 }
 
-/// Where the link (and so both stacks) lives: in .bss, where the linker
-/// counts it against the SRAM, not on the main stack. As a value of `main`
-/// it was there twice (`Bulb::boot` takes it by value), some 20 KB.
 static LINK: TakeOnce<Link> = TakeOnce::new();
 
 impl Link {
-    /// The link, built in its place. There is one; a second call panics.
     #[inline(never)]
     pub fn take() -> &'static mut Link {
         LINK.take_with(Link::new).expect("the radio link is taken once")
@@ -506,20 +415,13 @@ impl Link {
         }
     }
 
-    /// Starts the radio and the stacks. Apart from `poll`: what the stacks
-    /// are built in on the way into `self` takes as much room again on the
-    /// main stack, and here that room is given back before `poll` goes on
-    /// (in `poll`'s own frame it stayed taken under every call it makes).
     #[inline(never)]
     #[cold]
     fn start(&mut self) {
         radio::init();
         Stack::new_in(&mut self.stack, Tc32Hal::new(), IDENTITY);
-        // BLE comes after the stack (`ble_switch`): a blank factory sector
-        // has its address by then, and the stack has read the BLE setting
     }
 
-    /// (Its own frame: what BLE is built in is not added to the stack's.)
     #[cfg(feature = "ble")]
     #[inline(never)]
     #[cold]
@@ -533,7 +435,6 @@ impl Link {
         }
     }
 
-    /// Whether BLE is to run now, by the setting the stack keeps.
     #[cfg(feature = "ble")]
     fn ble_wanted(&mut self) -> bool {
         let Some(stack) = self.stack.as_mut() else {
@@ -543,7 +444,6 @@ impl Link {
             BleMode::On => true,
             BleMode::Off => false,
             BleMode::Window => {
-                // the stack's clock starts with the stack, right after power-on
                 if !self.window_over {
                     let window_ms = stack.ble_window_minutes() as u32 * 60_000;
                     self.window_over = stack.hal.now_ms() >= window_ms;
@@ -553,13 +453,6 @@ impl Link {
         }
     }
 
-    /// Starts or stops BLE as the setting says. A firmware update over BLE
-    /// is let finish first (`ble::Ble::ota_busy`: the transfer, the restart
-    /// into a good image, the connection whose central reads the final
-    /// status). When the window after power-on closes, a connection under
-    /// way goes on until it ends, as on the stock bulb; when BLE is switched
-    /// off, any other connection is dropped and the central sees the link
-    /// time out.
     #[cfg(feature = "ble")]
     fn ble_switch(&mut self) {
         let wanted = self.ble_wanted();
@@ -580,7 +473,6 @@ impl Link {
     }
 }
 
-/// The link as `main` holds it: by reference (see `LINK`).
 impl Radio for &mut Link {
     fn poll(&mut self) -> Option<Command> {
         (**self).poll()
@@ -612,11 +504,6 @@ impl Radio for Link {
                 self.last_light = Some(light);
             }
         }
-        // BLE first: its events have their moments, and it gives the radio
-        // back before the stack looks at it (`ble_switch` has decided whether
-        // it runs at all)
-        // (no BLE: the main loop's wait does not end for it; a round that
-        // returned before this point keeps the last moment, which is safe)
         #[cfg(feature = "ble")]
         if self.ble.is_none() {
             BLE_NEXT.set(None);
@@ -627,15 +514,6 @@ impl Radio for Link {
             if !ble.ota_active() {
                 staging::release(Owner::Ble);
             }
-            // Only with room before BLE's next event: the refresh takes the
-            // hardware counters, and with them the stack depth, counted
-            // word by word up through the free RAM (`stack::free`), a
-            // millisecond or two of the CPU while the stack has not gone
-            // deep. Just before an advertising event it made the event
-            // late, 310.2 ms after the one before (the emulator's
-            // ll_adv_interval over other starts of the system timer: the
-            // CPU in stack::untouched when the event was due). Put off, it
-            // comes a round or an event later.
             if ble.idle_time() >= DIAG_ROOM {
                 self.diag.refresh(ble, stack);
             }
@@ -650,8 +528,6 @@ impl Radio for Link {
             if let Some(c) = c {
                 return Some(c);
             }
-            // (also while an event waits for a quiet moment within its
-            // advDelay: idle is 0 then, and nothing of ours is to break it)
             if idle < ADV_GUARD && ble.link_state() == ble::LinkState::Advertising {
                 return None;
             }
@@ -661,7 +537,6 @@ impl Radio for Link {
         if matches!(stack.ota_state(), OtaState::Idle | OtaState::Querying) {
             staging::release(Owner::Zigbee);
         }
-        // no probes of the motion sensing while an image comes in over BLE
         #[cfg(all(feature = "sense", feature = "ble"))]
         stack.sense_pause(self.ble.as_ref().is_some_and(|b| b.ota_busy()));
         let c = stack.poll();

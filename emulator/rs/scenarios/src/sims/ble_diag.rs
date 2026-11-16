@@ -1,17 +1,3 @@
-//! The GATT diagnostic service of the device page (crates/ble/src/diag.rs,
-//! crates/bulb-tc32/src/diag.rs) on the Rust firmware: the bulb on the
-//! Zigbee network, the central finds the service by UUID and reads info /
-//! state / log / frames / config / counters; the bytes are decoded here, as
-//! the page decodes them, and compared with what Zigbee and the PWM show;
-//! commands as the page writes them. The counters characteristic is
-//! compared, attribute for attribute, with Read Attributes of the
-//! Diagnostics cluster (0x0B05, the manufacturer's under code 0x1141).
-//!
-//! Image: `--image bin=...` (default target/tc32/bulb-tc32.bin), and
-//! `--image tw=...` for a tunable white image. `BLE_DIAG_DUMP=<file>`
-//! writes the raw values last read from each characteristic (hex) and what
-//! Zigbee says about the bulb to that JSON file: a fixture for a decoder.
-
 use super::ble_central::{hx, login_packet, unhx, Bench};
 use super::json;
 use super::{node_of, SimCtx, SimDef};
@@ -26,14 +12,10 @@ const D: NodeId = NodeId::Dut;
 const DIAG: u16 = 0x0B05;
 const MFR: u16 = 0x1141;
 const STOCK_HANDLES: [(u8, u16); 5] = [(0x11, 0x12), (0x12, 0x15), (0x13, 0x18), (0x15, 0x1B), (0x14, 0x1E)];
-/// The bulb's IEEE address: Telink's OUI, the rest made up.
 const IEEE: u64 = 0xa4c138_0000_00d1a6;
 const SERVICE: &str = "e6100000-5a4b-4c3d-8e2f-1a2b3c4d5e6f";
-/// The characteristics by the short id in their UUID (e610xxxx-...).
 const CHARS: [(&str, &str); 7] =
     [("0001", "info"), ("0002", "state"), ("0003", "log"), ("0004", "cmd"), ("0005", "frames"), ("0006", "config"), ("0007", "counters")];
-
-// ---- the page's decoding, byte for byte ----
 
 fn u16le(b: &[u8], i: usize) -> u16 {
     u16::from_le_bytes([b[i], b[i + 1]])
@@ -48,7 +30,6 @@ struct Info {
     tunable: bool,
     flags: u8,
     release: u8,
-    /// as the page shows it: most significant byte first, colons
     ieee: String,
     model: String,
     firmware: String,
@@ -81,10 +62,8 @@ struct State {
     mac_tx: u32,
     on: bool,
     level: u8,
-    /// None: 0xFFFF (no colour temperature)
     mireds: Option<u16>,
     logged_in: bool,
-    /// state[39] bits 0..3: 0 done, 1 requires login, 2 invalid parameters
     result: u8,
 }
 
@@ -113,13 +92,11 @@ fn decode_state(b: &[u8]) -> Option<State> {
     })
 }
 
-/// (time, code, arg), newest first.
 fn decode_log(b: &[u8]) -> Vec<(u32, u8, u8)> {
     let n = (*b.first().unwrap_or(&0) as usize).min(b.len().saturating_sub(1) / 6);
     (0..n).map(|i| 1 + i * 6).map(|o| (u32le(b, o), b[o + 4], b[o + 5])).collect()
 }
 
-/// The C firmware's event codes in a log (the Rust firmware's own, from 32, left out).
 fn c_codes(log: &[(u32, u8, u8)]) -> Vec<u8> {
     log.iter().map(|e| e.1).filter(|c| (1..32).contains(c)).collect()
 }
@@ -138,7 +115,6 @@ struct Frame {
     src: u16,
     cluster: u16,
     cmd: u8,
-    /// cluster specific (frame control bits 0..1 = 1), not a general command
     specific: bool,
     lqi: u8,
 }
@@ -156,7 +132,6 @@ struct Config {
     start_up_on_off: u8,
     start_up_level: u8,
     level_options: u8,
-    /// None: 0xFF (no Color Control)
     color_options: Option<u8>,
     start_up_mireds: u16,
     ct_min: u16,
@@ -178,7 +153,6 @@ fn decode_config(b: &[u8]) -> Option<Config> {
     })
 }
 
-/// Bytes of a numeric ZCL value of type `t`, and whether it is signed.
 fn zcl_width(t: u8) -> Option<(usize, bool)> {
     match t {
         0x08 | 0x10 | 0x18 | 0x20 | 0x30 => Some((1, false)),
@@ -201,7 +175,6 @@ fn number(v: &[u8], signed: bool) -> i64 {
     x
 }
 
-/// The counters value: format 1, then (id, type, value) as wide as the type.
 fn decode_counters(b: &[u8]) -> Option<Vec<(u16, u8, i64)>> {
     if b.first() != Some(&1) {
         return None;
@@ -217,8 +190,6 @@ fn decode_counters(b: &[u8]) -> Option<Vec<(u16, u8, i64)>> {
     }
     (o == b.len()).then_some(out)
 }
-
-// ---- the page's commands ----
 
 mod cmd {
     pub fn identify() -> Vec<u8> {
@@ -258,7 +229,6 @@ struct S<'a> {
     b: Bench,
     mtu: usize,
     bad: Vec<String>,
-    /// value handle -> characteristic name, and the last value read of each (`BLE_DIAG_DUMP`)
     names: Vec<(u16, &'static str)>,
     raw: Vec<(&'static str, Vec<u8>)>,
 }
@@ -293,7 +263,6 @@ impl S<'_> {
         self.run_until(ms, |_| false).map(|_| ())
     }
 
-    /// The responses of the cluster with one of the commands, after `send`.
     fn zcl_and_wait(&mut self, send: impl FnOnce(&mut Bench), cluster: u16, kinds: &[u8], max_ms: f64) -> R<Vec<Vec<u8>>> {
         let n0 = self.b.w.coord.zcl_rsp.len();
         send(&mut self.b);
@@ -324,7 +293,6 @@ impl S<'_> {
     fn connect(&mut self) -> R<Option<String>> {
         self.b.ble_connect(D, 40, None);
         let c = self.b.ble_wait_connected(D, 15000.0)?;
-        // a new connection starts at the default MTU: exchanged, as a browser does
         self.mtu = 23;
         if c.is_some() {
             let rsp = self.att(&[0x02, 64, 0])?;
@@ -339,7 +307,6 @@ impl S<'_> {
         self.b.att_ok(D, pdu)
     }
 
-    /// Read + Read Blob to the end of the value (like a browser with a small MTU).
     fn read_long(&mut self, handle: u16) -> R<Option<Vec<u8>>> {
         let mut q = vec![0x0a];
         q.extend_from_slice(&handle.to_le_bytes());
@@ -392,7 +359,6 @@ impl S<'_> {
     }
 }
 
-/// A Read Attributes Response body: (attribute, type, value) of those read with success.
 fn read_records(body: &[u8]) -> Vec<(u16, u8, i64)> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -411,7 +377,6 @@ fn read_records(body: &[u8]) -> Vec<(u16, u8, i64)> {
     out
 }
 
-/// The Diagnostics cluster's attributes `ids` read over Zigbee, eight at a time.
 fn zigbee_diag(s: &mut S, ids: &[u16]) -> R<Vec<(u16, u8, i64)>> {
     let short = s.short();
     let mut out = Vec::new();
@@ -437,16 +402,11 @@ fn zigbee_diag(s: &mut S, ids: &[u16]) -> R<Vec<(u16, u8, i64)>> {
     Ok(out)
 }
 
-/// The counters characteristic against Read Attributes of the Diagnostics
-/// cluster just before and just after it was taken (the firmware refreshes
-/// it every second): every value as one of the cluster's at or between the
-/// two reads, of the same type.
 fn counters_check(s: &mut S, h: u16) -> R<()> {
     let first = s.read(h, "counters")?;
     let first = decode_counters(&first).ok_or_else(|| none("counters"))?;
     let ids: Vec<u16> = first.iter().map(|c| c.0).collect();
     let before = zigbee_diag(s, &ids)?;
-    // the next refresh comes after these reads
     s.run(1200.0)?;
     let raw = s.read(h, "counters")?;
     let after = zigbee_diag(s, &ids)?;
@@ -491,7 +451,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bin", "target/tc32/bulb-tc32.bin");
     let tw = cx.images.iter().any(|i| i.label == "tw");
     let mut node = node_of(&img, cx.cpi)?;
-    // a made-up IEEE address in the factory MAC record (as `addr_conflict::bulb_node`)
     let e = IEEE.to_le_bytes();
     node.write_flash(0xFF000, &[e[0], e[1], e[2], 0x38, 0xC1, 0xA4, e[3], e[4] & 0x7F]);
     let b = Bench::new(node, "dut", true, None);
@@ -520,7 +479,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
         return Ok(());
     }
     let dev = s.b.w.coord.devices.iter().find(|d| d.announced).unwrap().clone();
-    // `SIM_STACK=1`: how deep the main stack goes from here on (with the service filled every second)
     if let Some(l) = super::util::stack_rearm(s.b.w.node_mut(D), img) {
         s.cx.say(&l);
     }
@@ -535,7 +493,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
     let c = s.connect()?;
     s.check("BLE connection", c.is_some(), "");
 
-    // the service by UUID (Find By Type Value 0x2800), like getPrimaryService() in a browser
     let mut q = vec![0x06, 1, 0, 0xFF, 0xFF, 0x00, 0x28];
     q.extend_from_slice(&svc);
     let rsp = s.att(&q)?;
@@ -566,7 +523,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
             let mut u = e[5..].to_vec();
             u.reverse();
             let full = hx(&u);
-            // e610xxxx-5a4b-4c3d-8e2f-1a2b3c4d5e6f: the short id and the base of the service's UUID
             let k = if full.len() == 32 && full[..4] == SERVICE[..4] && full[8..] == SERVICE.replace('-', "")[8..] {
                 full[4..8].to_string()
             } else {
@@ -593,7 +549,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
         }
     }
 
-    // the stock characteristics below the service
     let mut tel: Vec<(u8, u16)> = Vec::new();
     let mut start: u32 = 1;
     while start < h0 as u32 {
@@ -637,7 +592,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
         info.model == if tw { "ESMLFzm_w6_TW" } else { "ESMLFzm_w6_Dimm" }
             && info.firmware == "3.0.2_1610"
             && info.tunable == tw
-            // the watchdog and the motion sensing (in every image, off until switched on)
             && info.flags == 0x03
             && info.ieee == ieee,
         &format!(
@@ -701,7 +655,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
     let cfg_h = ch("0006")?;
     let cfg = decode_config(&s.read(cfg_h, "config")?).ok_or_else(|| none("config"))?;
     let tw_ok = if tw { cfg.ct_min == 153 && cfg.ct_max == 454 && cfg.color_options == Some(1) } else { cfg.color_options.is_none() };
-    // StartUpOnOff and StartUpCurrentLevel as Zigbee reads them
     let short = dev.short;
     let mut startup = Vec::new();
     for (cluster, attr) in [(0x0006u16, 0x4003u16), (0x0008, 0x4000)] {
@@ -797,7 +750,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
     }
     let toggles = (1..seq.len()).filter(|i| seq[*i] != seq[i - 1]).count();
     let now_on = s.b.light(D).on;
-    // 3 s in half seconds
     s.check(
         "cmd 0x01: the bulb blinks and returns to its state",
         rsp[0] == 0x13 && toggles >= 5 && now_on == light.on,
@@ -819,8 +771,6 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
     Ok(())
 }
 
-/// `BLE_DIAG_DUMP=<file>`: the raw values last read and what Zigbee says
-/// about the bulb, for a decoder's tests.
 fn dump(s: &S, image: &std::path::Path, tw: bool) {
     let Some(path) = std::env::var_os("BLE_DIAG_DUMP") else { return };
     let root = crate::runner::repo_root();

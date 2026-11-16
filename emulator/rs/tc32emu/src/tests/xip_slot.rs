@@ -1,4 +1,3 @@
-// xip_slot_test.go
 use crate::{Flash, Machine, FLASH_MEM, REG_BASE};
 
 #[test]

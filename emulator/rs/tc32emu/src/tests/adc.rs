@@ -1,4 +1,3 @@
-// adc_test.go
 use std::collections::{BTreeSet, HashMap};
 
 use super::{digest_u32, rbg_machine};

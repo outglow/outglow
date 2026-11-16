@@ -1,7 +1,3 @@
-//! The spec tests: each states where its expectation comes from (document,
-//! clause, requirement in one sentence), as the Python suite in emulator/spec/
-//! does. Tests of one session run in order on one joined bulb.
-
 pub mod aps_data;
 pub mod bdb_join;
 pub mod misc_ota_gp;
@@ -27,14 +23,10 @@ pub struct Test {
     pub doc: &'static str,
     pub clause: &'static str,
     pub req: &'static str,
-    /// the shared session the test runs in; "" = a session of its own
     pub session: &'static str,
     pub run: fn(&mut Session) -> R<String>,
-    /// mandatory for a Zigbee 3.0 router/light
     pub mandatory: bool,
-    /// why the clause can be read in more than one way
     pub ambiguous: Option<&'static str>,
-    /// options of the test's session (the first test of a shared session decides)
     pub setup: SessionDef,
 }
 
@@ -43,7 +35,6 @@ fn not_set(_: &mut Session) -> R<String> {
 }
 
 impl Test {
-    /// Defaults for the fields a test does not set: `Test { id, .., ..Test::D }`.
     pub const D: Test = Test {
         id: "",
         doc: "",
@@ -56,7 +47,6 @@ impl Test {
         setup: SessionDef::D,
     };
 
-    /// The session key: the shared session's name or `own:ID`.
     pub fn group(&self) -> String {
         if self.session.is_empty() {
             format!("own:{}", self.id)
@@ -66,15 +56,11 @@ impl Test {
     }
 }
 
-/// Options of a session (`define_session` in Python).
 #[derive(Clone, Copy, Debug)]
 pub struct SessionDef {
     pub join: bool,
-    /// light on at full level before every test of a shared session
     pub baseline: bool,
-    /// check after every test that the bulb still answers
     pub alive_check: bool,
-    /// changes to the Trust Center before it starts (`tc=dict(...)`)
     pub tc: Option<fn(&mut Coord)>,
 }
 
@@ -88,7 +74,6 @@ impl Default for SessionDef {
     }
 }
 
-/// The tests with the module each comes from (the module names the area: `nwk_routing`, `zcl_level`, ...).
 pub fn modules() -> Vec<(&'static str, Vec<Test>)> {
     vec![
         ("aps_data", aps_data::tests()),

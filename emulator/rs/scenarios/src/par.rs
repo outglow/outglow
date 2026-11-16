@@ -1,19 +1,3 @@
-//! The worker threads of the parallel lockstep (`World::lockstep` with
-//! `ZB_PARALLEL=1`): one thread per further bulb, kept for the life of the
-//! `World`, each running its bulb for one phase at a time while the
-//! scenario's thread runs the first bulb and the scripted nodes.
-//!
-//! A bulb is a `zbnode::Node`, full of `Rc` and `RefCell`, so it is not
-//! `Send`. It is handed to a worker anyway ([`BulbPtr`]), under this
-//! invariant: no `Rc` inside a bulb is shared with anything that another
-//! thread touches while the bulb is out. The emulator's hooks only ever
-//! capture the node's own models; the air (`Air`) copies every frame and BLE
-//! packet it hands to a bulb; the scenario's own handles into a bulb (its BLE
-//! central, debug logs a scenario hooks into one bulb) are touched only by
-//! scenario code, which runs between the phases, while the workers wait.
-//! The lockstep keeps its side: during a phase the further bulbs are taken
-//! out of `Air::bulbs` and what the air sends them waits in `Air::lent`.
-
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,12 +5,8 @@ use std::thread::{self, JoinHandle, Thread};
 
 use crate::air::{bulb_next, Bulb, BulbOut};
 
-/// A bulb lent to a worker for one phase.
 pub(crate) struct BulbPtr(*mut Bulb);
 
-// SAFETY: see the module documentation. The pointer is used by one worker
-// between `Pool::start` and the end of `Pool::wait`, and the bulb is touched
-// by nobody else then.
 unsafe impl Send for BulbPtr {}
 
 impl BulbPtr {
@@ -37,10 +17,7 @@ impl BulbPtr {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Phase {
-    /// The bulb waits in TX mode: run it until its frame starts or it
-    /// leaves TX mode (or `target`).
     Commit,
-    /// Run it to `target`.
     Run,
 }
 
@@ -56,18 +33,14 @@ struct Slot {
     job: Option<Job>,
     out: Vec<BulbOut>,
     err: Option<String>,
-    /// wall time this worker spent running its bulb
     busy: std::time::Duration,
 }
 
 struct Shared {
-    /// bumped by the scenario's thread to start a phase
     gen: AtomicU64,
-    /// workers done with the current phase
     done: AtomicUsize,
     quit: AtomicBool,
     slots: Vec<Mutex<Slot>>,
-    /// the thread that waits for the phase (the scenario's)
     main: Mutex<Thread>,
     spin: u32,
 }
@@ -77,8 +50,6 @@ pub(crate) struct Pool {
     handles: Vec<JoinHandle<()>>,
 }
 
-/// Busy-wait this many rounds before sleeping (`ZB_PARALLEL_SPIN`): a phase
-/// is short, and waking a parked thread costs more than most phases take.
 fn spin_rounds() -> u32 {
     std::env::var("ZB_PARALLEL_SPIN").ok().and_then(|v| v.parse().ok()).unwrap_or(20_000)
 }
@@ -106,11 +77,6 @@ impl Pool {
         self.sh.slots.len()
     }
 
-    /// Starts a phase: worker k runs `jobs[k]` (None: nothing this time).
-    ///
-    /// # Safety
-    /// Every bulb in `jobs` stays where it is and is touched by nobody else
-    /// until `wait` returns.
     pub(crate) unsafe fn start(&self, jobs: Vec<Option<Job>>) {
         debug_assert_eq!(jobs.len(), self.len());
         *self.sh.main.lock().unwrap() = thread::current();
@@ -124,7 +90,6 @@ impl Pool {
         }
     }
 
-    /// Waits for the phase `start` began to end on every worker.
     pub(crate) fn wait(&self) {
         let n = self.len();
         let mut spins = 0u32;
@@ -138,12 +103,10 @@ impl Pool {
         }
     }
 
-    /// The wall time each worker spent running its bulb so far.
     pub(crate) fn busy(&self) -> Vec<std::time::Duration> {
         self.sh.slots.iter().map(|s| s.lock().unwrap().busy).collect()
     }
 
-    /// What worker k's bulb put out in the last phase, and its error.
     pub(crate) fn take(&self, k: usize) -> (Vec<BulbOut>, Option<String>) {
         let mut s = self.sh.slots[k].lock().unwrap();
         (std::mem::take(&mut s.out), s.err.take())
@@ -185,7 +148,6 @@ fn worker(sh: &Shared, k: usize) {
             let mut guard = sh.slots[k].lock().unwrap();
             let slot = &mut *guard;
             if let Some(job) = slot.job.take() {
-                // SAFETY: `Pool::start`'s contract: the bulb is this worker's until `wait` returns.
                 let b = unsafe { &mut *job.bulb.0 };
                 let t0 = std::time::Instant::now();
                 let out = &mut slot.out;

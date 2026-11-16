@@ -1,5 +1,3 @@
-//! The BLE test modules, one per emulator/spec_ble/*.py.
-
 pub mod att_commands;
 pub mod att_errors;
 pub mod att_find;

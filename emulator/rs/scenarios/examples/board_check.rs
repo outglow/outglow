@@ -1,16 +1,3 @@
-//! Every board of the Rust firmware against the stock firmware of that board
-//! (docs/stock-profiles.md, `scenarios::profile::board_check`; the same as
-//! the sim `cargo sims -- board_check`, with options). From emulator/rs:
-//!
-//!   cargo run --release -p scenarios --example board_check                 # images in target/
-//!   cargo run --release -p scenarios --example board_check -- --build      # build every board first
-//!   cargo run --release -p scenarios --example board_check -- --only EGLO_ZM_TW
-//!
-//! Options: --only TEXT (board names containing it), --build (run
-//! cargo xtask build --board <name> for each first), --jobs N (all
-//! cores), --cpi N (3), --out DIR (keep our profiles there), --level-step,
-//! --ct-step, --hue-step, --sat-step N. Exit status 1 when a check failed.
-
 use std::path::PathBuf;
 use std::time::Instant;
 

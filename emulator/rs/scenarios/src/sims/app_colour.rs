@@ -1,19 +1,3 @@
-//! Colour as the AwoX HomeControl app drives it (decompiled app, docs/stock-colour.md):
-//! the ZCL tunnel on 1912 for colour (Move to Hue and Saturation), brightness,
-//! colour temperature and the colour animation (Enhanced Move Hue / Stop Move
-//! Step), and the status the app asks for (`value[0]=2`, `[0x0a addr]`) and
-//! reads from the 0x80 notifications on 1911 (flags, level, mireds, hue,
-//! saturation). The same packets go to the stock colour image and to ours;
-//! the outputs and the status after each are compared.
-//!
-//! Not in the script: Move to Color through the tunnel. The app does not
-//! send it; the stock firmware takes xy to hue and saturation only in the
-//! routine that saves the Zigbee attributes, which the tunnel does not
-//! start, so there an xy after another mode shows the old hue
-//! (docs/stock-colour.md).
-//!
-//! `cargo sims -- app_colour [-v] [--image stock=...] [--image rust=...]`
-
 use super::ble_central::{crc8_6c, discover, hx, login, pad16, secure_pw, tel_get, unhx, zcl_tunnel_packet, Bench, Transport, RND8};
 use super::{SimCtx, SimDef};
 use crate::air::NodeId;
@@ -27,7 +11,6 @@ pub fn def() -> SimDef {
 
 const D: NodeId = NodeId::Dut;
 
-/// Telink's aes_att_decryption: AES-128 decryption on the reversed bytes.
 fn telink_aes_dec(key: &[u8; 16], data: &[u8]) -> [u8; 16] {
     let mut k = *key;
     k.reverse();
@@ -38,7 +21,6 @@ fn telink_aes_dec(key: &[u8; 16], data: &[u8]) -> [u8; 16] {
     o
 }
 
-/// The app's status request (`get_status_notification`, i9.f): type 2, [0x0a addr LE].
 fn status_request(key: &[u8; 16], addr: u16) -> Vec<u8> {
     let body = [3u8, 0x0a, addr as u8, (addr >> 8) as u8];
     let mut blk = vec![crc8_6c(&body)];
@@ -48,7 +30,6 @@ fn status_request(key: &[u8; 16], addr: u16) -> Vec<u8> {
     v
 }
 
-/// The 19 octets of an app status (0x80, one AES block, three in the clear), or None.
 fn app_status(key: &[u8; 16], v: &[u8]) -> Option<[u8; 19]> {
     if v.len() != 20 || v[0] != 0x80 {
         return None;
@@ -59,7 +40,6 @@ fn app_status(key: &[u8; 16], v: &[u8]) -> Option<[u8; 19]> {
     Some(d)
 }
 
-/// What the app makes of it (n7.k): flags, level, mireds, hue, saturation.
 fn show(d: &[u8; 19]) -> String {
     format!(
         "on {} colour {} turning {} candle {} level {} mireds {} hue {} sat {}",
@@ -74,7 +54,6 @@ fn show(d: &[u8; 19]) -> String {
     )
 }
 
-/// The compare values of the six PWM channels (0 when off).
 fn pwm(b: &Bench) -> [u16; 6] {
     let g = &b.node(D).m.regs;
     let p = &g[0x780..0x7c0];
@@ -87,19 +66,15 @@ fn pwm(b: &Bench) -> [u16; 6] {
     out
 }
 
-/// The outcome of one step: the outputs once it settled, the last app status, and how many
-/// app statuses and other notifications came.
 struct Step {
     what: &'static str,
     pwm: [u16; 6],
     status: Option<[u8; 19]>,
     statuses: usize,
     other: usize,
-    /// The outputs seen every 20 ms while the step lasted (the candle mode's flicker).
     seen: Vec<[u16; 6]>,
 }
 
-/// The app's packets, in order: (what, tunnel cluster and ZCL, or the status request; ms to wait).
 enum Pkt {
     Zcl(u16, &'static [u8]),
     Status,
@@ -143,7 +118,6 @@ fn exercise(cx: &mut SimCtx, img: &Image, label: &str) -> R<Vec<Step>> {
     };
     let hc = tel_get(&tel, 0x12).unwrap();
     let hs = tel_get(&tel, 0x11).unwrap();
-    // the app's notification switch, and the CCCD
     let mut q = vec![0x12];
     q.extend_from_slice(&hs.to_le_bytes());
     q.push(0x01);
@@ -215,14 +189,11 @@ fn run(cx: &mut SimCtx) -> R<()> {
     for (a, b) in s.iter().zip(&r) {
         let candle = a.what.starts_with("candle");
         let animating = a.what.contains("animating") || a.what.starts_with("animation on");
-        // the outputs, settled (a candle flickers; a turning hue is where the clock has it)
         if !candle && !animating {
             cx.check(0.0, &format!("{}: the outputs", a.what), a.pwm.iter().zip(&b.pwm).all(|(x, y)| near(*x, *y)),
                      &format!("stock {:?}, ours {:?}", a.pwm, b.pwm));
         }
-        // the status the app reads
         let same = match (a.status, b.status) {
-            // the stock firmware sends its status some 90 ms after the command, by when its hue has moved on
             (Some(x), Some(y)) if animating => {
                 x[..7] == y[..7] && x[11..16] == y[11..16] && (x[16] as i32 - y[16] as i32).abs() <= 3 && x[17..] == y[17..]
             }
@@ -233,7 +204,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         cx.check(0.0, &name, same, &format!("stock {}; ours {}", text(a), text(b)));
         cx.check(0.0, &format!("{}: no mesh notification to the app", a.what), b.other == 0, &format!("{} other", b.other));
         if !a.seen.is_empty() {
-            // a candle flickers at random: ours through levels the stock firmware's shows too
             let (mut sa, mut sb) = (a.seen.clone(), b.seen.clone());
             sa.sort();
             sb.sort();

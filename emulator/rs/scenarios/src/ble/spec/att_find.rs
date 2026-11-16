@@ -1,6 +1,3 @@
-//! ATT: Find Information and Find By Type Value (Core 5.4 Vol 3 Part F 3.4.3);
-//! emulator/spec_ble/att_find.py.
-
 use super::att_errors::cat;
 use crate::ble::harness::{att_error, hx, BleSession, LinkOpts};
 use crate::ble::util::{
@@ -99,12 +96,10 @@ fn rev(b: &[u8]) -> Vec<u8> {
     b.iter().rev().copied().collect()
 }
 
-/// Python's `[hex(h) for h in hs]`.
 fn hexes(hs: &[u16]) -> String {
     py::list(hs.iter().map(|h| format!("'{h:#x}'")))
 }
 
-/// (handle, UUID) of an ATT_FIND_INFORMATION_RSP, or None when it is not a well-formed one.
 fn pairs(rsp: Option<&[u8]>) -> Option<Vec<(u16, Vec<u8>)>> {
     let r = rsp?;
     if r.len() < 6 || r[0] != 0x05 || !(r[1] == 1 || r[1] == 2) {
@@ -118,10 +113,6 @@ fn pairs(rsp: Option<&[u8]>) -> Option<Vec<(u16, Vec<u8>)>> {
 }
 
 fn find_info_invalid_handles(s: &mut BleSession) -> R<String> {
-    // 3.4.3.1: "If a server receives an ATT_FIND_INFORMATION_REQ PDU with the Starting Handle parameter
-    // greater than the Ending Handle parameter or the Starting Handle parameter is 0x0000, an
-    // ATT_ERROR_RSP PDU shall be sent with the Error Code parameter set to Invalid Handle (0x01); the
-    // Attribute Handle In Error parameter shall be set to the Starting Handle parameter."
     link(s, LinkOpts::new())?;
     table(s)?;
     let c = |what: &str, a: u16, b: u16| -> Case {
@@ -139,9 +130,6 @@ fn find_info_invalid_handles(s: &mut BleSession) -> R<String> {
 }
 
 fn find_info_not_found(s: &mut BleSession) -> R<String> {
-    // 3.4.3.1: "If no attributes will be returned, an ATT_ERROR_RSP PDU shall be sent with the Error Code
-    // parameter set to Attribute Not Found (0x0A); the Attribute Handle In Error parameter shall be set to
-    // the Starting Handle parameter."
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let nx = g.last_handle() as u32 + 1;
@@ -164,11 +152,6 @@ fn find_info_not_found(s: &mut BleSession) -> R<String> {
 }
 
 fn find_info_format(s: &mut BleSession) -> R<String> {
-    // 3.4.3.2: "The Find Information Response shall have complete handle-UUID pairs. Such pairs shall not
-    // be split across response packets ... The handle-UUID pairs shall be returned in ascending order of
-    // attribute handles." Table 3.9: format 0x01 = 16-bit UUIDs (4-octet pairs), 0x02 = 128-bit UUIDs
-    // (18-octet pairs); "it is not possible to include attributes with differing UUID sizes into a single
-    // response packet". Table 3.8: Information Data 4 to (ATT_MTU-2) octets.
     link(s, LinkOpts::new())?;
     let (mut start, mut last, mut n): (u16, u16, usize) = (1, 0, 0);
     let mut fmts: Vec<u8> = Vec::new();
@@ -219,10 +202,6 @@ fn find_info_format(s: &mut BleSession) -> R<String> {
 }
 
 fn find_info_range(s: &mut BleSession) -> R<String> {
-    // 3.4.3.1: "Only attributes with attribute handles between the Starting Handle parameter and the
-    // Ending Handle parameter will be returned." 3.4.3.2: ascending order, so the first pair is the lowest
-    // attribute of the range. Every handle is asked alone (start = end), then some ranges that end in the
-    // middle of the table.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let hs: Vec<u16> = g.attrs.keys().copied().collect();
@@ -262,11 +241,6 @@ fn find_info_range(s: &mut BleSession) -> R<String> {
 }
 
 fn fbtv_invalid_handles(s: &mut BleSession) -> R<String> {
-    // 3.4.3.3: "If a server receives an ATT_FIND_BY_TYPE_VALUE_REQ PDU with the Starting Handle parameter
-    // greater than the Ending Handle parameter or the Starting Handle parameter is 0x0000, an
-    // ATT_ERROR_RSP PDU shall be sent with the Error Code parameter set to Invalid Handle (0x01). The
-    // Attribute Handle In Error parameter shall be set to the Starting Handle parameter." The type and
-    // value are those of a primary service that exists, so there would be something to find.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let sv = g.services[0].clone();
@@ -284,11 +258,6 @@ fn fbtv_invalid_handles(s: &mut BleSession) -> R<String> {
 }
 
 fn fbtv_not_found(s: &mut BleSession) -> R<String> {
-    // 3.4.3.3: "If no attributes will be returned, an ATT_ERROR_RSP PDU shall be sent by the server with
-    // the Error Code parameter set to Attribute Not Found (0x0A). The Attribute Handle In Error parameter
-    // shall be set to the starting handle." "Note: Attribute values will be compared in terms of length
-    // and binary representation." Control: the same request with the value of an existing service is
-    // answered with an ATT_FIND_BY_TYPE_VALUE_RSP.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let sv = g.services[0].clone();
@@ -331,14 +300,6 @@ fn fbtv_not_found(s: &mut BleSession) -> R<String> {
 }
 
 fn fbtv_plain_attribute(s: &mut BleSession) -> R<String> {
-    // 3.4.3.4: "For each handle that matches the attribute type and attribute value in the
-    // ATT_FIND_BY_TYPE_VALUE_REQ PDU a Handles Information shall be returned ... If the attribute type in
-    // the ATT_FIND_BY_TYPE_VALUE_REQ PDU is not a grouping attribute as defined by a higher layer
-    // specification, the Group End Handle shall be equal to the Found Attribute Handle." "The Handles
-    // Information List is ordered sequentially based on the found attribute handles." The attribute is a
-    // characteristic value with a 16-bit type and a value of 1 to ATT_MTU - 7 octets; a characteristic
-    // value is no grouping attribute (Part G 2.5.3). Second request: the same value with one octet changed,
-    // which must not be found (3.4.3.3).
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let vals = read_all(s)?;

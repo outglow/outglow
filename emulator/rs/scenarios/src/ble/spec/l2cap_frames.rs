@@ -1,6 +1,3 @@
-//! L2CAP: frames, fragmentation and recombination, channels (Core 5.4 Vol 3
-//! Part A 3, 7.2; Vol 6 Part B 2.4.1); emulator/spec_ble/l2cap_frames.py.
-
 use crate::ble::harness::{hx, BleSession, LinkOpts, CID_ATT};
 use crate::ble::BleTest;
 use crate::frames::py_bytes;
@@ -8,7 +5,6 @@ use crate::py;
 use crate::session::{expect, Stop, R};
 
 const DOC: &str = "Core 5.4 Vol 3 Part A";
-/// Read By Type: characteristic declarations.
 const REQ: [u8; 7] = [0x08, 0x01, 0x00, 0xFF, 0xFF, 0x03, 0x28];
 
 pub fn tests() -> Vec<BleTest> {
@@ -71,7 +67,6 @@ fn opt_repr(r: &Option<Vec<u8>>) -> String {
     r.as_ref().map(|b| py_bytes(b)).unwrap_or_else(|| "None".into())
 }
 
-/// Sends an L2CAP frame as LL data PDUs cut at the given offsets (LLID 2 first, then LLID 1).
 fn send_split(s: &mut BleSession, fr: &[u8], cuts: &[usize]) -> R<Option<Vec<u8>>> {
     s.poll()?;
     let n0 = s.lk().frames.len();
@@ -101,8 +96,6 @@ fn cuts_str(c: &[usize]) -> String {
 }
 
 fn recombination(s: &mut BleSession) -> R<String> {
-    // 7.2.2: "The L2CAP layer shall reassemble the fragments it receives from the Controller into complete
-    // PDUs". Vol 6 Part B 2.4.1: LLID 0b10 = start of an L2CAP message, 0b01 = continuation fragment.
     let rf = reference(s)?;
     let fr = frame(CID_ATT, &REQ);
     let mut bad = Vec::new();
@@ -121,8 +114,6 @@ fn recombination(s: &mut BleSession) -> R<String> {
 }
 
 fn split_header(s: &mut BleSession) -> R<String> {
-    // Vol 6 Part B 2.4.1: a start fragment "shall not have the Length field set to 0 and should not have
-    // it set to less than 4": a receiver has to recombine short start fragments (Part A 7.2.2).
     let rf = reference(s)?;
     let fr = frame(CID_ATT, &REQ);
     let mut bad = Vec::new();
@@ -151,7 +142,6 @@ fn split_header(s: &mut BleSession) -> R<String> {
 }
 
 fn fragmentation(s: &mut BleSession) -> R<String> {
-    // 7.2.1 / Vol 6 Part B 2.4.1, 4.5.10. Needs a server that agrees to an ATT_MTU above 23.
     s.connect(LinkOpts::new().set("interval", 6))?;
     s.link_run(100.0)?;
     let rsp = s.att_t(&[0x02, 158, 0], 3000.0)?;
@@ -210,12 +200,9 @@ fn att_rsps(s: &BleSession, n0: usize) -> Vec<Vec<u8>> {
 }
 
 fn length_mismatch(s: &mut BleSession) -> R<String> {
-    // 7.2.2: "... shall discard any L2CAP PDUs that fail to match the PDU Length field." Two ways not to
-    // match: a new start fragment while octets are still missing, and a continuation with surplus octets.
     let rf = reference(s)?;
     let fr = frame(CID_ATT, &REQ);
     let mut notes = Vec::new();
-    // (a) too short: 7 of 11 payload octets, then a complete new frame
     let n0 = s.lk().frames.len();
     s.data(2, &fr[..8])?;
     let rsp = s.att_t(&REQ, 3000.0)?;
@@ -230,7 +217,6 @@ fn length_mismatch(s: &mut BleSession) -> R<String> {
         ),
     )?;
     notes.push("incomplete frame dropped");
-    // (b) too long: the frame's octets plus 6 more in the continuation
     let n0 = s.lk().frames.len();
     s.data(2, &fr[..6])?;
     let mut cont = fr[6..].to_vec();
@@ -258,8 +244,6 @@ fn length_mismatch(s: &mut BleSession) -> R<String> {
 }
 
 fn unassigned_cid(s: &mut BleSession) -> R<String> {
-    // 3: "If a PDU is received on a CID that is not assigned or is reserved for future use on the logical
-    // link type, the recipient shall ignore that PDU."
     s.connect(LinkOpts::new().set("interval", 6))?;
     s.link_run(100.0)?;
     let n0 = s.lk().frames.len();

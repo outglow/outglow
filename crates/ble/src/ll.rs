@@ -1,65 +1,25 @@
-//! Link layer: advertising and one connection as peripheral.
-//!
-//! The radio runs single events; here is when they happen, on which
-//! channel, with which window, and what the control packets of the central
-//! change (Bluetooth Core Specification Vol 6 Part B).
-
 use crate::hal::{ConnEvent, Hal, ADV_PDU_MAX, CONNECT_LEN, LL_PAYLOAD_MAX, TICKS_PER_MS, TICKS_PER_US};
 use crate::pdu::{self, ConnectInd};
 use crate::{reached, Ble};
 
-/// Advertising interval: 300 ms (as the stock) plus the specification's
-/// random delay (advDelay, 0 to 10 ms). The delay is drawn from 0 to 9 ms:
-/// an event starts from the main loop, which comes round a fraction of a
-/// millisecond late when the Zigbee side has frames to handle, and that
-/// lateness adds to the interval; the last millisecond is kept for it, so
-/// that the intervals stay within advInterval + 10 ms (Core 5.4 Vol 6 Part
-/// B 4.4.2.2.1).
 pub(crate) const ADV_INTERVAL: u32 = 300 * TICKS_PER_MS;
 pub(crate) const ADV_DELAY_MAX_MS: u32 = 9;
-/// Advertising events in a row that may be left out because the radio's
-/// other user's neighbours were still talking when their advDelay ran out
-/// (`Hal::neighbours_talking`, see `link_poll`); the next one goes in any
-/// case, so that a bulb in a network that never falls quiet can still be
-/// found.
 const ADV_SKIP_MAX: u8 = 3;
-/// T_GAP(lim_adv_timeout) (Vol 3 Part C Appendix A): from power-up the bulb
-/// advertises in the limited discoverable mode, as the stock does (Flags
-/// 0x05), for no longer than this; then in the general discoverable mode
-/// (Flags 0x06), so that it can still be found and connected to.
 const LIM_ADV_TIMEOUT: u32 = 180_000 * TICKS_PER_MS;
-/// Turnaround time between packets: the widening of the receive window
-/// must stay below half an interval less this.
 const T_IFS: u32 = 150 * TICKS_PER_US;
-/// 1.25 ms, the unit of connection intervals and transmit windows.
 const UNIT: u32 = 1250 * TICKS_PER_US;
-/// How long before an event's start the radio is taken from Zigbee. A main
-/// loop pass that takes longer than this just then costs that event.
 const LEAD: u32 = 1500 * TICKS_PER_US;
-/// This device's clock accuracy assumed for window widening, in ppm.
 const OWN_PPM: u32 = 100;
-/// Allowance for both sides' timing jitter in the receive window.
 const JITTER: u32 = 32 * TICKS_PER_US;
-/// The longest a connection event may run after its window, and how long
-/// before the next one it must be over: the rest of the time is Zigbee's.
 const EVENT_MAX: u32 = 4 * TICKS_PER_MS;
 const EVENT_GAP: u32 = 2 * TICKS_PER_MS;
-/// A connection that never heard the central is lost after this many
-/// connection events (Vol 6 Part B 4.5.2), whether run or missed.
 const ESTABLISH_EVENTS: u16 = 6;
-/// Places kept free in the transmit queue before a received packet is
-/// handled: its answer is at most three fragments or one control packet.
 pub(crate) const TX_RESERVE: usize = 4;
 
-/// Connection interval asked of the central: 50 ms keeps the app
-/// responsive and leaves Zigbee most of the radio time.
 const WANTED_INTERVAL: u16 = 40;
 const WANTED_TIMEOUT: u16 = 400;
-/// Not within the first five seconds of a connection (GAP's recommendation):
-/// the central is busy discovering services then.
 const PARAM_REQUEST_AFTER: u32 = 5000 * TICKS_PER_MS;
 
-// control opcodes
 const LL_CONNECTION_UPDATE_IND: u8 = 0x00;
 const LL_CHANNEL_MAP_IND: u8 = 0x01;
 const LL_TERMINATE_IND: u8 = 0x02;
@@ -75,7 +35,6 @@ const LL_LENGTH_RSP: u8 = 0x15;
 const ERR_REMOTE_USER_TERMINATED: u8 = 0x13;
 const ERR_UNSUPPORTED_REMOTE_FEATURE: u8 = 0x1a;
 
-/// Bluetooth 4.2; company 0x0211 (Telink, the chip's maker); our own subversion.
 const VERSION: [u8; 6] = [LL_VERSION_IND, 0x08, 0x11, 0x02, 0x01, 0x00];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,41 +56,24 @@ struct Update {
 pub(crate) struct Link {
     pub state: LinkState,
     next_adv: u32,
-    /// The latest moment for that event: until then it waits while the
-    /// other radio user has traffic.
     adv_latest: u32,
-    /// Advertising events left out in a row (`ADV_SKIP_MAX`).
     adv_skipped: u8,
-    /// Still in the limited discoverable mode, entered at `start`.
     limited: bool,
     start: u32,
     p: ConnectInd,
-    /// Counter of the next connection event.
     event: u16,
     unmapped: u8,
-    /// Reference for event times: the last anchor point, or where the
-    /// transmit window starts before one was seen.
     anchor: u32,
-    /// Connection intervals from `anchor` to the next event.
     since: u32,
-    /// When the central was last heard (the CONNECT_IND before that): the
-    /// two clocks agreed then.
     sync: u32,
-    /// Start of the supervision timeout: when the central was last heard,
-    /// or the start of the transmit window of new connection parameters.
     alive: u32,
-    /// Counter of the event that ran last: received packets belong to it.
     last_event: u16,
-    /// Transmit window still open: no anchor seen since the connection or
-    /// its last update.
     window: u32,
     established: bool,
     update: Option<Update>,
     map_update: Option<([u8; 5], u16)>,
     version_sent: bool,
-    /// The central asked to end the connection; it ends after the event that acknowledged that.
     terminated: bool,
-    /// We asked to end the connection: give up waiting for the acknowledgement then.
     closing: Option<u32>,
     param_request_at: Option<u32>,
     pub connected_at: u32,
@@ -141,7 +83,6 @@ impl Link {
     pub fn new(now: u32) -> Link {
         Link {
             state: LinkState::Advertising,
-            // the first event a little after start: the light comes first
             next_adv: now.wrapping_add(20 * TICKS_PER_MS),
             adv_latest: now.wrapping_add(20 * TICKS_PER_MS),
             adv_skipped: 0,
@@ -182,26 +123,20 @@ impl Link {
         self.p.interval as u32 * UNIT
     }
 
-    /// When the central's packet of the next event is expected.
     fn expected(&self) -> u32 {
         self.anchor.wrapping_add(self.since.wrapping_mul(self.interval()))
     }
 
-    /// How far the two clocks may have drifted apart by `at`.
     fn drift(&self, at: u32) -> u32 {
         let ppm = pdu::sca_ppm(self.p.sca) + OWN_PPM;
         let elapsed_ms = at.wrapping_sub(self.sync) / TICKS_PER_MS;
-        // ppm of a millisecond is a nanosecond: 16 ticks per 1000
         elapsed_ms * ppm * TICKS_PER_US / 1000
     }
 
-    /// How much earlier than expected the receiver opens (and how much
-    /// longer it stays open): the drift and both sides' jitter.
     fn widening(&self, at: u32) -> u32 {
         self.drift(at) + JITTER
     }
 
-    /// Moves on to the next event: counters, and the changes whose instant it is.
     fn advance(&mut self) {
         self.since += 1;
         self.last_event = self.event;
@@ -209,7 +144,6 @@ impl Link {
         self.apply_due();
     }
 
-    /// Applies a stored change when the next event is its instant.
     fn apply_due(&mut self) {
         if let Some((map, instant)) = self.map_update {
             if instant == self.event {
@@ -219,11 +153,9 @@ impl Link {
         }
         if let Some(u) = self.update {
             if u.instant == self.event {
-                // the new timing starts from where this event would have been
                 self.anchor = self.expected().wrapping_add(u.win_offset as u32 * UNIT);
                 self.since = 0;
                 self.window = u.win_size as u32 * UNIT;
-                // the supervision timeout starts over with the transmit window
                 self.alive = self.anchor;
                 self.p.interval = u.interval;
                 self.p.latency = u.latency;
@@ -236,7 +168,6 @@ impl Link {
 
 impl<H: Hal> Ble<H> {
     pub(crate) fn link_poll(&mut self) {
-        // polled far more often than the clock wraps (268 s)
         if self.link.limited && self.hal.now().wrapping_sub(self.link.start) >= LIM_ADV_TIMEOUT {
             self.link.limited = false;
         }
@@ -245,21 +176,6 @@ impl<H: Hal> Ble<H> {
             if !reached(now, self.link.next_adv) {
                 return;
             }
-            // A frame that has just come or gone is often followed by
-            // another (an answer, a broadcast after a unicast, a stock
-            // router's Device_annce 0.4 ms after its first Link Status):
-            // what comes while BLE has the radio is lost, and a broadcast
-            // its sender does not repeat is lost for good. The event waits
-            // for a quiet moment within its advDelay. When there was none
-            // and the neighbours of the other radio user are talking just
-            // then, it is left out, and the next one is due an advertising
-            // interval later; to a scanner that is one advertisement it did
-            // not catch. (The bulb's own traffic only delays the event: what
-            // follows it, `radio::transmit` waits for.) In the emulator's
-            // `mixed_chain` an event that went at the end of its advDelay
-            // whatever the traffic took the radio 40 us after a stock
-            // router's Link Status, and the router's announcement, sent
-            // once, never reached the coordinator.
             if self.hal.radio_busy() {
                 if !reached(now, self.link.adv_latest) {
                     return;
@@ -267,8 +183,6 @@ impl<H: Hal> Ble<H> {
                 if self.hal.neighbours_talking() && self.link.adv_skipped < ADV_SKIP_MAX {
                     self.link.adv_skipped += 1;
                     self.schedule_advertising(now);
-                    // its mesh listening window is only put off until the
-                    // radio is quiet (`air_poll`)
                     self.air.listen_owed = true;
                     return;
                 }
@@ -285,7 +199,6 @@ impl<H: Hal> Ble<H> {
         self.link.state == LinkState::Connected
     }
 
-    /// How long the radio is free before the link layer takes it for its next event.
     pub(crate) fn link_idle_time(&self, now: u32) -> u32 {
         let l = &self.link;
         let next = match l.state {
@@ -303,9 +216,6 @@ impl<H: Hal> Ble<H> {
         }
     }
 
-    /// Flags (LE only; limited, later general discoverable), the GAP
-    /// service, the mesh name, and AwoX's manufacturer data: vendor 0x0160,
-    /// product, low four bytes of the address.
     fn advertising_data(&self, out: &mut [u8; 31]) -> usize {
         let name = self.mesh.name();
         let shown = &name[..name.len().min(12)];
@@ -314,9 +224,7 @@ impl<H: Hal> Ble<H> {
             out[n..n + bytes.len()].copy_from_slice(bytes);
             n += bytes.len();
         };
-        // the GAP service as an incomplete list (0x02), as the stock firmware has it
         put(&[0x02, 0x01, if self.link.limited { 0x05 } else { 0x06 }, 0x03, 0x02, 0x00, 0x18]);
-        // Complete Local Name, or Shortened when it does not fit
         put(&[shown.len() as u8 + 1, if shown.len() == name.len() { 0x09 } else { 0x08 }]);
         put(shown);
         put(&[0x09, 0xff, 0x60, 0x01]);
@@ -335,10 +243,6 @@ impl<H: Hal> Ble<H> {
         let mut rsp = [0u8; ADV_PDU_MAX];
         let rsp_len = pdu::advertising(pdu::SCAN_RSP, &self.addr, &data[..n], &mut rsp);
 
-        // An event due while the other radio user has traffic
-        // (`Hal::radio_busy`) waits for a quiet moment, but no longer than
-        // the rest of the advDelay range (`link_poll`): when it goes, it
-        // starts within advInterval + advDelay of this one.
         self.schedule_advertising(now);
         self.stats.adv_events += 1;
         self.air.listen_due = true;
@@ -348,8 +252,6 @@ impl<H: Hal> Ble<H> {
         self.connected(p, end);
     }
 
-    /// The next advertising event: an advertising interval and a random
-    /// advDelay after `now`, and the latest moment it may wait for.
     fn schedule_advertising(&mut self, now: u32) {
         let delay = self.hal.random() % (ADV_DELAY_MAX_MS * TICKS_PER_MS);
         self.link.next_adv = now.wrapping_add(ADV_INTERVAL + delay);
@@ -363,7 +265,6 @@ impl<H: Hal> Ble<H> {
         l.p = p;
         l.event = 0;
         l.unmapped = 0;
-        // the transmit window opens 1.25 ms after the CONNECT_IND, plus its offset
         l.anchor = end.wrapping_add(UNIT + p.win_offset as u32 * UNIT);
         l.since = 0;
         l.sync = end;
@@ -388,7 +289,6 @@ impl<H: Hal> Ble<H> {
         self.link.state = LinkState::Advertising;
         self.link.next_adv = self.hal.now();
         self.link.adv_latest = self.link.next_adv;
-        // nothing of this connection may be left in the radio's queue when it advertises
         self.hal.connection_reset();
         self.stats.disconnects += 1;
         self.host_reset();
@@ -396,8 +296,6 @@ impl<H: Hal> Ble<H> {
         self.ota_link_lost();
     }
 
-    /// Asks the central to end the connection. It ends when the central
-    /// acknowledged that, or after the supervision timeout.
     pub(crate) fn terminate(&mut self) {
         if self.link.state == LinkState::Connected && self.link.closing.is_none() {
             self.hal.tx_push(pdu::LLID_CONTROL, &[LL_TERMINATE_IND, ERR_REMOTE_USER_TERMINATED]);
@@ -415,7 +313,6 @@ impl<H: Hal> Ble<H> {
             let window = l.window + 2 * widening;
             let now = self.hal.now();
 
-            // supervision
             let lost = if l.established {
                 now.wrapping_sub(l.alive) > l.p.timeout as u32 * 10 * TICKS_PER_MS && reached(now, l.alive)
             } else {
@@ -425,9 +322,6 @@ impl<H: Hal> Ble<H> {
                 self.disconnected();
                 return;
             }
-            // A central unheard for so long that the window would cover half
-            // an interval is lost: beyond that, events could not be told apart
-            // (and the radio would hardly leave BLE any more).
             if l.drift(expected) >= (l.interval() / 2).saturating_sub(T_IFS) {
                 self.stats.links_lost += 1;
                 self.disconnected();
@@ -444,7 +338,6 @@ impl<H: Hal> Ble<H> {
             }
             let channel = pdu::next_channel(&mut self.link.unmapped, self.link.p.hop, &self.link.p.channel_map);
             if reached(now, start.wrapping_add(window)) {
-                // the main loop was away for the whole event
                 self.stats.events_skipped += 1;
                 self.link.advance();
                 continue;
@@ -473,7 +366,6 @@ impl<H: Hal> Ble<H> {
                 l.established = true;
             }
             self.link.advance();
-            // received packets first: a control packet may change the next event
             self.link_receive();
             if self.link.terminated {
                 self.disconnected();
@@ -482,7 +374,6 @@ impl<H: Hal> Ble<H> {
         }
     }
 
-    /// Hands received packets on: control packets here, data to L2CAP.
     fn link_receive(&mut self) {
         let mut payload = [0u8; LL_PAYLOAD_MAX];
         while self.hal.tx_free() >= TX_RESERVE {
@@ -496,8 +387,6 @@ impl<H: Hal> Ble<H> {
         }
     }
 
-    /// Takes packets left in the receive queue when the transmit queue was
-    /// too full after the event, and runs the link's own timers.
     pub(crate) fn link_idle(&mut self) {
         self.link_receive();
         if self.link.terminated {
@@ -515,7 +404,6 @@ impl<H: Hal> Ble<H> {
         }
     }
 
-    /// L2CAP Connection Parameter Update Request.
     fn request_parameters(&mut self) {
         let mut req = [0x12, 0x01, 0x08, 0x00, 0, 0, 0, 0, 0, 0, 0, 0];
         req[4..6].copy_from_slice(&WANTED_INTERVAL.to_le_bytes());
@@ -537,14 +425,10 @@ impl<H: Hal> Ble<H> {
                     timeout: u16_at(8),
                     instant: u16_at(10),
                 };
-                // how far the instant lies after the event the packet came in
                 let ahead = u.instant.wrapping_sub(self.link.last_event);
                 if ahead >= 32767 || !(6..=3200).contains(&u.interval) {
-                    // an instant in the past: the two sides disagree about the connection
                     self.link.terminated = true;
                 } else if ahead == 0 {
-                    // First heard on the instant itself: that packet was the
-                    // new anchor already, without a transmit window.
                     self.link.p.interval = u.interval;
                     self.link.p.latency = u.latency;
                     self.link.p.timeout = u.timeout;
@@ -568,8 +452,6 @@ impl<H: Hal> Ble<H> {
             }
             LL_TERMINATE_IND => self.link.terminated = true,
             LL_FEATURE_REQ => {
-                // No optional link layer feature is implemented; requests of
-                // such features (ping, data length, PHY...) get LL_UNKNOWN_RSP below.
                 self.hal.tx_push(pdu::LLID_CONTROL, &[LL_FEATURE_RSP, 0, 0, 0, 0, 0, 0, 0, 0]);
             }
             LL_VERSION_IND => {
@@ -581,7 +463,6 @@ impl<H: Hal> Ble<H> {
             LL_ENC_REQ => {
                 self.hal.tx_push(pdu::LLID_CONTROL, &[LL_REJECT_IND, ERR_UNSUPPORTED_REMOTE_FEATURE]);
             }
-            // answers to nothing we asked, and indications without an answer
             LL_UNKNOWN_RSP | LL_FEATURE_RSP | LL_REJECT_IND | LL_PING_RSP | LL_LENGTH_RSP => {}
             _ => {
                 self.hal.tx_push(pdu::LLID_CONTROL, &[LL_UNKNOWN_RSP, opcode]);

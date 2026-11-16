@@ -1,11 +1,3 @@
-//! Endpoints that describe themselves: a few key diagnostic values as
-//! Analog Input clusters and two settings as Binary Output and Analog
-//! Output clusters (ZCL revision 8, 3.14.2, 3.14.3, 3.14.6), one per
-//! endpoint, with a Description, a range and a unit, so that a coordinator
-//! that knows nothing of this device (Zigbee2MQTT's generated definitions)
-//! shows them; and the reporting of attributes outside the three of the
-//! light (`XReport`: these objects and the Diagnostics cluster).
-
 use super::diag;
 use super::Stack;
 use crate::hal::{Hal, NvItem};
@@ -15,7 +7,6 @@ pub(crate) const ANALOG_INPUT: u16 = 0x000C;
 pub(crate) const ANALOG_OUTPUT: u16 = 0x000D;
 pub(crate) const BINARY_OUTPUT: u16 = 0x0010;
 
-/// Attributes of the three clusters.
 pub(crate) const A_DESCRIPTION: u16 = 0x001C;
 pub(crate) const A_MAX_PRESENT: u16 = 0x0041;
 pub(crate) const A_MIN_PRESENT: u16 = 0x0045;
@@ -33,20 +24,14 @@ pub(crate) const T_ENUM16: u8 = 0x31;
 pub(crate) const T_SINGLE: u8 = 0x39;
 pub(crate) const T_STRING: u8 = 0x42;
 
-/// What an object endpoint shows or sets.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Value {
-    /// Relayed unicasts lost (queue full, no route, MAC failure after all attempts).
     RelaysLost,
-    /// AverageMACRetryPerAPSMessageSent, in hundredths.
     MacRetries,
-    /// Share of the time since the start the radio was lent to BLE, in tenths of a percent.
     BleShare,
     Neighbors,
     Children,
-    /// Setting: end devices may join through this router.
     AllowChildren,
-    /// Setting: minutes after the start BLE goes quiet (0: never).
     BleWindow,
 }
 
@@ -55,23 +40,18 @@ pub(crate) struct Object {
     pub cluster: u16,
     pub value: Value,
     pub description: &'static str,
-    /// BACnet engineering unit (EngineeringUnits), if one fits.
     pub units: Option<u16>,
-    /// ApplicationType: group (0 = analog input), type, index.
     pub app_type: Option<u32>,
     pub min: f32,
     pub max: f32,
     pub resolution: f32,
 }
 
-/// BACnet units: percent, minutes; ApplicationType of analog inputs: Count, Percentage.
 const UNIT_PERCENT: u16 = 98;
 const UNIT_MINUTES: u16 = 72;
 const APP_COUNT: u32 = 0x000C_0000;
 const APP_PERCENT: u32 = 0x0004_0000;
-/// The largest count a single-precision value holds exactly.
 const COUNT_MAX: f32 = 16_777_216.0;
-/// The longest BLE window that can be set, in minutes (a day).
 pub(crate) const BLE_WINDOW_MAX: u16 = 1440;
 
 pub(crate) const OBJECTS: [Object; 7] = [
@@ -91,9 +71,7 @@ pub(crate) const OBJECTS: [Object; 7] = [
              app_type: None, min: 0.0, max: BLE_WINDOW_MAX as f32, resolution: 1.0 },
 ];
 
-/// The endpoints of the objects, in ascending order.
 pub(crate) const ENDPOINTS: [u8; 7] = [2, 3, 4, 5, 6, 7, 8];
-/// Home Automation device identifiers: Simple Sensor, Configuration Tool.
 const DEVICE_SIMPLE_SENSOR: u16 = 0x000C;
 const DEVICE_CONFIGURATION_TOOL: u16 = 0x0005;
 
@@ -109,7 +87,6 @@ pub(crate) fn device_id(o: &Object) -> u16 {
     }
 }
 
-/// The attributes of an object's cluster, in ascending order, with their types.
 pub(crate) fn attributes(o: &Object, out: &mut [(u16, u8); 10]) -> usize {
     let pv = if o.cluster == BINARY_OUTPUT { T_BOOL } else { T_SINGLE };
     let mut n = 0;
@@ -144,19 +121,14 @@ pub(crate) fn attribute_type(o: &Object, id: u16) -> Option<u8> {
     a[..n].iter().find(|x| x.0 == id).map(|x| x.1)
 }
 
-/// Reporting of an attribute other than the light's three: of an object
-/// (PresentValue, StatusFlags) or of the Diagnostics cluster.
 #[derive(Clone, Copy)]
 pub(crate) struct XReport {
-    /// 0: unused.
     pub ep: u8,
     pub cluster: u16,
     pub attr: u16,
-    /// The attribute is the manufacturer's (Diagnostics, `diag::MANUFACTURER`).
     pub mfr: bool,
     pub min_s: u16,
     pub max_s: u16,
-    /// Reportable change: an integer, or the bits of a single-precision value.
     pub change: u32,
     pub last: u32,
     pub last_sent: u32,
@@ -168,22 +140,17 @@ impl XReport {
 
 pub(crate) const XREPORTS: usize = 11;
 const REPORTS_VERSION: u8 = 1;
-/// Version, then per configuration: endpoint, flags, cluster, attribute,
-/// minimum, maximum, change.
 const XREPORT_LEN: usize = 14;
 const _: () = assert!(1 + XREPORTS * XREPORT_LEN <= 160, "the reporting configurations fit one record");
 
-/// The reporting entry of one attribute outside the light's three, if it is reportable.
 pub(crate) fn reportable(ep: u8, cluster: u16, attr: u16, mfr: bool) -> bool {
     if cluster == super::zcl::DIAGNOSTICS && ep == super::aps::ENDPOINT {
-        // the tables are read, not reported
         return diag::attribute(mfr, attr).is_some_and(|a| a.0 != diag::T_OCTETS);
     }
     !mfr && object(ep).is_some_and(|o| o.cluster == cluster) && matches!(attr, A_PRESENT_VALUE | A_STATUS_FLAGS)
 }
 
 impl<H: Hal> Stack<H> {
-    /// PresentValue of an object: the bits of a single (analog) or 0/1 (binary).
     pub(crate) fn object_present(&mut self, o: &Object) -> u32 {
         let now = self.hal.now_ms();
         let v: f32 = match o.value {
@@ -198,8 +165,6 @@ impl<H: Hal> Stack<H> {
             Value::Neighbors => self.live_neighbors() as f32,
             Value::Children => self.child_count() as f32,
             Value::AllowChildren => return self.allow_children as u32,
-            // the BLE setting as a window: 0 for no limit (and for BLE off,
-            // which only the settings cluster 0xFC5F can say; OutOfService then)
             Value::BleWindow => match self.ble_mode {
                 super::BleMode::Window => self.ble_window as f32,
                 super::BleMode::On | super::BleMode::Off => 0.0,
@@ -208,7 +173,6 @@ impl<H: Hal> Stack<H> {
         v.to_bits()
     }
 
-    /// The value of a reportable attribute, as reports compare it, and its type.
     pub(crate) fn xreport_value(&mut self, r: &XReport) -> Option<(u32, u8)> {
         if r.ep == super::aps::ENDPOINT && !r.mfr && self.colour_reportable(r.cluster, r.attr) {
             let l = &self.light;
@@ -236,12 +200,9 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Configure Reporting of an attribute outside the light's three.
-    /// `None`: no room for another configuration.
     pub(crate) fn xreport_configure(&mut self, ep: u8, cluster: u16, attr: u16, mfr: bool, min_s: u16, max_s: u16, change: u32) -> Option<()> {
         let at = self.xreports.iter().position(|r| r.ep == ep && r.cluster == cluster && r.attr == attr && r.mfr == mfr);
         let now = self.hal.now_ms();
-        // maximum 0xFFFF: no reports; minimum 0xFFFF with maximum 0: as out of the box (none)
         if max_s == 0xFFFF || (min_s, max_s) == (0xFFFF, 0) {
             if let Some(i) = at {
                 self.xreports[i] = XReport::EMPTY;
@@ -261,7 +222,6 @@ impl<H: Hal> Stack<H> {
         self.xreports.iter().find(|r| r.ep == ep && r.cluster == cluster && r.attr == attr && r.mfr == mfr).copied()
     }
 
-    /// Sends the reports of the attributes outside the light's three that are due.
     pub(crate) fn xreport_timers(&mut self, now: u32) {
         for i in 0..XREPORTS {
             let r = self.xreports[i];
@@ -282,7 +242,6 @@ impl<H: Hal> Stack<H> {
                     let step = f32::from_bits(r.change);
                     a != b && d >= if step > 0.0 { step } else { 0.0 }
                 }
-                // discrete types: any change
                 T_BOOL | T_BITMAP8 | diag::T_ENUM8 => value != r.last,
                 _ => value != r.last && value.wrapping_sub(r.last).min(r.last.wrapping_sub(value)) >= r.change.max(1),
             };
@@ -338,7 +297,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// A write to an object's PresentValue (`zcl::write_status` checked it).
     pub(crate) fn object_write(&mut self, o: &Object, value: &[u8]) {
         match o.value {
             Value::AllowChildren => {
@@ -349,7 +307,6 @@ impl<H: Hal> Stack<H> {
                 let mut v = [0u8; 4];
                 v.copy_from_slice(value.get(..4).unwrap_or(&[0; 4]));
                 let minutes = (f32::from_le_bytes(v) + 0.5) as u16;
-                // 0: BLE without a limit; else a window of that many minutes
                 if minutes == 0 {
                     self.ble_mode = super::BleMode::On;
                 } else {
@@ -362,7 +319,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Whether a value may be written to an object's PresentValue.
     pub(crate) fn object_value_ok(o: &Object, value: &[u8]) -> bool {
         match o.value {
             Value::AllowChildren => value.first().is_some_and(|b| *b <= 1),
@@ -370,14 +326,12 @@ impl<H: Hal> Stack<H> {
                 let mut v = [0u8; 4];
                 v.copy_from_slice(value.get(..4).unwrap_or(&[0; 4]));
                 let f = f32::from_le_bytes(v);
-                // whole minutes in range (a NaN fails every comparison)
                 f >= o.min && f <= o.max && f == (f as u16) as f32
             }
             _ => false,
         }
     }
 
-    /// Settings for the firmware around the stack.
     pub fn allows_children(&self) -> bool {
         self.allow_children
     }

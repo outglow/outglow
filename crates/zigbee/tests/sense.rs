@@ -1,14 +1,3 @@
-//! Motion sensing from RSSI on the stack (feature `sense`, docs/rf-sensing.md):
-//! the probes, the Occupancy Sensing cluster 0x0406 and the manufacturer
-//! cluster 0xFC5E (code 0x1141), the reports to the coordinator, the stored
-//! configuration. Between bulbs the signal is the channel measured between
-//! the owner's bulbs (`crates/sense/tests/model`): the K1-K2 link of the
-//! corridor, -56.75 dBm, a spread of 0.83 dB (the smaller one its readings
-//! allow; the larger is 2.34), 10 % of the probes lost.
-//!
-//! The sensing is off out of the box; the tests of what it does switch it
-//! on first, as a user does (the rate, `SENSE_ON_RATE`).
-
 mod sim;
 
 #[path = "../../sense/tests/model/mod.rs"]
@@ -31,8 +20,6 @@ const PROBE_PAN: u16 = 0x5E55;
 const T_U8: u8 = 0x20;
 const T_U16: u8 = 0x21;
 
-/// The channel between the bulbs: per sender (short address) and receiving
-/// port. Frames it does not know keep the strength the link quality gives.
 struct Field {
     links: HashMap<(u16, usize), Channel>,
     g: Rng,
@@ -48,7 +35,6 @@ fn mac_src_short(mpdu: &[u8]) -> Option<u16> {
     }
 }
 
-/// Puts the field on the air.
 fn field(net: &mut Net) -> Shared {
     let f = Rc::new(RefCell::new(Field { links: HashMap::new(), g: Rng(7) }));
     let ff = f.clone();
@@ -66,8 +52,6 @@ fn field(net: &mut Net) -> Shared {
     f
 }
 
-/// Two sensing bulbs on the network and the K1-K2 channel between them,
-/// the sensing switched on in both.
 fn two() -> (Net, Shared, [usize; 2], [u16; 2]) {
     let (mut net, f, n, s) = two_off();
     for a in s {
@@ -76,12 +60,10 @@ fn two() -> (Net, Shared, [usize; 2], [u16; 2]) {
     (net, f, n, s)
 }
 
-/// Switches the sensing of a bulb on or off, as the converter's switch does.
 fn switch(net: &mut Net, short: u16, on: bool) {
     assert_eq!(write(net, short, SENSE, 0x0001, T_U8, &[if on { SENSE_ON_RATE } else { 0 }]), 0);
 }
 
-/// The same two bulbs as they come: the sensing off.
 fn two_off() -> (Net, Shared, [usize; 2], [u16; 2]) {
     let mut net = Net::new();
     net.identity = IDENTITY_SENSE;
@@ -96,7 +78,6 @@ fn two_off() -> (Net, Shared, [usize; 2], [u16; 2]) {
     (net, f, [a, b], [sa, sb])
 }
 
-/// Both directions of the link between two bulbs.
 fn both(f: &Shared, shorts: [u16; 2], ports: [usize; 2], mut each: impl FnMut(&mut Channel)) {
     let mut f = f.borrow_mut();
     each(f.links.get_mut(&(shorts[1], ports[0])).unwrap());
@@ -107,7 +88,6 @@ fn ports(net: &Net, n: [usize; 2]) -> [usize; 2] {
     [net.nodes[n[0]].id, net.nodes[n[1]].id]
 }
 
-/// Reads one attribute; the value after status and type (an octet string without its length).
 fn read(net: &mut Net, short: u16, cluster: u16, id: u16) -> Option<Vec<u8>> {
     let i = id.to_le_bytes();
     let n0 = net.coord.zcl_rx.len();
@@ -126,7 +106,6 @@ fn read(net: &mut Net, short: u16, cluster: u16, id: u16) -> Option<Vec<u8>> {
     Some(if rec[3] == 0x41 { rec[5..].to_vec() } else { rec[4..].to_vec() })
 }
 
-/// Writes one attribute; the status of the response (0 for success).
 fn write(net: &mut Net, short: u16, cluster: u16, id: u16, ty: u8, value: &[u8]) -> u8 {
     let mut p = id.to_le_bytes().to_vec();
     p.push(ty);
@@ -143,7 +122,6 @@ fn write(net: &mut Net, short: u16, cluster: u16, id: u16, ty: u8, value: &[u8])
     rsp.2[hdr]
 }
 
-/// Reports of `attr` from `short` in frames `since` onwards: the values.
 fn reports(net: &Net, short: u16, cluster: u16, attr: u16, since: usize) -> Vec<u32> {
     let mut out = vec![];
     for (s, c, f) in &net.coord.zcl_rx[since..] {
@@ -171,12 +149,10 @@ fn reports(net: &Net, short: u16, cluster: u16, attr: u16, since: usize) -> Vec<
     out
 }
 
-/// Probes on the air from a port since `since` [ms].
 fn probes(net: &Net, port: usize, since: u32) -> Vec<Vec<u8>> {
     net.sent_by(port, since).into_iter().filter(|m| m.len() >= 9 && u16::from_le_bytes([m[3], m[4]]) == PROBE_PAN).collect()
 }
 
-/// Runs until both bulbs have been up for the minute after which probes go.
 fn past_holdoff(net: &mut Net) {
     let t = net.now();
     if t < 62_000 {
@@ -191,7 +167,6 @@ fn the_clusters_are_on_the_endpoint_with_their_defaults() {
     net.coord.zdo(sa, 0x0004, &[s[0], s[1], 1]);
     net.run(50);
     let desc = net.coord.last_zdo(sa, 0x8004).unwrap();
-    // 10 server clusters, the last two Occupancy Sensing and 0xFC5E
     assert_eq!(desc[11], 10);
     assert_eq!(&desc[12 + 16..12 + 20], &[0x06, 0x04, 0x5E, 0xFC]);
 
@@ -210,7 +185,6 @@ fn the_clusters_are_on_the_endpoint_with_their_defaults() {
     assert_eq!(read(&mut net, sa, SENSE, 0xFF46), Some(vec![0, 0]));
     assert_eq!(net.air.borrow().ports[net.nodes[n[0]].id].probe_pan, 0xFFFF, "off: the radio takes no probes");
 
-    // a bulb without sensing has neither
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
@@ -239,7 +213,6 @@ fn probes_go_five_a_second_after_the_first_minute_unacknowledged() {
     assert_eq!(&p[9..12], b"EG\x01");
     assert_eq!(u16::from_le_bytes([p[12], p[13]]), PAN, "the network's PAN inside");
     assert_eq!(p[18], 5, "the rate");
-    // nobody answers a probe: no acknowledgement follows one
     let log = net.air.borrow().log.clone();
     for w in log.windows(2) {
         if w[0].2.len() >= 5 && u16::from_le_bytes([w[0].2[3], w[0].2[4]]) == PROBE_PAN {
@@ -297,21 +270,17 @@ fn a_crossing_is_reported_to_the_coordinator_and_cleared_after_the_delay() {
 fn light_changes_are_not_motion() {
     let (mut net, f, n, [sa, sb]) = two();
     let p = ports(&net, n);
-    // the sensitivity the control below was made for (an 8 dB step at s 45)
     for a in [sa, sb] {
         assert_eq!(write(&mut net, a, SENSE, 0x0000, T_U8, &[45]), 0);
     }
     past_holdoff(&mut net);
     net.run(10_000);
     let n0 = net.coord.zcl_rx.len();
-    // B goes off, and the link jumps by 8 dB with it: A learns of it from B's
-    // probes, B from its own light
     both(&f, [sa, sb], p, |ch| ch.offset = -8.0);
     net.coord.zcl(sb, 0x0006, 0x01, 0x00, &[]);
     net.run(12_000);
     assert!(!net.nodes[n[1]].on);
     assert!(!reports(&net, sa, OCC, 0, n0).contains(&1) && !reports(&net, sb, OCC, 0, n0).contains(&1), "no occupancy");
-    // the same jump back without a light change is motion (the control)
     both(&f, [sa, sb], p, |ch| ch.offset = 0.0);
     net.run(4000);
     assert!(reports(&net, sa, OCC, 0, n0).contains(&1), "the jump alone is seen");
@@ -338,7 +307,6 @@ fn the_rate_is_set_from_zcl_and_0_stops_the_probes() {
 fn calibration_from_the_attribute_counts_down_and_sets_the_line() {
     let (mut net, f, n, [sa, sb]) = two();
     let p = ports(&net, n);
-    // the noisier K1-K3 link: its smaller spread is 2 dB
     let k = model::link("K1", "K3");
     both(&f, [sa, sb], p, |ch| *ch = Channel::of(&k, k.sigma_lo));
     past_holdoff(&mut net);
@@ -353,11 +321,9 @@ fn calibration_from_the_attribute_counts_down_and_sets_the_line() {
     assert_eq!(u16::from_le_bytes([sens[0], sens[1]]), sb);
     let (s, anchor) = (sens[2], sens[3]);
     assert!((20..45).contains(&s) && s == anchor, "less sensitive than 45, the anchor with it: {s}/{anchor}");
-    // the empty room on that link after calibration
     let n0 = net.coord.zcl_rx.len();
     net.run(60_000);
     assert!(!reports(&net, sa, OCC, 0, n0).contains(&1), "a minute of the empty room without a report");
-    // stored: after a power cycle the line comes back with its s
     net.power_cycle(n[0]);
     net.run(1000);
     assert_eq!(read(&mut net, sa, SENSE, 0x0005).unwrap(), sens);
@@ -389,7 +355,6 @@ fn writes_out_of_range_of_the_wrong_type_or_to_the_state_are_refused() {
     assert_eq!(write(&mut net, sa, SENSE, 0xFF43, T_U8, &[1]), 0x88, "READ_ONLY");
     assert_eq!(write(&mut net, sa, OCC, 0x0000, 0x18, &[1]), 0x88);
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "nothing written");
-    // another manufacturer's code: not ours
     let seq = net.coord.zcl_mfr(sa, SENSE, 0x00, 0x1234, 0x00, &[0, 0]);
     net.run(50);
     assert_eq!(net.coord.last_zcl_mfr(sa, SENSE, 0x0B).unwrap(), vec![0x1C, 0x34, 0x12, seq, 0x0B, 0x00, 0x81]);
@@ -398,8 +363,6 @@ fn writes_out_of_range_of_the_wrong_type_or_to_the_state_are_refused() {
 #[test]
 fn a_report_goes_every_half_hour_without_a_change() {
     let (mut net, f, n, [sa, sb]) = two();
-    // a calm link: uncalibrated, the default s = 45 is ON now and then
-    // already at the measured 0.83 dB (`crates/sense/tests/measured.rs`)
     let p = ports(&net, n);
     both(&f, [sa, sb], p, |ch| ch.sigma = 0.3);
     let n0 = net.coord.zcl_rx.len();
@@ -453,10 +416,6 @@ fn no_probes_while_an_update_over_ble_runs() {
 
 #[test]
 fn the_corridor_after_calibration_reports_a_crossing_and_nothing_else() {
-    // three bulbs with the measured K1-K2-K3 links (their smaller spreads),
-    // each calibrated for 60 s from ZCL, then 20 minutes of the empty corridor
-    // with the probe loss and the drift of the readings, and a person crossing
-    // the K1-K2 line
     let mut net = Net::new();
     net.identity = IDENTITY_SENSE;
     let nodes = [net.join_node(), net.join_node(), net.join_node()];
@@ -508,10 +467,8 @@ fn the_automatic_calibration_is_on_until_a_sensitivity_is_given_by_hand() {
     let (mut net, _, n, [sa, _]) = two();
     assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![1]), "on out of the box");
     assert!(net.nodes[n[0]].stack.sense_core().auto_cal);
-    // a sensitivity written by hand stays: the automatic calibration goes off with it
     assert_eq!(write(&mut net, sa, SENSE, 0x0000, T_U8, &[35]), 0);
     assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![0]));
-    // and can be turned on again; it outlives a power cycle
     assert_eq!(write(&mut net, sa, SENSE, 0x0006, T_U8, &[1]), 0);
     assert_eq!(write(&mut net, sa, SENSE, 0x0006, T_U8, &[2]), 0x87, "0 or 1");
     net.power_cycle(n[0]);
@@ -522,9 +479,6 @@ fn the_automatic_calibration_is_on_until_a_sensitivity_is_given_by_hand() {
 
 #[test]
 fn out_of_the_box_the_sensing_is_off_and_the_air_is_as_without_it() {
-    // the same network twice, with bulbs without the sensing and with it
-    // (off): the same frames at the same moments, for longer than the
-    // half-hourly report would take
     let run = |identity: Identity| {
         let mut net = Net::new();
         net.identity = identity;
@@ -552,7 +506,6 @@ fn the_rate_switches_the_sensing_on_and_off() {
     let (mut net, _, n, [sa, sb]) = two_off();
     let [pa, pb] = ports(&net, n);
     past_holdoff(&mut net);
-    // A on: it probes, and its radio takes probes; B, off, neither
     switch(&mut net, sa, true);
     assert_eq!(net.air.borrow().ports[pa].probe_pan, PROBE_PAN);
     assert_eq!(net.air.borrow().ports[pb].probe_pan, 0xFFFF);
@@ -563,12 +516,10 @@ fn the_rate_switches_the_sensing_on_and_off() {
     assert!(probes(&net, pb, t0).is_empty());
     assert_eq!(read(&mut net, sb, SENSE, 0x0002), Some(vec![]), "B takes no samples");
     assert_eq!(read(&mut net, sa, SENSE, 0x0002), Some(vec![]), "nobody probes for A");
-    // B on too: a line each
     switch(&mut net, sb, true);
     net.run(5000);
     assert_eq!(read(&mut net, sa, SENSE, 0x0002).unwrap().len(), 6);
     assert_eq!(read(&mut net, sb, SENSE, 0x0002).unwrap().len(), 6);
-    // A off: no probes, no reports, the radio back to its own PAN only
     switch(&mut net, sa, false);
     assert_eq!(net.air.borrow().ports[pa].probe_pan, 0xFFFF);
     let (t0, n0) = (net.now(), net.coord.zcl_rx.len());
@@ -576,7 +527,6 @@ fn the_rate_switches_the_sensing_on_and_off() {
     assert!(probes(&net, pa, t0).is_empty());
     assert!(reports(&net, sa, OCC, 0, n0).is_empty() && reports(&net, sa, SENSE, 0xFF46, n0).is_empty(), "nothing from A");
     assert_eq!(reports(&net, sb, OCC, 0, n0), vec![0], "B, on, still reports every half hour");
-    // what A learnt stays for when it is on again
     assert_eq!(read(&mut net, sa, SENSE, 0x0005).unwrap().len(), 4);
 }
 
@@ -621,7 +571,6 @@ fn a_calibration_needs_the_sensing_on() {
     assert_eq!(write(&mut net, sa, SENSE, 0x0003, T_U8, &[60]), 0);
     net.run(1000);
     assert!(read(&mut net, sa, SENSE, 0x0003).unwrap()[0] > 50);
-    // switched off midway: the recording is abandoned
     switch(&mut net, sa, false);
     assert_eq!(read(&mut net, sa, SENSE, 0x0003), Some(vec![0]));
 }
@@ -641,7 +590,6 @@ fn the_switch_is_stored_and_an_update_from_an_image_without_sensing_comes_up_off
     net.run(1000);
     assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![0]), "and off stays off");
 
-    // a bulb that ran an image without the sensing has no record of it
     let mut net = Net::new();
     let k = net.join_node();
     net.identity = IDENTITY_SENSE;
@@ -656,9 +604,6 @@ fn the_switch_is_stored_and_an_update_from_an_image_without_sensing_comes_up_off
 
 #[test]
 fn occupancy_reports_can_be_configured() {
-    // as a coordinator without the converter does (Zigbee2MQTT's generated
-    // definition): Occupancy bound and reported at least hourly. That is
-    // asked for, and goes whether the sensing runs or not.
     let (mut net, f, n, [sa, sb]) = two_off();
     let ext = net.air.borrow().ports[net.nodes[n[0]].id].ext;
     let mut bind = ext.to_le_bytes().to_vec();
@@ -669,7 +614,6 @@ fn occupancy_reports_can_be_configured() {
     bind.push(1);
     net.coord.zdo(sa, 0x0021, &bind);
     net.run(2000);
-    // Occupancy (bitmap8), at most every 0 s, at least every 60 s
     let seq = net.coord.zcl(sa, OCC, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x18, 0, 0, 60, 0]);
     net.run(50);
     assert_eq!(net.coord.last_zcl(sa, OCC, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00], "configured");
@@ -677,7 +621,6 @@ fn occupancy_reports_can_be_configured() {
     net.run(61_000);
     assert_eq!(reports(&net, sa, OCC, 0, n0), vec![0], "the periodic report, the sensing off");
     assert!(probes(&net, net.nodes[n[0]].id, 0).is_empty(), "and still no probes");
-    // on: a crossing reported through the configuration too (and by the sensing itself)
     switch(&mut net, sa, true);
     switch(&mut net, sb, true);
     past_holdoff(&mut net);

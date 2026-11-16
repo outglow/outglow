@@ -1,10 +1,3 @@
-//! Brightness curves of the original bulbs: level (0..=254) to PWM duty on a
-//! 0..=65535 scale. Measured on the stock firmware in the emulator (Move to
-//! Level 1..254, duty after the output has settled; for the tunable-white bulb
-//! the sum of both channels; `board_check` compares every board's curve with
-//! its stock firmware).
-
-/// The dimmable bulb (level 128: 25.2 %).
 pub const DIMM: [u16; 255] = [
     0, 257, 257, 257, 257, 257, 257, 257, 257, 257, 257, 257,
     257, 257, 257, 257, 257, 257, 257, 257, 257, 257, 257, 515,
@@ -30,7 +23,6 @@ pub const DIMM: [u16; 255] = [
     64503, 65019, 65535,
 ];
 
-/// The tunable-white bulb (level 128: 19.8 %).
 pub const TW: [u16; 255] = [
     0, 983, 983, 983, 1068, 1095, 1124, 1152, 1180, 1208, 1237, 1266,
     1293, 1322, 1350, 1378, 1406, 1435, 1464, 1491, 1520, 1548, 1576, 1606,
@@ -56,7 +48,6 @@ pub const TW: [u16; 255] = [
     65535, 65535, 65535,
 ];
 
-/// Duty for a brightness level on a PWM with `max_duty` steps.
 pub fn duty(level: u8, max_duty: u16, tunable: bool) -> u16 {
     let table = if tunable { &TW } else { &DIMM };
     let v = table[(level as usize).min(254)] as u32;

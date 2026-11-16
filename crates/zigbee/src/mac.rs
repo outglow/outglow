@@ -1,7 +1,3 @@
-//! IEEE 802.15.4-2003 MAC frame headers, as far as Zigbee uses them: no MAC
-//! security, short and extended addressing, beacons and the association
-//! commands.
-
 use crate::util::{Buf, Reader};
 
 pub const FRAME_BEACON: u8 = 0;
@@ -18,10 +14,7 @@ pub const CMD_REALIGNMENT: u8 = 0x08;
 
 pub const BROADCAST: u16 = 0xFFFF;
 
-/// Capability information of this node in an association request: full
-/// function device, mains powered, receiver on when idle, wants an address.
 pub const CAPABILITY_ROUTER: u8 = 0x8E;
-/// The capability bit "allocate address".
 pub const CAPABILITY_ALLOCATE_ADDRESS: u8 = 0x80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +38,6 @@ pub struct Header {
 }
 
 impl Header {
-    /// Parses a header; returns it with the offset of the MAC payload.
     pub fn parse(mpdu: &[u8]) -> Option<(Header, usize)> {
         let mut r = Reader::new(mpdu);
         let fcf = r.u16()?;
@@ -86,8 +78,6 @@ impl Header {
         Some((h, r.pos()))
     }
 
-    /// Appends the header. The source PAN is elided when it equals the
-    /// destination PAN.
     pub fn write(&self, b: &mut Buf) {
         let both = self.dst != Addr::None && self.src != Addr::None;
         let compress = both && self.src_pan == self.dst_pan;
@@ -123,7 +113,6 @@ impl Header {
     }
 }
 
-/// What a Zigbee beacon says about the network and the sender.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beacon {
     pub pan: u16,
@@ -140,7 +129,6 @@ pub struct Beacon {
 }
 
 impl Beacon {
-    /// Parses a beacon frame's MAC payload (superframe spec onwards).
     pub fn parse(h: &Header, payload: &[u8]) -> Option<Beacon> {
         let short = match h.src {
             Addr::Short(s) => s,
@@ -152,14 +140,13 @@ impl Beacon {
         r.skip(if gts & 7 != 0 { 1 + 3 * (gts & 7) as usize } else { 0 })?;
         let pend = r.u8()?;
         r.skip(2 * (pend & 7) as usize + 8 * ((pend >> 4) & 7) as usize)?;
-        // Zigbee beacon payload
         if r.u8()? != 0 {
-            return None; // protocol id
+            return None;
         }
         let a = r.u8()?;
         let b = r.u8()?;
         let ext_pan = r.u64()?;
-        r.skip(3)?; // tx offset
+        r.skip(3)?;
         let update_id = r.u8().unwrap_or(0);
         Some(Beacon {
             pan: h.src_pan,
@@ -176,7 +163,6 @@ impl Beacon {
         })
     }
 
-    /// Builds the whole beacon MPDU.
     pub fn write(&self, seq: u8, b: &mut Buf) {
         Header {
             frame_type: FRAME_BEACON,
@@ -190,7 +176,6 @@ impl Beacon {
             src: Addr::Short(self.short),
         }
         .write(b);
-        // beacon order and superframe order 15 (no superframe), no GTS, no pending
         b.u16(0x0FFF | (self.pan_coordinator as u16) << 14 | (self.permit_join as u16) << 15);
         b.u8(0);
         b.u8(0);

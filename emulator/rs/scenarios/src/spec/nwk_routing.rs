@@ -1,11 +1,3 @@
-//! NWK layer of a router among other routers (R22 3.4, 3.6.2, 3.6.3, 3.6.5,
-//! 3.6.13, 4.3.1). Ported from emulator/spec/nwk_routing.py.
-//!
-//! Topology: the Trust Center hears the bulb; two scripted routers r2 and r3
-//! hear only the bulb, so everything between them has to pass through it. The
-//! scripted routers do what the text says a router does (Link Status, Route
-//! Reply with the link cost of the next hop) and nothing else.
-
 use super::Test;
 use crate::air::NodeId;
 use crate::frames::{ZclValue, BCAST_ROUTERS};
@@ -13,10 +5,8 @@ use crate::session::{expect, is_nwk_cmd, CapFrame, Session, Stop, R};
 use crate::station::{Sent, SrcIeee, Tx};
 
 const S: &str = "nwk-route";
-/// an address nobody has
 const FAR: u16 = 0x5E01;
 const DUT: Option<NodeId> = Some(NodeId::Dut);
-/// the payload of a Report Attributes frame used as relayed traffic
 const REPORT: [u8; 4] = [0x00, 0x00, 0x10, 0x01];
 
 macro_rules! t {
@@ -122,10 +112,8 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---------------------------------------------------------------- helpers
 type Entries = Vec<(u16, (u8, u8))>;
 
-/// Link Status frame -> {address: (incoming cost, outgoing cost)}, in insertion order.
 fn ls_entries(f: &CapFrame) -> Entries {
     let p = f.nwk.as_ref().unwrap().payload.as_ref().unwrap();
     let n = (p[1] & 0x1F) as usize;
@@ -186,7 +174,6 @@ fn round1(x: f64) -> f64 {
     format!("{x:.1}").parse().unwrap()
 }
 
-/// Python's round() to an integer (ties to even).
 fn round0(x: f64) -> i64 {
     x.round_ties_even() as i64
 }
@@ -195,7 +182,6 @@ fn int_gaps(v: &[CapFrame]) -> Vec<i64> {
     v.windows(2).map(|w| round0(w[1].t0 - w[0].t0)).collect()
 }
 
-/// `try: body finally: fin` — an error of the clean-up replaces the body's result.
 fn finally<T>(r: R<T>, fin: R<()>) -> R<T> {
     match fin {
         Err(e) => Err(e),
@@ -215,8 +201,6 @@ fn next_ls(s: &mut Session, max_ms: f64, since: Option<usize>) -> R<Option<CapFr
     s.wait(is_nwk_cmd(0x08), max_ms, since, DUT, 5.0)
 }
 
-/// r2 and r3 as router neighbours of the bulb (both listed in its Link Status
-/// with a non-zero outgoing cost), or INCONCLUSIVE.
 fn net(s: &mut Session) -> R<(NodeId, NodeId)> {
     if s.has_note("net") {
         return match s.note::<Option<(NodeId, NodeId)>>("net").unwrap() {
@@ -271,13 +255,11 @@ fn onoff(s: &mut Session) -> R<ZclValue> {
     }
 }
 
-/// A peer's ZCL frame.
 fn ptx_zcl(s: &mut Session, p: NodeId, dst: u16, cluster: u16, cmd: u8, payload: &[u8], o: Tx) -> Sent {
     let (st, air) = s.w.st(p);
     st.tx_zcl(air, dst, cluster, cmd, payload, &o)
 }
 
-/// The relayed test traffic: a Report Attributes (server to client), no Default Response.
 fn report() -> Tx {
     Tx::new().general().ddr().to_client()
 }
@@ -286,7 +268,6 @@ fn nwk_is(f: &CapFrame, src: u16, dst: u16, seq: u8) -> bool {
     f.nwk.as_ref().is_some_and(|n| n.src == src && n.dst == dst && n.seq == seq)
 }
 
-// ---------------------------------------------------------------- Link Status
 fn link_status_format(s: &mut Session) -> R<String> {
     net(s)?;
     let i = s.mark();
@@ -385,19 +366,16 @@ fn link_status_outgoing(s: &mut Session) -> R<String> {
     finally(r, fin)
 }
 
-// ---------------------------------------------------------------- broadcasts
 fn broadcast_relay(s: &mut Session) -> R<String> {
     net(s)?;
     let i = s.mark();
     let r = s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(5));
     s.run(300.0)?;
-    // (a copy that began while the bulb's radio was lent to BLE goes again: `World::ble_retry`)
     let copies = s.frames(i, Some(NodeId::Coord), |f| f.nwk.as_ref().is_some_and(|n| n.seq == r.nwk_seq && n.dst == 0xFFFD));
     if copies.is_empty() {
         return Err(Stop::Error("StopIteration: the Trust Center's broadcast is not on the air".into()));
     }
     let rel = s.frames(i, DUT, |f| nwk_is(f, 0, 0xFFFD, r.nwk_seq));
-    // the copy the bulb passed on: the last one before its retransmission
     let orig = match rel.first() {
         Some(f) => copies.iter().filter(|c| c.t1 <= f.t0).last().unwrap_or(&copies[0]).clone(),
         None => copies[0].clone(),
@@ -441,8 +419,6 @@ fn broadcast_radius_and_duplicate(s: &mut Session) -> R<String> {
     let rel = s.frames(i, DUT, |f| nwk_is(f, 0, BCAST_ROUTERS, r.nwk_seq));
     expect(v1 != v0, "a Toggle broadcast to 0xFFFC with radius 1 was not delivered to the application")?;
     expect(rel.is_empty(), format!("a broadcast received with radius 1 was retransmitted {} time(s)", rel.len()))?;
-    // the same broadcast again (same NWK source and sequence number): 0.3 s and 2.5 s after the first copy,
-    // both far inside nwkNetworkBroadcastDeliveryTime, during which the transaction record is kept
     for gap in [300u32, 2500] {
         let v1 = onoff(s)?;
         let i = s.mark();
@@ -473,7 +449,6 @@ fn broadcast_radius_and_duplicate(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-// ---------------------------------------------------------------- route discovery
 fn rreq_relay(s: &mut Session) -> R<String> {
     let (r2, r3) = net(s)?;
     let (a2, a3) = (short(s, r2), short(s, r3));
@@ -522,7 +497,6 @@ fn rrep_forward(s: &mut Session) -> R<String> {
         ));
     }
     let i = s.mark();
-    // the destination's reply (3.6.3.5.2): to the device the request came from, path cost = that link's cost
     let mut p = vec![0x02, 0x00, rid];
     p.extend_from_slice(&a2.to_le_bytes());
     p.extend_from_slice(&a3.to_le_bytes());
@@ -640,7 +614,6 @@ fn rreq_initiation(s: &mut Session) -> R<String> {
     net(s)?;
     let dut = s.dut_short;
     let i = s.mark();
-    // a request that seems to come from a distant device: the answer needs a route to it
     s.tx_zcl(0x0000, 0x00, &[0x00, 0x00], Tx::new().general().src(FAR).src_ieee(SrcIeee::Is(0x00124B00FA000001)));
     s.run(2500.0)?;
     let rq = s.frames(i, DUT, is_rreq(None, Some(FAR), Some(dut)));
@@ -680,7 +653,6 @@ fn rreq_initiation(s: &mut Session) -> R<String> {
     Ok(format!("4 transmissions, gaps {} ms", py_list(&gaps)))
 }
 
-// ---------------------------------------------------------------- many-to-one, source routes
 fn mto(s: &mut Session) {
     let w = &mut s.w;
     w.coord.many_to_one_route_request(&mut w.air, true);
@@ -800,7 +772,6 @@ fn source_route_failure(s: &mut Session) -> R<String> {
         let i = s.mark();
         let mut f = None;
         for _ in 0..5 {
-            // several frames: 3.6.3.7 lets the router decide when a link has failed
             s.tx_zcl(
                 0x0006,
                 0x0A,
@@ -872,7 +843,6 @@ fn link_failure_status(s: &mut Session) -> R<String> {
         let i = s.mark();
         let mut f = None;
         for _ in 0..5 {
-            // several frames, so that the link can be classified as failed (3.6.3.7)
             ptx_zcl(s, r2, a3, 0x0006, 0x0A, &REPORT, report().mac_dst(dut).discover(0));
             f = s.wait(|f| net_status_to(f, a2), 4000.0, Some(i), DUT, 5.0)?;
             if f.is_some() {
@@ -907,7 +877,6 @@ fn link_failure_status(s: &mut Session) -> R<String> {
     Ok(format!("status code {:#04x}", p[1]))
 }
 
-// ---------------------------------------------------------------- unknown command, security
 fn unknown_command(s: &mut Session) -> R<String> {
     let (r2, _r3) = net(s)?;
     let a2 = short(s, r2);
@@ -977,7 +946,6 @@ fn replayed_frame_counter(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-// ---------------------------------------------------------------- ageing of router neighbours (long; last)
 fn link_status_ageing(s: &mut Session) -> R<String> {
     let (_r2, r3) = net(s)?;
     let a3 = short(s, r3);

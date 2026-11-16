@@ -1,11 +1,5 @@
-//! Byte-level helpers: a bounds-checked little-endian reader and a fixed
-//! frame buffer. Nothing here can panic on malformed input.
-
-/// Largest MPDU without the FCS (aMaxPHYPacketSize 127 - 2).
 pub const MAX_MPDU: usize = 125;
 
-/// Little-endian reader over a byte slice; every accessor returns `None`
-/// past the end.
 #[derive(Clone, Copy)]
 pub struct Reader<'a> {
     b: &'a [u8],
@@ -61,8 +55,6 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Fixed-capacity byte buffer. Appending past the capacity sets `overflow`
-/// and drops the bytes; callers check `ok()` before transmitting.
 #[derive(Clone, Copy)]
 pub struct Buffer<const N: usize> {
     d: [u8; N],
@@ -70,12 +62,9 @@ pub struct Buffer<const N: usize> {
     overflow: bool,
 }
 
-/// A frame: an MPDU or anything that has to fit into one.
 pub type Buf = Buffer<MAX_MPDU>;
-/// An application payload that may be sent in fragments.
 pub type Long = Buffer<MAX_TRANSFER>;
 
-/// Largest application payload (APS fragmentation carries it over the air).
 pub const MAX_TRANSFER: usize = 250;
 
 impl<const N: usize> Buffer<N> {
@@ -96,7 +85,6 @@ impl<const N: usize> Buffer<N> {
     pub fn ok(&self) -> bool {
         !self.overflow
     }
-    /// Bytes that can still be appended.
     pub fn room(&self) -> usize {
         N - self.n as usize
     }
@@ -137,7 +125,6 @@ impl<const N: usize> Buffer<N> {
     pub fn u64(&mut self, v: u64) {
         self.bytes(&v.to_le_bytes());
     }
-    /// Overwrites one byte already in the buffer.
     pub fn set(&mut self, i: usize, v: u8) {
         if let Some(b) = self.d[..self.n as usize].get_mut(i) {
             *b = v;
@@ -154,7 +141,6 @@ impl<const N: usize> Default for Buffer<N> {
     }
 }
 
-/// Millisecond timestamps wrap after 49 days; compare them through this.
 pub fn due(now: u32, at: u32) -> bool {
     now.wrapping_sub(at) as i32 >= 0
 }

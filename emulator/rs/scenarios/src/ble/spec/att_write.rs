@@ -1,6 +1,3 @@
-//! ATT: Write Request and queued writes (Core 5.4 Vol 3 Part F 3.4.5.1,
-//! 3.4.5.2, 3.4.6; Part G 3.1, 3.3.1); emulator/spec_ble/att_write.py.
-
 use super::att_errors::cat;
 use crate::ble::harness::{att_error, hx, BleSession, Gatt, LinkOpts};
 use crate::ble::util::{cccds, describe, error_cases, link, read, some, table, u16b, value, Case};
@@ -64,7 +61,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// `hx(v) if v is not None else None`
 fn ho(v: &Option<Vec<u8>>) -> String {
     v.as_ref().map(|v| hx(v)).unwrap_or_else(|| "None".into())
 }
@@ -74,7 +70,6 @@ fn rv(s: &mut BleSession, h: u16) -> R<Option<Vec<u8>>> {
     Ok(value(r.as_deref()))
 }
 
-/// N/A when the server has no ATT_WRITE_REQ (optional in a server, Part G 4.2) and says so.
 fn write_supported(s: &mut BleSession, g: &Gatt) -> R<()> {
     let sv = g.services[0].start;
     let v = rv(s, sv)?.filter(|v| !v.is_empty()).unwrap_or_else(|| vec![0x00]);
@@ -98,9 +93,6 @@ fn hlist(hs: &[u16]) -> String {
 }
 
 fn write_invalid_handles(s: &mut BleSession) -> R<String> {
-    // 3.4.5.1: "If the handle is invalid, then an ATT_ERROR_RSP PDU shall be sent with the Error Code
-    // parameter set to Invalid Handle (0x01)." 3.2.2: no attribute has handle 0x0000. The request is
-    // optional in a server (Part G 4.2, C.2).
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     write_supported(s, &g)?;
@@ -117,11 +109,6 @@ fn write_invalid_handles(s: &mut BleSession) -> R<String> {
 }
 
 fn write_not_permitted(s: &mut BleSession) -> R<String> {
-    // Part G 3.1: a service declaration's "Attribute Permissions shall be read-only"; 3.3.1: "The Attribute
-    // Value of a characteristic declaration is read only." Part F 3.4.5.1: "If the attribute value cannot
-    // be written due to permissions then an ATT_ERROR_RSP PDU shall be sent with the Error Code parameter
-    // set to Write Not Permitted (0x03)"; 3.4.1.1: handle of the request. The value written is the one the
-    // attribute has with its first octet changed.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     write_supported(s, &g)?;
@@ -172,13 +159,10 @@ fn write_not_permitted(s: &mut BleSession) -> R<String> {
     Ok(format!("declarations {}: Write Not Permitted with the handle, values unchanged", hlist(&hs)))
 }
 
-// ------------------------------------------------------------------ queued writes
 fn prepare(s: &mut BleSession, h: u16, off: u16, part: &[u8]) -> R<Option<Vec<u8>>> {
     s.att(&cat(&[&[0x16], &u16b(h), &u16b(off), part]))
 }
 
-/// An attribute that may be written: a CCCD if there is one, else the first
-/// characteristic value with the Write property.
 fn target(g: &Gatt) -> R<(u16, String)> {
     if let Some((_, h)) = cccds(g).first() {
         return Ok((*h, "Client Characteristic Configuration descriptor".into()));
@@ -193,8 +177,6 @@ fn target(g: &Gatt) -> R<(u16, String)> {
     Ok((c.value, format!("value of characteristic {}", hx(&u))))
 }
 
-/// True when the request was refused with Request Not Supported; with `strict`
-/// its handle must be 0x0000 (3.3).
 fn unsupported(rsp: Option<&[u8]>, what: &str, strict: bool) -> R<bool> {
     if let Some(e) = att_error(rsp) {
         if e.2 == 0x06 {
@@ -213,15 +195,6 @@ fn echo(h: u16, off: u16, v: &[u8]) -> Vec<u8> {
 }
 
 fn prepare_write(s: &mut BleSession) -> R<String> {
-    // 3.4.6.2: "The attribute handle shall be set to the same value as in the corresponding
-    // ATT_PREPARE_WRITE_REQ PDU. The value offset and part attribute value shall be set to the same values
-    // as in the corresponding ATT_PREPARE_WRITE_REQ PDU." 3.4.6.1: "The server shall not change the value
-    // of the attribute until an ATT_EXECUTE_WRITE_REQ PDU is received." 3.4.6.3: "When the flags parameter
-    // is set to 0x00 all pending prepare write values shall be discarded ... and an
-    // ATT_EXECUTE_WRITE_RSP PDU shall be sent"; "If there are no pending prepared write values, then no
-    // values are written, and an ATT_EXECUTE_WRITE_RSP PDU shall be sent." Queued writes are optional in a
-    // server (Part G 4.2); 3.3 then requires Request Not Supported with handle 0x0000. Nothing is ever
-    // executed here: the attribute is not changed by the test.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (h, what) = target(&g)?;
@@ -294,13 +267,6 @@ fn prepare_write(s: &mut BleSession) -> R<String> {
 }
 
 fn queued_write_execute(s: &mut BleSession) -> R<String> {
-    // 3.4.6.1: "The server shall not change the value of the attribute until an ATT_EXECUTE_WRITE_REQ PDU
-    // is received." 3.4.6.3: "When the flags parameter is set to 0x01, all pending prepare write values
-    // that are currently queued shall be written in the order they were received in the corresponding
-    // ATT_PREPARE_WRITE_REQ PDUs. The queue shall then be cleared and an ATT_EXECUTE_WRITE_RSP PDU shall
-    // be sent." 3.4.6.1: "These will then be executed in the order received, causing multiple writes for
-    // this attribute to occur." The attribute is a Client Characteristic Configuration descriptor: two
-    // octets, readable and writable by Part G 3.3.3.3, so the written value can be read back.
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let cc = cccds(&g);
@@ -341,7 +307,6 @@ fn queued_write_execute(s: &mut BleSession) -> R<String> {
         got.as_deref() == Some(&on[..]),
         format!("CCCD {h:#06x} reads {} after the Execute Write; required the prepared value {}", ho(&got), hx(&on)),
     )?;
-    // two prepared values for the same attribute: the later one stays
     for v in [&on[..], &[0x00, 0x00][..]] {
         let rsp = prepare(s, h, 0, v)?;
         expect(
@@ -367,12 +332,6 @@ fn queued_write_execute(s: &mut BleSession) -> R<String> {
 }
 
 fn prepare_write_errors(s: &mut BleSession) -> R<String> {
-    // 3.4.6.1: "If the handle is invalid, then an ATT_ERROR_RSP PDU shall be sent with the Error Code
-    // parameter set to Invalid Handle (0x01). If the attribute value cannot be written then an
-    // ATT_ERROR_RSP PDU shall be sent with the Error Code parameter set to Write Not Permitted (0x03)."
-    // "If an ATT_PREPARE_WRITE_REQ PDU was invalid, and therefore an ATT_ERROR_RSP PDU has been issued,
-    // then this prepared write will be considered to have not been received." Read-only: a service
-    // declaration (Part G 3.1).
     link(s, LinkOpts::new())?;
     let g = table(s)?;
     let (h, _what) = target(&g)?;

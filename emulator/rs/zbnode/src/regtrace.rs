@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! ZBNODE_REG_TRACE=<file>[,<t0 ms>,<t1 ms>] (emulator/go/cmd/zbnode/regtrace.go):
-//! an opt-in register trace that only observes. See the Go file for the line formats.
-//! ZBNODE_REG_TRACE_PWM=1 adds the PWM block (0x780..0x7bf).
-
 use std::cell::{Cell, RefCell};
 use std::fs::File;
 use std::io::Write;
@@ -49,14 +44,12 @@ fn in_range(o: usize, size: usize) -> bool {
     RANGES.iter().any(|&(lo, hi)| o < hi && o + size > lo) || (pwm_too() && o < 0x7c0 && o + size > 0x780)
 }
 
-/// ZBNODE_REG_TRACE_PWM=1: the PWM block (0x780..0x7bf) too, for the light outputs.
 fn pwm_too() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("ZBNODE_REG_TRACE_PWM").is_some())
 }
 
-/// BLE DMA buffer: 4 length bytes, header, payload.
 fn ble_len(m: &Machine, lo: u16, extra: i64) -> i64 {
     let a = lo as usize;
     if a + 6 > m.sram.len() {
@@ -128,7 +121,6 @@ pub fn install(m: &mut Machine, spec: &str) {
     }));
 }
 
-/// The text of a Go *PathError's cause for the common cases.
 fn go_io_err(e: &std::io::Error) -> String {
     match e.kind() {
         std::io::ErrorKind::NotFound => "no such file or directory".into(),

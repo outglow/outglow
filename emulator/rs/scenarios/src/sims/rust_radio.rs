@@ -1,15 +1,3 @@
-//! The Rust firmware's radio driver against the vendor driver, in the
-//! emulator (once emulator/rust_radio_check.py against the C firmware).
-//!
-//! Both images (the stock firmware with Telink's closed driver, and the Rust
-//! firmware) join the same simulated network, each on its own air; then the
-//! RF/DMA/clock registers and all analog registers are compared (differences
-//! only where listed, each with its reason), the ACK turnaround is measured,
-//! an energy scan is asked for, and the radio model's complaints are counted.
-//!
-//! Images: `--image stock=...` (default stock/stock-dimm.bin) and `--image
-//! rust=...` (default target/tc32/bulb-tc32.bin).
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -25,19 +13,10 @@ pub fn def() -> SimDef {
 
 const CHANNEL: i64 = 15;
 const CPI: i64 = 3;
-/// zigbee_coord.Coordinator's default network key: bytes(range(1, 17))
 const DEFAULT_KEY: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
-/// Digital registers compared: (first, last) inclusive.
 const DIGITAL: [(usize, usize); 7] =
     [(0x060, 0x066), (0x400, 0x4FF), (0xC0A, 0xC0B), (0xC20, 0xC21), (0xC40, 0xC48), (0xF00, 0xF1F), (0x1200, 0x12FF)];
-
-/// The vendor's values of BLE registers are left in the 802.15.4 state:
-/// the stock firmware runs Telink's concurrent BLE + Zigbee stack, whose BLE
-/// events write these and whose return to 802.15.4 does not set them back
-/// (the C firmware built on that SDK with BLE left the same values; built
-/// without BLE it had the Rust driver's). The stock radio receives and sends
-/// 802.15.4 with them as well.
 
 fn expected(o: usize) -> Option<&'static str> {
     Some(match o {
@@ -58,9 +37,6 @@ fn expected(o: usize) -> Option<&'static str> {
     })
 }
 
-/// The analog registers the stock start-up sets apart from the Telink Zigbee
-/// SDK start-up that the Rust code reproduces (the C firmware on that SDK had
-/// the Rust values in all four).
 const STOCK_START: &str = "set by the stock firmware's own start-up, not by the Telink Zigbee SDK's that the Rust start-up follows";
 
 fn expected_analog(a: usize) -> Option<&'static str> {
@@ -81,7 +57,6 @@ fn emu(e: String) -> Stop {
     Stop::Error(e)
 }
 
-/// The radio's channel from the synthesizer registers (`Radio154.channel`), or None.
 fn channel(w: &World) -> Option<i64> {
     let g = &w.air.dut.m.regs;
     let mhz = ((g[0x1245] & 0x3F) as i64) << 6 | (g[0x1244] >> 2) as i64;
@@ -101,17 +76,14 @@ fn chs(c: Option<i64>) -> String {
     c.map(|c| c.to_string()).unwrap_or_else(|| "None".into())
 }
 
-/// Boots an image next to a coordinator; the world once it has joined (and whether it did).
 fn join(img: &crate::image::Image, max_ms: f64, ev: &Rc<RefCell<Vec<String>>>) -> R<(World, bool)> {
     let mut node = node_of(img, CPI)?;
-    // the machine's own events, printed as the Python emulator prints them
     ev.borrow_mut().push(format!("[{:9.3} ms] reset #{}: boot slot 0x{:05x}", 0.0, node.m.reset_count, node.m.boot_slot));
     let e = ev.clone();
     node.m.event = Some(Rc::new(move |m: &mut tc32emu::Machine, text: &str| {
         e.borrow_mut().push(format!("[{:9.3} ms] {text}", m.ms()));
     }));
     let mut w = World::new(node, Coord::new_plain(CHANNEL, DEFAULT_KEY), Keys::default(), None);
-    // what became of every frame at the bulb's receiver (`lent_to_ble`)
     w.air.dut.radio.b().rx_log = Some(Vec::new());
     w.coord.start(&mut w.air);
     let joined = |w: &World| w.coord.has_event("device-announce");
@@ -122,7 +94,6 @@ fn join(img: &crate::image::Image, max_ms: f64, ev: &Rc<RefCell<Vec<String>>>) -
     }
     let ok = joined(&w);
     if ok {
-        // key exchange and a few exchanges with acknowledgements
         let short = w.coord.devices.iter().find(|d| d.announced).unwrap().short;
         let t = w.now() + 2500.0;
         w.run_ms(t).map_err(emu)?;
@@ -135,14 +106,10 @@ fn join(img: &crate::image::Image, max_ms: f64, ev: &Rc<RefCell<Vec<String>>>) -
     Ok((w, ok))
 }
 
-/// Runs on until the bulb's radio is back in 802.15.4 receive on the
-/// network's channel (both images lend the radio to BLE advertising events);
-/// the ms it took, or None.
 fn settle_rx(w: &mut World, max_ms: f64) -> R<Option<f64>> {
     let t0 = w.now();
     while w.now() < t0 + max_ms {
         if channel(w) == Some(CHANNEL) && rx_on(w) {
-            // and still there a little later: not between two steps of a switch
             let t = w.now() + 0.2;
             w.run_ms(t).map_err(emu)?;
             if channel(w) == Some(CHANNEL) && rx_on(w) {
@@ -166,11 +133,6 @@ fn snapshot(w: &World) -> (Vec<(usize, u8)>, Vec<u8>) {
     (d, m.analog[..256].to_vec())
 }
 
-/// For each coordinator frame that asks for an acknowledgement: microseconds
-/// from its end to the start of the bulb's ACK when the ACK came before the
-/// coordinator's next frame (None: no ACK), whether the coordinator sent
-/// the same frame again (its MAC retry, which gets an entry of its own), and
-/// whether the frame began while the bulb's radio was lent to BLE.
 fn ack_delays(w: &World) -> Vec<(Option<f64>, bool, bool)> {
     let fr = &w.air.frames;
     let mut out = Vec::new();
@@ -193,8 +155,6 @@ fn ack_delays(w: &World) -> Vec<(Option<f64>, bool, bool)> {
     out
 }
 
-/// The radio model's complaints, and whether there are none but frames that
-/// began while the radio was lent to BLE (`lent_to_ble`).
 fn complaints(w: &World) -> (String, bool) {
     let r = w.air.dut.radio.b();
     let why = if r.dropped.is_empty() {
@@ -291,9 +251,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         for (name, w) in [("vendor", &cw), ("Rust", &rw)] {
             let d = ack_delays(w);
             let got: Vec<f64> = d.iter().filter_map(|x| x.0).collect();
-            // a first copy the bulb did not hear because its radio was lent to
-            // a BLE event (`lent_to_ble`), acknowledged on the retry; how many
-            // depends on where the events fall, not on the driver
             let retried = d.iter().filter(|x| x.0.is_none() && x.1 && x.2).count();
             let mut line = format!("{} of {} frames acknowledged", got.len(), d.len());
             if retried > 0 {

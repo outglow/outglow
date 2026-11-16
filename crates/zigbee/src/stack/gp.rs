@@ -1,35 +1,3 @@
-//! Green Power basic proxy (endpoint 242): hears the frames of Green Power
-//! devices (battery-less switches and the like, which are not on the
-//! network) and passes them on to the sinks that paired with them.
-//!
-//! - In commissioning mode (GP Proxy Commissioning Mode from a sink) the
-//!   frames of devices are tunnelled as GP Commissioning Notifications,
-//!   after a short pause. When the device waits for an answer and the
-//!   notification is a broadcast, the pause depends on how well the device
-//!   was heard, so that of several proxies the best placed one is first.
-//! - GP Pairing from a sink fills the proxy table: device, where its frames
-//!   go (sinks by unicast, the group derived from the device, groups the
-//!   sink chose, each with its alias), security level, key, frame counter.
-//!   GP Proxy Table Request reads the table back, as does the ProxyTable
-//!   attribute.
-//! - In operation a frame from a paired device is checked for freshness,
-//!   verified and decrypted with the device's key, and sent as a GP
-//!   Notification: unicast to the sinks, and to the groups under an alias
-//!   source address, so that the copies of several proxies collapse into
-//!   one broadcast.
-//! - A frame a sink has for a device (GP Response, in commissioning mode: a
-//!   commissioning reply, a channel configuration) is held by the proxy the
-//!   sink names, and sent 20 ms after the device's next frame that announces
-//!   a receive window, on the channel the sink names.
-//!
-//! Devices are known by a 32-bit source identifier or by an IEEE address
-//! with an endpoint. The behaviour follows the Green Power Basic
-//! specification (14-0563, clause numbers in the comments); the proxy of
-//! the Telink Zigbee SDK, whose source is open, was the guide to what the
-//! text leaves open, and `emulator/rust_gp_sim.py` runs both side by side.
-//! Where the two differ the text wins: the tunnelling delays are those of
-//! clause A.3.6.3.1, not the SDK's.
-
 use super::frag::SINGLE_MAX;
 use super::Stack;
 use crate::aes::Aes128;
@@ -42,25 +10,19 @@ use crate::util::{due, Buf, Buffer, Long, Reader};
 pub(crate) const GP_ENDPOINT: u8 = 242;
 pub(crate) const PROFILE_GP: u16 = 0xA1E0;
 pub(crate) const CLUSTER_GP: u16 = 0x0021;
-/// Device identifier of a GP Proxy Basic.
 pub(crate) const DEVICE_PROXY_BASIC: u16 = 0x0061;
-/// gppMaxProxyTableEntries.
 pub(crate) const PROXIES: usize = 5;
-/// Sinks and groups one device can be paired with.
 const SINKS: usize = 2;
 const SINK_GROUPS: usize = 2;
 
-// commands the proxy sends
 const GP_NOTIFICATION: u8 = 0x00;
 const GP_COMMISSIONING_NOTIFICATION: u8 = 0x04;
 const GP_PROXY_TABLE_RESPONSE: u8 = 0x0B;
-// commands the proxy receives
 const GP_PAIRING: u8 = 0x01;
 const GP_PROXY_COMMISSIONING_MODE: u8 = 0x02;
 const GP_RESPONSE: u8 = 0x06;
 const GP_PROXY_TABLE_REQUEST: u8 = 0x0B;
 
-// attributes of the client side of the cluster
 const ATTR_MAX_PROXY_TABLE_ENTRIES: u16 = 0x0010;
 const ATTR_PROXY_TABLE: u16 = 0x0011;
 const ATTR_FUNCTIONALITY: u16 = 0x0016;
@@ -69,41 +31,26 @@ const ATTR_SHARED_KEY_TYPE: u16 = 0x0020;
 const ATTR_SHARED_KEY: u16 = 0x0021;
 const ATTR_LINK_KEY: u16 = 0x0022;
 const ATTR_CLUSTER_REVISION: u16 = 0xFFFD;
-/// gppFunctionality: the Green Power feature, direct communication, derived
-/// and pre-commissioned groupcast, lightweight unicast, commissioning (also
-/// through a commissioning tool), security levels 0, 2 and 3, devices
-/// with an IEEE address.
 const FUNCTIONALITY: u32 = 0x09_AC2F;
 const ACTIVE_FUNCTIONALITY: u32 = 0xFF_FFFF;
 const CLUSTER_REVISION: u16 = 2;
 
-// commands of Green Power devices that the proxy treats specially
 const GPD_COMMISSIONING: u8 = 0xE0;
 const GPD_DECOMMISSIONING: u8 = 0xE1;
 const GPD_SUCCESS: u8 = 0xE2;
 const GPD_CHANNEL_REQUEST: u8 = 0xE3;
-/// From here up the commands are for devices, not from them.
 const GPD_TO_DEVICE: u8 = 0xF0;
-/// Source identifiers from here up are reserved; 0xFFFFFFFF means "all".
 const SRC_ID_RESERVED: u32 = 0xFFFF_FFF9;
-/// The IEEE address that is none.
 const NO_IEEE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
-/// Dmin (A.3.6.3.1): the pause between a device's frame and its
-/// notification, in ms; longer when the device listens for an answer first
-/// (its receive window is over by then).
 const DMIN_U: u32 = 5;
 const DMIN_B: u32 = 32;
-/// Dmax.
 const DMAX: u32 = 100;
 
-/// gpdRxOffset: a device opens its receive window this long after its frame.
 const RX_OFFSET_US: u32 = 20_000;
-/// How long a frame waits here for the device's receive window.
 const TX_QUEUE_MS: u32 = 5_000;
 const MAX_TX_PAYLOAD: usize = 48;
 
-// key types
 const KEY_NONE: u8 = 0;
 const KEY_NWK: u8 = 1;
 const KEY_GROUP: u8 = 2;
@@ -111,10 +58,8 @@ const KEY_NWK_DERIVED_GROUP: u8 = 3;
 const KEY_INDIVIDUAL: u8 = 4;
 const KEY_DERIVED_INDIVIDUAL: u8 = 7;
 
-// ZCL statuses and types used here
 const SUCCESS: u8 = 0x00;
 const MALFORMED_COMMAND: u8 = 0x80;
-/// (ZCL revision 8: one status for every command a device does not have.)
 const UNSUP_COMMAND: u8 = 0x81;
 const UNSUPPORTED_ATTRIBUTE: u8 = 0x86;
 const INVALID_VALUE: u8 = 0x87;
@@ -129,12 +74,9 @@ const T_U16: u8 = 0x21;
 const T_LONG_OCTETS: u8 = 0x43;
 const T_KEY: u8 = 0xF1;
 
-/// Who a Green Power device is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Gpd {
-    /// Application identifier 0: a 32-bit source identifier.
     Src(u32),
-    /// Application identifier 2: an IEEE address (and an endpoint, kept beside it).
     Ieee(u64),
 }
 
@@ -146,7 +88,6 @@ impl Gpd {
         }
     }
 
-    /// Reads the identifier that follows an options field with this application identifier.
     fn read(app: u8, r: &mut Reader) -> Option<(Gpd, u8)> {
         match app {
             0 => Some((Gpd::Src(r.u32()?), 0)),
@@ -168,8 +109,6 @@ impl Gpd {
         }
     }
 
-    /// Whether this can be a device: not the identifier that stands for
-    /// none, nor one of the reserved ones (A.1.4.1.4).
     fn is_valid(self) -> bool {
         match self {
             Gpd::Src(id) => id != 0 && id < SRC_ID_RESERVED,
@@ -177,8 +116,6 @@ impl Gpd {
         }
     }
 
-    /// Alias network address of the device: the low two bytes of its
-    /// identifier, kept out of the reserved values.
     pub(crate) fn alias(self) -> u16 {
         let (low, high) = match self {
             Gpd::Src(id) => (id as u16, (id >> 16) as u16),
@@ -198,10 +135,6 @@ impl Gpd {
         }
     }
 
-    /// CCM* nonce of a frame from the device: its identifier twice, or its
-    /// IEEE address; the frame counter; security control 0x05. (Frames
-    /// towards a device are different: the first identifier is left zero,
-    /// and for an IEEE address the security control is 0xC5.)
     fn nonce(self, counter: u32) -> [u8; 13] {
         let mut n = [0u8; 13];
         match self {
@@ -217,10 +150,8 @@ impl Gpd {
     }
 }
 
-/// A frame for a Green Power device, waiting for its receive window.
 #[derive(Clone, Copy)]
 pub(crate) struct Queued {
-    /// `Src(0)`: a maintenance frame for whichever device asks for a channel.
     pub gpd: Gpd,
     pub endpoint: u8,
     pub channel: u8,
@@ -230,48 +161,34 @@ pub(crate) struct Queued {
     pub expires: u32,
 }
 
-/// gpsCommissioningWindow default.
 const DEFAULT_WINDOW_S: u32 = 180;
-/// A device repeats each frame a few times within milliseconds; they count as one.
 const DUPLICATE_MS: u32 = 2_000;
 const ENTRY_VERSION: u8 = 2;
-/// Longest stored entry: 38 bytes, and 10 for each sink, 4 for each group.
 const ENTRY_MAX: usize = 38 + 10 * SINKS + 4 * SINK_GROUPS;
 const KEYS_VERSION: u8 = 1;
 
-/// Communication modes of a pairing.
 const MODE_FULL_UNICAST: u8 = 0;
-// (mode 1: the group derived from the device's identifier)
 const MODE_COMMISSIONED_GROUP: u8 = 2;
 const MODE_LIGHTWEIGHT_UNICAST: u8 = 3;
 
-/// One paired device.
 #[derive(Clone, Copy)]
 pub(crate) struct ProxyEntry {
     pub used: bool,
     pub gpd: Gpd,
     pub endpoint: u8,
-    /// Sinks that take the device's frames by unicast: extended and short address.
     pub sinks: [(u64, u16); SINKS],
     pub sink_count: u8,
-    /// Groups a sink chose, each with the alias to send under (0xFFFF: the derived one).
     pub groups: [(u16, u16); SINK_GROUPS],
     pub group_count: u8,
-    /// Also to the group derived from the device's identifier.
     pub derived_group: bool,
-    /// Alias the sink assigned for the derived group, instead of the derived one.
     pub alias: Option<u16>,
-    /// Radius of the groupcasts (0xFF: not given).
     pub radius: u8,
-    /// The device numbers its frames (MAC sequence numbers that count up).
     pub seq_cap: bool,
     pub fixed: bool,
-    /// A frame of the device has been heard here since the pairing.
     pub in_range: bool,
     pub security: u8,
     pub key_type: u8,
     pub key: [u8; 16],
-    /// Last frame counter (or MAC sequence number, without security) accepted.
     pub counter: u32,
 }
 
@@ -300,10 +217,8 @@ impl ProxyEntry {
         self.sink_count != 0 || self.group_count != 0 || self.derived_group
     }
 
-    /// The entry in the format of the ProxyTable attribute and the GP Proxy Table Response.
     fn write<const N: usize>(&self, out: &mut Buffer<N>) {
         let secure = self.security >= 2;
-        // entry active and valid, then what the entry holds
         let options: u16 = self.gpd.app() as u16
             | 1 << 3
             | 1 << 4
@@ -347,8 +262,6 @@ impl ProxyEntry {
     }
 }
 
-/// The keys of the Green Power cluster a sink may set (attributes
-/// gpSharedSecurityKeyType, gpSharedSecurityKey, gpLinkKey).
 #[derive(Clone, Copy)]
 pub(crate) struct Keys {
     pub shared_type: u8,
@@ -360,7 +273,6 @@ impl Keys {
     pub(crate) const DEFAULT: Keys = Keys { shared_type: KEY_NONE, shared: [0; 16], link: super::DEFAULT_TCLK };
 }
 
-/// Commissioning mode: until when, for which sink, and how.
 #[derive(Clone, Copy)]
 pub(crate) struct Commissioning {
     pub until: u32,
@@ -369,39 +281,26 @@ pub(crate) struct Commissioning {
     pub exit_on_pairing: bool,
 }
 
-/// Where a frame that waits out its delay goes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Forward {
-    /// A commissioning notification: unicast to this sink.
     Sink(u16),
-    /// A commissioning notification: broadcast under the device's alias.
     Broadcast,
-    /// A notification of a paired device: to the sinks of this proxy table
-    /// entry, and (at once, or `Pending::then` ms later) to its groups.
     Sinks(u8),
-    /// The same, when only the groups are left.
     Groups(u8),
-    /// A Device_annce in the name of the alias, which a Zigbee device has
-    /// taken for its address.
     Announce,
 }
 
-/// A notification waiting out its tunnelling delay.
 #[derive(Clone, Copy)]
 pub(crate) struct Pending {
     pub at: u32,
     pub to: Forward,
     pub alias: u16,
-    /// MAC sequence number of the device's frame, from which the sequence
-    /// numbers of frames under an alias derive.
     pub seq: u8,
-    /// How much later than the unicasts the groupcasts go out, in ms.
     pub then: u8,
     pub len: u8,
     pub zcl: [u8; 96],
 }
 
-/// What a Green Power data frame says, before security processing.
 struct Gpdf<'a> {
     gpd: Gpd,
     endpoint: u8,
@@ -409,10 +308,7 @@ struct Gpdf<'a> {
     auto_commissioning: bool,
     security: u8,
     key_bit: u8,
-    /// The frame asks for an answer: what its notification says. (A channel
-    /// request always does.)
     rx_after_tx: bool,
-    /// The device opens a receive window after this very frame.
     listens: bool,
     counter: u32,
     header: &'a [u8],
@@ -423,10 +319,6 @@ fn parse<'a>(mac_seq: u8, mac_src: Addr, p: &'a [u8]) -> Option<Gpdf<'a>> {
     let mut r = Reader::new(p);
     let fc = r.u8()?;
     let auto_commissioning = fc & 0x40 != 0;
-    // Maintenance frames (channel requests): no identifier, no security.
-    // Here the auto-commissioning bit says that the device does not listen
-    // after this frame: of several requests sent in a row only the last
-    // is followed by a receive window (A.1.4.1.2).
     if fc & 3 == 1 && fc & 0x80 == 0 {
         return Some(Gpdf {
             gpd: Gpd::Src(0),
@@ -454,8 +346,6 @@ fn parse<'a>(mac_seq: u8, mac_src: Addr, p: &'a [u8]) -> Option<Gpdf<'a>> {
         rx_after_tx = ext & 0x40 != 0;
         to_gpd = ext & 0x80 != 0;
     }
-    // security level 1 is deprecated; a data frame cannot say both "I
-    // commission myself" and "I listen for an answer" (A.1.4.1.2)
     if to_gpd || security == 1 || (rx_after_tx && auto_commissioning) {
         return None;
     }
@@ -484,18 +374,13 @@ fn parse<'a>(mac_seq: u8, mac_src: Addr, p: &'a [u8]) -> Option<Gpdf<'a>> {
     })
 }
 
-/// Verifies (level 2) or verifies and decrypts (level 3) the body of a
-/// frame into `out`; returns the length of command identifier plus payload.
 fn unsecure(key: &[u8; 16], engine: Option<crate::aes::Engine>, f: &Gpdf, out: &mut [u8; 96]) -> Option<usize> {
     let len = f.body.len().checked_sub(crypto::MIC_LEN)?;
     let body = out.get_mut(..f.body.len())?;
     body.copy_from_slice(f.body);
     let nonce = f.gpd.nonce(f.counter);
-    // (with the hardware's cipher where there is one: a device that listens
-    // for an answer is answered 20 ms after its frame, and this comes first)
     let aes = Aes128::with_engine(key, engine);
     if f.security == 2 {
-        // authentication only: header and payload are the associated data
         let mut aad = [0u8; 110];
         let n = f.header.len() + len;
         let a = aad.get_mut(..n)?;
@@ -504,21 +389,16 @@ fn unsecure(key: &[u8; 16], engine: Option<crate::aes::Engine>, f: &Gpdf, out: &
         crypto::ccm_decrypt(&aes, &nonce, &aad[..n], &mut body[len..])?;
         Some(len)
     } else {
-        // encryption and authentication: the header is the associated data,
-        // the payload is enciphered with its MIC at the end
         crypto::ccm_decrypt(&aes, &nonce, f.header, body)?;
         Some(len)
     }
 }
 
-/// The GPP-GPD link field of the notifications: (RSSI in dBm, limited to
-/// -109..8, plus 110) / 2 in the low six bits, a quality class in the top two.
 fn link(lqi: u8, rssi: i8) -> u8 {
     let rssi = (rssi as i32).clamp(-109, 8);
     ((rssi + 110) / 2) as u8 | (lqi >> 6) << 6
 }
 
-/// Dmin for a frame (A.3.6.3.1).
 fn dmin(rx_after_tx: bool) -> u32 {
     if rx_after_tx {
         DMIN_B
@@ -527,9 +407,6 @@ fn dmin(rx_after_tx: bool) -> u32 {
     }
 }
 
-/// QualityBasedDelay (A.3.6.3.1): what gppTunnelingDelay adds to Dmin, by
-/// the link quality class the notification reports (`link`): nothing for
-/// the best, more the worse the device was heard.
 fn quality_delay(lqi: u8) -> u32 {
     match lqi >> 6 {
         3 => 0,
@@ -558,10 +435,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// The key a frame of a paired device is protected with: the one of the
-    /// pairing, else the shared key when it is of the pairing's type, else
-    /// (for the type "network key") the network key. A frame must name the
-    /// class of key (shared or individual) the pairing has.
     fn gp_entry_key(&self, e: &ProxyEntry, key_bit: u8) -> Option<[u8; 16]> {
         let individual = matches!(e.key_type, KEY_INDIVIDUAL | KEY_DERIVED_INDIVIDUAL);
         let shared = matches!(e.key_type, KEY_NWK | KEY_GROUP | KEY_NWK_DERIVED_GROUP);
@@ -579,28 +452,20 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// A Green Power data frame from the air (`p` starts at its NWK frame control).
     pub(crate) fn on_gpdf(&mut self, mac_seq: u8, mac_src: Addr, p: &[u8], lqi: u8, end_us: u32) -> Option<()> {
         let f = parse(mac_seq, mac_src, p)?;
         let now = self.hal.now_ms();
-        // Commands for devices are not a device's to send (another proxy's
-        // answer to one, overheard): dropped before anything comes of them
-        // (A.1.5.2.2). Under encryption the command shows only later.
         if f.security != 3 && f.body.first().is_some_and(|cmd| *cmd >= GPD_TO_DEVICE) {
             return None;
         }
-        // the device's repeats of the same frame
         if self.gp_seen.iter().any(|s| s.0 == f.gpd && s.1 == f.counter && !due(now, s.2)) {
             return None;
         }
         let commissioning = self.gp_commissioning(now);
         let entry = self.proxy_index(f.gpd).filter(|i| {
             let e = &self.proxies[*i];
-            // a device with an IEEE address is paired per endpoint; 0 and 0xFF stand for all
             matches!(f.gpd, Gpd::Src(_)) || f.endpoint == e.endpoint || matches!(f.endpoint, 0 | 0xFF) || matches!(e.endpoint, 0 | 0xFF)
         });
-        // security processing: with the key of the pairing when the frame
-        // fits it; for an unknown device with the shared key, if there is one
         let mut plain = [0u8; 96];
         let mut key_type = KEY_NONE;
         let processed = if f.security == 0 {
@@ -626,10 +491,6 @@ impl<H: Hal> Stack<H> {
         if f.security == 3 && processed.is_some_and(|n| n > 0 && plain[0] >= GPD_TO_DEVICE) {
             return None;
         }
-        // The device listens after this frame: what the sink left for it
-        // goes out now. Only a frame that passed its security check gets
-        // the answer (A.1.5.2.2): anybody can put a device's identifier
-        // into a frame.
         if f.listens && processed.is_some() {
             self.gp_answer(&f, end_us);
         }
@@ -638,7 +499,6 @@ impl<H: Hal> Stack<H> {
             self.gp_commissioning_notification(&c, &f, processed.map(|n| &plain[..n]), key_type, mac_seq, lqi, now);
             return Some(());
         }
-        // operation: only paired devices, only fresh and authentic frames
         let i = entry?;
         let e = self.proxies[i];
         let len = processed?;
@@ -649,7 +509,6 @@ impl<H: Hal> Stack<H> {
         if matches!(cmd, GPD_CHANNEL_REQUEST | GPD_SUCCESS) {
             return None;
         }
-        // (a secured frame with a stale counter was not even decrypted above)
         if f.security == 0 && e.seq_cap && f.counter == e.counter {
             return None;
         }
@@ -661,9 +520,6 @@ impl<H: Hal> Stack<H> {
         let mut z = Buf::new();
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         z.bytes(&[0x11, self.zcl_seq, GP_NOTIFICATION]);
-        // where else the frame goes, security, whether the device listens
-        // now (never said of the commissioning commands), no room to queue
-        // an answer in operation, proxy information present
         let rx_after_tx = f.rx_after_tx && !matches!(cmd, GPD_COMMISSIONING | GPD_DECOMMISSIONING);
         let options: u16 = f.gpd.app() as u16
             | ((e.sink_count != 0) as u16) << 3
@@ -685,10 +541,6 @@ impl<H: Hal> Stack<H> {
         if !z.ok() {
             return None;
         }
-        // The notification goes out after Dmin: to the sinks, and to the
-        // groups. Only when the device waits for an answer do the groupcasts
-        // take gppTunnelingDelay, which is Dmin and the pause for the link
-        // quality (A.3.5.2.3).
         let mut zcl = [0u8; 96];
         zcl[..z.len()].copy_from_slice(z.as_slice());
         let pending = Pending {
@@ -702,7 +554,6 @@ impl<H: Hal> Stack<H> {
         };
         match self.gp_pending.iter().position(|p| p.is_none()) {
             Some(slot) => self.gp_pending[slot] = Some(pending),
-            // nowhere to keep it: better at once than not at all
             None => {
                 self.gp_notify(&pending, true);
                 self.gp_notify(&pending, false);
@@ -711,15 +562,12 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    /// Sends the notification of a paired device to the sinks of its proxy
-    /// table entry (`sinks`) or to its groups.
     fn gp_notify(&mut self, p: &Pending, sinks: bool) {
         let (Forward::Sinks(i) | Forward::Groups(i)) = p.to else {
             return;
         };
         let e = self.proxies[i as usize];
         let zcl = &p.zcl[..p.len as usize];
-        // (the pairing may have gone, or the entry to another device, while the frame waited)
         let mut id: Buffer<9> = Buffer::new();
         e.gpd.write(&mut id, 0);
         let n = id.len().min(8);
@@ -743,10 +591,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// A notification to a group, from the device's alias address. The APS
-    /// counter is the alias sequence number too (A.3.6.3.3): the copies of
-    /// several proxies are the same frame, and frames of one device that
-    /// come through different proxies do not look like repeats to the sink.
     fn gp_group_notification(&mut self, group: u16, alias: u16, seq: u8, radius: u8, zcl: &[u8]) {
         let mut aps = Buf::new();
         aps.u8(0x0C);
@@ -759,8 +603,6 @@ impl<H: Hal> Stack<H> {
         self.gp_alias_broadcast(alias, seq, radius, aps.as_slice());
     }
 
-    /// The device will listen 20 ms after this frame: send it what the sink
-    /// left for it, if anything.
     fn gp_answer(&mut self, f: &Gpdf, end_us: u32) {
         let Some(q) = self.gp_tx else {
             return;
@@ -772,27 +614,22 @@ impl<H: Hal> Stack<H> {
         let mut m = Buf::new();
         match q.gpd {
             Gpd::Ieee(ieee) => {
-                // MAC: data frame to the device's extended address, no source address
                 m.u16(0x0C01);
                 m.u8(self.next_mac_seq());
                 m.u16(0xFFFF);
                 m.u64(ieee);
-                // towards the device, no security; its endpoint
                 m.u8(0x8C);
                 m.u8(0x82);
                 m.u8(q.endpoint);
             }
             Gpd::Src(id) => {
-                // MAC: data frame to everyone, no source address
                 m.u16(0x0801);
                 m.u8(self.next_mac_seq());
                 m.u16(0xFFFF);
                 m.u16(0xFFFF);
                 if id == 0 {
-                    // maintenance frame
                     m.u8(0x0D);
                 } else {
-                    // data frame with extended frame control: towards the device, no security
                     m.u8(0x8C);
                     m.u8(0x80);
                     m.u32(id);
@@ -807,8 +644,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Drops a frame whose device never opened a receive window, and sends
-    /// the commissioning notifications whose delay is over.
     pub(crate) fn gp_timers(&mut self, now: u32) {
         if let Some(q) = self.gp_tx {
             if due(now, q.expires) {
@@ -836,7 +671,6 @@ impl<H: Hal> Stack<H> {
                     aps.u16(CLUSTER_GP);
                     aps.u16(PROFILE_GP);
                     aps.u8(GP_ENDPOINT);
-                    // under an alias the APS counter is the alias sequence number (A.3.6.3.3)
                     aps.u8(p.seq);
                     aps.bytes(zcl);
                     self.gp_alias_broadcast(p.alias, p.seq, nwk::DEFAULT_RADIUS, aps.as_slice());
@@ -851,8 +685,6 @@ impl<H: Hal> Stack<H> {
                 }
                 Forward::Groups(_) => self.gp_notify(&p, false),
                 Forward::Announce => {
-                    // Device_annce for the alias: no IEEE address, capabilities
-                    // none; NWK sequence number and APS counter 0 (A.3.6.3.4.2)
                     self.zdo_seq = self.zdo_seq.wrapping_add(1);
                     let mut aps = Buf::new();
                     aps.bytes(&[0x08, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, self.zdo_seq]);
@@ -865,17 +697,8 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// A Zigbee device announced itself (Device_annce, A.3.5.2.3). A sink
-    /// that has a new address is sent the frames there from now on. A
-    /// device whose address is an alias this proxy sends under has to take
-    /// another: it is told so by a Device_annce from that very address, a
-    /// moment later, unless another proxy was quicker.
     pub(crate) fn gp_device_announced(&mut self, short: u16, ext: u64) {
         if ext == NO_IEEE {
-            // The other side of that: an announcement without an IEEE
-            // address is made in the name of an alias. The alias stays; if
-            // it is this node's address, this node takes another (R22
-            // 2.4.4.2, 3.6.1.9).
             if short == self.nib.short {
                 self.address_conflict(short);
             }
@@ -902,7 +725,6 @@ impl<H: Hal> Stack<H> {
                 || (e.derived_group && e.alias == Some(short))
                 || e.groups[..e.group_count as usize].iter().any(|g| g.1 == short);
         }
-        // (not in commissioning mode: A.3.6.3.4.1)
         if !conflict || self.gp_commissioning(now).is_some() || self.gp_pending.iter().flatten().any(|p| p.to == Forward::Announce && p.alias == short) {
             return;
         }
@@ -920,8 +742,6 @@ impl<H: Hal> Stack<H> {
     #[allow(clippy::too_many_arguments)]
     fn gp_commissioning_notification(&mut self, c: &Commissioning, f: &Gpdf, plain: Option<&[u8]>, key_type: u8, mac_seq: u8, lqi: u8, now: u32) {
         let cmd = plain.and_then(|p| p.first().copied());
-        // frames that are not a device's to send, and what a device that
-        // commissions itself sends while it still says so in every frame
         if f.maintenance && cmd != Some(GPD_CHANNEL_REQUEST) {
             return;
         }
@@ -935,11 +755,6 @@ impl<H: Hal> Stack<H> {
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         z.bytes(&[0x11, self.zcl_seq, GP_COMMISSIONING_NOTIFICATION]);
         let failed = plain.is_none();
-        // Whether the device listens now, security level and key type,
-        // whether the security could be processed here, proxy information
-        // present. Of a frame that could not be processed the key type says
-        // only what the frame itself says: an individual key (0b100) or
-        // not (A.3.3.4.3). The sink rebuilds the frame's header from it.
         let key_type = match (f.security, failed) {
             (0, _) => KEY_NONE,
             (_, true) if f.key_bit != 0 => KEY_INDIVIDUAL,
@@ -962,7 +777,6 @@ impl<H: Hal> Stack<H> {
                 z.bytes(&p[1..]);
             }
             _ => {
-                // not ours to read: the protected bytes as they came, the MIC separately
                 let n = f.body.len().saturating_sub(crypto::MIC_LEN);
                 z.u8(f.body.first().copied().unwrap_or(0));
                 z.u8(n.saturating_sub(1) as u8);
@@ -982,11 +796,6 @@ impl<H: Hal> Stack<H> {
         };
         let mut zcl = [0u8; 96];
         zcl[..z.len()].copy_from_slice(z.as_slice());
-        // When the device does not wait for an answer: after Dmin_u. When
-        // it does: by unicast after Dmin_b; by broadcast after
-        // gppTunnelingDelay, which adds the pause for the link quality, but
-        // not for the proxy the sink picked to answer the device
-        // (A.3.9.1 steps 6b, 12e; A.3.6.3.1).
         let delay = if f.rx_after_tx && !c.unicast && !self.gp_first { DMIN_B + quality_delay(lqi) } else { dmin(f.rx_after_tx) };
         self.gp_pending[slot] = Some(Pending {
             at: now.wrapping_add(delay),
@@ -999,11 +808,6 @@ impl<H: Hal> Stack<H> {
         });
     }
 
-    /// Broadcasts an APS frame with the device's alias as NWK source and a
-    /// sequence number derived from the device's frame: every proxy that
-    /// heard the device sends the same broadcast, and the network's duplicate
-    /// rejection leaves one. If another proxy's copy got here first, ours
-    /// stays unsent.
     fn gp_alias_broadcast(&mut self, alias: u16, seq: u8, radius: u8, aps: &[u8]) {
         let now = self.hal.now_ms();
         if self.broadcast_seen(alias, seq, now) {
@@ -1013,7 +817,6 @@ impl<H: Hal> Stack<H> {
         self.nwk_send(&h, aps);
     }
 
-    /// A Green Power cluster frame for the proxy.
     pub(crate) fn on_gp(&mut self, src: u16, src_ep: u8, p: &[u8], unicast: bool) -> Option<()> {
         let mut r = Reader::new(p);
         let fc = r.u8()?;
@@ -1023,12 +826,10 @@ impl<H: Hal> Stack<H> {
         let seq = r.u8()?;
         let cmd = r.u8()?;
         let mut rsp = Long::new();
-        // answers go the other way, and want no Default Response themselves
         let rsp_fc = 0x10 | (!fc & 0x08);
         let status = if fc & 3 == 0 {
             self.gp_global(cmd, r, seq, rsp_fc, &mut rsp)
         } else if fc & 0x08 == 0 {
-            // a command for sinks; this is a proxy
             Some(UNSUP_COMMAND)
         } else {
             match self.gp_command(src, cmd, r, seq, &mut rsp) {
@@ -1036,15 +837,12 @@ impl<H: Hal> Stack<H> {
                 None => Some(MALFORMED_COMMAND),
             }
         };
-        // Only unicasts are answered; but a GP Proxy Table Request that
-        // found what it asked for is answered however it came (A.3.4.4.2.1).
         let found = fc & 0x0B == 0x09 && cmd == GP_PROXY_TABLE_REQUEST && rsp.len() > 3 && rsp.get(3) == SUCCESS;
         if !unicast && !found {
             return Some(());
         }
         if rsp.is_empty() {
             match status {
-                // Default Response, unless it was declined and all went well
                 Some(status) if (status != SUCCESS || fc & 0x10 == 0) && !(fc & 3 == 0 && cmd == 0x0B) => {
                     rsp.bytes(&[rsp_fc, seq, 0x0B, cmd, status])
                 }
@@ -1057,14 +855,11 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    /// Commands a sink sends to proxies. `None`: the command is malformed.
-    /// `Some(None)`: done, the answer (if any) is in `rsp`.
     fn gp_command(&mut self, src: u16, cmd: u8, mut r: Reader, seq: u8, rsp: &mut Long) -> Option<Option<u8>> {
         let now = self.hal.now_ms();
         match cmd {
             GP_PROXY_COMMISSIONING_MODE => {
                 let options = r.u8()?;
-                // while in commissioning mode only the sink that asked for it has a say
                 if self.gp_commissioning(now).is_some_and(|c| c.sink != src) {
                     return Some(Some(SUCCESS));
                 }
@@ -1072,7 +867,6 @@ impl<H: Hal> Stack<H> {
                     self.gp_mode = None;
                     return Some(Some(SUCCESS));
                 }
-                // a new session: no proxy has been picked to answer a device yet
                 self.gp_first = false;
                 let window = if options & 0x02 != 0 { r.u16()? as u32 } else { DEFAULT_WINDOW_S };
                 self.gp_mode = Some(Commissioning {
@@ -1084,8 +878,6 @@ impl<H: Hal> Stack<H> {
                 Some(Some(SUCCESS))
             }
             GP_RESPONSE => {
-                // a basic proxy has frames for devices in commissioning mode only
-                // (Table 23); what it does not support it drops without a word
                 if self.gp_commissioning(now).is_none() {
                     return Some(None);
                 }
@@ -1099,7 +891,6 @@ impl<H: Hal> Stack<H> {
                     n => n as usize,
                 };
                 let data = r.take(len)?;
-                // one proxy is asked to deliver; the others drop what they hold for the device
                 self.gp_first = temp_master == self.nib.short;
                 if !self.gp_first {
                     if let Some(q) = self.gp_tx.filter(|q| q.gpd == gpd) {
@@ -1116,7 +907,6 @@ impl<H: Hal> Stack<H> {
                 let mut payload = [0u8; MAX_TX_PAYLOAD];
                 payload[..len].copy_from_slice(data);
                 self.gp_tx = Some(Queued { gpd, endpoint, channel, cmd: gpd_cmd, len: len as u8, payload, expires: now.wrapping_add(TX_QUEUE_MS) });
-                // wait for the device where it will listen
                 if channel != self.nib.channel {
                     self.hal.set_channel(channel);
                 }
@@ -1144,8 +934,6 @@ impl<H: Hal> Stack<H> {
                     if !wanted {
                         continue;
                     }
-                    // as many whole entries as fit one frame, in the order of the table: the
-                    // reader goes on from the index after the last one it got
                     let mut entry: Buffer<72> = Buffer::new();
                     e.write(&mut entry);
                     if rsp.len() + entry.len() > SINGLE_MAX {
@@ -1164,13 +952,11 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// GP Pairing: a sink adds itself to a device's entry, removes itself, or removes the device.
     fn gp_pairing(&mut self, mut r: Reader) -> Option<u8> {
         let options = r.u8()? as u32 | (r.u8()? as u32) << 8 | (r.u8()? as u32) << 16;
         let (gpd, endpoint) = Gpd::read((options & 7) as u8, &mut r)?;
         let found = self.proxy_index(gpd);
         if options & 0x10 != 0 {
-            // remove the device: nothing follows
             let i = found?;
             self.proxies[i] = ProxyEntry::EMPTY;
             self.store_proxy(i);
@@ -1189,7 +975,6 @@ impl<H: Hal> Stack<H> {
         }
         let add = options & 0x08 != 0;
         if !add {
-            // this sink no longer wants the device's frames this way
             let i = found?;
             let e = &mut self.proxies[i];
             match mode {
@@ -1213,7 +998,7 @@ impl<H: Hal> Stack<H> {
             self.store_proxy(i);
             return Some(SUCCESS);
         }
-        r.skip(1)?; // device identifier (what kind of device): of no use to a proxy
+        r.skip(1)?;
         let counter = if options & (1 << 14) != 0 { Some(r.u32()?) } else { None };
         let key = if options & (1 << 15) != 0 { Some(r.key()?) } else { None };
         let alias = if options & (1 << 16) != 0 { Some(r.u16()?) } else { None };
@@ -1225,7 +1010,6 @@ impl<H: Hal> Stack<H> {
         }
         match mode {
             MODE_LIGHTWEIGHT_UNICAST => {
-                // (a sink is who its IEEE address says; its network address may have changed)
                 let n = e.sink_count as usize;
                 match e.sinks[..n].iter().position(|s| s.0 == sink.0) {
                     Some(at) => e.sinks[at] = sink,
@@ -1264,7 +1048,6 @@ impl<H: Hal> Stack<H> {
         if self.gp_mode.is_some_and(|c| c.exit_on_pairing) {
             self.gp_mode = None;
         }
-        // frames under an alias must not look like ours
         let aliases = [Some(gpd.alias()), alias];
         if aliases.contains(&Some(self.nib.short)) {
             self.address_conflict(self.nib.short);
@@ -1272,11 +1055,8 @@ impl<H: Hal> Stack<H> {
         Some(SUCCESS)
     }
 
-    /// General commands on the Green Power cluster: its attributes.
-    /// `None`: the answer, if there is one, is in `rsp`.
     fn gp_global(&mut self, cmd: u8, mut r: Reader, seq: u8, rsp_fc: u8, rsp: &mut Long) -> Option<u8> {
         match cmd {
-            // Read Attributes
             0x00 => {
                 rsp.bytes(&[rsp_fc, seq, 0x01]);
                 while let Some(id) = r.u16() {
@@ -1290,7 +1070,6 @@ impl<H: Hal> Stack<H> {
                             for e in self.proxies.iter().filter(|e| e.used) {
                                 e.write(&mut table);
                             }
-                            // only when the whole table goes into one frame, unfragmented (A.3.4.2.2.1)
                             if table.ok() && rsp.len() + 3 + table.len() <= SINGLE_MAX {
                                 rsp.u8(T_LONG_OCTETS);
                                 rsp.u16(table.len() as u16);
@@ -1318,7 +1097,6 @@ impl<H: Hal> Stack<H> {
                 }
                 None
             }
-            // Write Attributes (also undivided, and without response)
             0x02 | 0x03 | 0x05 => {
                 rsp.bytes(&[rsp_fc, seq, 0x04]);
                 let mut keys = self.gp_keys;
@@ -1356,7 +1134,6 @@ impl<H: Hal> Stack<H> {
                         failed = true;
                         rsp.u8(status);
                         rsp.u16(id);
-                        // what follows a record that was not understood cannot be found
                         if status != INVALID_VALUE {
                             break;
                         }
@@ -1374,13 +1151,11 @@ impl<H: Hal> Stack<H> {
                 }
                 None
             }
-            // a Default Response is not answered
             0x0B => None,
             _ => Some(UNSUP_COMMAND),
         }
     }
 
-    /// Simple descriptor of the Green Power endpoint (for the ZDO server).
     pub(crate) fn gp_simple_descriptor(&self, rsp: &mut Buf) {
         rsp.u8(10);
         rsp.u8(GP_ENDPOINT);
@@ -1392,9 +1167,6 @@ impl<H: Hal> Stack<H> {
         rsp.u16(CLUSTER_GP);
     }
 
-    // ------------------------------------------------------------ storage
-
-    /// Stores one entry of the proxy table (an unused one as a bare version byte).
     pub(crate) fn store_proxy(&mut self, i: usize) {
         let e = self.proxies[i];
         let mut b: Buffer<ENTRY_MAX> = Buffer::new();

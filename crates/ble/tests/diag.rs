@@ -1,5 +1,3 @@
-//! The diagnostic service of the device page (`ble::diag`), from a central's side.
-
 mod sim;
 
 use ble::diag::{self, parse, zigbee_event, DiagCommand, FrameLog, Info, LogEntry, State};
@@ -15,7 +13,6 @@ const FRAMES: u16 = 0x2a;
 const CONFIG: u16 = 0x2c;
 const COUNTERS: u16 = 0x2e;
 
-/// e61000xx-5a4b-4c3d-8e2f-1a2b3c4d5e6f, least significant byte first.
 fn uuid(short: u8) -> Vec<u8> {
     vec![0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, short, 0x00, 0x10, 0xe6]
 }
@@ -26,7 +23,6 @@ fn connected(identity: ble::Identity) -> Rig {
     rig
 }
 
-/// Read and Read Blob to the end, at the default MTU (23).
 fn read_long(rig: &mut Rig, handle: u16) -> Vec<u8> {
     let mut v = rig.read(handle);
     let mut last = v.len();
@@ -53,7 +49,6 @@ fn the_service_is_found_by_its_uuid_after_the_stock_handles() {
     let mut q = vec![0x06, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28];
     q.extend(uuid(0));
     assert_eq!(rig.att(&q), [0x07, 0x20, 0x00, 0x2e, 0x00]);
-    // the characteristics: (declaration, properties, value handle, short id)
     let mut found = vec![];
     let mut start = 0x20u16;
     loop {
@@ -86,7 +81,6 @@ fn the_command_characteristic_is_written_not_read() {
     let mut q = vec![0x08, 0x01, 0x00, 0xff, 0xff];
     q.extend(uuid(4));
     assert_eq!(rig.att(&q), [0x01, 0x08, CMD as u8, 0x00, 0x02], "by type: the error names the handle");
-    // the others are read-only
     assert_eq!(rig.att(&[0x12, STATE as u8, 0x00, 0x01]), [0x01, 0x12, STATE as u8, 0x00, 0x03]);
 }
 
@@ -160,7 +154,6 @@ fn the_values_read_as_the_firmware_set_them() {
     assert_eq!(s[..12], [1, 4, 3, 2, 1, 1, 0, 2, 0, 3, 6, 5]);
     assert_eq!(s[12..23], [1, 0x34, 0x12, 0xcd, 0xab, 15, 4, 3, 1, 200, (-50i8) as u8]);
     assert_eq!(s[23..35], [0xe8, 0x03, 0, 0, 0x84, 0x03, 0, 0, 30, 0, 2, 0]);
-    // the light as reported to the BLE side, the colour temperature of a tunable bulb
     let light = rig.bulb.state();
     assert_eq!(s[35..37], [light.on as u8, light.level]);
     assert_eq!(u16::from_le_bytes([s[37], s[38]]), light.color_temp);
@@ -212,15 +205,12 @@ fn a_dimmable_bulb_shows_no_colour() {
 #[test]
 fn only_the_blink_works_without_a_login() {
     let mut rig = connected(DIMMABLE);
-    // blink: done, counter 1
     assert_eq!(write_cmd(&mut rig, &[0x01]), 0x10);
     assert_eq!(rig.ble.borrow_mut().take_diag_command(), Some(DiagCommand::Identify));
-    // the light: login required, counter 2, nothing to carry out
     assert_eq!(write_cmd(&mut rig, &[0x10, 0x00]), 0x21);
     assert_eq!(rig.ble.borrow_mut().take_diag_command(), None);
     assert_eq!(write_cmd(&mut rig, &[0x31, b'R', b'S', b'T']), 0x31);
     assert_eq!(rig.ble.borrow_mut().take_diag_command(), None);
-    // an empty write is no command
     rig.write(CMD, &[]);
     assert_eq!(read_long(&mut rig, STATE)[39], 0x31);
 
@@ -230,14 +220,12 @@ fn only_the_blink_works_without_a_login() {
     assert_eq!(rig.ble.borrow_mut().take_diag_command(), Some(DiagCommand::Light(Command::Off)));
     assert_eq!(write_cmd(&mut rig, &[0x10, 0x07]), 0x80 | 0x52, "invalid parameters");
     assert_eq!(rig.ble.borrow_mut().take_diag_command(), None);
-    // the counter has three bits
     for _ in 0..3 {
         write_cmd(&mut rig, &[0x30]);
     }
     assert_eq!(read_long(&mut rig, STATE)[39], 0x80 | 0x00);
     assert_eq!(rig.ble.borrow_mut().take_diag_command(), Some(DiagCommand::Restart));
 
-    // a new connection starts logged out
     rig.central().terminate();
     rig.run(500);
     rig.connect();
@@ -255,7 +243,6 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     assert_eq!(parse(&[0x11, 60, 5, 0], dimm), light(Command::MoveToLevel { level: 60, transition_ms: 500 }));
     assert_eq!(parse(&[0x11, 255, 0, 0], dimm), light(Command::MoveToLevel { level: 254, transition_ms: 0 }));
     assert_eq!(parse(&[0x11, 60, 5], dimm), None);
-    // colour temperature: a tunable bulb only, within its range
     assert_eq!(parse(&[0x12, 0x90, 0x01, 10, 0], tw), light(Command::MoveToColorTemperature { mireds: 400, transition_ms: 1000 }));
     assert_eq!(parse(&[0x12, 100, 0, 0, 0], tw), None);
     assert_eq!(parse(&[0x12, 0xc6, 0x01, 0, 0], tw), light(Command::MoveToColorTemperature { mireds: 454, transition_ms: 0 }));
@@ -263,7 +250,6 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     assert_eq!(parse(&[0x20, 0xff], dimm), light(Command::SetPowerOnBehavior(PowerOnBehavior::Previous)));
     assert_eq!(parse(&[0x20, 3], dimm), None);
     assert_eq!(parse(&[0x21, 0], dimm), light(Command::SetStartupLevel(0)));
-    // options: the bits the light has
     assert_eq!(parse(&[0x22, 0xff], tw), Some(DiagCommand::LevelOptions(3)));
     assert_eq!(parse(&[0x22, 0xff], dimm), Some(DiagCommand::LevelOptions(1)));
     assert_eq!(parse(&[0x23, 0xff], tw), Some(DiagCommand::ColorOptions(1)));
@@ -286,7 +272,6 @@ fn the_stacks_events_take_the_c_firmwares_codes_where_they_mean_the_same() {
     assert_eq!(zigbee_event(ev::BLE_CONNECT, 3, 0, 15), (8, 0));
     assert_eq!(zigbee_event(ev::BLE_DISCONNECT, 3, 0, 15), (9, 0));
     assert_eq!(zigbee_event(ev::IDENTIFY, 0, 0, 15), (10, 0));
-    // the others: 32 + their own code
     assert_eq!(zigbee_event(ev::NEIGHBOR_ADDED, 0x1234, 180, 15), (37, 180), "the neighbor's link quality");
     assert_eq!(zigbee_event(ev::TX_FAIL, 0x1234, 0xe9, 15), (50, 0xe9), "the MAC status");
     assert_eq!(zigbee_event(ev::STATUS_RX, 0x0b, 0x1234, 15), (41, 0x0b), "the status code");

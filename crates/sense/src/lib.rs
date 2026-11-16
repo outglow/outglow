@@ -1,66 +1,19 @@
-//! Motion sensing from the signal strength (RSSI) of frames between bulbs
-//! (device-free sensing, as Philips Hue MotionAware): the detector core and
-//! the probe frame. Portable, `no_std`, integer arithmetic, no allocation.
-//!
-//! The algorithm is the C firmware's (`firmware/sense/eglo_sense_core.c`,
-//! reconstructed from the README of the Ripple project; `docs/rf-sensing.md`),
-//! ported line by line; a comparison on random input feeds both the same
-//! frames and finds their state the same after every step.
-//!
-//! ```text
-//!   line      = one sender heard by this receiver (up to LINES)
-//!   sample    = RSSI of a kept frame; at most 12.5 samples/s per line
-//!   reference = median of the 5 previous samples
-//!   weight    = min(|x - median| / threshold, 3)
-//!   rule      = sum of the weights of the last 16 samples >= M continuously for
-//!               D = 10 ms * (100 - s)  ->  line ON
-//!   OFF       = off_s seconds after the last moment at which the rule was met
-//!   s (0..100) selects the threshold and M (`params`); 0 = detection disabled.
-//!               Every line has its own s.
-//!
-//!   calibration  = a recording of the empty room: for every line the most sensitive s at
-//!                  which the M-of-16 rule was never met, minus a margin
-//!   self-tuning  = once a day s by one level (5), at most 2 levels from the
-//!                  anchor (s from calibration or set manually), based on the
-//!                  line noise measured only when nothing detects motion
-//!   automatic    = (not in the C firmware; `Core::auto_cal`) the calibration's
-//!   calibration    search every hour; after a full day a line nobody
-//!                  calibrated takes the s of its quietest hour (the highest
-//!                  s that hour left), and that hour's noise as its anchor
-//! ```
 #![forbid(unsafe_code)]
 #![no_std]
 
 pub mod probe;
 
 pub const LINES: usize = 10;
-/// Reference samples (median).
 pub const HIST: usize = 5;
-/// Window of the M-of-N rule.
 pub const WIN: usize = 16;
-/// 12.5 kept samples/s.
 pub const MIN_GAP_MS: u32 = 80;
-/// A longer gap restarts the line's detection.
 pub const RESET_GAP_MS: u32 = 4000;
-/// Weaker frames do not count.
 pub const MIN_RSSI: i8 = -90;
-/// After a light change (own or the sender's).
 pub const BLANK_MS: u32 = 1500;
-/// A line without frames for this long may yield to a new sender.
 pub const EVICT_MS: u32 = 60_000;
 pub const NO_SRC: u16 = 0xFFFF;
-/// Deviation in dB, clipped.
 pub const DEV_MAX: i16 = 63;
 
-/// Calibration margin: a short recording does not see rare noise
-/// coincidences, so we look for the s at which the window sum did not even
-/// reach M - CAL_HEADROOM, and subtract a further CAL_MARGIN units of s.
-/// Values tuned on the synthetic channel model of the C firmware
-/// (emulator/sense_core_test.py: 60 s recording, then an hour without a
-/// false ON); `crates/sense/tests/measured.rs` checks them on the channel
-/// measured between the owner's bulbs. As in the C core they can be set at
-/// build time (environment `SENSE_CAL_HEADROOM`, `SENSE_CAL_MARGIN`), to
-/// try others (`tests/explore.rs`).
 pub const CAL_HEADROOM: u8 = env_u8(option_env!("SENSE_CAL_HEADROOM"), 4);
 pub const CAL_MARGIN: u8 = env_u8(option_env!("SENSE_CAL_MARGIN"), 0);
 
@@ -80,27 +33,17 @@ const fn env_u8(v: Option<&str>, default: u8) -> u8 {
     assert!(n <= 255, "a number 0..=255");
     n as u8
 }
-/// Fewer samples in the recording: the line stays unchanged.
 pub const CAL_MIN_FRAMES: u16 = 40;
-/// One self-tuning level.
 pub const TUNE_STEP: u8 = 5;
-/// At most this many levels from the anchor.
 pub const TUNE_LEVELS: u8 = 2;
 pub const HOUR_MS: u32 = 3_600_000;
-/// An hour with fewer samples does not count.
 pub const HOUR_MIN_FRAMES: u16 = 1000;
-/// A day with fewer valid hours does not count.
 pub const DAY_MIN_HOURS: u8 = 12;
 
-/// Line detects motion.
 pub const F_ON: u8 = 0x01;
-/// Rule met at the last sample.
 pub const F_RULE: u8 = 0x02;
-/// We know the sender's light change counter.
 pub const F_CHG: u8 = 0x04;
 
-/// Threshold (in 1/4 dB) and M for a sensitivity: s 100..50: threshold
-/// 1 dB, M grows 1..8; s 49..1: M = 8, threshold 1.25..10 dB.
 pub fn params(s: u8) -> (u8, u8) {
     let s = s.min(100) as u32;
     if s >= 50 {
@@ -112,58 +55,35 @@ pub fn params(s: u8) -> (u8, u8) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Line {
-    /// Sender's short address; `NO_SRC` = free.
     pub src: u16,
     pub flags: u8,
-    /// Valid samples in `hist` (0..=HIST).
     pub nhist: u8,
     pub hpos: u8,
-    /// Sender's light change counter from the last probe.
     pub peer_chg: u8,
     pub hist: [i8; HIST],
-    /// Last kept sample.
     pub rssi: i8,
-    /// Sum of the window weights (diagnostics).
     pub sum: u8,
-    /// Smoothed |x - median|, 1/8 dB (diagnostics).
     pub noise: u8,
-    /// Sensitivity of this line.
     pub s: u8,
-    /// Self-tuning anchor.
     pub anchor_s: u8,
-    /// Noise of the anchor day, 1/32 dB; 0 = not known yet.
     pub anchor_noise: u16,
     pub dpos: u8,
-    /// Deviations of the last 16 samples [dB].
     pub dev: [u8; WIN],
-    /// Calibration: the most sensitive s that has not triggered so far.
     pub cal_s: u8,
-    /// Calibration: number of samples and sum of their deviations.
     pub cal_n: u16,
     pub cal_sum: u32,
-    /// Self-tuning: samples of the current hour (only when nothing is ON)...
     pub hour_cnt: u16,
     pub hour_sum: u32,
-    /// ...and of the valid hours of the current day.
     pub day_cnt: u32,
     pub day_sum: u32,
-    /// Quietest hour of the day, 1/32 dB.
     pub day_min: u16,
     pub day_hours: u8,
-    /// Automatic calibration: the calibration's search over this hour (all
-    /// samples, motion or not), and the highest of the day's hours (the
-    /// quietest hour). Its noise is the self-tuning's `day_min`.
     pub hour_cal_s: u8,
     pub day_cal_s: u8,
-    /// Time of the last kept sample.
     pub t_kept: u32,
-    /// Time of the last frame from the sender.
     pub t_seen: u32,
-    /// Since when the rule has been met.
     pub t_rule: u32,
-    /// When the rule was last met.
     pub t_hit: u32,
-    /// End of blanking; valid when `blank`.
     pub t_blank: u32,
     pub blank: bool,
 }
@@ -211,7 +131,6 @@ impl Line {
         self.flags & F_ON != 0
     }
 
-    /// Sum of the window weights for threshold `thr_q4` [1/4 dB].
     fn win_sum(&self, thr_q4: u8) -> u8 {
         let mut sum = 0u8;
         for &d in &self.dev {
@@ -282,34 +201,20 @@ fn median5(h: &[i8; HIST]) -> i8 {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Core {
-    /// Default sensitivity (new lines).
     pub s: u8,
-    /// Seconds until OFF.
     pub off_s: u16,
-    /// Self-tuning enabled.
     pub selftune: bool,
-    /// Automatic calibration from the quietest hour of the first full day
-    /// (lines without an anchor noise: never calibrated, no anchor day yet).
-    /// Off here, as in the C firmware; the stack turns it on.
     pub auto_cal: bool,
-    /// The s/anchor of some line changed: save to NV and clear.
     pub dirty: bool,
-    /// Calibration in progress.
     pub cal: bool,
-    /// Hour of the current self-tuning day.
     pub hour: u8,
-    /// Mask of the ON lines from the last tick.
     pub on_mask: u16,
     pub t_cal_end: u32,
-    /// Start of the current hour.
     pub t_hour: u32,
     pub line: [Line; LINES],
 }
 
 impl Core {
-    /// Every line free with sensitivity `s` (what `sense_core_init` makes of a
-    /// zeroed `sense_t`). A constant expression, so that it is built where it
-    /// goes: inside the stack, which is built in its place, not copied.
     pub const fn new(now: u32, s: u8, off_s: u16) -> Core {
         let s = if s > 100 { 100 } else { s };
         Core {
@@ -327,13 +232,6 @@ impl Core {
         }
     }
 
-    /// The sensing was switched on (`Core::new` is the start for a core that
-    /// runs from the first moment): the hours, and with them the first day of
-    /// the self-tuning and of the automatic calibration, count from `now`, and
-    /// every line starts its detection again, nothing ON, no calibration
-    /// running. What the lines learnt (sender, s, anchor) stays. Time the
-    /// core did not see (no frames, no ticks while the sensing was off) is
-    /// no part of any hour.
     pub fn start(&mut self, now: u32) {
         self.cal = false;
         self.t_cal_end = now;
@@ -352,7 +250,6 @@ impl Core {
         }
     }
 
-    /// Changing the default s sets it (and the anchor) in all lines.
     pub fn cfg(&mut self, s: u8, off_s: u16) {
         let s = s.min(100);
         self.off_s = if off_s != 0 { off_s } else { 1 };
@@ -369,7 +266,6 @@ impl Core {
         self.line.iter().position(|l| l.src == src)
     }
 
-    /// A free line, or the longest-silent one (over EVICT_MS) that is not ON.
     fn alloc(&mut self, now: u32, src: u16) -> Option<usize> {
         let mut best = None;
         let mut best_age = EVICT_MS;
@@ -386,7 +282,6 @@ impl Core {
         }
         let i = best?;
         if self.line[i].src != NO_SRC {
-            // a remembered line gave way
             self.dirty = true;
         }
         let s = self.s;
@@ -398,7 +293,6 @@ impl Core {
         Some(i)
     }
 
-    /// A line remembered in NV; false when there is no room (or it is there already).
     pub fn line_restore(&mut self, now: u32, src: u16, s: u8, anchor_s: u8, anchor_noise: u16) -> bool {
         if src == NO_SRC || self.find(src).is_some() {
             return false;
@@ -413,8 +307,6 @@ impl Core {
         true
     }
 
-    /// A frame from `src` at level `rssi` [dBm]. `probe`: it was a probe
-    /// (which may create the line), carrying the sender's light change counter.
     pub fn frame(&mut self, now: u32, src: u16, rssi: i8, probe: Option<u8>) {
         let i = match self.find(src) {
             Some(i) => i,
@@ -433,7 +325,6 @@ impl Core {
         l.t_seen = now;
 
         if let Some(chg) = probe {
-            // the sender switched or dimmed its light: that is not motion
             if l.flags & F_CHG != 0 && chg != l.peer_chg {
                 l.blank = true;
                 l.t_blank = now.wrapping_add(BLANK_MS);
@@ -452,7 +343,6 @@ impl Core {
             return;
         }
         if now.wrapping_sub(l.t_kept) < MIN_GAP_MS {
-            // at most 12.5 samples/s
             return;
         }
         if now.wrapping_sub(l.t_kept) > RESET_GAP_MS {
@@ -470,9 +360,6 @@ impl Core {
             l.noise = (l.noise as i16 + ((target - l.noise as i16) >> 3)) as u8;
 
             if cal {
-                // the most sensitive s at which the window sum never reached M - margin; the sum
-                // decreases with the threshold and M does not decrease, so it is enough to step
-                // down as the recording goes
                 l.cal_n = l.cal_n.wrapping_add(1);
                 l.cal_sum = l.cal_sum.wrapping_add(dev as u32);
                 while l.cal_s > 1 {
@@ -484,8 +371,6 @@ impl Core {
                 }
             }
             if auto_cal {
-                // the same search over the hour, whatever happens in it: the quietest hour of
-                // the day is the one that leaves the highest s
                 while l.hour_cal_s > 1 {
                     let (thr, m) = params(l.hour_cal_s);
                     if (l.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16 {
@@ -495,7 +380,6 @@ impl Core {
                 }
             }
             if nothing_on && l.flags & F_ON == 0 && l.hour_cnt < 0xFFFF {
-                // background noise: only when nothing detects motion
                 l.hour_cnt += 1;
                 l.hour_sum = l.hour_sum.wrapping_add(dev as u32);
             }
@@ -525,7 +409,6 @@ impl Core {
         }
     }
 
-    /// Own light changed: blank all lines for BLANK_MS.
     pub fn blank(&mut self, now: u32) {
         for l in self.line.iter_mut().filter(|l| l.src != NO_SRC) {
             l.blank = true;
@@ -534,7 +417,6 @@ impl Core {
         }
     }
 
-    /// Calibration: record the empty room for `seconds` (0 = abort without changes).
     pub fn cal_start(&mut self, now: u32, seconds: u16) {
         self.cal = seconds != 0;
         self.t_cal_end = now.wrapping_add(seconds as u32 * 1000);
@@ -545,7 +427,6 @@ impl Core {
         }
     }
 
-    /// Seconds until the end of the calibration; 0 = not running.
     pub fn cal_left(&self, now: u32) -> u16 {
         let left = self.t_cal_end.wrapping_sub(now) as i32;
         if !self.cal || left <= 0 {
@@ -568,7 +449,6 @@ impl Core {
         }
     }
 
-    /// End of the hour: close the statistics; every 24 hours move s by at most one level.
     fn hour_finish(&mut self) {
         self.hour += 1;
         let day_end = self.hour >= 24;
@@ -589,7 +469,6 @@ impl Core {
                 l.day_sum = l.day_sum.wrapping_add(l.hour_sum);
                 l.day_cnt = l.day_cnt.wrapping_add(l.hour_cnt as u32);
                 l.day_hours += 1;
-                // an hour counts for the automatic calibration as for the self-tuning
                 if auto_cal && l.hour_cal_s > l.day_cal_s {
                     l.day_cal_s = l.hour_cal_s;
                 }
@@ -601,7 +480,6 @@ impl Core {
                 continue;
             }
             if auto_cal && l.anchor_noise == 0 && l.day_hours >= DAY_MIN_HOURS && l.day_cal_s != 0 && l.s != 0 {
-                // calibrated by its quietest hour: that s, and the quietest hour's noise as the anchor
                 let s = if l.day_cal_s > CAL_MARGIN { l.day_cal_s - CAL_MARGIN } else { 1 };
                 l.set_s(s, l.day_min.max(1));
                 l.flags &= !F_RULE;
@@ -612,16 +490,13 @@ impl Core {
                 let lo = if l.anchor_s > span { l.anchor_s - span } else { 1 };
                 let hi = if l.anchor_s < 100 - span { l.anchor_s + span } else { 100 };
                 if l.anchor_noise == 0 {
-                    // first full day = the anchor day
                     l.anchor_noise = if day_mean != 0 { day_mean } else { 1 };
                     dirty = true;
                 } else if selftune {
                     if l.day_min as u32 > 2 * l.anchor_noise as u32 && l.s > lo {
-                        // even the quietest hour is more than 2x louder than on the anchor day
                         l.s = if l.s - lo > TUNE_STEP { l.s - TUNE_STEP } else { lo };
                         dirty = true;
                     } else if (day_mean as u32) * 2 < l.anchor_noise as u32 && l.s < hi {
-                        // the whole day more than 2x quieter
                         l.s = if hi - l.s > TUNE_STEP { l.s + TUNE_STEP } else { hi };
                         dirty = true;
                     }
@@ -638,8 +513,6 @@ impl Core {
         }
     }
 
-    /// Passage of time (OFF, delay D, end of calibration, self-tuning);
-    /// returns the mask of the ON lines.
     pub fn tick(&mut self, now: u32) -> u16 {
         if self.cal && (now.wrapping_sub(self.t_cal_end) as i32) >= 0 {
             self.cal_finish();
@@ -655,7 +528,6 @@ impl Core {
                 continue;
             }
             if l.flags & F_RULE != 0 && now.wrapping_sub(l.t_kept) > RESET_GAP_MS {
-                // the sender went silent midway
                 l.restart();
             }
             if l.flags & F_RULE != 0 {

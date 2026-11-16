@@ -1,9 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! AES-128 (FIPS-197), CCM (RFC 3610) and the Bluetooth LE security
-//! functions: the port of tc32-devtools go/ble/aes128. Byte slices are in the
-//! standard AES orientation (first byte = most significant octet); the Go
-//! package's 128-bit *big.Int values are u128 here.
-
 use std::sync::OnceLock;
 
 pub(crate) struct Tables {
@@ -91,7 +85,6 @@ fn expand(key: &[u8]) -> [[u8; 16]; 11] {
     rk
 }
 
-/// Encrypt is the AES-128 block encryption.
 pub fn encrypt(key: &[u8], block: &[u8]) -> [u8; 16] {
     let sbox = &tables().sbox;
     let rk = expand(key);
@@ -126,7 +119,6 @@ pub fn encrypt(key: &[u8], block: &[u8]) -> [u8; 16] {
     s
 }
 
-/// Decrypt is the AES-128 block decryption.
 pub fn decrypt(key: &[u8], block: &[u8]) -> [u8; 16] {
     let inv = &tables().inv;
     let rk = expand(key);
@@ -161,32 +153,26 @@ pub fn decrypt(key: &[u8], block: &[u8]) -> [u8; 16] {
     s
 }
 
-/// Big128: a 128-bit integer from 16 big-endian bytes.
 pub fn big128(b: &[u8]) -> u128 {
     b.iter().fold(0u128, |v, &x| (v << 8) | x as u128)
 }
 
-/// Bytes128: 16 big-endian bytes.
 pub fn bytes128(x: u128) -> [u8; 16] {
     x.to_be_bytes()
 }
 
-/// BytesLE: n little-endian bytes of x (n <= 16).
 pub fn bytes_le(x: u128, n: usize) -> Vec<u8> {
     x.to_le_bytes()[..n].to_vec()
 }
 
-/// FromLE: little-endian bytes as an integer (at most 16).
 pub fn from_le(b: &[u8]) -> u128 {
     b.iter().rev().fold(0u128, |v, &x| (v << 8) | x as u128)
 }
 
-/// E is the security function e.
 pub fn e(k: u128, p: u128) -> u128 {
     big128(&encrypt(&bytes128(k), &bytes128(p)))
 }
 
-/// C1 is the legacy confirm value.
 pub fn c1(k: u128, r: u128, preq: &[u8], pres: &[u8], iat: u32, ia: &[u8], rat: u32, ra: &[u8]) -> u128 {
     let p1 = (from_le(pres) << 72) | (from_le(preq) << 16) | ((rat as u128) << 8 | iat as u128);
     let p2 = (from_le(ia) << 48) | from_le(ra);
@@ -194,18 +180,15 @@ pub fn c1(k: u128, r: u128, preq: &[u8], pres: &[u8], iat: u32, ia: &[u8], rat: 
     e(k, x ^ p2)
 }
 
-/// S1 is the key generation function s1.
 pub fn s1(k: u128, r1: u128, r2: u128) -> u128 {
     let mask = (1u128 << 64) - 1;
     e(k, ((r1 & mask) << 64) | (r2 & mask))
 }
 
-/// Ah is the random address hash ah.
 pub fn ah(k: u128, r: u32) -> u32 {
     (e(k, (r & 0xFFFFFF) as u128) & 0xFFFFFF) as u32
 }
 
-/// RPA is a resolvable private address, 6 octets LSO first.
 pub fn rpa(irk: &[u8], prand: u32) -> [u8; 6] {
     let prand = (prand & 0x3FFFFF) | 0x400000;
     let h = ah(from_le(irk), prand);
@@ -221,7 +204,6 @@ fn len_bytes(mut n: usize, lf: usize) -> Vec<u8> {
     b
 }
 
-/// CCM is CCM encryption (RFC 3610): data' || MIC.
 pub fn ccm(key: &[u8], nonce: &[u8], aad: &[u8], data: &[u8], mic_len: usize) -> Vec<u8> {
     let n = data.len();
     let lf = 15 - nonce.len();
@@ -275,12 +257,10 @@ pub fn ccm(key: &[u8], nonce: &[u8], aad: &[u8], data: &[u8], mic_len: usize) ->
     out
 }
 
-/// CCMEncrypt is the BLE LL AES-CCM: payload' || MIC (4 octets).
 pub fn ccm_encrypt(sk: &[u8], nonce: &[u8], hdr0: u8, payload: &[u8]) -> Vec<u8> {
     ccm(sk, nonce, &[hdr0 & 0xE3], payload, 4)
 }
 
-/// CCMDecrypt is the inverse of CCMEncrypt: (payload, MIC ok).
 pub fn ccm_decrypt(sk: &[u8], nonce: &[u8], hdr0: u8, data: &[u8]) -> (Vec<u8>, bool) {
     if data.len() < 4 {
         return (Vec::new(), false);

@@ -1,38 +1,21 @@
-//! The rules of the firmware staging area (on the bulb 0x6000, where the
-//! stock firmware's BLE update puts a new image and the resident bootloader
-//! looks for one; `crates/bulb-tc32/src/staging.rs`), apart from the chip:
-//!
-//! - one update path at a time owns the area, Zigbee or BLE ([`Ownership`]);
-//! - the image is made bootable (0x4B at offset 8, the "K" of "KNLT") only
-//!   once what the flash really holds checks out ([`mark_bootable`]): the
-//!   header, its size, and the CRC-32 at its end, computed with the mark in
-//!   place as the bootloader computes it.
-
 use crate::store::Flash;
 
-/// Offset of the byte that marks a staged image as bootable.
 pub const BOOT_MARK: usize = 8;
-/// The bootable mark ("K" of "KNLT"); erased (0xFF) while the image comes in.
 pub const MARK: u8 = 0x4b;
-/// The smallest image the check takes (the header and the CRC).
 const MIN_SIZE: u32 = 0x40;
 
-/// An update path that writes to the staging area.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Owner {
     Zigbee = 1,
     Ble = 2,
 }
 
-/// Which update path has the staging area, if one has.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Ownership(u8);
 
 impl Ownership {
     pub const FREE: Ownership = Ownership(0);
 
-    /// Takes the area for `who` (again, when it has it already). False while
-    /// the other path has it.
     pub fn claim(&mut self, who: Owner) -> bool {
         if self.0 != 0 && self.0 != who as u8 {
             return false;
@@ -45,8 +28,6 @@ impl Ownership {
         self.0 == who as u8
     }
 
-    /// Gives the area up (the transfer ended or was abandoned); only the
-    /// path that has it can.
     pub fn release(&mut self, who: Owner) {
         if self.holds(who) {
             self.0 = 0;
@@ -64,11 +45,6 @@ fn crc32_update(mut crc: u32, byte: u8) -> u32 {
     (crc >> 4) ^ TABLE[(crc & 0x0f) as usize]
 }
 
-/// Whether the flash at `base` holds a complete image the way the
-/// bootloader wants it, short of the bootable mark: "KNLT" at 8 with its
-/// first byte still blank, its own size at 0x18 (at most `area`), and at its
-/// end the CRC-32 of everything before (computed with the mark in place).
-/// `feed` is called every 16 KB: a large image takes a moment.
 pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bool {
     let mut head = [0u8; 0x20];
     flash.read(base, &mut head);
@@ -99,8 +75,6 @@ pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bo
     u32::from_le_bytes(stored) == crc
 }
 
-/// Marks the staged image at `base` bootable if the flash holds a good one
-/// ([`image_good`]); whether it did. Nothing is written otherwise.
 pub fn mark_bootable<F: Flash>(flash: &mut F, base: usize, area: u32, feed: fn()) -> bool {
     if !image_good(flash, base, area, feed) {
         return false;

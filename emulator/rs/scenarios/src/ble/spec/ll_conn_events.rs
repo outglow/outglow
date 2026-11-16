@@ -1,7 +1,3 @@
-//! Link Layer, connection events: channel selection, clock accuracy and window
-//! widening, acknowledgment, the data channel PDU header (Core 5.4 Vol 6 Part B
-//! 2.4, 4.2.4, 4.5.1, 4.5.6-4.5.9); emulator/spec_ble/ll_conn_events.py.
-
 use std::collections::BTreeSet;
 
 use super::ll_conn_setup::{link_chm, miss_texts, tail, triples};
@@ -108,7 +104,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// `repr(str)` for the ASCII texts of the radio model.
 fn str_repr(s: &str) -> String {
     let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
     let mut o = String::new();
@@ -138,8 +133,6 @@ fn read_req(h: u16) -> Vec<u8> {
     v
 }
 
-/// Runs n events; (events answered, (event, channel used, channel expected) that differ, channel
-/// mismatches the radio model reported).
 fn channel_check(s: &mut BleSession, hop: i64, chm: &[u8], n: i64) -> R<(usize, Vec<(i64, i64, i64)>, Vec<String>)> {
     s.wait_event(n, None)?;
     s.link_run(3.0)?;
@@ -157,7 +150,6 @@ fn channel_check(s: &mut BleSession, hop: i64, chm: &[u8], n: i64) -> R<(usize, 
 }
 
 fn csa1_all(s: &mut BleSession) -> R<String> {
-    // 4.5.8.2: unmappedChannel = (lastUnmappedChannel + hopIncrement) mod 37, starting from 0.
     let mut notes = Vec::new();
     for hop in [5i64, 7, 11, 16] {
         s.connect(LinkOpts::new().set("interval", 6).set("timeout", 100).set("hop", hop))?;
@@ -179,7 +171,6 @@ fn csa1_all(s: &mut BleSession) -> R<String> {
 }
 
 fn csa1_sparse(s: &mut BleSession) -> R<String> {
-    // 4.5.8.2: remappingIndex = unmappedChannel mod numUsedChannels over the ascending used channels.
     let maps: [(&str, [u8; 5]); 4] = [
         ("2 channels", [0x01, 0x00, 0x00, 0x00, 0x10]),
         ("5 scattered", [0x02, 0x02, 0x40, 0x00, 0x01]),
@@ -215,7 +206,6 @@ fn csa1_sparse(s: &mut BleSession) -> R<String> {
 }
 
 fn counts_missed(s: &mut BleSession) -> R<String> {
-    // 4.5.1: connEventCounter advances for all connection events. The central is silent for 9 events.
     s.connect(LinkOpts::new().set("interval", 12).set("timeout", 300).set("hop", 6))?;
     s.wait_event(12, None)?;
     let k = s.event()?;
@@ -241,7 +231,7 @@ fn counts_missed(s: &mut BleSession) -> R<String> {
         back.iter().filter(|p| p.ch != exp[p.event as usize]).map(|p| (p.event, p.ch, exp[p.event as usize])).collect();
     expect(wrong.is_empty(), format!("(event, channel, expected): {}", triples(&wrong[..wrong.len().min(4)])))?;
     let inst = k + 22;
-    let chm = [0x00, 0xff, 0x00, 0x00, 0x0f]; // channels 8-15 and 32-35
+    let chm = [0x00, 0xff, 0x00, 0x00, 0x0f];
     s.channel_map(&chm, inst)?;
     s.wait_event(inst + 10, None)?;
     s.link_run(3.0)?;
@@ -262,7 +252,6 @@ fn counts_missed(s: &mut BleSession) -> R<String> {
 }
 
 fn sn_nesn(s: &mut BleSession) -> R<String> {
-    // 4.5.9: both sequence numbers start at zero; without loss nothing is resent.
     s.connect(LinkOpts::new().set("interval", 6).set("timeout", 100))?;
     for h in 1..9u16 {
         s.att_t(&read_req(h), 2000.0)?;
@@ -302,8 +291,6 @@ fn opt_hx(r: &Option<Vec<u8>>) -> String {
 }
 
 fn retransmission(s: &mut BleSession) -> R<String> {
-    // 4.5.9: a resent PDU equals the last one sent; a repeated PDU of the central is ignored. The central
-    // loses the bulb's answer in chosen events.
     s.connect(LinkOpts::new().set("interval", 6).set("timeout", 200))?;
     s.link_run(200.0)?;
     let reqs: Vec<Vec<u8>> = [3u16, 6, 9, 11, 13, 15, 3, 9, 13, 6].iter().map(|h| read_req(*h)).collect();
@@ -363,7 +350,6 @@ fn retransmission(s: &mut BleSession) -> R<String> {
 }
 
 fn lossy_link(s: &mut BleSession) -> R<String> {
-    // 4.5.9 as a whole: a third of the packets is lost each way; 40 requests get 40 answers in order.
     s.connect(LinkOpts::new().set("interval", 6).set("timeout", 300))?;
     s.link_run(200.0)?;
     let handles = [3u16, 6, 9, 11, 13, 15];
@@ -404,11 +390,10 @@ fn lossy_link(s: &mut BleSession) -> R<String> {
 }
 
 fn pdu_header(s: &mut BleSession) -> R<String> {
-    // 2.4 Table 2.19, Figure 2.25, 2.4.1, 2.4.2, 4.5.10 (see the Python module).
     s.connect(LinkOpts::new().set("interval", 6).set("timeout", 200))?;
     s.ll(&[0x0c, 0x0b, 0x0f, 0x00, 0x34, 0x12])?;
     s.ll(&[0x08, 0, 0, 0, 0, 0, 0, 0, 0])?;
-    s.att_t(&[0x02, 100, 0], 3000.0)?; // a larger MTU: longer answers, fragments
+    s.att_t(&[0x02, 100, 0], 3000.0)?;
     let mut start: u16 = 1;
     for _ in 0..12 {
         let mut q = vec![0x08];
@@ -451,8 +436,6 @@ fn pdu_header(s: &mut BleSession) -> R<String> {
     ))
 }
 
-/// The timeout argument of `_drift`: max(100, min(3200, iv * 1.25 * 6 // 10 + 50)) with Python's types
-/// (a float unless 100 or 3200 wins); the central reads a float text as its default.
 fn drift_timeout(iv: i64) -> String {
     let x = (iv as f64 * 1.25 * 6.0 / 10.0).floor() + 50.0;
     let m = if x < 3200.0 { py::float(x) } else { "3200".to_string() };
@@ -483,7 +466,6 @@ fn drift(s: &mut BleSession, sca: i64, ppm: i64, interval: i64, events: i64, tim
 }
 
 fn clock_error(s: &mut BleSession) -> R<String> {
-    // 4.2.4 / 4.5.7 / 2.3.3.1 Table 2.11: the central's clock a little inside each SCA limit, 8 us jitter.
     let cases = [(1i64, 240i64, 24i64, 120i64), (1, -240, 24, 120), (0, 480, 800, 14), (0, -480, 800, 14), (5, 45, 1600, 8),
                  (7, -18, 3200, 6), (1, 240, 3200, 6)];
     let (mut notes, mut bad) = (Vec::new(), Vec::new());
@@ -566,8 +548,6 @@ fn clock_error(s: &mut BleSession) -> R<String> {
 }
 
 fn widening_after_silence(s: &mut BleSession) -> R<String> {
-    // 4.2.4: the allowance grows with the time since the last sync. A central 240 ppm off is silent for
-    // a number of 500 ms events.
     let mut notes = Vec::new();
     for (ppm, n) in [(240i64, 6i64), (-240, 10), (240, 16)] {
         let o = LinkOpts::new().set("interval", 400).set("timeout", 1500).set("sca", 1);
@@ -609,13 +589,12 @@ fn widening_after_silence(s: &mut BleSession) -> R<String> {
 }
 
 fn more_data(s: &mut BleSession) -> R<String> {
-    // 4.5.6: with MD set the central may continue the event and the peripheral should listen.
     s.connect(LinkOpts::new().set("interval", 40).set("timeout", 200).set("maxexch", 8))?;
     s.link_run(300.0)?;
     let e = s.event()?;
     s.wait_event(e + 1, None)?;
     for _ in 0..4 {
-        s.ll(&[0x12])?; // four LL_PING_REQ queued together: the first three carry MD = 1
+        s.ll(&[0x12])?;
     }
     let k = s.event()?;
     s.wait_event(k + 6, None)?;

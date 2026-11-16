@@ -1,23 +1,16 @@
-//! Bulb images: where the code after the ram_code area is linked
-//! (`link_shift`, a port of emulator/compare_stock.py), and the image list of
-//! a run.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use tc32emu::isa::to_thumb;
 
-/// One image of a run: a label for the test names and the .bin file.
 #[derive(Clone, Debug)]
 pub struct Image {
     pub label: String,
     pub path: PathBuf,
-    /// The link offset; None: found as `link_shift` finds it.
     pub link_shift: Option<i64>,
 }
 
 impl Image {
-    /// `label=path` or `label=path@0xOFFSET`.
     pub fn parse(spec: &str) -> Result<Image, String> {
         let (label, rest) = spec.split_once('=').ok_or_else(|| format!("image spec {spec:?}: label=path expected"))?;
         let (path, shift) = match rest.rsplit_once('@') {
@@ -28,15 +21,12 @@ impl Image {
             }
             None => (rest, None),
         };
-        // a relative path is taken from the current directory, else from the repository root
-        // (cargo runs the test binary in the crate directory)
         let mut p = PathBuf::from(path);
         if p.is_relative() && !p.exists() {
             let r = crate::runner::repo_root().join(&p);
             if r.exists() {
                 p = r;
             } else if let Some(d) = crate::sims::stock_dir_path(path) {
-                // stock/... names an image of OUTGLOW_STOCK_DIR as the defaults do
                 p = d;
             }
         }
@@ -51,9 +41,6 @@ impl Image {
         self.link_shift.unwrap_or_else(|| link_shift(img, Some(&self.path)))
     }
 
-    /// A node booted from this image. For an image whose ELF has `bulb_idle`
-    /// (where the Rust firmware waits with nothing to do) the emulator jumps
-    /// over that wait to the next event; `ZBNODE_NO_IDLE=1` runs it instead.
     pub fn node(&self, cpi: i64) -> Result<zbnode::Node, String> {
         let bytes = self.bytes()?;
         let shift = self.shift(&bytes);
@@ -66,12 +53,10 @@ impl Image {
         Ok(node)
     }
 
-    /// A symbol of the ELF next to the .bin (`x.elf` for `x.bin` or `x-ota.bin`).
     pub fn symbol(&self, name: &str) -> Option<u32> {
         self.symbol_sized(name).map(|(v, _)| v)
     }
 
-    /// A symbol of the ELF next to the .bin with its size: the addresses of a function.
     pub fn symbol_sized(&self, name: &str) -> Option<(u32, u32)> {
         let s = self.path.to_string_lossy();
         let stem = s.strip_suffix(".bin").unwrap_or(&s).to_string();
@@ -80,13 +65,6 @@ impl Image {
     }
 }
 
-/// Offset at which the code after the ram_code area is linked.
-///
-/// When the image has an ELF next to it, the link script's own symbol says it
-/// (FW_OFFSET in the Rust firmware, __FW_OFFSET in the C one). Otherwise it is
-/// guessed: the D for which the most 32-bit words of the image point at a
-/// function prologue (push {.., lr}) shifted by D; 0 when the image is linked
-/// at the file address.
 pub fn link_shift(img: &[u8], path: Option<&Path>) -> i64 {
     if let Some(p) = path {
         let s = p.to_string_lossy();
@@ -120,7 +98,6 @@ fn guess_shift(img: &[u8]) -> i64 {
         }
         a += 2;
     }
-    // hits in first-seen order: on a tie Python's max() keeps the first
     let mut order: Vec<(i64, u32)> = Vec::new();
     let mut idx: HashMap<i64, usize> = HashMap::new();
     let mut a = 0;
@@ -158,12 +135,10 @@ fn guess_shift(img: &[u8]) -> i64 {
     }
 }
 
-/// The value of a symbol in an ELF32 little-endian file.
 pub fn elf_symbol(d: &[u8], name: &str) -> Option<u32> {
     elf_symbol_sized(d, name).map(|(v, _)| v)
 }
 
-/// A symbol's value and size (`st_size`: the length of a function).
 pub fn elf_symbol_sized(d: &[u8], name: &str) -> Option<(u32, u32)> {
     if d.get(..4)? != b"\x7fELF" || *d.get(4)? != 1 || *d.get(5)? != 1 {
         return None;
@@ -176,7 +151,7 @@ pub fn elf_symbol_sized(d: &[u8], name: &str) -> Option<(u32, u32)> {
     let sec = |k: usize| shoff + k * shentsize;
     for k in 0..shnum {
         if u32_at(sec(k) + 4)? != 2 {
-            continue; // SHT_SYMTAB only
+            continue;
         }
         let off = u32_at(sec(k) + 16)? as usize;
         let size = u32_at(sec(k) + 20)? as usize;

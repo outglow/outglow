@@ -1,9 +1,3 @@
-//! BLE test of our firmware (BLE=1) from the side of the AwoX HomeControl app
-//! (emulator/ble_mesh_sim.py): advertising in the AwoX format, GATT table
-//! like stock, Device Information, mesh login (secure / 1234 / wrong),
-//! status and notifications, light commands against PWM, pairing (new
-//! name/password) with reconnection, mesh reset.
-
 use super::ble_central::{
     discover, fmt_light, hx, ok, secure_pw, tel_get, tel_text, unhx, Bench, MeshClient, Status, Transport, OP_MESH_RESET,
     OP_NOTIFY, OP_POWER, OP_STATUS_REQ, OP_STATUS_RSP, OP_WHITE_BRIGHTNESS, OP_WHITE_TEMPERATURE,
@@ -23,7 +17,6 @@ const D: NodeId = NodeId::Dut;
 const STOCK_HANDLES: [(u8, u16); 5] = [(0x11, 0x12), (0x12, 0x15), (0x13, 0x18), (0x14, 0x1E), (0x15, 0x1B)];
 const DEVINFO_HANDLES: [(u16, &str); 4] = [(0x09, "2a26 fw"), (0x0B, "2a29 mfr"), (0x0D, "2a24 model"), (0x0F, "2a27 hw")];
 
-/// `parse_adv`: AD structures by type, in first-seen order (a later one of the same type replaces the value).
 pub fn parse_adv(adv: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let mut out: Vec<(u8, Vec<u8>)> = Vec::new();
     let mut i = 0;
@@ -46,7 +39,6 @@ pub fn adv_get(adv: &[(u8, Vec<u8>)], t: u8) -> Option<Vec<u8>> {
     adv.iter().find(|(k, _)| *k == t).map(|(_, v)| v.clone())
 }
 
-/// `{adv.get(t)!r}`: the bytes' repr or None.
 pub fn adv_repr(adv: &[(u8, Vec<u8>)], t: u8) -> String {
     adv_get(adv, t).map(|v| py_bytes(&v)).unwrap_or_else(|| "None".into())
 }
@@ -107,13 +99,12 @@ fn run(cx: &mut SimCtx) -> R<()> {
     mac6.reverse();
     t.cx.say(&format!("   MAC BLE {}", py::hex_sep(&mac6, ":")));
 
-    // --- advertising
     let adv = parse_adv(&b.ble_adv(D));
     let md = adv_get(&adv, 0xFF).unwrap_or_default();
     let product = if md.len() >= 8 { Some(u16::from_le_bytes([md[2], md[3]])) } else { None };
     let exp_product = if tw { 0x20A6 } else { 0x20A7 };
     let good = adv_get(&adv, 0x01).as_deref() == Some(&[0x05][..])
-        && adv_get(&adv, 0x02).as_deref() == Some(&[0x00, 0x18][..]) // incomplete list, as the stock bulb
+        && adv_get(&adv, 0x02).as_deref() == Some(&[0x00, 0x18][..])
         && adv_get(&adv, 0x09).as_deref() == Some(&b"unpaired"[..])
         && md.get(..2) == Some(&[0x60, 0x01][..])
         && product == Some(exp_product)
@@ -124,7 +115,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     };
     t.check("AwoX advertising: flags, UUID 0x1800, name, vendor 0x0160, product, MAC", good, &detail);
 
-    // --- GATT
     let (_, tel, _) = discover(&mut b, D)?;
     t.check("Telink mesh handles like stock", STOCK_HANDLES.iter().all(|(k, v)| tel_get(&tel, *k) == Some(*v)), &tel_text(&tel));
     let mut tr = Transport::new(D, &tel);
@@ -153,7 +143,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         &di_text,
     );
 
-    // --- login
     let mut cl = MeshClient::new(&mac_le);
     let bad = match cl.login(&mut b, &mut tr, b"unpaired", b"wrong-password")? {
         Ok(_) => "accepted".to_string(),
@@ -170,7 +159,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     ok(cl.login(&mut b, &mut tr, b"unpaired", &secure_pw(&mac6))?)?;
     t.check("login with the secure password (SHA-256 of the MAC)", cl.key.is_some(), "");
 
-    // --- status / notifications
     let rsp = cccd_on(&mut b, &tel)?;
     let n0 = b.ntfs_len(D);
     ok(tr.write(&mut b, 0x11, &[0x01])?)?;
@@ -220,7 +208,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         t.check("TW 0xf0 temperature 64 -> mix, sum 100%", 40.0 < st.duty0 && st.duty0 < 60.0 && 98.0 < st.duty && st.duty < 102.0, &fmt_light(&st));
     }
 
-    // command with a wrong key: no effect
     let good_key = cl.key;
     cl.key = Some([0; 16]);
     let st_before = b.light(D);
@@ -228,7 +215,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     cl.key = good_key;
     t.check("command with a wrong session key ignored", st.on == st_before.on && nt.is_empty(), &fmt_light(&st));
 
-    // --- pairing: new name / password / LTK, reconnection
     for pkt in super::ble_central::set_mesh_packets(&cl.key.unwrap(), b"EgloTest", b"s3cret", b"0123456789abcdef") {
         ok(tr.write(&mut b, 0x14, &pkt)?)?;
         tr.sleep(&mut b, 50.0)?;
@@ -261,7 +247,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     t.check("after pairing: login with the new name/password and a command work", !st.on, &fmt_light(&st));
     cmd(&mut b, &mut tr, &mut cl, OP_POWER, &[1], 700.0)?;
 
-    // --- reset mesh
     ok(cl.send(&mut b, &mut tr, OP_MESH_RESET, &[0], 0xFFFF)?)?;
     let end = b.t(D) + 3000.0;
     while b.t(D) < end && b.ble_state(D).0 == "connected" {

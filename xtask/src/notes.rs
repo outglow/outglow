@@ -1,7 +1,3 @@
-//! `cargo xtask release-notes`: the top of a release's notes, in Markdown:
-//! how to install, and the files of every board. GitHub appends the list of
-//! changes since the previous release (`gh release create --generate-notes`).
-
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -9,13 +5,13 @@ use outglow_image::board;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// release version, e.g. 1.0.0
+    #[doc = " release version, e.g. 1.0.0"]
     #[arg(long)]
     version: String,
-    /// release tag (default v<version>)
+    #[doc = " release tag (default v<version>)"]
     #[arg(long)]
     tag: Option<String>,
-    /// the directory with the release assets (`cargo xtask index --assets`)
+    #[doc = " the directory with the release assets (`cargo xtask index --assets`)"]
     #[arg(long)]
     assets: PathBuf,
 }

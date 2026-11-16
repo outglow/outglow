@@ -1,11 +1,5 @@
-// SPDX-License-Identifier: Apache-2.0
-//! pyRandom (pyrandom.go): Python's random.Random(seed) for a small int seed.
-
 use tc32emu::bigint::BigUint;
 
-/// MT19937 seeded through init_by_array([seed]); getrandbits(k) as the top
-/// k bits of one 32-bit output (k <= 32), randrange(n) as
-/// _randbelow_with_getrandbits.
 #[derive(Clone)]
 pub struct PyRandom {
     mt: [u32; 624],
@@ -75,7 +69,6 @@ impl PyRandom {
         y
     }
 
-    /// getrandbits for 1 <= k <= 32 (Go: a shift by 32 - k of a uint32; k = 0 gives 0).
     pub fn getrandbits(&mut self, k: u32) -> u32 {
         let g = self.genrand();
         let s = 32 - k;
@@ -86,7 +79,6 @@ impl PyRandom {
         }
     }
 
-    /// randrange(n) for n > 0.
     pub fn randrange(&mut self, n: u32) -> u32 {
         let mut k = 0u32;
         let mut x = n;
@@ -105,7 +97,6 @@ impl PyRandom {
         (0..n).map(|_| self.randrange(256) as u8).collect()
     }
 
-    /// getrandbits(k) for any k: 32-bit words, the first the least significant.
     pub fn getrandbits_big(&mut self, k: u32) -> BigUint {
         let words = (k - 1) / 32 + 1;
         let mut w = Vec::with_capacity(words as usize);

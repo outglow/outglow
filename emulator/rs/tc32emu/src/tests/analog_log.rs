@@ -1,4 +1,3 @@
-// analog_log_test.go
 use crate::{AnalogAccess, Flash, Machine, FLASH_MEM, REG_BASE};
 
 fn write(m: &mut Machine, addr: u8, val: u8) {

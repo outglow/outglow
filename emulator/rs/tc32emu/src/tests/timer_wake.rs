@@ -1,4 +1,3 @@
-// timer_wake_test.go
 use crate::{Flash, Machine, FLASH_MEM};
 
 #[test]

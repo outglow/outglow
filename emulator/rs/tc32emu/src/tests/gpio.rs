@@ -1,4 +1,3 @@
-// gpio_test.go
 use crate::{Flash, Machine};
 
 #[test]

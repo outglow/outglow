@@ -1,6 +1,3 @@
-//! L2CAP: the LE signalling channel (Core 5.4 Vol 3 Part A 4, 4.1, 4.20);
-//! emulator/spec_ble/l2cap_signaling.py.
-
 use crate::ble::harness::{hx, BleSession, L2Frame, LinkOpts, ParamReq, CID_SIG};
 use crate::ble::{BleTest, Level};
 use crate::py;
@@ -86,7 +83,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// Python's `format(x, 'g')` for the moderate values these tests print.
 fn g(x: f64) -> String {
     if x == 0.0 {
         return "0".into();
@@ -108,7 +104,6 @@ fn cmd(code: u8, ident: u8, data: &[u8]) -> Vec<u8> {
     v
 }
 
-/// (identifier, reason, reason data) of a Command Reject, else None.
 fn reject_of(fr: Option<&L2Frame>) -> Option<(u8, u16, Vec<u8>)> {
     let d: &[u8] = fr.map(|f| &f.data[..]).unwrap_or(&[]);
     if d.len() >= 6 && d[0] == 0x01 {
@@ -151,8 +146,6 @@ fn link12(s: &mut BleSession) -> R<()> {
 }
 
 fn reject_unknown(s: &mut BleSession) -> R<String> {
-    // 4 / 4.1: an unknown code gets an L2CAP_COMMAND_REJECT_RSP with the same identifier; Table 4.2 codes
-    // above 0x1A are reserved, 0x0C-0x11 are now none.
     link12(s)?;
     let cases: [(u8, &[u8]); 6] =
         [(0x1C, &[]), (0x1B, &[0x01, 0x02]), (0x0D, &[]), (0x30, &[0, 0, 0, 0]), (0xFF, &[]), (0x7E, &[0xaa])];
@@ -163,7 +156,6 @@ fn reject_unknown(s: &mut BleSession) -> R<String> {
 }
 
 fn reject_disallowed(s: &mut BleSession) -> R<String> {
-    // Table 4.2: 0x02, 0x04, 0x08 and 0x0A are allowed on CID 0x0001 only; 4: a disallowed code gets a reject.
     link12(s)?;
     let cases: [(u8, Vec<u8>, &str); 4] = [
         (0x02, vec![1, 0, 0x40, 0], "L2CAP_CONNECTION_REQ"),
@@ -182,7 +174,6 @@ fn le16s(v: &[u16]) -> Vec<u8> {
 }
 
 fn credit_based(s: &mut BleSession) -> R<String> {
-    // 4.1: "Implementations shall always send these packets in response to unidentified signaling packets."
     link12(s)?;
     let reqs: [(u8, Vec<u8>, u8, &str); 3] = [
         (0x14, le16s(&[0x0080, 0x0040, 64, 64, 1]), 0x15, "L2CAP_LE_CREDIT_BASED_CONNECTION_REQ"),
@@ -215,7 +206,6 @@ fn credit_based(s: &mut BleSession) -> R<String> {
 }
 
 fn identifier(s: &mut BleSession) -> R<String> {
-    // 4: "The requesting device sets this field and the responding device uses the same value in its response."
     link12(s)?;
     for ident in [0x01u8, 0x02, 0x7F, 0x80, 0xFE, 0xFF] {
         expect_reject(s, 0x1C, ident, &[], "reserved code")?;
@@ -224,8 +214,6 @@ fn identifier(s: &mut BleSession) -> R<String> {
 }
 
 fn param_req_to_peripheral(s: &mut BleSession) -> R<String> {
-    // 4.20: a Peripheral's Host that receives the request "shall respond with an L2CAP_COMMAND_REJECT_RSP
-    // packet with reason 0x0000 (Command not understood)."
     link12(s)?;
     expect_reject(s, 0x12, 0x55, &le16s(&[24, 40, 0, 400]), "L2CAP_CONNECTION_PARAMETER_UPDATE_REQ")?;
     expect(s.alive(3000.0)?, "the connection ended")?;
@@ -233,8 +221,6 @@ fn param_req_to_peripheral(s: &mut BleSession) -> R<String> {
 }
 
 fn unsolicited_response(s: &mut BleSession) -> R<String> {
-    // 4: "A command response with an invalid identifier is silently discarded." 4.1: no reject for an
-    // identified Response packet.
     s.connect(LinkOpts::new().set("interval", 12).param_req(ParamReq::Ignore))?;
     let n0 = s.lk().frames.len();
     s.l2cap(CID_SIG, &cmd(0x13, 0x77, &[0, 0]))?;
@@ -256,8 +242,6 @@ fn unsolicited_response(s: &mut BleSession) -> R<String> {
 }
 
 fn mtu_exceeded(s: &mut BleSession) -> R<String> {
-    // 4: a C-frame over MTUsig gets a Command Reject with the supported MTUsig (Table 4.1: at least 23 on
-    // LE-U; 4.1 Table 4.4: reason 0x0001 carries 2 octets).
     link12(s)?;
     let data: Vec<u8> = (0..120).collect();
     let fr = s.sig(&cmd(0x1C, 0x61, &data), 4000.0)?;
@@ -280,7 +264,6 @@ fn mtu_exceeded(s: &mut BleSession) -> R<String> {
 }
 
 fn param_update_request(s: &mut BleSession) -> R<String> {
-    // 4.20 with Vol 6 Part B 2.4.2.16, 4.5.1, 4.5.2; Part A 4: identifier 0x00 is invalid.
     s.connect(LinkOpts::new().set("interval", 24).set("timeout", 400).param_req(ParamReq::Reject))?;
     s.link_until(12000.0, Some(20.0), |s| Ok(if s.lk().param_reqs.is_empty() { None } else { Some(()) }))?;
     if s.lk().param_reqs.is_empty() {

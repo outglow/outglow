@@ -1,4 +1,3 @@
-// rbg_test.go
 use std::collections::HashMap;
 
 use super::{digest_u32, hex, rbg_machine, rbg_read, unhex};

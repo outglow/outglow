@@ -1,7 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The CPU's machine, its memory map, the TLSR8278 peripherals and the
-//! register bus (machine.go).
-
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
@@ -12,7 +8,6 @@ use crate::i2c::I2cDevice;
 use crate::pke::PkeWrite;
 use crate::spi::SpiDevice;
 
-/// FlashMem is the flash model's array: 1 MB.
 pub const FLASH_MEM: usize = 0x100000;
 pub(crate) const ICACHE_LINES: usize = 64;
 pub(crate) const ICACHE_LINE_SHIFT: usize = 5;
@@ -20,11 +15,9 @@ pub(crate) const ICACHE_LINE_SHIFT: usize = 5;
 pub const SRAM_BASE: u32 = 0x840000;
 pub const REG_BASE: u32 = 0x800000;
 pub const REG_SIZE: usize = 0x10000;
-/// The register block again (Telink's older SDK writes RF registers there).
 pub const REG_ALIAS: u32 = 0x1000000;
 pub const MODE_IRQ: u32 = 0x12;
 pub const MODE_SVC: u32 = 0x13;
-/// The boot clock.
 pub const CPU_HZ: i64 = 24_000_000;
 pub const STIMER_HZ: i64 = 16_000_000;
 pub const IRQ_STIMER: u32 = 20;
@@ -33,8 +26,6 @@ pub(crate) const STIMER_EN: u8 = 0x02;
 pub(crate) const STIMER_IRQ: u8 = 0x04;
 pub(crate) const M32: i64 = 0xFFFFFFFF;
 
-/// SRAMFill: the power-on contents of an SRAM of size bytes for a seed,
-/// xorshift32 (13, 17, 5), one byte (the low one) per step.
 pub fn sram_fill(seed: u32, size: usize) -> Vec<u8> {
     let mut out = vec![0u8; size];
     let mut x = seed;
@@ -47,7 +38,6 @@ pub fn sram_fill(seed: u32, size: usize) -> Vec<u8> {
     out
 }
 
-/// One entry of Machine::analog_log: kind b'r' or b'w'.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnalogAccess {
     pub kind: u8,
@@ -55,7 +45,6 @@ pub struct AnalogAccess {
     pub val: u8,
 }
 
-/// One entry of Machine::analog_writes; who is the pc's symbol.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AnalogWrite {
     pub addr: u8,
@@ -63,29 +52,12 @@ pub struct AnalogWrite {
     pub who: String,
 }
 
-/// A wake from suspend: the time and the analog 0x44 status.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wake {
     pub ms: f64,
     pub status: u8,
 }
 
-// The hooks. Each is an Rc'd Fn that receives the machine; the machine
-// clones the Rc and calls it, so a hook may call back into the machine
-// (Read, RegWrite, ...) and so reach the hooks again, the Go hooks' chained
-// re-entrant calls. A hook with state keeps it in a Cell/RefCell.
-
-/// Not in Go, speed only: the register bytes the installed register hooks
-/// act on (`Machine.reg_hook_mask`). An access touching none of the marked
-/// bytes skips the hooks:
-/// - a read goes straight to the machine's own register read;
-/// - a write goes to the machine's own register write with `reg_write_hook`
-///   detached while it runs, which is what a chain of hooks that pass the
-///   write on and end in a detached base write (the BLE and 802.15.4 radio
-///   models of zbnode) does.
-/// The owner of the hook chain marks every byte any hook in it may treat
-/// differently from that, and replaces or drops the mask whenever the chain
-/// changes. Offsets past the register block count as marked.
 #[derive(Clone)]
 pub struct RegHookMask {
     read: Vec<u64>,
@@ -115,53 +87,33 @@ impl RegHookMask {
         }
         (o..o + size).any(|b| bits[b / 64] & (1 << (b % 64)) != 0)
     }
-    /// Whether a read of [o, o+size) may be taken by a hook.
     #[inline]
     pub fn read_hooked(&self, o: usize, size: usize) -> bool {
         Self::touches(&self.read, o, size)
     }
-    /// Whether a write of [o, o+size) may be taken by a hook.
     #[inline]
     pub fn write_hooked(&self, o: usize, size: usize) -> bool {
         Self::touches(&self.write, o, size)
     }
 }
 
-/// RegReadHook(o, size): Some(v) takes the read.
 pub type RegReadHook = Rc<dyn Fn(&mut Machine, usize, usize) -> Result<Option<u32>, Error>>;
-/// RegWriteHook(o, size, val): true takes the write.
 pub type RegWriteHook = Rc<dyn Fn(&mut Machine, usize, usize, u32) -> Result<bool, Error>>;
-/// MemReadHook / UnalignedReadHook(a, size): Some(v) takes the read.
 pub type MemReadHook = Rc<dyn Fn(&mut Machine, u32, usize) -> Result<Option<u32>, Error>>;
-/// MemWriteHook(a, size, val): true takes the write.
 pub type MemWriteHook = Rc<dyn Fn(&mut Machine, u32, usize, u32) -> Result<bool, Error>>;
-/// PadLevelsHook(port, lvl, flt) -> (lvl, flt).
 pub type PadLevelsHook = Rc<dyn Fn(&mut Machine, usize, u8, u8) -> (u8, u8)>;
-/// ResetHooks, OnIrq, OnTreti, OnFeed.
 pub type MachineHook = Rc<dyn Fn(&mut Machine)>;
-/// TraceStep(pc, hw): after every executed instruction.
 pub type TraceStepHook = Rc<dyn Fn(&mut Machine, u32, u16)>;
-/// OnWake(status).
 pub type OnWakeHook = Rc<dyn Fn(&mut Machine, u8)>;
-/// The PC hooks (Hooks): run before the instruction at their address.
 pub type PcHook = Rc<dyn Fn(&mut Machine) -> Result<(), Error>>;
-/// Event(text).
 pub type EventHook = Rc<dyn Fn(&mut Machine, &str)>;
-/// ChkHook(a, size) -> Some(address to use).
 pub type ChkHook = Rc<dyn Fn(&mut Machine, u32, usize) -> Option<u32>>;
-/// UpdateTimeHook: after a successful UpdateTime.
 pub type UpdateTimeHook = Rc<dyn Fn(&mut Machine) -> Result<(), Error>>;
-/// IdleSkipHook(n) -> n.
 pub type IdleSkipHook = Rc<dyn Fn(&mut Machine, i64) -> i64>;
-/// SysclkHook -> Hz.
 pub type SysclkHook = Rc<dyn Fn(&mut Machine) -> i64>;
-/// SramCodeEndHook -> the SRAM code region's end.
 pub type SramCodeEndHook = Rc<dyn Fn(&mut Machine) -> usize>;
-/// LevelSources: the interrupt source bits a peripheral's status holds.
 pub type LevelSource = Rc<dyn Fn(&mut Machine) -> u32>;
-/// CoreWakeSources: a core (digital) wake event now.
 pub type CoreWakeSource = Rc<dyn Fn(&mut Machine) -> bool>;
-/// on_flash_write(op, addr, n): Flash.OnWrite with the machine.
 pub type FlashWriteHook = Rc<dyn Fn(&mut Machine, &str, usize, usize)>;
 
 pub(crate) fn le32(b: &[u8], o: usize) -> u32 {
@@ -202,7 +154,6 @@ fn clip(b: &[u8], o: usize, size: usize) -> &[u8] {
     &b[o..o + size]
 }
 
-/// The mask of a size-byte value (Go `1<<(8*size) - 1` in uint32).
 #[inline]
 pub(crate) fn size_mask(size: usize) -> u32 {
     if size >= 4 {
@@ -222,18 +173,14 @@ fn bank_index(mode: u32) -> Option<usize> {
 
 pub(crate) const PAD_R_OHM: [i64; 4] = [0, 1_000_000, 100_000, 10_000];
 
-/// The CPU, its memory and the TLSR8278 peripherals.
 pub struct Machine {
-    /// The emulator's settings (Go's package variables).
     pub cfg: Config,
     pub flash: Flash,
     pub cpi: i64,
     pub cycle_accurate: bool,
 
     pub r: [u32; 16],
-    /// The banked r13/r14 of IRQ (0) and SVC (1) mode.
     pub(crate) bank: [[u32; 2]; 2],
-    /// SPSR of IRQ (0) and SVC (1) mode.
     pub spsr: [u32; 2],
     pub mode: u32,
     pub ibit: u32,
@@ -263,8 +210,6 @@ pub struct Machine {
     pub(crate) tmr_base: [i64; 2],
     pub(crate) tmr_on: [bool; 2],
     pub(crate) tmr_wrap: [bool; 2],
-    /// Timer2 (Rust only): enabled at the last control write, and its count
-    /// when its capture match was last looked for (see tmr2_update).
     pub(crate) tmr2_on: bool,
     pub(crate) tmr2_last: u32,
     pub(crate) wd_fed: i64,
@@ -305,11 +250,8 @@ pub struct Machine {
     pub(crate) qdec_last: i64,
     pub(crate) qdec_count: i32,
     pub(crate) qdec_sub: i64,
-    /// An optional device on the hardware-I2C master bus.
     pub i2c_dev: Option<I2cDevice>,
-    /// Bytes the UART transmitted (register-FIFO path).
     pub uart_tx: Vec<u8>,
-    /// Bytes queued for the UART to receive.
     pub uart_rx: Vec<u8>,
 
     pub(crate) adc_pin_codes: BTreeMap<i64, u32>,
@@ -333,14 +275,9 @@ pub struct Machine {
     pub(crate) icache_tags: [i64; ICACHE_LINES],
     pub reset_count: i64,
 
-    /// The system timer value when suspend began, or None.
     pub asleep: Option<u32>,
-    /// CPU stall (Rust only, reference/cpu-stall-8258.md): 0x6f written with
-    /// bit 7 and without bit 0. Only the CPU stops; it goes on when a source
-    /// in the wake mask 0x78 is active. See stall_until.
     pub stalled: bool,
     pub(crate) stall_since: i64,
-    /// Of cycles, those spent stalled.
     pub stall_cycles: i64,
     pub(crate) sleep_since: f64,
     pub(crate) sleep_deep: bool,
@@ -354,34 +291,22 @@ pub struct Machine {
     pub level_sources: Vec<LevelSource>,
     pub core_wake_sources: Vec<CoreWakeSource>,
     pub wakes: Vec<Wake>,
-    /// FloatWakes: {port, enabled & floating} seen.
     pub float_wakes: BTreeMap<(i64, i64), bool>,
     pub on_treti: Option<MachineHook>,
 
     pub reg_read_hook: Option<RegReadHook>,
     pub reg_write_hook: Option<RegWriteHook>,
-    /// Not in Go, speed only: see RegHookMask (None: every access calls the hooks).
     pub reg_hook_mask: Option<Box<RegHookMask>>,
     pub pad_levels_hook: Option<PadLevelsHook>,
     pub reset_hooks: Vec<MachineHook>,
     pub trace_step: Option<TraceStepHook>,
     pub on_irq: Option<MachineHook>,
     pub on_wake: Option<OnWakeHook>,
-    /// The PC hooks (Go Hooks).
     pub hooks: HashMap<u32, PcHook>,
     pub event: Option<EventHook>,
     pub mem_read_hook: Option<MemReadHook>,
-    /// Not in Go, speed only: `mem_read_hook` is called only for addresses
-    /// below this (default u32::MAX: always, as in Go). An owner whose hook
-    /// returns None, with no side effect, for every read at or above some
-    /// address sets it there, so that instruction fetches from flash skip the
-    /// hook; it must keep the bound in step with whatever the hook depends on.
     pub mem_read_hook_below: u32,
     pub mem_write_hook: Option<MemWriteHook>,
-    /// Not in Go, speed only: SRAM writes at or above this address skip
-    /// `mem_write_hook` (default u32::MAX: none does, as in Go). An owner sets
-    /// it where its hook returns false, with no side effect, for every SRAM
-    /// write at or above it; every other write still calls the hook.
     pub mem_write_hook_below: u32,
     pub unaligned_read_hook: Option<MemReadHook>,
     pub chk_hook: Option<ChkHook>,
@@ -390,24 +315,18 @@ pub struct Machine {
     pub sysclk_hook: Option<SysclkHook>,
     pub on_feed: Option<MachineHook>,
     pub sram_code_end_hook: Option<SramCodeEndHook>,
-    /// Flash.OnWrite with the machine: called right after the flash commits
-    /// a program or erase (or refuses one), once per write.
     pub on_flash_write: Option<FlashWriteHook>,
     pub(crate) sym_addrs: Vec<u32>,
     pub(crate) sym_names: Vec<String>,
 
-    /// Of cycles, those Run's idle skip jumped over.
     pub idle_skipped: i64,
 }
 
 impl Machine {
-    /// NewMachine: a machine on flash, booting from boot_slot (-1: the first
-    /// bootable slot), with the settings from the environment.
     pub fn new(flash: Flash, boot_slot: i64, cpi: i64) -> Result<Machine, Error> {
         Machine::with_config(flash, boot_slot, cpi, Config::env())
     }
 
-    /// NewMachine with the given settings.
     pub fn with_config(mut flash: Flash, boot_slot: i64, cpi: i64, cfg: Config) -> Result<Machine, Error> {
         flash.attached = true;
         flash.now = 0;
@@ -565,7 +484,6 @@ impl Machine {
         Ok(m)
     }
 
-    /// Banked: a mode's banked r13 and r14 (zeros for another mode).
     pub fn banked(&self, mode: u32) -> [u32; 2] {
         match bank_index(mode) {
             Some(i) => self.bank[i],
@@ -573,19 +491,16 @@ impl Machine {
         }
     }
 
-    /// Sets a mode's banked r13 and r14 (Go m.bank[mode] = ...).
     pub fn set_banked(&mut self, mode: u32, v: [u32; 2]) {
         if let Some(i) = bank_index(mode) {
             self.bank[i] = v;
         }
     }
 
-    /// LatchIrq: irq_latch |= 1 << src.
     pub fn latch_irq(&mut self, src: u32) {
         self.irq_latch |= 1u32.checked_shl(src).unwrap_or(0);
     }
 
-    /// The latched edge-triggered interrupt sources.
     pub fn irq_latch(&self) -> u32 {
         self.irq_latch
     }
@@ -594,12 +509,10 @@ impl Machine {
         self.irq_latch = v;
     }
 
-    /// BankedSP: the saved r13 of the banked modes (IRQ, SVC).
     pub fn banked_sp(&self) -> Vec<u32> {
         vec![self.bank[0][0], self.bank[1][0]]
     }
 
-    /// SetSymbols gives Symbolize() its table (name -> address).
     pub fn set_symbols<'a, I: IntoIterator<Item = (&'a str, u32)>>(&mut self, syms: I) {
         let mut ps: Vec<(u32, String)> = syms.into_iter().map(|(n, a)| (a, n.to_string())).collect();
         ps.sort();
@@ -607,7 +520,6 @@ impl Machine {
         self.sym_names = ps.into_iter().map(|p| p.1).collect();
     }
 
-    /// Symbolize: name+0xoff of the last symbol at or before addr, or the hex address.
     pub fn symbolize(&self, addr: u32) -> String {
         let i = self.sym_addrs.partition_point(|&a| a <= addr);
         if i == 0 {
@@ -633,28 +545,22 @@ impl Machine {
         self.event.is_some()
     }
 
-    // ------------------------------------------------------------ flash glue
-
     #[inline]
     pub(crate) fn flash_sync(&mut self) {
         self.flash.now = self.cycles;
         self.flash.hz = self.cpu_hz;
     }
 
-    /// Flash.Busy() at the machine's time.
     pub fn flash_busy(&mut self) -> bool {
         self.flash_sync();
         self.flash.busy()
     }
 
-    /// Flash.BusyLeftUs() at the machine's time.
     pub fn flash_busy_left_us(&mut self) -> f64 {
         self.flash_sync();
         self.flash.busy_left_us()
     }
 
-    /// Flash.Select at the machine's time; Machine::on_flash_write sees the
-    /// writes it commits.
     pub fn flash_select(&mut self, low: bool) -> Result<(), Error> {
         self.flash_sync();
         let r = self.flash.select(low);
@@ -662,7 +568,6 @@ impl Machine {
         r
     }
 
-    /// Flash.Clock at the machine's time.
     pub fn flash_clock(&mut self, b: u8) -> Result<u8, Error> {
         self.flash_sync();
         self.flash.clock(b)
@@ -680,9 +585,6 @@ impl Machine {
         }
     }
 
-    /// Reset: the boot ROM's slot choice and copy, the register and analog
-    /// reset values, and a cold CPU. boot_slot -1 picks the first slot whose
-    /// byte 8 is 0x4b.
     pub fn reset(&mut self, boot_slot: i64, cause_wd: bool) -> Result<(), Error> {
         let mut boot_slot = boot_slot;
         if boot_slot < 0 {
@@ -821,15 +723,11 @@ impl Machine {
         Ok(())
     }
 
-    // ------------------------------------------------------------ time
-
-    /// Ms is the simulated time in milliseconds.
     #[inline]
     pub fn ms(&self) -> f64 {
         self.ms_base + (self.cycles.wrapping_sub(self.ms_base_cyc).wrapping_mul(1000)) as f64 / self.cpu_hz as f64
     }
 
-    /// Sysclk decodes reg_clk_sel (0x66) and 0x70[0].
     pub fn sysclk(&self) -> i64 {
         let sel = self.regs[0x66] as i64;
         let fhs_sel = ((self.regs[0x70] & 1) as i64) << 1 | (sel >> 7);
@@ -886,7 +784,6 @@ impl Machine {
         ) & M32) as u32
     }
 
-    /// StimerNow: the system timer count as read (bits 2:0 read 0).
     #[inline]
     pub fn stimer_now(&self) -> u32 {
         self.stimer_raw() & !7
@@ -907,7 +804,6 @@ impl Machine {
         }
     }
 
-    /// Whether the system timer runs.
     pub fn stimer_on(&self) -> bool {
         self.stimer_on
     }
@@ -927,7 +823,6 @@ impl Machine {
         (self.cycles.wrapping_sub(self.tick2_base) & M32) as u32
     }
 
-    /// UpdateTime advances the peripherals to the current cycle.
     pub fn update_time(&mut self) -> Result<(), Error> {
         if self.regs[0xB10] & 0x04 != 0 {
             self.dfifo2_fill();
@@ -1002,11 +897,6 @@ impl Machine {
         }
     }
 
-    /// Timer2 in mode 0 (Rust only): sets its status (0x623 bit 2) when its
-    /// count (the free-running tick2 the watchdog also compares) has passed
-    /// the capture 0x62c since the last look. The count is not reloaded at the
-    /// match, unlike Timer0/1 here: the watchdog model shares it. A capture of
-    /// 0 never matches, so an image that leaves 0x62c alone sees no change.
     pub(crate) fn tmr2_update(&mut self) {
         let now = self.tick2_now();
         let cap = le32(&self.regs, 0x62C);
@@ -1019,12 +909,10 @@ impl Machine {
         self.tmr2_last = now;
     }
 
-    /// Timer2's mode (0x620 bit 7, 0x621 bit 0) is 0, the system clock mode.
     fn tmr2_mode0(&self) -> bool {
         self.regs[0x620] & 0x80 == 0 && self.regs[0x621] & 0x01 == 0
     }
 
-    /// The cycles until Timer2 matches its capture (Rust only), or None.
     fn cycles_to_tmr2(&self) -> Option<i64> {
         let cap = le32(&self.regs, 0x62C);
         if !self.tmr2_on || cap == 0 || !self.tmr2_mode0() {
@@ -1091,7 +979,6 @@ impl Machine {
         Ok(())
     }
 
-    /// CyclesToStimer: the cycles until the system timer reaches target.
     pub fn cycles_to_stimer(&self, target: u32) -> i64 {
         if !self.stimer_on {
             return 0;
@@ -1103,8 +990,6 @@ impl Machine {
         delta as i64 * self.cpu_hz / STIMER_HZ + 1
     }
 
-    /// CyclesToTimerMatch: the cycles until the first match of a running
-    /// Timer0/1 whose interrupt is unmasked, or None.
     pub fn cycles_to_timer_match(&self) -> Option<i64> {
         let mut best = 0i64;
         let mut found = false;
@@ -1135,8 +1020,6 @@ impl Machine {
         }
     }
 
-    // ------------------------------------------------------------ memory
-
     pub(crate) fn sram_code_end(&mut self) -> usize {
         if let Some(h) = self.sram_code_end_hook.clone() {
             return h(self);
@@ -1166,11 +1049,8 @@ impl Machine {
         Ok(a)
     }
 
-    /// Read reads size (1, 2 or 4) bytes at address a.
     #[inline]
     pub fn read(&mut self, a: u32, size: usize) -> Result<u32, Error> {
-        // The common case written out: an aligned SRAM read that no hook sees
-        // (below the register alias, past the flash: read_slow's first match).
         if (self.mem_read_hook.is_none() || a >= self.mem_read_hook_below)
             && a & (size as u32).wrapping_sub(1) == 0
             && SRAM_BASE <= a
@@ -1275,11 +1155,8 @@ impl Machine {
         Err(emu_err(format!("read{} 0x{:08x} at {}", size * 8, a, self.here())))
     }
 
-    /// Write writes size (1, 2 or 4) bytes at address a.
     #[inline]
     pub fn write(&mut self, a: u32, size: usize, val: u32) -> Result<(), Error> {
-        // The common case written out: an SRAM write that no hook sees
-        // (below the register alias: write_slow's first match).
         if (self.mem_write_hook.is_none() || a >= self.mem_write_hook_below) && SRAM_BASE <= a && a < REG_ALIAS {
             let o = (a - SRAM_BASE) as usize;
             if o + size <= self.cfg.sram_size && o + size <= self.sram.len() {
@@ -1323,9 +1200,6 @@ impl Machine {
         Err(emu_err(format!("write{} 0x{:08x} = 0x{:x} at {}", size * 8, a, val, self.here())))
     }
 
-    // ------------------------------------------------------------ registers
-
-    /// RegRead reads a peripheral register at offset o from 0x800000.
     pub fn reg_read(&mut self, o: usize, size: usize) -> Result<u32, Error> {
         if self.reg_read_hook.is_some() && self.reg_hook_mask.as_ref().is_none_or(|k| k.read_hooked(o, size)) {
             let h = self.reg_read_hook.clone().unwrap();
@@ -1539,11 +1413,9 @@ impl Machine {
         }
     }
 
-    /// RegWrite writes a peripheral register at offset o from 0x800000.
     pub fn reg_write(&mut self, o: usize, size: usize, mut val: u32) -> Result<(), Error> {
         if self.reg_write_hook.is_some() {
             if self.reg_hook_mask.as_ref().is_some_and(|k| !k.write_hooked(o, size)) {
-                // The hooks would pass it on to a detached base write (RegHookMask).
                 let h = self.reg_write_hook.take();
                 let res = self.reg_write(o, size, val);
                 self.reg_write_hook = h;
@@ -1750,7 +1622,6 @@ impl Machine {
             }
             return Ok(());
         } else if (0x62C..0x630).contains(&o) {
-            // Timer2's capture (Rust only): a match is looked for from now on.
             if self.tmr2_on {
                 self.tmr2_update();
             }
@@ -1784,9 +1655,6 @@ impl Machine {
             return Err(Error::SoftwareReset);
         } else if o == 0x6F && size == 1 && val & 0x80 != 0 {
             self.regs[o] = val as u8;
-            // Datasheet table 2-3: bit 7 "stall mcu trig: if bit 0 set 1, then
-            // system will go to suspend; or only stall mcu". Go takes both as
-            // a suspend; the stall is Rust only.
             if val & 0x01 == 0 {
                 return self.enter_stall(val);
             }
@@ -1910,7 +1778,6 @@ impl Machine {
         self.pad_inputs(port);
     }
 
-    /// padInputs: the levels of a port's pads as the input buffers see them.
     pub(crate) fn pad_inputs(&mut self, port: usize) -> u8 {
         let (lvl, flt) = self.pad_levels(port);
         let mut v = (lvl & !flt) | (self.pad_hold[port] & flt);
@@ -1986,17 +1853,14 @@ impl Machine {
         }
     }
 
-    /// Whether a pad is on its way to its pull's level (Go len(padRCSince) > 0).
     pub fn pad_rc_pending(&self) -> bool {
         !self.pad_rc_since.is_empty()
     }
 
-    /// HoldPads: a board model calls it when what it wires to the pads has changed.
     pub fn hold_pads(&mut self, port: usize) {
         self.hold_pads_internal(port);
     }
 
-    /// GpioIrqUpdate: the GPIO interrupt request; a rising request latches source 18.
     pub fn gpio_irq_update(&mut self) {
         let mut req = 0u8;
         if self.regs[0x5B5] & 0x08 != 0 {
@@ -2020,9 +1884,6 @@ impl Machine {
         self.wd_fed = self.cycles;
     }
 
-    // ------------------------------------------------------------ IRQ
-
-    /// IrqSources: the latched edge sources and the level sources' status.
     pub fn irq_sources(&mut self) -> u32 {
         let mut level = 0u32;
         let n = self.level_sources.len();
@@ -2036,7 +1897,6 @@ impl Machine {
         self.irq_latch | (level & 0xFFFF)
     }
 
-    /// IrqPending: whether an interrupt would be taken now.
     pub fn irq_pending(&mut self) -> bool {
         if self.regs[0x643] & 1 == 0 || self.ibit != 0 {
             return false;
@@ -2045,7 +1905,6 @@ impl Machine {
         self.irq_sources() & mask != 0
     }
 
-    /// TakeIrq enters IRQ mode as the TC32 does.
     pub fn take_irq(&mut self) {
         let ret = self.r[15];
         let cpsr = self.cpsr();
@@ -2058,15 +1917,11 @@ impl Machine {
         }
     }
 
-    // ------------------------------------------------------------ CPSR
-
-    /// CPSR assembles the status register.
     #[inline]
     pub fn cpsr(&self) -> u32 {
         self.n << 31 | self.z << 30 | self.c << 29 | self.v << 28 | self.ibit << 7 | self.mode
     }
 
-    /// setCPSR: an error for a mode not modelled.
     pub fn set_cpsr(&mut self, val: u32) -> Result<(), Error> {
         let new_mode = val & 0x1F;
         let ni = match bank_index(new_mode) {
@@ -2090,7 +1945,6 @@ impl Machine {
         Ok(())
     }
 
-    /// The SPSR of the current mode (Go m.SPSR[m.Mode]).
     #[inline]
     pub(crate) fn spsr_cur(&self) -> u32 {
         match bank_index(self.mode) {
@@ -2105,8 +1959,6 @@ impl Machine {
             self.spsr[i] = v;
         }
     }
-
-    // ------------------------------------------------------------ suspend
 
     pub(crate) fn enter_suspend(&mut self, val: u32) -> Result<(), Error> {
         let v = self.stimer_raw();
@@ -2125,21 +1977,6 @@ impl Machine {
         Ok(())
     }
 
-    // ------------------------------------------------------------ CPU stall (Rust only)
-    //
-    // reference/cpu-stall-8258.md. 0x6f = 0x80 stops the CPU clock only:
-    // the system timer, Timer0/1/2, the watchdog, PWM and the radio (its
-    // model's scheduled events) go on. The CPU goes on when an interrupt
-    // source in the wake mask 0x78 (the bit layout of the interrupt mask 0x640:
-    // timers 0-2, bit 13 the radio, bit 20 the system timer, ...) is active,
-    // whether or not 0x640, 0x643 or the I bit let it interrupt; then an
-    // interrupt that is pending and enabled is taken before the next
-    // instruction (Run), else the code after the trigger runs. The wake costs
-    // no cycles (datasheet table 2-1: Idle to Active 0 us). While stalled the
-    // time jumps from event to event: timer matches, the system timer
-    // compare, the watchdog, pad RC settling and the models' next events
-    // (IdleSkipHook).
-
     fn enter_stall(&mut self, val: u32) -> Result<(), Error> {
         self.stalled = true;
         self.stall_since = self.cycles;
@@ -2150,7 +1987,6 @@ impl Machine {
         Ok(())
     }
 
-    /// The active interrupt sources in the wake mask 0x78.
     fn stall_wake_sources(&mut self) -> u32 {
         let mask = le32(&self.regs, 0x78);
         if mask == 0 {
@@ -2159,7 +1995,6 @@ impl Machine {
         self.irq_sources() & mask
     }
 
-    /// The cycles to the next event that may end a stall, at most `left`.
     fn stall_skip(&mut self, left: i64) -> i64 {
         let mut skip = left.min(self.cpu_hz / 1000);
         for n in 0..2 {
@@ -2201,9 +2036,6 @@ impl Machine {
         skip.max(1)
     }
 
-    /// Advances a stalled machine to max_cycles or until it wakes (UpdateTime
-    /// at every step, so the models' events and a watchdog reset happen at
-    /// their time; an error leaves the machine stalled, a later call goes on).
     pub fn stall_until(&mut self, max_cycles: i64) -> Result<(), Error> {
         loop {
             self.update_time()?;
@@ -2229,7 +2061,6 @@ impl Machine {
         }
     }
 
-    /// padLevels: (levels, floating) of a port's pads as they are electrically.
     pub fn pad_levels(&mut self, port: usize) -> (u8, u8) {
         let (lvl, flt) = self.pad_levels_base(port);
         if let Some(h) = self.pad_levels_hook.clone() {
@@ -2239,9 +2070,6 @@ impl Machine {
     }
 
     fn pad_levels_base(&self, port: usize) -> (u8, u8) {
-        // Go loops over the 8 pads; the same per pad, as masks: a GPIO output
-        // drives its level, else an enabled PWM output (only PC1 and PB5 can
-        // be one, see pwm_channel), else the pull (1, 3: up; 0: floating).
         let b = 0x580 + 8 * port;
         let own = self.regs[b + 6] & !self.regs[b + 2];
         let mut lvl = self.regs[b + 3] & own;
@@ -2271,8 +2099,6 @@ impl Machine {
         (lvl | (up & rest), none & rest)
     }
 
-    /// pwmChannel: the PWM channel a peripheral-mode pad is muxed to and
-    /// whether it is enabled; None (Go's (0, false)) for no channel.
     fn pwm_channel(&self, port: usize, pin: usize) -> Option<(usize, bool)> {
         if (self.regs[0x586 + 8 * port] >> pin) & 1 != 0 {
             return None;
@@ -2367,7 +2193,6 @@ impl Machine {
         st
     }
 
-    /// SleepUntil advances a suspended machine by one chunk, or wakes it.
     pub fn sleep_until(&mut self, max_cycles: i64) {
         let st = self.wake_status();
         if st != 0 {

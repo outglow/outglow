@@ -1,14 +1,3 @@
-//! Zigbee says when BLE runs, on the Rust firmware with BLE: the settings
-//! cluster 0xFC5F (manufacturer code 0x1141), attribute 0x0000 the mode
-//! (0 always, 1 for a window after power-on, 2 never), 0x0001 the window in
-//! minutes, 0x0002 whether BLE runs now.
-//!
-//! Off: the bulb stops advertising and a connection is dropped, Zigbee goes
-//! on; on again: it advertises. An update over BLE that has begun is let
-//! finish before BLE stops. Window: BLE after power-on, gone when the window
-//! has passed. The setting outlives a power cycle; the factory reset by power
-//! cycling brings BLE back.
-
 use super::ble_central::{data_packets, discover, end_packet, erase_packet, hx, Bench, Transport, OTA};
 use super::{node_of, SimCtx, SimDef};
 use crate::air::NodeId;
@@ -34,11 +23,8 @@ fn until(b: &mut Bench, max_ms: f64, step: f64, mut cond: impl FnMut(&Bench) -> 
     Ok(cond(b))
 }
 
-/// A global ZCL command to the settings cluster, with our manufacturer code
-/// or without one; returns the body of the answer (`resp`), if one came.
 fn settings_cmd(b: &mut Bench, short: u16, cmd: u8, resp: u8, payload: &[u8], code: Option<u16>) -> R<Option<Vec<u8>>> {
     let c = &mut b.w.coord;
-    // the coordinator's own counters, as its other frames take them
     let seq = nx(&mut c.st.zcl_seq);
     let mut aps = vec![0x40, EP];
     aps.extend_from_slice(&SETTINGS.to_le_bytes());
@@ -60,13 +46,11 @@ fn settings_cmd(b: &mut Bench, short: u16, cmd: u8, resp: u8, payload: &[u8], co
     Ok(got(b))
 }
 
-/// Value bytes of one attribute (after its type), or None.
 fn read(b: &mut Bench, short: u16, attr: u16) -> R<Option<Vec<u8>>> {
     let rsp = settings_cmd(b, short, 0x00, 0x01, &attr.to_le_bytes(), Some(CODE))?;
     Ok(rsp.filter(|p| p.len() >= 5 && p[2] == 0).map(|p| p[4..].to_vec()))
 }
 
-/// The status records of the Write Attributes Response (`[0]`: all written).
 fn write(b: &mut Bench, short: u16, attr: u16, ty: u8, value: &[u8], code: Option<u16>) -> R<Option<Vec<u8>>> {
     let mut p = attr.to_le_bytes().to_vec();
     p.push(ty);
@@ -74,9 +58,6 @@ fn write(b: &mut Bench, short: u16, attr: u16, ty: u8, value: &[u8], code: Optio
     settings_cmd(b, short, 0x02, 0x04, &p, code)
 }
 
-/// The radio's log of sent advertising PDUs. It runs on the bulb's own
-/// clock, which starts again at every power-on, and keeps what came before:
-/// `Mark` is where the current power-on begins in it.
 #[derive(Clone, Copy)]
 struct Mark(usize);
 
@@ -84,7 +65,6 @@ fn mark(b: &Bench) -> Mark {
     Mark(b.ble_rf(D, f64::NEG_INFINITY).1.len())
 }
 
-/// Advertising events (ADV_IND on channel 37) of this power-on since `t0` (air time).
 fn adverts(b: &Bench, m: Mark, t0: f64) -> usize {
     adverts_between(b, m, t0, f64::INFINITY)
 }
@@ -99,7 +79,6 @@ fn show(v: &Option<Vec<u8>>) -> String {
     v.as_ref().map(|v| hx(v)).unwrap_or_else(|| "no answer".into())
 }
 
-/// Basic reads one after another; which of them were answered, and when.
 fn basic_answers(b: &mut Bench, short: u16, n: usize) -> R<Vec<Option<f64>>> {
     let mut out = Vec::new();
     for _ in 0..n {
@@ -135,7 +114,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.run(D, 3000.0)?;
     let answers_on = basic_answers(&mut b, short, 10)?;
 
-    // --- out of the box
     let t0 = b.t(D);
     b.run(D, 3000.0)?;
     let n = adverts(&b, m, t0);
@@ -144,7 +122,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
           &format!("mode {}, window {}, running {}", show(&mode), show(&window), show(&active)));
     check(cx, "and the bulb advertises", n >= 8, &format!("{n} advertising events in 3 s"));
 
-    // --- off
     let w = write(&mut b, short, 0x0000, T_ENUM8, &[2], Some(CODE))?;
     check(cx, "mode 2 (off) written with the manufacturer code", w == Some(vec![0]), &show(&w));
     b.run(D, 300.0)?;
@@ -159,14 +136,12 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let fmt = |v: &[Option<f64>]| v.iter().map(|a| a.map_or("-".into(), |t| format!("{t:.0}"))).collect::<Vec<_>>().join(" ");
     check(cx, "Zigbee goes on", okn == 10, &format!("{okn}/10 reads answered (ms): {}; with BLE on before: {}", fmt(&answers), fmt(&answers_on)));
 
-    // --- on again, without the manufacturer code
     let w = write(&mut b, short, 0x0000, T_ENUM8, &[0], None)?;
     let t0 = b.t(D);
     b.run(D, 3000.0)?;
     let n = adverts(&b, m, t0);
     check(cx, "mode 0 written without the code: advertising again", w == Some(vec![0]) && n >= 8, &format!("write {}, {n} advertising events in 3 s", show(&w)));
 
-    // --- off while a central is connected
     b.ble_connect(D, 24, Some(1600.0));
     let adva = b.ble_wait_connected(D, 15000.0)?;
     check(cx, "a central connects", adva.is_some(), &adva.clone().unwrap_or_default());
@@ -174,7 +149,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         let rsp = b.att_ok(D, &[0x0a, 0x0b, 0x00])?;
         let w = write(&mut b, short, 0x0000, T_ENUM8, &[2], Some(CODE))?;
         b.run(D, 200.0)?;
-        // (the central here has no supervision timeout: it counts the events nobody answered)
         let s0 = b.ble_stats(D);
         b.run(D, 3000.0)?;
         let s1 = b.ble_stats(D);
@@ -188,7 +162,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         check(cx, "and nothing is advertised after it", n == 0, &format!("{n} advertising events in 3 s"));
     }
 
-    // --- an update over BLE that has begun is let finish
     write(&mut b, short, 0x0000, T_ENUM8, &[0], Some(CODE))?;
     b.run(D, 1000.0)?;
     b.ble_connect(D, 24, Some(1600.0));
@@ -196,8 +169,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     if adva.is_some() {
         let (_, tel, _) = discover(&mut b, D)?;
         let mut tr = Transport::new(D, &tel);
-        // an image the bulb takes packet by packet and turns down at the end
-        // (its CRC-32 does not match): nothing is activated
         let mut fake = vec![0u8; 8192];
         fake[8..12].copy_from_slice(b"KNLT");
         let declared = (fake.len() as u32).to_le_bytes();
@@ -215,7 +186,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
             let half = pkts.len() / 2;
             for (i, pkt) in pkts {
                 if i == half {
-                    // Zigbee asks for BLE off in the middle of the transfer
                     let w = write(&mut b, short, 0x0000, T_ENUM8, &[2], Some(CODE))?;
                     if w != Some(vec![0]) {
                         return Ok(Err(format!("write {}", show(&w))));
@@ -240,7 +210,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         check(cx, "BLE off asked for in the middle of an update over BLE: the transfer runs to its end",
               r.is_ok() && aborted.is_none() && sent == total && status.first() == Some(&4),
               &format!("{sent}/{total} packets, end status {}{}", hx(&status), r.err().map(|e| format!(", {e}")).unwrap_or_default()));
-        // the updater ends the connection once it has the status; then BLE stops
         let still = b.ble_state(D).0 == "connected";
         let st = b.ble_disconnect(D, 3000.0)?;
         let t0 = b.t(D);
@@ -252,7 +221,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         check(cx, "a central connects for the update", false, "");
     }
 
-    // --- a window of one minute after power-on
     let w1 = write(&mut b, short, 0x0001, T_U16, &[1, 0], Some(CODE))?;
     let w2 = write(&mut b, short, 0x0000, T_ENUM8, &[1], Some(CODE))?;
     b.w.reboot().map_err(Stop::Error)?;
@@ -278,7 +246,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     check(cx, "a minute after power-on: no advertising, attribute 0x0002 reads 0", n == 0 && active == Some(vec![0]),
           &format!("{n} advertising events from {:.1} s after power-on, running {}", (t0 - boot) / 1000.0, show(&active)));
 
-    // --- off, power cycles, then the factory reset sequence
     write(&mut b, short, 0x0000, T_ENUM8, &[2], Some(CODE))?;
     b.run(D, 1000.0)?;
     let mut during = 0;

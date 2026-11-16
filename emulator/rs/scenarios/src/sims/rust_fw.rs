@@ -1,18 +1,3 @@
-//! The Rust firmware (crates/bulb-tc32) from reset in the emulator, checked on
-//! the LED's PWM output and in flash (emulator/rust_fw_sim.py).
-//!
-//! What is checked: the boot through boot/start.S into the main loop; PC1
-//! muxed to PWM0; the PWM duty of every brightness level against the HOST
-//! build of the same Rust code (bulb-sim's duty_table); the commands of the
-//! debug link (crates/bulb-tc32/src/link.rs); the configuration record in
-//! flash, its sector erase and power cycles; power-on behaviour; the
-//! watchdog; the factory reset by power cycling; tc32-devtools' forms_check.py
-//! and image_check.py on the ELF.
-//!
-//! The Python script runs the firmware on tc32-devtools' Python emulator
-//! (Machine8258); this one on tc32emu (the Rust port of the Go one), through
-//! zbnode's node setup, with nothing on the radio's air.
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -29,17 +14,14 @@ pub fn def() -> SimDef {
 }
 
 const SRAM: usize = 0x840000;
-/// the light's configuration log: two sectors that take turns (bulb_core::store)
 pub const CONFIG_SECTORS: [usize; 2] = [0xF0000, 0xF4000];
 const SECTOR_SIZE: usize = 0x1000;
-/// a slot of the log: eight bytes and their complement
 pub const SLOT: usize = 16;
 const NV_SECTORS: [usize; 2] = [0xF1000, 0xF2000];
 const MAC_SECTOR: usize = 0xFF000;
 const RESET_SECTOR: usize = 0xCF000;
 const OP_HANG: u8 = 0xEE;
 const PWM_PERIOD: u32 = 48000;
-/// cycles an instruction: fewer instructions per simulated ms (as the Python script)
 const CPI: i64 = 24;
 
 pub const OP_ON: u8 = 1;
@@ -53,8 +35,6 @@ const POB_ON: u8 = 1;
 const POB_TOGGLE: u8 = 2;
 pub const POB_PREVIOUS: u8 = 0xFF;
 
-/// The symbols of an ELF32 (`_common.syms`): name -> address (Thumb bit
-/// cleared) and name -> size, in symbol table order (a later one replaces).
 pub fn syms(elf: &[u8]) -> Result<(Vec<(String, u32)>, BTreeMap<String, u32>), String> {
     let u16_at = |o: usize| u16::from_le_bytes([elf[o], elf[o + 1]]) as usize;
     let u32_at = |o: usize| u32::from_le_bytes(elf[o..o + 4].try_into().unwrap());
@@ -115,7 +95,6 @@ fn llvm_dir() -> String {
     std::env::var("TC32_LLVM").unwrap_or_else(|_| format!("{}/oss/llvm-tc32/build/bin", std::env::var("HOME").unwrap_or_default()))
 }
 
-/// Targets of the calls in irq_handler: (count, those outside the RAM copy).
 fn irq_path_calls(elf: &str, rstored: u32) -> Option<(usize, Vec<String>)> {
     let out = Command::new(format!("{}/llvm-objdump", llvm_dir()))
         .args(["-d", "--mcpu=tc32", "--no-show-raw-insn", "--disassemble-symbols=irq_handler", elf])
@@ -163,9 +142,6 @@ impl Out<'_> {
     }
 }
 
-/// tc32-devtools' compiler checks, run as the Python script runs them, when a
-/// checkout is there (TC32_DEVTOOLS, default ~/oss/tc32-devtools); the build
-/// does not need it.
 fn tool_check(o: &mut Out, name: &str, script: &str, args: &[&str]) {
     let root = std::env::var("TC32_DEVTOOLS").unwrap_or_else(|_| format!("{}/oss/tc32-devtools", std::env::var("HOME").unwrap_or_default()));
     if !std::path::Path::new(&format!("{root}/compiler/{script}")).exists() {
@@ -230,7 +206,6 @@ impl Net {
     }
 }
 
-/// The firmware in the emulator, with the debug link's SRAM blocks.
 pub struct Bulb {
     pub node: Node,
     pub cmd: usize,
@@ -238,9 +213,7 @@ pub struct Bulb {
     pub net_block: usize,
     pub seq: u8,
     pub ev: Rc<RefCell<Vec<String>>>,
-    /// a watchdog reset seen by the last run: the time it happened
     pub bitten: Option<f64>,
-    /// a watchdog reset is what the test waits for (else it is an error)
     pub expect_wd: bool,
 }
 
@@ -249,15 +222,12 @@ fn emu(e: String) -> Stop {
 }
 
 impl Bulb {
-    /// A new machine on this flash (power on): SRAM and registers start over.
     pub fn power_on(flash: &[u8], ev: &Rc<RefCell<Vec<String>>>, link_shift: i64) -> R<Node> {
         let mut node = Node::new(flash, CPI, link_shift).map_err(emu)?;
-        // the machine's own events (Machine.event), printed as the Python emulator prints them
         let e = ev.clone();
         node.m.event = Some(Rc::new(move |m: &mut tc32emu::Machine, text: &str| {
             e.borrow_mut().push(format!("[{:9.3} ms] {text}", m.ms()));
         }));
-        // the reset of the new machine happened in Node::new, before the hook was set
         ev.borrow_mut().push(format!("[{:9.3} ms] reset #{}: boot slot 0x{:05x}", 0.0, node.m.reset_count, node.m.boot_slot));
         Ok(node)
     }
@@ -273,15 +243,10 @@ impl Bulb {
         self.node.ms()
     }
 
-    /// `Machine.run_ms` (the Python script drives the machine directly): a
-    /// watchdog reset is noted with the time it bit, then the machine resets as
-    /// the script does (`m.reset(cause_wd=True)`).
     pub fn run(&mut self, ms: f64) -> R<()> {
         let target = self.node.m.ms() + ms;
-        // a transmission stops the run (zbnode hands the frame to the air): carry on to the target
         while self.node.m.ms() < target {
             let r = self.node.m.run_ms(target, &[]);
-            // nothing on the air: the radio's transmissions go nowhere
             self.node.radio.b().tx_pending.clear();
             match r {
                 Ok(()) | Err(tc32emu::Error::Stop(_)) => {}
@@ -317,7 +282,6 @@ impl Bulb {
         Net { state: b[0], channel: b[1], reset_step: b[4], factory: b[5], warm: b[6] }
     }
 
-    /// A power-on that lasts `seconds`; the network block at its end.
     fn session(&mut self, seconds: f64) -> R<Net> {
         self.cycle()?;
         self.boot(400.0)?;
@@ -326,7 +290,6 @@ impl Bulb {
         Ok(self.net())
     }
 
-    /// Writes a command and runs until the firmware has taken it.
     pub fn send(&mut self, payload: &[u8], timeout_ms: f64) -> R<bool> {
         let mut p = payload.to_vec();
         p.resize(7, 0);
@@ -359,7 +322,6 @@ impl Bulb {
         self.send(&p, 200.0)
     }
 
-    /// `Machine.pwm_channel(2, 1)`: the PWM channel PC1 is muxed to, or None.
     fn pc1_channel(&self) -> Option<u8> {
         let g = &self.node.m.regs;
         if (g[0x586 + 16] >> 1) & 1 != 0 {
@@ -391,20 +353,16 @@ impl Bulb {
         self.pwm_py().2
     }
 
-    /// The configuration log: the records of its active sector.
     fn records(&self) -> Vec<Vec<u8>> {
         config_log(&self.node.m.flash.mem).map(|(_, r)| r).unwrap_or_default()
     }
 }
 
-/// The first half of a slot of the configuration log whose second half is its complement.
 fn config_slot(flash: &[u8], at: usize) -> Option<&[u8]> {
     let (a, b) = flash[at..at + SLOT].split_at(SLOT / 2);
     a.iter().zip(b).all(|(x, y)| *x == !*y).then_some(a)
 }
 
-/// The configuration log's active sector (the newer generation in a valid
-/// header `A5 'L' 'T' 01 gen 00 00 5A`) and its records.
 pub fn config_log(flash: &[u8]) -> Option<(usize, Vec<Vec<u8>>)> {
     let gen = |base: usize| config_slot(flash, base).filter(|h| h[..4] == [0xA5, b'L', b'T', 1] && h[5..] == [0, 0, 0x5A]).map(|h| h[4]);
     let base = match (gen(CONFIG_SECTORS[0]), gen(CONFIG_SECTORS[1])) {
@@ -417,7 +375,6 @@ pub fn config_log(flash: &[u8]) -> Option<(usize, Vec<Vec<u8>>)> {
     Some((base, recs))
 }
 
-/// The Zigbee stack's stored items (id -> latest data) from its two-sector log.
 fn nv_items(flash: &[u8]) -> BTreeMap<u8, Vec<u8>> {
     let mut best: Option<(usize, u8)> = None;
     for base in NV_SECTORS {
@@ -472,13 +429,9 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let elf_s = canon(&elf_img.path);
     let bin_s = canon(&bin_img.path);
     tool_check(&mut o, "forms_check.py: only instruction forms the vendor code uses", "forms_check.py", &["check", &elf_s]);
-    // (image_check.py, the image against the link, is not run: our own
-    // elf2bin, crates/outglow-image, lays the image out and is tested)
     let _ = &bin_s;
 
     o.say("first power-on (blank configuration sector)");
-    // as on the bulb after an installation: the image where the code is linked (FW_OFFSET),
-    // and at 0, where this emulator boots from in place of a bootloader
     let node = Bulb::power_on(&image, &ev, a("FW_OFFSET") as i64)?;
     let mut b = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev: ev.clone(), bitten: None, expect_wd: false };
     let booted = b.boot(400.0).err().map(|e| format!("{e:?}"));
@@ -656,7 +609,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
             &bitten.map(|x| format!("after {x:.0} ms")).unwrap_or_else(|| "no watchdog reset".into()));
     if bitten.is_some() {
         b.seq = 0;
-        b.run(300.0)?; // SRAM keeps its old contents across this reset: let the firmware start over
+        b.run(300.0)?;
         let (s, n) = (b.st(), b.net());
         o.check(
             "after the watchdog reset the light is back as it was, and the start does not count as a power-on",
@@ -666,7 +619,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     }
 
     o.say("factory reset by power cycling (1, 1, 1, 12, 12 s, then on)");
-    b.session(31.0)?; // a long session closes whatever count was open
+    b.session(31.0)?;
     b.cmd1(&[OP_POWER_ON, POB_OFF])?;
     b.cmd1(&[OP_STARTUP, 33])?;
     b.run(200.0)?;
@@ -701,7 +654,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     );
     let items = nv_items(&b.node.m.flash.mem);
     let ishow = format!("{{{}}}", items.iter().map(|(k, v)| format!("{k}: '{}'", hx(v))).collect::<Vec<_>>().join(", "));
-    // (and the reset counters, which start anew: this start is the first, ZCL 3.15.2.2.1.1)
     let ok = items.keys().copied().collect::<Vec<_>>() == [2, 16]
         && items[&2].get(..4).unwrap_or(&[]) >= fc_before.get(..4).unwrap_or(&[])
         && items[&2].len() == 8

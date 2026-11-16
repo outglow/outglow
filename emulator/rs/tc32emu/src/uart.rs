@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! UART register-FIFO path (uart.go).
-
 use crate::machine::Machine;
 
 impl Machine {

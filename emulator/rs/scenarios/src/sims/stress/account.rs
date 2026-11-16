@@ -1,19 +1,3 @@
-//! Accounting of lost relays and MAC retransmissions (`STRESS_ACCOUNT=1`):
-//! diagnostics only, nothing else depends on it.
-//!
-//! Two sources besides the air:
-//! - every bulb radio's fate log (`zbnode::radio154::RxFate`): what became of
-//!   each frame that reached it (received, collision, receiver off and why);
-//! - for Rust images built with `cargo xtask build --trace`, the
-//!   firmware's own record of what it did with each frame (`ZB_TRACE`, the
-//!   kinds in `zigbee::hal::trace` and `bulb-tc32/src/trace.rs`) and the radio
-//!   queue's drop counter (`RADIO_DROPPED`).
-//!
-//! `report` gives, for each relayed frame a bulb acknowledged and then never
-//! passed on (`Mesh::relay_lost_list`), the firmware's outcome, and for each
-//! MAC retransmission by a bulb, why the attempt before it got no
-//! acknowledgement.
-
 use std::collections::BTreeMap;
 
 use super::net::{Dec, Mesh};
@@ -22,7 +6,6 @@ use crate::air::NodeId;
 const SRAM: u32 = 0x840000;
 const RING_ENTRIES: u32 = 512;
 
-// zigbee::hal::trace (kept in step by hand: the emulator does not link the firmware crates)
 const K_RELAY: u8 = 1;
 const K_TX: u8 = 2;
 const K_DROP: u8 = 3;
@@ -37,7 +20,6 @@ const K_MAC: u8 = 18;
 
 #[derive(Clone, Debug)]
 pub struct TraceRec {
-    /// air time (ms)
     pub t: f64,
     pub kind: u8,
     pub detail: u8,
@@ -49,7 +31,6 @@ pub struct TraceRec {
 
 #[derive(Clone, Debug)]
 pub struct RxRec {
-    /// air time (ms)
     pub t0: f64,
     pub t1: f64,
     pub fcs: u16,
@@ -63,9 +44,7 @@ pub struct Account {
     last_dropped: Vec<u32>,
     pub overflow: Vec<u64>,
     pub traces: Vec<Vec<TraceRec>>,
-    /// per bulb: frames by start time (µs, air)
     pub rx: Vec<BTreeMap<i64, Vec<RxRec>>>,
-    /// per bulb: (ms, frames dropped because the radio queue was full)
     pub qfull: Vec<Vec<(f64, u32)>>,
 }
 
@@ -103,12 +82,10 @@ impl Account {
         }
     }
 
-    /// Takes what the bulbs recorded since the last call.
     pub fn poll(&mut self, m: &Mesh) {
         for (k, b) in m.bulbs.iter().enumerate() {
             let node = m.s.w.node(b.id);
             let off = Self::t_off(m, b.id);
-            // (a bulb paired at the coordinator is a new node: its radio starts without the log)
             let mut radio = node.radio.b();
             for f in radio.rx_log.get_or_insert_with(Vec::new).drain(..) {
                 let t0 = f.t0 + off;
@@ -130,7 +107,7 @@ impl Account {
             }
             let head = rd32(&node.m.sram, ring + 4);
             if head < self.last_head[k] {
-                self.last_head[k] = 0; // restarted
+                self.last_head[k] = 0;
             }
             if head - self.last_head[k] > RING_ENTRIES {
                 self.overflow[k] += (head - self.last_head[k] - RING_ENTRIES) as u64;
@@ -154,7 +131,6 @@ impl Account {
         }
     }
 
-    /// The fate at bulb `k` of air frame `d`.
     pub fn fate(&self, k: usize, d: &Dec, psdu: &[u8]) -> Option<&'static str> {
         let fcs = if psdu.len() >= 2 { u16::from_le_bytes([psdu[psdu.len() - 2], psdu[psdu.len() - 1]]) } else { 0 };
         let key = (d.t0 * 1000.0).round() as i64;
@@ -162,9 +138,6 @@ impl Account {
     }
 }
 
-/// What the ring of a TRACE=1 image holds now (at most its last
-/// `RING_ENTRIES` records), with air times (`t_off`: the node's power-on
-/// time on the air), for scenarios other than the stress house.
 pub fn ring_records(node: &zbnode::Node, img: &crate::image::Image, t_off: f64) -> Vec<TraceRec> {
     let Some(ring) = img.symbol("ZB_TRACE") else { return Vec::new() };
     let sram = &node.m.sram;
@@ -190,7 +163,6 @@ pub fn ring_records(node: &zbnode::Node, img: &crate::image::Image, t_off: f64) 
         .collect()
 }
 
-/// One line about a record (`ring_records`).
 pub fn describe(r: &TraceRec) -> String {
     kind_name(r)
 }
@@ -255,7 +227,6 @@ fn kind_name(r: &TraceRec) -> String {
     }
 }
 
-/// The outcome class of a lost relay from the firmware's record of it.
 fn relay_class(chain: &[&TraceRec]) -> String {
     if chain.is_empty() {
         return "no record (never reached the NWK layer)".into();
@@ -289,10 +260,6 @@ fn relay_class(chain: &[&TraceRec]) -> String {
     "relayed, no outcome".into()
 }
 
-/// What the air shows of relay `x`'s handling of frame `i` (any image): a
-/// copy of a frame it acknowledged and passed on before, its own frame
-/// coming back (a routing loop), passed on or reported only after the 3 s
-/// of `relay_drops`, a route discovery for the destination right after.
 fn air_class(m: &Mesh, i: usize, x: NodeId) -> String {
     let d = &m.dec[i];
     let n = d.nwk.as_ref().unwrap();
@@ -301,7 +268,6 @@ fn air_class(m: &Mesh, i: usize, x: NodeId) -> String {
         return "its own frame came back (routing loop)".into();
     }
     let same = |e: &Dec| e.nwk.as_ref().is_some_and(|f| f.src == n.src && f.seq == n.seq);
-    // an earlier copy (same sender, MAC sequence number) that it acknowledged
     let first = m.dec[..i].iter().rev().take_while(|e| e.t0 > d.t0 - 50.0).find(|e| e.who == d.who && e.mac_seq == d.mac_seq && same(e));
     if let Some(f) = first {
         let passed = m.dec[f.idx + 1..i].iter().any(|e| e.who == Some(x) && same(e));
@@ -330,7 +296,6 @@ fn air_class(m: &Mesh, i: usize, x: NodeId) -> String {
     }
 }
 
-/// Lost relays and MAC retransmissions in [t0, t1) explained, as text lines.
 pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<String> {
     let mut out = vec![format!("== accounting: {title} ({:.0}-{:.0} ms)", t0, t1)];
     let kix = |id: NodeId| m.bulbs.iter().position(|b| b.id == id);
@@ -340,7 +305,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
             out.push(format!("   (trace ring of {} overflowed: {o} records lost)", m.bulbs[k].name));
         }
     }
-    // ---- lost relays
     let mut classes: BTreeMap<String, usize> = BTreeMap::new();
     let mut lines = Vec::new();
     for (i, x) in m.relay_lost_list() {
@@ -358,7 +322,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
             .collect();
         let fw = a.ring[k].is_some();
         let mut class = if fw { relay_class(&chain) } else { air_class(m, i, x) };
-        // a copy of a frame the bulb had relayed before (its sender missed our ACK)
         if class.starts_with("dropped on receipt: replay") {
             let earlier = m.dec[..i].iter().rev().take_while(|e| e.t0 > d.t0 - 3000.0).any(|e| {
                 e.who == Some(x) && e.nwk.as_ref().is_some_and(|f| f.src == n.src && f.seq == n.seq)
@@ -392,7 +355,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
     if std::env::var("STRESS_ACCOUNT").is_ok_and(|v| v == "2") {
         out.extend(lines);
     }
-    // ---- MAC retransmissions
     let mut retx: BTreeMap<String, usize> = BTreeMap::new();
     let mut per_rx: BTreeMap<String, usize> = BTreeMap::new();
     let frames = &m.s.w.air.frames;
@@ -418,7 +380,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
         if p.mac_seq != d.mac_seq || body(p) != body(d) {
             continue;
         }
-        // attempt j got no acknowledgement: why?
         let Some(rx_short) = p.mac_dst else { continue };
         let Some(r) = m.node_of_short(rx_short) else {
             *retx.entry("receiver unknown".into()).or_default() += 1;
@@ -427,7 +388,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
         let ack = m.dec[j + 1..].iter().take_while(|e| e.t0 < p.t1 + 3.0).find(|e| e.who == Some(r) && e.mac_ty == 2 && e.mac_seq == p.mac_seq);
         let air_what = m.chan.what(p.idx, r);
         let cause: String = if let Some(ack) = ack {
-            // the receiver acknowledged: the sender did not get it
             let k = kix(w).unwrap();
             let late = ack.t0 - p.t1;
             match a.fate(k, ack, &frames[ack.idx].psdu) {
@@ -487,7 +447,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
             }
         }
     }
-    // ACK turnaround of the bulbs: from the end of the frame to the start of its ACK
     let mut turn: Vec<f64> = Vec::new();
     let mut frames_by_bulbs = 0usize;
     for i in start..m.dec.len() {
@@ -518,7 +477,6 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
             turn.len()
         ));
     }
-    // what the firmware's MAC transmissions came to (TRACE=1 images)
     let mut mac: BTreeMap<(&str, &str), (usize, u64, u64)> = BTreeMap::new();
     for tr in &a.traces {
         for r in tr.iter().filter(|r| r.kind == K_MAC && r.t >= t0 && r.t < t1) {
@@ -543,12 +501,9 @@ pub fn report(m: &Mesh, a: &Account, t0: f64, t1: f64, title: &str) -> Vec<Strin
     out
 }
 
-/// A drop at receiver `r` of frame `d` with radio fate `f`, with what the
-/// receiver or the air was doing.
 fn collide_name(m: &Mesh, a: &Account, d: &Dec, r: NodeId, f: &str) -> String {
     let frames = &m.s.w.air.frames;
     if f == "collision" {
-        // the other frames on the air at r at the same time
         let lo = d.idx.saturating_sub(40);
         let hi = (d.idx + 40).min(frames.len());
         let mut who = Vec::new();
@@ -558,7 +513,6 @@ fn collide_name(m: &Mesh, a: &Account, d: &Dec, r: NodeId, f: &str) -> String {
                 continue;
             }
             let ack = g.psdu.first().is_some_and(|b| b & 7 == 2);
-            // could the sender of d have heard the other one before it started?
             let heard = d.who.is_some_and(|s| m.chan.what(j, s).is_some());
             let before = g.t0 < d.t0;
             let what = match (ack, before, heard) {
@@ -576,7 +530,6 @@ fn collide_name(m: &Mesh, a: &Account, d: &Dec, r: NodeId, f: &str) -> String {
     }
     let _ = a;
     if f.ends_with("transmitting") || f.ends_with("TX mode") {
-        // what the receiver had on the air then
         let own = frames.iter().rev().take(60).find(|g| g.who == r && g.t0 < d.t1 + 0.3 && d.t0 < g.t1 + 0.3);
         return match own {
             Some(g) if g.psdu.first().is_some_and(|b| b & 7 == 2) => format!("{f} (sending an ACK)"),

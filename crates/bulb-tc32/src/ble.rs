@@ -1,6 +1,3 @@
-//! The BLE side on this chip: `ble::Hal` on the radio (`ble_radio`), the
-//! system timer and the flash.
-
 use ble::hal::{ConnEvent, EventResult, Hal, ADV_PDU_MAX, CONNECT_LEN, LL_PAYLOAD_MAX};
 use ble::Identity;
 
@@ -11,9 +8,6 @@ use crate::flash;
 use crate::reg;
 use crate::staging::{self, Owner};
 
-/// What the bulb says it is over BLE: the stock bulb's product number and
-/// Device Information strings, so that the AwoX app and our updater see the
-/// device they know.
 pub const IDENTITY: Identity = Identity {
     product: BOARD.ble_product,
     model: BOARD.model,
@@ -25,19 +19,10 @@ pub const IDENTITY: Identity = Identity {
     colour: BOARD.rgb.is_some(),
 };
 
-/// 802.15.4 traffic this recent makes an advertising event wait
-/// (`ble::Hal::radio_busy`, within its advDelay): a frame that follows
-/// another (an acknowledgement, an answer, a broadcast after a unicast)
-/// comes within a few milliseconds.
 pub(crate) const RADIO_QUIET: u32 = 3 * 16_000;
 
-/// Flash sector with the device's address, written at the factory: the BLE
-/// address is its first six bytes (the start of the Zigbee EUI-64), as on
-/// the stock firmware.
 const MAC_SECTOR: usize = 0xf_f000;
 
-/// The sector with the mesh network's settings, after the Zigbee store: a
-/// log of records `A5, length, data, checksum`, the last valid one counts.
 pub const MESH_SECTOR: usize = 0xf_3000;
 const SECTOR_SIZE: usize = 0x1000;
 const RECORD_MAX: usize = 64;
@@ -46,7 +31,6 @@ fn checksum(data: &[u8]) -> u8 {
     data.iter().fold(0x5a, |c, b| c.rotate_left(1) ^ *b)
 }
 
-/// Offset and length of the last valid record, and where the free space starts.
 fn scan() -> (Option<(usize, usize)>, usize) {
     let mut last = None;
     let mut off = 0;
@@ -67,7 +51,6 @@ fn scan() -> (Option<(usize, usize)>, usize) {
     (last, off)
 }
 
-/// Forgets the mesh network (factory reset).
 pub fn erase_settings() {
     if !flash::blank(MESH_SECTOR) {
         flash::erase_sector(MESH_SECTOR);
@@ -92,8 +75,6 @@ impl Hal for BleHal {
     }
 
     fn random(&mut self) -> u32 {
-        // xorshift, stirred with the free-running timer: session nonces and
-        // advertising jitter, nothing that keeps a secret
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 17;
         self.rng ^= self.rng << 5;
@@ -157,7 +138,6 @@ impl Hal for BleHal {
     }
 
     fn ota_capacity(&mut self) -> u32 {
-        // one update at a time: no room while Zigbee is downloading an image
         if staging::claim(Owner::Ble) {
             staging::SIZE
         } else {
@@ -183,7 +163,6 @@ impl Hal for BleHal {
     }
 
     fn radio_busy(&mut self) -> bool {
-        // (the time since the last frame counts from its end: one arriving now is traffic too)
         radio::receiving() || radio::quiet_ticks() < RADIO_QUIET
     }
 

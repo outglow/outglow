@@ -1,11 +1,4 @@
-//! AES-128 (FIPS-197). Zigbee security proper (CCM* and the
-//! Matyas-Meyer-Oseas hash) only runs the cipher forwards; the inverse
-//! cipher is here for touchlink, which transports the network key in a
-//! single ECB-encrypted block.
-
 const fn gen_sbox() -> [u8; 256] {
-    // Walk the multiplicative group of GF(2^8) with generator 3: p runs
-    // through the elements, q through their inverses.
     let mut s = [0u8; 256];
     let mut p: u8 = 1;
     let mut q: u8 = 1;
@@ -41,7 +34,6 @@ const fn gen_inverse(s: &[u8; 256]) -> [u8; 256] {
 
 static INV_SBOX: [u8; 256] = gen_inverse(&SBOX);
 
-/// Multiplication in GF(2^8).
 fn gmul(mut a: u8, mut b: u8) -> u8 {
     let mut p = 0;
     while b != 0 {
@@ -58,12 +50,8 @@ fn xtime(x: u8) -> u8 {
     (x << 1) ^ (if x & 0x80 != 0 { 0x1b } else { 0 })
 }
 
-/// A block cipher the hardware offers: encrypts one block in place under
-/// a key. False when it cannot be used (the block is then computed here;
-/// the engine may have left anything in its argument).
 pub type Engine = fn(&[u8; 16], &mut [u8; 16]) -> bool;
 
-/// An expanded AES-128 key.
 #[derive(Clone)]
 pub struct Aes128 {
     rk: [u8; 176],
@@ -71,8 +59,6 @@ pub struct Aes128 {
 }
 
 impl Aes128 {
-    /// A key whose blocks are encrypted by `engine` when there is one and
-    /// it works, and in software otherwise.
     pub fn with_engine(key: &[u8; 16], engine: Option<Engine>) -> Self {
         let mut aes = Aes128::new(key);
         aes.engine = engine;
@@ -121,7 +107,6 @@ impl Aes128 {
         }
         self.add_round_key(s, 0);
         for round in 1..=10 {
-            // SubBytes + ShiftRows (state is column-major: s[4*col + row])
             let t = *s;
             for col in 0..4 {
                 for row in 0..4 {
@@ -141,11 +126,9 @@ impl Aes128 {
         }
     }
 
-    /// The inverse cipher.
     pub fn decrypt(&self, s: &mut [u8; 16]) {
         self.add_round_key(s, 10);
         for round in (0..10).rev() {
-            // InvShiftRows + InvSubBytes
             let t = *s;
             for col in 0..4 {
                 for row in 0..4 {
@@ -175,14 +158,12 @@ mod tests {
 
     static BLOCKS: AtomicUsize = AtomicUsize::new(0);
 
-    /// An engine that works: counts its blocks and checks which key it was given.
     fn counting(key: &[u8; 16], block: &mut [u8; 16]) -> bool {
         BLOCKS.fetch_add(1, Ordering::SeqCst);
         Aes128::new(key).encrypt(block);
         true
     }
 
-    /// An engine that fails after spoiling its argument.
     fn broken(_: &[u8; 16], block: &mut [u8; 16]) -> bool {
         block.fill(0xee);
         false
@@ -205,7 +186,6 @@ mod tests {
         Aes128::with_engine(&key, Some(broken)).encrypt(&mut block);
         assert_eq!(block, expected, "computed in software from the untouched input");
 
-        // decryption stays in software and still inverts it
         let aes = Aes128::with_engine(&key, Some(counting));
         aes.decrypt(&mut block);
         assert_eq!(block, plain);
@@ -224,7 +204,6 @@ mod tests {
             block,
             [0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a]
         );
-        // and back
         Aes128::new(&key).decrypt(&mut block);
         for i in 0..16 {
             assert_eq!(block[i], (i as u8) * 0x11);

@@ -1,8 +1,3 @@
-// SPDX-License-Identifier: Apache-2.0
-//! blespec (emulator/go/cmd/zbnode/blespec.go): the BS* commands behind
-//! emulator/spec_ble (the BLE conformance suite). See the Go file for the
-//! command list.
-
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -36,8 +31,6 @@ struct SpecAdvSent {
     pdu: Vec<u8>,
 }
 
-/// Stands between the radio model and the central: records what passes and
-/// answers advertising packets from a script.
 #[derive(Default)]
 pub struct SpecPeer {
     c: Option<CentralRc>,
@@ -51,7 +44,6 @@ pub struct SpecPeer {
     sca: i64,
 }
 
-/// The shared spec peer (a local type, so that it can implement ble::Peer).
 pub struct SpecCell(RefCell<SpecPeer>);
 
 impl SpecCell {
@@ -167,8 +159,6 @@ impl Peer for SpecCell {
     }
 }
 
-/// What the central does with an LL control PDU of the bulb: the answers a
-/// central owes (llauto=1) and the termination state.
 fn spec_ll_ctrl(spec: &SpecRc, orig: LlCtrlFn) -> LlCtrlFn {
     let spec = spec.clone();
     Rc::new(move |c: &mut Central, m: &mut Machine, pl: &[u8]| {
@@ -215,7 +205,6 @@ fn new_spec() -> SpecRc {
     Rc::new(SpecCell(RefCell::new(SpecPeer::default())))
 }
 
-/// The state behind the BS commands (Go's package variable `spec`).
 #[derive(Default)]
 pub struct Spec {
     spec: Option<SpecRc>,
@@ -229,7 +218,6 @@ fn replace_state(c: &CentralRc) {
 }
 
 impl Spec {
-    /// BSCENTRAL.
     fn central(&mut self, m: &mut Machine, radio: &RadioRef, kv: &BTreeMap<String, String>) -> Result<(), String> {
         let num = |k: &str, d: i64| -> i64 {
             if let Some(v) = kv.get(k) {
@@ -315,7 +303,6 @@ impl Spec {
         None
     }
 
-    /// Runs a BS command; false if f[0] is not one.
     pub fn command(&mut self, f: &[String], out: &mut String, m: &mut Machine, radio: &RadioRef) -> bool {
         if !f[0].starts_with("BS") {
             return false;

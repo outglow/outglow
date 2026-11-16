@@ -1,13 +1,3 @@
-//! Zigbee network simulation (emulator/zigbee_sim.py): one bulb image and the
-//! plain coordinator. Power-on, joining (beacon, association, Transport Key,
-//! Device Announce, TC key exchange), the interview of Zigbee2MQTT, control
-//! (Off, On, Move to Level, Toggle, Read Attributes, Bind, Configure Reporting)
-//! with the PWM output checked after every command, 30 s of stability.
-//!
-//! Like the Python script it prints the coordinator's events as they happen
-//! and writes every frame to a pcap (SIM_PCAP, default zigbee-sim.pcap in the
-//! repository root).
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -24,7 +14,6 @@ pub fn def() -> SimDef {
 
 const EP: u8 = 1;
 
-/// The pcap of radio154.Pcap: linktype 195 (IEEE 802.15.4 with FCS), simulation time.
 pub fn write_pcap(path: &std::path::Path, frames: &[AirFrame]) -> std::io::Result<()> {
     let mut b = Vec::new();
     for v in [0xA1B2C3D4u32] {
@@ -53,7 +42,6 @@ pub fn fmt_light(s: &Light) -> String {
     out
 }
 
-/// `decode_attrs` of zigbee_sim.py: a Read Attributes Response body in words.
 pub fn decode_attrs(b: &[u8]) -> String {
     let (mut out, mut i) = (Vec::new(), 0usize);
     while i + 3 <= b.len() {
@@ -99,8 +87,6 @@ fn decode_report(b: &[u8]) -> String {
     format!("attr {attr:#06x} type {:#04x} value {}", b[2], hex(&b[3..]))
 }
 
-/// The run of zigbee_sim.py's `Sim`: one engine (`run_ms`, no lockstep), a
-/// log every line of which goes to the output.
 pub struct Z {
     pub w: World,
     pub out: Rc<RefCell<String>>,
@@ -110,7 +96,6 @@ pub struct Z {
 }
 
 impl Z {
-    /// `Sim(a)` of zigbee_sim.py: the bulb, the plain coordinator (started), the log into the output.
     pub fn new(cx: &SimCtx, img: &crate::image::Image) -> R<Z> {
         let node = node_of(img, cx.cpi)?;
         let out = Rc::new(RefCell::new(String::new()));
@@ -160,7 +145,6 @@ impl Z {
     pub fn has(&self, kind: &str) -> bool {
         self.w.coord.events.iter().any(|e| e.kind == kind)
     }
-    /// `zcl_and_wait`: the responses of a cluster with one of the commands that came after `send`.
     pub fn zcl_and_wait(&mut self, send: impl FnOnce(&mut Z), cluster: u16, kinds: &[u8], max_ms: f64)
                     -> R<Vec<crate::coord::ZclRsp>> {
         let n0 = self.w.coord.zcl_rsp.len();
@@ -195,8 +179,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     r
 }
 
-/// `finish` of zigbee_sim.py: the result, every step, the dropped frames, the
-/// non-empty flash sectors; the pcap; the output to the context.
 pub fn finish(z: &mut Z, cx: &mut SimCtx, pcap: &str) {
     let n_ok = z.results.iter().filter(|r| r.1).count();
     let (sent, recv, dropped) = {
@@ -226,7 +208,6 @@ pub fn finish(z: &mut Z, cx: &mut SimCtx, pcap: &str) {
     cx.results = z.results.clone();
 }
 
-/// The non-empty 4 KB sectors of the first MB of flash, as [first, last] runs (`_ranges`).
 pub fn sector_ranges(flash: &[u8]) -> Vec<[usize; 2]> {
     let mut rng: Vec<[usize; 2]> = Vec::new();
     for x in (0..0x100000).step_by(0x1000) {
@@ -241,12 +222,10 @@ pub fn sector_ranges(flash: &[u8]) -> Vec<[usize; 2]> {
 }
 
 fn body(z: &mut Z) -> R<()> {
-    // 1. start and light after power-on
     z.idle(1000.0)?;
     let st = light_of(&z.w.air.dut);
     z.check("light after power-on", st.on, &fmt_light(&st));
 
-    // 2. joining
     let n0 = z.w.coord.events.len();
     let ok = z.run_until(60000.0, 20.0, |z| z.w.coord.events[n0..].iter().any(|e| e.kind == "device-announce"))?;
     let d = if ok { format!("after {:.1} s of simulation", z.ms() / 1000.0) } else { String::new() };
@@ -257,7 +236,6 @@ fn body(z: &mut Z) -> R<()> {
     let dev = z.w.coord.devices.iter().find(|d| d.announced).cloned().unwrap();
     let short = dev.short;
     z.say(&format!("   device {} -> {short:#06x}", fmt_ext(dev.ext)));
-    // time for the TC key exchange (R21+) and the first Link Status
     z.idle(6000.0)?;
     let left = z.has("leave");
     z.check("no network leave after joining", !left, "");
@@ -266,7 +244,6 @@ fn body(z: &mut Z) -> R<()> {
         z.check("TC key exchange (Verify Key ok)", ok, "");
     }
 
-    // 3. interview (like Zigbee2MQTT)
     let r = z.zdo_wait(0x0005, &short.to_le_bytes(), 0x8005)?;
     let eps: Vec<i64> = r.as_ref().map(|p| p[5..5 + p[4] as usize].iter().map(|x| *x as i64).collect()).unwrap_or_default();
     z.check("ZDO Active Endpoints", r.is_some(), &format!("endpoints={}", crate::py::ints(eps)));
@@ -288,11 +265,10 @@ fn body(z: &mut Z) -> R<()> {
     let d = rsp.first().map(|r| decode_attrs(&r.body)).unwrap_or_default();
     z.check("Basic: Read Attributes (manufacturer/model/sw)", !rsp.is_empty(), &d);
 
-    // 4. control and verification of the PWM output
     let cmd = |z: &mut Z, name: &str, cluster: u16, cmd_id: u8, payload: &[u8], expect: &dyn Fn(&Light) -> bool| -> R<()> {
         let pl = payload.to_vec();
         let rsp = z.zcl_and_wait(|z| { z.w.coord.zcl_cmd(&mut z.w.air, short, EP, cluster, cmd_id, &pl); }, cluster, &[0x0B], 1500.0)?;
-        z.idle(1200.0)?; // transition/fade
+        z.idle(1200.0)?;
         let st = light_of(&z.w.air.dut);
         let status = rsp.first().and_then(|r| r.body.get(1).copied());
         let ok = !rsp.is_empty() && status == Some(0) && expect(&st);
@@ -315,7 +291,6 @@ fn body(z: &mut Z) -> R<()> {
         z.check(name, !rsp.is_empty(), &d);
     }
 
-    // 5. reporting as in Zigbee2MQTT: ZDO Bind (OnOff -> coordinator), Configure Reporting, a state change
     let mut b = dev.ext.to_le_bytes().to_vec();
     b.push(EP);
     b.extend_from_slice(&0x0006u16.to_le_bytes());
@@ -325,7 +300,6 @@ fn body(z: &mut Z) -> R<()> {
     let r = z.zdo_wait(0x0021, &b, 0x8021)?;
     let ok = r.as_ref().is_some_and(|p| p.get(1) == Some(&0x00));
     z.check("ZDO Bind OnOff -> coordinator", ok, &r.map(|p| hex(&p)).unwrap_or_default());
-    // configure_reporting(short, EP, 0x0006, 0x0000, 0x10, 0, 60)
     let pl = [0x00, 0x00, 0x00, 0x10, 0, 0, 60, 0];
     let rsp = z.zcl_and_wait(|z| {
         z.w.coord.zcl_send_with(&mut z.w.air, short, EP, 0x0006, 0x06, &pl, crate::coord::HA, false, false, None, false);
@@ -339,7 +313,6 @@ fn body(z: &mut Z) -> R<()> {
     let rep = rep_of(z);
     z.check("OnOff report after state change", rep.is_some(), &rep.map(|r| decode_report(&r.body)).unwrap_or_default());
 
-    // 6. stability: tens of seconds on the network without a reset and without leaving
     z.idle(30000.0)?;
     let (sent, ndrop) = {
         let rb = z.w.air.dut.radio.b();

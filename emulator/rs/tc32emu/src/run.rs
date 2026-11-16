@@ -1,10 +1,6 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Run and RunMs (run.go).
-
 use crate::error::Error;
 use crate::machine::{Machine, STIMER_IRQ};
 
-/// A half-open [lo, hi) address range.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Range {
     pub lo: u32,
@@ -12,9 +8,6 @@ pub struct Range {
 }
 
 impl Machine {
-    /// Run: blocks of check_every instructions, then UpdateTime() and one
-    /// interrupt if pending; an idle loop (pc in idle_ranges) skips ahead to
-    /// the next compare while an interrupt could be taken. Ok at max_cycles.
     pub fn run(&mut self, max_cycles: i64, idle_ranges: &[Range], check_every: i64) -> Result<(), Error> {
         let check_every = if check_every <= 0 { 32 } else { check_every };
         while self.cycles < max_cycles {
@@ -23,8 +16,6 @@ impl Machine {
                 continue;
             }
             if self.stalled {
-                // Rust only: the CPU stall (Machine::stall_until); the
-                // interrupt that woke it, if enabled, comes first.
                 self.stall_until(max_cycles)?;
                 if !self.stalled && self.irq_pending() {
                     self.take_irq();
@@ -81,7 +72,6 @@ impl Machine {
         Ok(())
     }
 
-    /// RunMs runs until the simulated time reaches target_ms.
     pub fn run_ms(&mut self, target_ms: f64, idle_ranges: &[Range]) -> Result<(), Error> {
         while self.ms() < target_ms {
             let mut left = ((target_ms - self.ms()) * self.cpu_hz as f64 / 1000.0) as i64 + 1;

@@ -1,14 +1,3 @@
-//! Green Power: the Rust firmware's proxy next to the stock firmware's
-//! (Telink's Green Power proxy as AwoX built it; once rust_gp_sim.py against
-//! the C firmware). Both bulbs hear the coordinator (the sink) and
-//! a scripted Green Power device; what the two proxies make of every stimulus
-//! is compared (attributes, commissioning notifications, proxy table entries
-//! byte for byte, notifications by unicast and under the device's alias,
-//! what is refused, the frame sent to the device in its receive window).
-//!
-//! Images: `--image rust=...` (default target/tc32/bulb-tc32.bin) and
-//! `--image stock=...` (default stock/stock-dimm.bin).
-
 use std::collections::BTreeMap;
 
 use super::util::verified;
@@ -57,7 +46,6 @@ fn hx(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// `v.hex() if v else None`
 fn hex_or_none(v: &Option<Vec<u8>>) -> String {
     match v {
         Some(b) if !b.is_empty() => hx(b),
@@ -65,7 +53,6 @@ fn hex_or_none(v: &Option<Vec<u8>>) -> String {
     }
 }
 
-/// `str({k: v and v.hex() for k, v in got.items()})`
 fn got_text(r: &Option<Vec<u8>>, t: &Option<Vec<u8>>) -> String {
     let f = |v: &Option<Vec<u8>>| match v {
         None => "None".to_string(),
@@ -75,7 +62,6 @@ fn got_text(r: &Option<Vec<u8>>, t: &Option<Vec<u8>>) -> String {
     format!("{{'R': {}, 'T': {}}}", f(r), f(t))
 }
 
-/// A frame as the GPD builds it.
 #[derive(Clone)]
 struct Gpdf {
     cmd: u8,
@@ -126,7 +112,6 @@ impl Gp {
         self.s.now()
     }
 
-    /// `Gpd.send_mpdu`: on the air `delay_ms` from now, no carrier sense.
     fn send_mpdu(&mut self, mpdu: &[u8], delay_ms: f64) -> f64 {
         let psdu = with_fcs(mpdu);
         let t0 = self.s.w.air.now() + delay_ms;
@@ -135,7 +120,6 @@ impl Gp {
         t1
     }
 
-    /// One GPDF, sent `repeats` times with the same MAC sequence number.
     fn frame(&mut self, f: Gpdf) -> f64 {
         self.gpd_seq = self.gpd_seq.wrapping_add(1);
         let seq = self.gpd_seq;
@@ -198,8 +182,6 @@ impl Gp {
         t1
     }
 
-    // ---- the sink's side
-    /// A Green Power cluster frame from the sink's endpoint 242: broadcast, or unicast to one proxy.
     fn gp_send(&mut self, dst: u16, cmd: u8, payload: &[u8], specific: bool) -> u8 {
         let c = &mut self.s.w.coord;
         let seq = nx(&mut c.st.zcl_seq);
@@ -215,7 +197,6 @@ impl Gp {
         seq
     }
 
-    /// Twice: the coordinator sends a broadcast once and without listening first.
     fn broadcast(&mut self, cmd: u8, payload: &[u8]) -> R<()> {
         for _ in 0..2 {
             self.gp_send(0xFFFD, cmd, payload, true);
@@ -235,7 +216,6 @@ impl Gp {
             .collect()
     }
 
-    /// The same request to each proxy; the two answers.
     fn both_answer(&mut self, send: &dyn Fn(&mut Gp, u16), cmd: u8) -> R<(Option<Vec<u8>>, Option<Vec<u8>>)> {
         let mut out = [None, None];
         for (k, name) in ["R", "T"].iter().enumerate() {
@@ -328,14 +308,10 @@ impl Gp {
         }, 0x0B)
     }
 
-    /// Both proxies sent `want` notifications since `since`, equal but for their own address and the link byte.
     fn same_notification(&mut self, cx: &mut SimCtx, what: &str, cmd: u8, since: f64, want: usize) {
         self.notifications(cx, what, cmd, since, want, want, "")
     }
 
-    /// The Rust proxy sent `want` notifications (as the GP specification asks),
-    /// the stock proxy `stock` (as measured; `why` says what it does instead);
-    /// when both sent some, they are equal but for their own address and the link byte.
     #[allow(clippy::too_many_arguments)]
     fn notifications(&mut self, cx: &mut SimCtx, what: &str, cmd: u8, since: f64, want: usize, stock: usize, why: &str) {
         let gr: Vec<Notif> = self.gp_from(self.short["R"], cmd, since).iter().map(|b| notification(b)).collect();
@@ -392,7 +368,6 @@ impl Notif {
     }
 }
 
-/// The records of a Read Attributes Response: (attribute, value bytes); only the types this cluster answers with.
 fn attr_records(b: &[u8]) -> Vec<(u16, Vec<u8>)> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -416,7 +391,6 @@ fn attr_records(b: &[u8]) -> Vec<(u16, Vec<u8>)> {
     out
 }
 
-/// Splits a GP (Commissioning) Notification; the proxy-specific fields apart.
 fn notification(body: &[u8]) -> Notif {
     let g = |i: usize| body.get(i).copied().unwrap_or(0);
     let u16_ = |i: usize| u16::from_le_bytes([g(i), g(i + 1)]);
@@ -443,7 +417,6 @@ fn notification(body: &[u8]) -> Notif {
     }
 }
 
-/// NWK header fields and decrypted payload of a secured NWK data frame on the air.
 fn nwk_plain(psdu: &[u8], pan: u16) -> Option<(u16, u16, u8, u8, Vec<u8>)> {
     let f = mac_parse(psdu)?;
     let p = &f.payload;
@@ -483,7 +456,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     tn.write_flash(0xFF000, &REC_T);
     let mut s = Sim::new(rn, "R", Coord::new_plain(11, NWK_KEY), cx.log(), QUANTUM);
     let (rid, tid) = (NodeId::Dut, s.w.add_bulb(tn, "T"));
-    s.w.set_t_off(tid, 1500.0); // so that the two do not answer the same beacon request
+    s.w.set_t_off(tid, 1500.0);
     s.w.coord.start(&mut s.w.air);
     let gpd = s.w.attach_peer(|id| Peer::bare(Station::new(id, 11, 0xFFFF, None, 0, NWK_KEY, (0, 0, 0, 0, 0), 0, 0), "gpd"));
     let nodes = [(rid, "R"), (tid, "T")];
@@ -507,7 +480,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     g.s.run_until(15000.0, 10.0, |s| verified(s) >= 2)?;
     g.s.run(1000.0)?;
 
-    // ---- what the two proxies say of themselves
     let mut desc = [None, None];
     for (k, name) in ["R", "T"].iter().enumerate() {
         let t0 = g.now();
@@ -532,8 +504,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let (ar, at) = g.both_answer(&move |g: &mut Gp, s| {
         g.gp_send(s, 0x00, &read, false);
     }, 0x01)?;
-    // GP 1.1.2 Table 30: gpSharedSecurityKeyType 0b000 by default, ClusterRevision 0x0002.
-    // The stock proxy (measured) has key type 0b010 with the key c0..cf and revision 1.
     let (pr, pt) = (ar.as_deref().map(attr_records).unwrap_or_default(), at.as_deref().map(attr_records).unwrap_or_default());
     let val = |v: &[(u16, Vec<u8>)], id: u16| v.iter().find(|x| x.0 == id).map(|x| x.1.clone());
     let own = [0x0020u16, 0x0021, 0xFFFD];
@@ -545,12 +515,10 @@ fn run(cx: &mut SimCtx) -> R<()> {
                        (Rust: type 0b000, GP 1.1.2 default; stock: 0b010 with c0..cf) and the revision (Rust 2, stock 1)",
              common && rust_spec && stock_measured, &format!("Rust {}  stock {}", hex_or_none(&ar), hex_or_none(&at)));
     let (er, et) = g.table_entry(SWITCH, None, 0)?;
-    // GP 1.1.2 A.3.4.3.x: an empty table, asked in unicast: NOT_FOUND (0x8b), 0 entries, start index 0xff
     cx.check(g.now(), "an empty proxy table: Rust answers NOT_FOUND (GP 1.1.2 A.3.4.3); stock SUCCESS with no entry (measured)",
              er.as_deref() == Some(&[0x8B, 0x00, 0xFF, 0x00][..]) && et.as_deref() == Some(&[0x00, 0x00, 0xFF, 0x00][..]),
              &got_text(&er, &et));
 
-    // ---- commissioning mode
     g.commissioning_mode(true, true, false)?;
     let t0 = g.now();
     let mut comm = vec![0x02, 0x81, 0xB2];
@@ -576,18 +544,16 @@ fn run(cx: &mut SimCtx) -> R<()> {
     cx.check(g.now(), "neither tunnels a Commissioning frame marked auto-commissioning, nor a Commissioning Reply",
              (nr, nt) == (0, 0), &format!("{{'R': {nr}, 'T': {nt}}}"));
 
-    // ---- an answer for the device: first one proxy is named, then the other
     for name in ["R", "T"] {
         let mut reply = vec![0x00];
         reply.extend_from_slice(&g.short[name].to_le_bytes());
-        reply.push(0); // channel - 11
+        reply.push(0);
         reply.extend_from_slice(&SWITCH.to_le_bytes());
         reply.extend_from_slice(&[0xF0, 3, 0x01, 0x62, 0x1A]);
         g.broadcast(0x06, &reply)?;
         let n0 = g.s.w.air.frames.len();
         let t_end = g.frame(Gpdf { rx_after_tx: true, repeats: 1, ..Gpdf::new(0xE0, &[0x02, 0x23]) });
         g.s.run(300.0)?;
-        // the answer's window is measured from the start of the device's frame (GP Basic A.1.5.2.1.2-3)
         let t_start = g.s.w.air.frames[n0..].iter().find(|f| (f.t1 - t_end).abs() < 1e-6).map_or(t_end, |f| f.t0);
         let mut to_gpd = Vec::new();
         for f in &g.s.w.air.frames[n0..] {
@@ -614,7 +580,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
                  ok, if detail.is_empty() { "nothing sent" } else { &detail });
     }
 
-    // ---- pairing: unicast to the sink, encrypted
     g.pairing(SWITCH, None, 0, true, false, 3, 0, 3, 4, Some(100), Some(switch_key()), None, None, false)?;
     let (er, et) = g.table_entry(SWITCH, None, 0)?;
     cx.check(g.now(), "after GP Pairing the two proxy table entries are the same, byte for byte", er.is_some() && er == et,
@@ -638,10 +603,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     cx.check(g.now(), "a replayed counter, a wrong key and an unsecured frame are dropped by both", (nr, nt) == (0, 0),
              &format!("{{'R': {nr}, 'T': {nt}}}"));
     let (er, et) = g.table_entry(SWITCH, None, 0)?;
-    // the response: status, total, start index, count, then the entry: options (2), GPD ID (4), security
-    // options (1), frame counter (4), ... Rust's counter moved on to the last frame it took (102) and its
-    // InRange bit (options bit 10, GP 1.1.2 A.3.4.2.2.1) is set as it heard the device; the stock entry kept
-    // the pairing's 100 and no InRange (it took no frame)
     let counter_at = |v: &Option<Vec<u8>>| v.as_ref().and_then(|b| b.get(11..15)).map(|c| u32::from_le_bytes(c.try_into().unwrap()));
     let opts_at = |v: &Option<Vec<u8>>| v.as_ref().and_then(|b| b.get(4..6)).map(|c| u16::from_le_bytes([c[0], c[1]]));
     let same_but_counter = match (&er, &et) {
@@ -653,12 +614,9 @@ fn run(cx: &mut SimCtx) -> R<()> {
                  && opts_at(&er).zip(opts_at(&et)).is_some_and(|(r, t)| r == t | 0x0400),
              &format!("Rust {}  stock {}", hex_or_none(&er), hex_or_none(&et)));
 
-    // ---- a second device: no security, to a group of the sink's choosing
     let other: u32 = 0x00000042;
     g.pairing(other, None, 0, true, false, 2, 0x0B84, 0, 0, None, None, None, None, true)?;
     let (er, et) = g.table_entry(other, None, 0)?;
-    // GP 1.1.2 Table 26: the alias stored with the GroupID, "either pre-commissioned or derived": the
-    // stock entry holds the derived alias 0x0042, the Rust entry 0xffff (both send under 0x0042, below)
     let n = er.as_ref().map_or(0, |v| v.len());
     let same_but_alias = match (&er, &et) {
         (Some(a), Some(b)) => a.len() == b.len() && n >= 3 && a[..n - 3] == b[..n - 3] && a[n - 1] == b[n - 1],
@@ -714,7 +672,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let n = g.s.w.coord.zcl_rsp.iter().filter(|r| r.ms >= t0 && r.src == 0x0042 && r.cluster == GP_CLUSTER && r.cmd == Some(0x00)).count();
     cx.check(g.now(), "the two broadcasts collapse into one at the sink", n == 1, &format!("{n} received"));
 
-    // ---- shared key from the cluster attribute
     let mut write = vec![0x20, 0x00, 0x18, 0x02, 0x21, 0x00, 0xF1];
     write.extend_from_slice(&shared_key());
     let (wr, wt) = g.both_answer(&move |g: &mut Gp, s| {
@@ -729,7 +686,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     g.s.run(800.0)?;
     g.same_notification(cx, "a device paired with key type 'group key' and no key: both use the shared key", 0x00, t0, 1);
 
-    // ---- a device known by its IEEE address
     g.pairing(0, Some(SENSOR), 5, true, false, 3, 0, 3, 4, Some(100), Some(switch_key()), None, None, false)?;
     let (er, et) = g.table_entry(0, Some(SENSOR), 5)?;
     cx.check(g.now(), "a device with an IEEE address: the same entries", er.is_some() && er == et,
@@ -740,7 +696,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     g.notifications(cx, "its encrypted frame (own key) is decrypted and forwarded by Rust; stock forwards none (measured)", 0x00, t0, 1, 0,
                     "no notification");
 
-    // ---- removing
     g.pairing(SWITCH, None, 0, true, true, 3, 0, 0, 0, None, None, None, None, false)?;
     let (er, et) = g.table_entry(SWITCH, None, 0)?;
     cx.check(g.now(), "GP Pairing 'remove the device': gone from both tables",

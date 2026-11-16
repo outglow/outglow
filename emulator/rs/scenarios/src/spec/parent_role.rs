@@ -1,7 +1,3 @@
-//! The bulb as the parent of end devices (R22 3.6.10, 3.6.2.3, 3.6.5, 4.6.3),
-//! ported from emulator/spec/parent_role.py. The end devices are scripted at
-//! frame level (peer.rs) and hear only the bulb.
-
 use super::Test;
 use crate::air::NodeId;
 use crate::peer::EdJoin;
@@ -98,7 +94,6 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---- Python-style texts
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -112,7 +107,6 @@ fn tf(b: bool) -> &'static str {
         "False"
     }
 }
-/// repr() of a str
 fn py_str(s: &str) -> String {
     let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
     let mut o = String::new();
@@ -154,7 +148,6 @@ fn nwk_pl(f: &CapFrame) -> Vec<u8> {
     f.nwk.as_ref().and_then(|n| n.payload.clone()).unwrap_or_default()
 }
 
-// ---- local helpers
 fn ed_short(s: &mut Session, p: NodeId) -> u16 {
     s.peer(p).st.short16()
 }
@@ -162,7 +155,6 @@ fn ed_ext(s: &mut Session, p: NodeId) -> u64 {
     s.peer(p).st.ext
 }
 
-/// A fresh end device joined through the bulb, or INCONCLUSIVE with the reason.
 fn new_ed(s: &mut Session, n: u64, timeout: Option<u8>, cap: u8) -> R<(NodeId, EdJoin)> {
     let ed = s.end_device(&format!("ed{n}"), EXT + n, cap, true)?;
     let r = s.ed_join(ed, timeout, true)?;
@@ -185,7 +177,6 @@ fn shared_ed(s: &mut Session) -> R<NodeId> {
     }
 }
 
-/// (status, short, frame) of the Update Device commands for `ext` the bulb sent since the mark.
 fn update_devices(s: &mut Session, since: usize, ext: u64) -> Vec<(Option<u8>, Option<u16>, CapFrame)> {
     let mut out = Vec::new();
     for f in s.dut_frames(since, is_aps_cmd(0x06)) {
@@ -201,9 +192,6 @@ fn update_devices(s: &mut Session, since: usize, ext: u64) -> Vec<(Option<u8>, O
     out
 }
 
-/// Is the device still in the bulb's neighbour table as an end device? Decided
-/// by the rule of 3.6.10.2 step 2: an End Device Timeout Request from a device
-/// without an entry is dropped.
 fn child_known(s: &mut Session, ed: NodeId) -> R<(bool, String)> {
     let i = s.mark();
     let t = s.ed_timeout_request(ed, 8, 0, 200.0)?;
@@ -239,7 +227,6 @@ fn report_payload() -> Vec<u8> {
     vec![0x00, 0x00, 0x10, 0x01]
 }
 
-// ---------------------------------------------------------------- session A
 fn join_update_device(s: &mut Session) -> R<String> {
     let ed = shared_ed(s)?;
     let r = s.note::<EdJoin>("ed_join").unwrap();
@@ -554,7 +541,6 @@ fn route_request_for_child(s: &mut Session) -> R<String> {
         let r2_short = s.peer(r2).st.short16();
         let mut ok = false;
         for _ in 0..3 {
-            // the request is only accepted from a neighbour with a known cost
             let f = s.wait_dut(is_nwk_cmd(0x08), 18000.0, None)?;
             let Some(f) = f else { break };
             let p = nwk_pl(&f);
@@ -643,9 +629,6 @@ fn child_leave_rejoin(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-// ---------------------------------------------------------------- session B
-/// The ageing experiment of PAR-AGE-01 and -02, once per session: a child with a 10 s timeout that then
-/// sends nothing for 16 s. (child, capture mark before the silence); None when the timeout was refused.
 fn age_experiment(s: &mut Session) -> R<Option<(NodeId, usize)>> {
     if let Some(v) = s.note::<Option<(NodeId, usize)>>("age") {
         return Ok(v);
@@ -787,7 +770,6 @@ fn moved_child_unicast(s: &mut Session) -> R<String> {
     s.run(300.0)?;
     let (short, ext) = (ed_short(s, ed), ed_ext(s, ed));
     let dut = s.dut_short;
-    // the child's traffic now arrives through r2: one frame the bulb has to relay, one addressed to the bulb
     {
         let (st, air) = s.w.st(r2);
         st.tx_zcl(

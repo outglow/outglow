@@ -1,7 +1,3 @@
-//! GAP: advertising and scan response data of a discoverable, connectable
-//! peripheral (Core 5.4 Vol 3 Part C 9.2, 11; Core Specification Supplement 11
-//! Part A 1.1-1.4); emulator/spec_ble/gap_advertising.py.
-
 use crate::ble::harness::{hx, parse_ad, BleSession};
 use crate::ble::{BleTest, Level};
 use crate::frames::py_bytes;
@@ -90,7 +86,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-/// (AdvData of the ADV_IND, ScanRspData or None).
 fn data(s: &mut BleSession) -> R<(Vec<u8>, Option<Vec<u8>>)> {
     let pk = s.wait_adv(2, 5000.0, Some(0.0), 0)?;
     let Some(last) = pk.last() else { return Err(Stop::Inconclusive("no ADV_IND seen".into())) };
@@ -106,9 +101,6 @@ fn data(s: &mut BleSession) -> R<(Vec<u8>, Option<Vec<u8>>)> {
 }
 
 fn adv_data_format(s: &mut BleSession) -> R<String> {
-    // 11: "Each AD structure shall have a Length field of one octet, which contains the Length value and
-    // shall not be zero, and a Data field of Length octets ... The non-significant part ... shall contain
-    // all-zero octets." Vol 6 Part B 2.3.1.1 / 2.3.2.2: 0-31 octets.
     let (adv, rsp) = data(s)?;
     let mut notes = Vec::new();
     for (name, d) in [("AdvData", Some(adv)), ("ScanRspData", rsp)] {
@@ -126,7 +118,6 @@ fn adv_data_format(s: &mut BleSession) -> R<String> {
 }
 
 fn adv_flags(s: &mut BleSession) -> R<String> {
-    // 9.2.3.2 / 9.2.4.2 and CSS 1.3 (see the Python module).
     let (adv, _) = data(s)?;
     let (ads, _) = parse_ad(&adv);
     let fl: Vec<&Vec<u8>> = ads.iter().filter(|(t, _)| *t == FLAGS).map(|(_, v)| v).collect();
@@ -162,8 +153,6 @@ fn flags_of(data: &[u8]) -> Option<u8> {
 }
 
 fn limited_timeout(s: &mut BleSession) -> R<String> {
-    // 9.2.3.2: "Devices shall remain in the limited discoverable mode no longer than T_GAP(lim_adv_timeout)."
-    // Appendix A, Table A.1: 180 s, "Required value". The bulb is left alone for 185 s from power-up.
     let first = s.wait_adv(1, 5000.0, Some(0.0), 0)?;
     let Some(f) = first.first() else { return Err(Stop::Inconclusive("no ADV_IND seen".into())) };
     let f0 = flags_of(f.data());
@@ -190,8 +179,6 @@ fn limited_timeout(s: &mut BleSession) -> R<String> {
 }
 
 fn service_uuid_once(s: &mut BleSession) -> R<String> {
-    // CSS 1.1.1: "A packet or data block shall not contain more than one instance for each Service UUID
-    // data size." Incomplete and complete list of one size are the two types of that size.
     let (adv, rsp) = data(s)?;
     let mut notes = Vec::new();
     for (name, d) in [("AdvData", Some(adv)), ("ScanRspData", rsp)] {
@@ -214,8 +201,6 @@ fn service_uuid_once(s: &mut BleSession) -> R<String> {
 }
 
 fn no_gap_gatt_uuid(s: &mut BleSession) -> R<String> {
-    // CSS 1.1: "GAP and GATT service UUIDs should not be included in a Service UUIDs AD type, for either a
-    // complete or incomplete list."
     let (adv, rsp) = data(s)?;
     let mut hit = Vec::new();
     for (name, d) in [("AdvData", Some(adv)), ("ScanRspData", rsp)] {
@@ -238,7 +223,6 @@ fn no_gap_gatt_uuid(s: &mut BleSession) -> R<String> {
 }
 
 fn manufacturer_data(s: &mut BleSession) -> R<String> {
-    // CSS 1.4.1: "The first two data octets shall contain a company identifier from Assigned Numbers."
     let (adv, rsp) = data(s)?;
     let mut notes = Vec::new();
     for (name, d) in [("AdvData", Some(adv)), ("ScanRspData", rsp)] {
@@ -260,8 +244,6 @@ fn manufacturer_data(s: &mut BleSession) -> R<String> {
 }
 
 fn local_name(s: &mut BleSession) -> R<String> {
-    // CSS 1.2.1: a shortened name is a prefix of a complete name in the other packet, and two complete
-    // names are equal.
     let (adv, rsp) = data(s)?;
     let mut names: Vec<(&str, u8, Vec<u8>)> = Vec::new();
     for (name, d) in [("AdvData", Some(adv)), ("ScanRspData", rsp)] {

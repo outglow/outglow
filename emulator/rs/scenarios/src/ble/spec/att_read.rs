@@ -1,6 +1,3 @@
-//! ATT: Read By Type, Read, Read Blob, Read By Group Type (Core 5.4 Vol 3 Part F
-//! 3.4.4); emulator/spec_ble/att_read.py.
-
 use crate::ble::harness::{att_error, hx, BleSession, Gatt, LinkOpts};
 use crate::ble::util::{
     absent_uuid16, blob, describe, error_cases, error_problem, full_value, leading_run, link, read, read_all, some,
@@ -197,7 +194,6 @@ pub fn tests() -> Vec<BleTest> {
     ]
 }
 
-// ---- helpers
 fn le(v: u16) -> [u8; 2] {
     v.to_le_bytes()
 }
@@ -222,8 +218,6 @@ fn rbgt(s: &mut BleSession, a: u16, b: u16, typ: &[u8]) -> R<Option<Vec<u8>>> {
     s.att(&cat(&[&[0x10], &le(a), &le(b), typ]))
 }
 
-/// [Attribute Data] of a Read By Type (op 0x09, head 2) or Read By Group Type
-/// (0x11, head 4) response; None when it is not well formed.
 fn list_(rsp: &Option<Vec<u8>>, op: u8, head: u8) -> Option<Vec<Vec<u8>>> {
     let r = rsp.as_ref()?;
     if r.len() < 2 || r[0] != op || r[1] <= head || r.len() < 2 + r[1] as usize || (r.len() - 2) % r[1] as usize != 0 {
@@ -246,12 +240,7 @@ fn start_link(s: &mut BleSession) -> R<Gatt> {
     table(s)
 }
 
-// ------------------------------------------------------------------ Read By Type
 fn read_by_type_values(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1: the attributes with the lowest handles within the range. 3.4.4.2: complete handle-value
-    // pairs, Length = the size of one pair, of a longer value the first (ATT_MTU - 4) octets. The types are
-    // those of the first readable characteristic value with a 16-bit and with a 128-bit UUID; the value to
-    // compare with comes from a Read Request (and Read Blob Requests).
     let g = start_link(s)?;
     let (mut notes, mut bad) = (Vec::<String>::new(), Vec::<String>::new());
     for size in [2usize, 16] {
@@ -272,7 +261,6 @@ fn read_by_type_values(s: &mut BleSession) -> R<String> {
         let h0 = *g.attrs.iter().filter(|(_, u)| **u == c.uuid).map(|(h, _)| h).min().unwrap();
         let (mut v, mut rsp) = (None, None);
         for _ in 0..3 {
-            // again when the value was another one after the request
             v = full_value(s, h0, MTU)?.0;
             rsp = rbt(s, 1, 0xFFFF, &c.uuid)?;
             if v.is_none() || full_value(s, h0, MTU)?.0 == v {
@@ -322,9 +310,6 @@ fn read_by_type_values(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_type_uuid_forms(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1, Note: "All attribute types are effectively compared as 128-bit UUIDs, even if a 16-bit UUID
-    // is provided in this request or defined for an attribute." Part B 2.5.1. Types: «Characteristic»
-    // (0x2803) and the type of the first readable characteristic value with a 16-bit UUID.
     let g = start_link(s)?;
     let mut types = vec![0x2803u16];
     if let Some(c) = g.chars.iter().find(|c| c.uuid.len() == 2 && c.props & 0x02 != 0) {
@@ -354,10 +339,6 @@ fn read_by_type_uuid_forms(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_type_fill(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1: "The ATT Server shall include as many attributes as possible in the response"; values of
-    // different lengths need several requests. 3.4.4.2: pairs in handle order, up to ATT_MTU - 2 octets.
-    // Type «Characteristic»: declarations with 16-bit UUIDs are 5 octets, with 128-bit UUIDs 19. What each
-    // declaration holds is first asked one handle at a time (start = end).
     let g = start_link(s)?;
     let decls: Vec<u16> = g.attrs.iter().filter(|(_, u)| u[..] == CHAR).map(|(h, _)| *h).collect();
     let mut pairs: Vec<(u16, Vec<u8>)> = Vec::new();
@@ -417,8 +398,6 @@ fn read_by_type_fill(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_type_not_found(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1: no attribute of the type in the range -> Attribute Not Found (0x0A), Attribute Handle In
-    // Error = the starting handle.
     let g = start_link(s)?;
     let absent = absent_uuid16(&g)?;
     let nx = g.last_handle().wrapping_add(1);
@@ -451,8 +430,6 @@ fn read_by_type_not_found(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_type_invalid_handles(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1: Starting Handle greater than Ending Handle or 0x0000 -> Invalid Handle (0x01), Attribute
-    // Handle In Error = the Starting Handle. The type is «Characteristic», which exists.
     start_link(s)?;
     let cases = vec![
         case("0x0000-0xFFFF".into(), cat(&[&[0x08], &le(0), &le(0xFFFF), &CHAR]), &[0x01], Some(0x0000)),
@@ -469,9 +446,6 @@ fn val_of(vals: &[(u16, Option<Vec<u8>>)], h: u16) -> Option<Vec<u8>> {
 }
 
 fn read_by_type_not_readable(s: &mut BleSession) -> R<String> {
-    // 3.4.4.1: a value that cannot be read due to permissions -> Read Not Permitted (0x02) with the handle
-    // of the attribute causing the error. An attribute counts as unreadable when a Read Request on it is
-    // answered with Read Not Permitted.
     let g = start_link(s)?;
     let vals = read_all(s)?;
     let locked: Vec<u16> = g
@@ -506,9 +480,7 @@ fn read_by_type_not_readable(s: &mut BleSession) -> R<String> {
     ))
 }
 
-// ------------------------------------------------------------------ Read, Read Blob
 fn read_invalid_handles(s: &mut BleSession) -> R<String> {
-    // 3.4.4.3: an invalid handle -> Invalid Handle (0x01). 3.2.2: handle 0x0000 is reserved.
     let g = start_link(s)?;
     let lh = g.last_handle() as u32;
     let hs: Vec<u16> = [0u32, lh + 1, lh + 2, 0xFFFF]
@@ -526,7 +498,6 @@ fn read_invalid_handles(s: &mut BleSession) -> R<String> {
     ))
 }
 
-/// (handle, value) of the attributes longer than ATT_MTU - 1 octets, by Read Blob.
 fn long_values(s: &mut BleSession, g: &Gatt) -> R<Vec<(u16, Vec<u8>)>> {
     let vals = read_all(s)?;
     let full: Vec<u16> = g
@@ -572,9 +543,6 @@ fn slice(v: &[u8], off: usize, n: usize) -> Vec<u8> {
 }
 
 fn read_long_value(s: &mut BleSession) -> R<String> {
-    // 3.4.4.4: of a longer value the first (ATT_MTU-1) octets. 3.4.4.6: (ATT_MTU-1) octets from Value Offset.
-    // The value is put together from Read Blob Requests; the same value must then come out of requests at
-    // other offsets. A value that changes by itself proves nothing: the next long attribute is taken.
     let g = start_link(s)?;
     let mut moving = Vec::new();
     for (h, v) in long_values(s, &g)? {
@@ -607,7 +575,6 @@ fn read_long_value(s: &mut BleSession) -> R<String> {
     )))
 }
 
-/// (handle, value) of the Device Name, the attribute of variable length every GATT server has.
 fn name(s: &mut BleSession, g: &Gatt) -> R<(u16, Vec<u8>)> {
     let Some(c) = g.char16(0x2A00).cloned() else {
         return Err(Stop::Inconclusive("no Device Name characteristic to read in parts".into()));
@@ -638,8 +605,6 @@ fn name(s: &mut BleSession, g: &Gatt) -> R<(u16, Vec<u8>)> {
 }
 
 fn read_blob_offsets(s: &mut BleSession) -> R<String> {
-    // 3.4.4.5: a response when the offset is not greater than the length; for an offset equal to the
-    // length the part is empty. The Device Name is 0 to 248 octets (Part C 12.1): not of fixed length.
     let g = start_link(s)?;
     let (h, v) = name(s, &g)?;
     let n = v.len();
@@ -660,8 +625,6 @@ fn read_blob_offsets(s: &mut BleSession) -> R<String> {
 }
 
 fn read_blob_invalid_offset(s: &mut BleSession) -> R<String> {
-    // 3.4.4.5: an offset greater than the length -> Invalid Offset (0x07). Control: the offset equal to the
-    // length minus one is answered with a response.
     let g = start_link(s)?;
     let (h, v) = name(s, &g)?;
     let n = v.len();
@@ -686,7 +649,6 @@ fn read_blob_invalid_offset(s: &mut BleSession) -> R<String> {
 }
 
 fn read_blob_invalid_handles(s: &mut BleSession) -> R<String> {
-    // 3.4.4.5: an invalid handle -> Invalid Handle (0x01).
     let g = start_link(s)?;
     name(s, &g)?;
     let lh = g.last_handle() as u32;
@@ -706,10 +668,7 @@ fn read_blob_invalid_handles(s: &mut BleSession) -> R<String> {
     Ok(format!("handles {}: Invalid Handle", hs.iter().map(|h| format!("{h:#06x}")).collect::<Vec<_>>().join(", ")))
 }
 
-// ------------------------------------------------------------------ Read By Group Type
 fn read_by_group_type_fill(s: &mut BleSession) -> R<String> {
-    // 3.4.4.10: complete Attribute Data, ordered by handle, Length = the size of one. 3.4.4.9: the lowest
-    // handles within the range, as many as possible. Each service declaration is first asked alone.
     let g = start_link(s)?;
     let decls: Vec<u16> = g.attrs.iter().filter(|(_, u)| u[..] == PRIMARY).map(|(h, _)| *h).collect();
     let mut data: Vec<(u16, Vec<u8>)> = Vec::new();
@@ -777,9 +736,6 @@ fn read_by_group_type_fill(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_group_type_unsupported(s: &mut BleSession) -> R<String> {
-    // 3.4.4.9: not a supported grouping attribute -> Unsupported Group Type (0x10), Starting Handle. Part G
-    // 2.5.3: «Characteristic» shall not be used. Only types that attributes of this server have are asked.
-    // Control: «Primary Service» is answered with a response.
     let g = start_link(s)?;
     let ctl = rbgt(s, 1, 0xFFFF, &PRIMARY)?;
     if !ctl.as_ref().is_some_and(|c| c[0] == 0x11) {
@@ -809,8 +765,6 @@ fn read_by_group_type_unsupported(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_group_type_secondary(s: &mut BleSession) -> R<String> {
-    // 3.4.4.9: no attribute of the type in the range -> Attribute Not Found (0x0A); not a supported
-    // grouping attribute -> Unsupported Group Type (0x10); either with the Starting Handle.
     let g = start_link(s)?;
     let sec: Vec<u16> = g.attrs.iter().filter(|(_, u)| u[..] == [0x01, 0x28]).map(|(h, _)| *h).collect();
     let rsp = rbgt(s, 1, 0xFFFF, &[0x01, 0x28])?;
@@ -831,8 +785,6 @@ fn read_by_group_type_secondary(s: &mut BleSession) -> R<String> {
 }
 
 fn read_by_group_type_errors(s: &mut BleSession) -> R<String> {
-    // 3.4.4.9: Starting Handle 0x0000 or greater than the Ending Handle -> Invalid Handle (0x01); no
-    // attribute of the type in the range -> Attribute Not Found (0x0A); both with the Starting Handle.
     let g = start_link(s)?;
     let nx = g.last_handle().wrapping_add(1);
     let cases = vec![

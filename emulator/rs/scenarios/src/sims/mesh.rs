@@ -1,9 +1,3 @@
-//! Telink mesh on the air between two (or three) bulbs with our firmware
-//! (emulator/mesh_sim.py): the app connects to A, commands with dst != 0 go
-//! over the radio (channels 2/12/23/34, network access code, LTK) to B; B's
-//! responses (0xdb) return to the app through A. `--image relay=`: a third
-//! node C hears only B, commands to C go A -> B -> C.
-
 use super::ble_central::{
     discover, fmt_light, hx, ok, secure_pw, set_mesh_packets, tel_get, unhx, Bench, MeshClient, Status, Transport,
     OP_MESH_ADDR, OP_POWER, OP_STATUS_REQ, OP_STATUS_RSP, OP_WHITE_BRIGHTNESS,
@@ -58,7 +52,6 @@ impl Run<'_> {
         Ok((mac_le, tel, tr, cl))
     }
 
-    /// Like the app when adding a bulb: factory login, setMesh, then the address (0xe0).
     fn pair(&mut self, id: NodeId, expect_mac: &[u8], addr: Option<u16>) -> R<()> {
         let (mac_le, _, mut tr, mut cl) = self.connect(id)?;
         let mut em = expect_mac.to_vec();
@@ -127,14 +120,12 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.run_ms(a, 1500.0)?;
     let mut r = Run { cx, b, names };
 
-    // --- pairing the bulbs into one network (A keeps the default address)
     r.pair(a, &mac_a, None)?;
     r.pair(bb, &mac_b, Some(ADDR_B))?;
     if let Some(cid) = c {
         r.pair(cid, &mac_c, Some(ADDR_C))?;
     }
 
-    // --- app on A
     let (_, tel, mut tr, mut cl) = r.connect(a)?;
     ok(cl.login(&mut r.b, &mut tr, MESH_NAME, MESH_PW)?)?;
     let has_key = cl.key.is_some();

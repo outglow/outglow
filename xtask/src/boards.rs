@@ -1,21 +1,3 @@
-//! `cargo xtask boards [--check]`: the board table from the stock profiles.
-//!
-//! Reads analysis/profiles/*.json (what `cargo run -p scenarios --example
-//! stock_profile` records of the original firmware in the emulator) and writes
-//! the board table everywhere it is needed:
-//!
-//! - crates/bulb-tc32/src/boards.rs: what the firmware is built from
-//!   (`BULB_BOARD`);
-//! - crates/bulb-tc32/boards.tsv: name, tunable, OTA image type;
-//! - crates/outglow-image/src/boards_table.rs: what the tools check images and
-//!   bulbs against;
-//! - site/public/boards.json: the same for the website and its flasher.
-//!
-//! The white bulbs: dimmable (one channel) or tunable white (warm + cold); the
-//! colour bulbs: red, green and blue beside two whites (RGB+TW), one white
-//! (RGB+W), or a white ring with a colour strip of its own (EBF). OTA image
-//! types are fixed here once given: an image type names a board for good.
-
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -25,17 +7,14 @@ use serde_json::Value;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// fail if the generated files are not up to date instead of writing them
+    #[doc = " fail if the generated files are not up to date instead of writing them"]
     #[arg(long)]
     check: bool,
-    /// the profiles (default analysis/profiles)
+    #[doc = " the profiles (default analysis/profiles)"]
     #[arg(long)]
     profiles: Option<PathBuf>,
 }
 
-/// Pins that can carry a PWM output: (pin, mux register, field shift, field
-/// value, function), from gpio_set_mux() of the vendor's chip_8258/gpio.c; the
-/// same table as PWM_MUX in emulator/rs/scenarios/src/profile.rs.
 const PWM_MUX: [(&str, u32, u32, u32, &str); 25] = [
     ("PA0", 0x5a8, 0, 1, "PWM0_N"), ("PA2", 0x5a8, 4, 2, "PWM0"), ("PA3", 0x5a8, 6, 2, "PWM1"),
     ("PA4", 0x5a9, 0, 2, "PWM2"), ("PB0", 0x5aa, 0, 0, "PWM3"), ("PB1", 0x5aa, 2, 0, "PWM4"),
@@ -48,7 +27,6 @@ const PWM_MUX: [(&str, u32, u32, u32, &str); 25] = [
     ("PD5", 0x5af, 2, 2, "PWM0_N"),
 ];
 
-/// GPIO function enable register per port (1: plain GPIO, 0: the multiplexed function).
 fn gpio_func(port: char) -> Option<u32> {
     Some(match port {
         'A' => 0x586,
@@ -60,7 +38,6 @@ fn gpio_func(port: char) -> Option<u32> {
     })
 }
 
-/// Board name -> OTA image type (never change one once given).
 const IMAGE_TYPES: [(&str, u16); 21] = [
     ("ESMLFzm_w6_Dimm-4.63", 0x0390),
     ("ESMLFzm_w6_TW-4.63", 0x0391),
@@ -86,7 +63,6 @@ const IMAGE_TYPES: [(&str, u16); 21] = [
 ];
 
 struct Out {
-    pin: String,
     pwm: u32,
     gpio: u32,
     bit: u32,
@@ -121,10 +97,9 @@ fn out_of(name: &str, pwm: u32, pins: &[(String, String)]) -> Result<Out> {
     let mut c = pin.chars().skip(1);
     let port = c.next().unwrap_or('?');
     let n = c.next().and_then(|d| d.to_digit(10)).ok_or_else(|| anyhow!("{name}: pin {pin}"))?;
-    Ok(Out { pwm, gpio: gpio_func(port).ok_or_else(|| anyhow!("{name}: port of {pin}"))?, bit: 1 << n, mux, shift, value, pin })
+    Ok(Out { pwm, gpio: gpio_func(port).ok_or_else(|| anyhow!("{name}: port of {pin}"))?, bit: 1 << n, mux, shift, value })
 }
 
-/// The value of channel `c` in a sweep row (0 when absent).
 fn pwm(row: &Value, c: u32) -> f64 {
     row.get(format!("pwm{c}")).and_then(Value::as_f64).unwrap_or(0.0)
 }
@@ -149,12 +124,10 @@ fn board(p: &Value, image_type: u16) -> Result<Board> {
     let tunable = p.get("ct_sweep").is_some();
     let mut rgb: Option<Vec<u32>> = None;
     if let Some(hue) = p.get("hue_sweep").and_then(Value::as_array) {
-        // the channel at full at hue 0, 84 and 168 (full saturation): red, green, blue
         let mut picked = Vec::new();
         for h in [0, 84, 168] {
             let row = hue.iter().find(|r| r["v"].as_i64() == Some(h)).ok_or_else(|| anyhow!("{name}: no hue {h}"))?;
             let top: Vec<u32> = chans.iter().copied().filter(|&c| pwm(row, c) > 99.0 && !picked.contains(&c)).collect();
-            // (EBF: the warm white of the ring stays on beside the strip)
             let narrowed: Vec<u32> = top.iter().copied().filter(|&c| !hue.iter().all(|r| pwm(r, c) > 99.0)).collect();
             let t = if narrowed.is_empty() { top } else { narrowed };
             if t.len() != 1 {
@@ -167,7 +140,6 @@ fn board(p: &Value, image_type: u16) -> Result<Board> {
     }
     let color = |k: &str| p["color"].get(k).and_then(Value::as_i64).ok_or_else(|| anyhow!("{name}: no colour attribute {k}"));
     let (warm, cold, ct) = if rgb.is_some() && chans.len() == 1 {
-        // a colour bulb with one white (RGB+W)
         (chans[0], None, (color("0x400b")?, color("0x400c")?))
     } else if tunable {
         let sweep = rows(p, "ct_sweep")?;
@@ -228,22 +200,9 @@ fn rs_out(o: &Out) -> String {
 }
 
 fn firmware_table(boards: &[Board]) -> String {
-    let mut s = String::from(
-        "//! The boards the firmware is built for (`BULB_BOARD`, `cargo xtask build --board`):\n\
-         //! generated by `cargo xtask boards` from the stock firmware's own behaviour in the\n\
-         //! emulator (analysis/profiles/). Do not edit; run the generator.\n\n\
-         use crate::board::{Board, Out};\n\n",
-    );
+    let mut s = String::from("use crate::board::{Board, Out};\n\n");
     let _ = writeln!(s, "pub const BOARDS: [Board; {}] = [", boards.len());
     for b in boards {
-        let mut pins = format!("    // {}", b.warm.pin);
-        if let Some(c) = &b.cold {
-            let _ = write!(pins, " warm, {} cold", c.pin);
-        }
-        if let Some(r) = &b.rgb {
-            let _ = write!(pins, ", {}/{}/{} red/green/blue", r[0].pin, r[1].pin, r[2].pin);
-        }
-        let _ = writeln!(s, "{pins}");
         let _ = writeln!(s, "    Board {{");
         let _ = writeln!(s, "        name: \"{}\",", b.name);
         let _ = writeln!(s, "        tag: \"outglow-board:{}\",", b.name);
@@ -278,8 +237,7 @@ fn tsv(boards: &[Board]) -> String {
 
 fn tools_table(boards: &[Board]) -> String {
     let mut s = String::from(
-        "// Generated by `cargo xtask boards` from the stock profiles (analysis/profiles/).\n\
-         // Do not edit; run the generator.\n\n",
+        "",
     );
     let _ = writeln!(s, "pub const BOARDS: [Known; {}] = [", boards.len());
     for b in boards {

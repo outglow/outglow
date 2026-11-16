@@ -1,8 +1,3 @@
-//! What the Trust Center and the scripted peers share (`NodeMixin` in
-//! emulator/spec/harness.py): an ordered MAC queue with carrier sense and
-//! stop-and-wait retries, and frame builders where every header field of
-//! every layer can be forced by a test.
-
 use std::collections::{HashMap, VecDeque};
 
 use crate::air::{Air, Ev, NodeId};
@@ -15,10 +10,8 @@ pub const EP: u8 = 1;
 pub const HA: u16 = 0x0104;
 pub const MAC_RETRIES: u32 = 3;
 
-/// What a station scheduled for itself.
 #[derive(Clone, Debug)]
 pub enum StationEv {
-    /// A frame transmitted at a fixed time (a MAC acknowledgement).
     Transmit { psdu: Vec<u8>, t0: f64, t1: f64 },
     PumpFire,
     TxDone,
@@ -29,13 +22,11 @@ pub enum StationEv {
 struct TxEntry {
     mpdu: Vec<u8>,
     t: f64,
-    /// MAC retries left; None: no acknowledgement expected
     retries: Option<u32>,
     upper: u32,
     acked: bool,
 }
 
-/// Sequence numbers and counters of a frame a station sent.
 #[derive(Clone, Debug, Default)]
 pub struct Sent {
     pub nwk_seq: u8,
@@ -45,22 +36,16 @@ pub struct Sent {
     pub zdo_seq: Option<u8>,
 }
 
-/// The source IEEE address field of an NWK header.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum SrcIeee {
-    /// the station's own address
     #[default]
     Own,
     None,
     Is(u64),
 }
 
-/// Everything a test may force in a frame it sends (the keyword arguments of
-/// `NodeMixin.tx_nwk`/`tx_aps_data`/`tx_zcl`/`tx_zdo` and of `Session.zcl`).
-/// `None` means the default of the layer.
 #[derive(Clone, Debug, Default)]
 pub struct Tx {
-    // NWK
     pub mac_dst: Option<u16>,
     pub src: Option<u16>,
     pub nwk_seq: Option<u8>,
@@ -82,7 +67,6 @@ pub struct Tx {
     pub multicast: Option<u8>,
     pub pan: Option<u16>,
     pub version: Option<u8>,
-    // APS
     pub ep: Option<u8>,
     pub src_ep: Option<u8>,
     pub profile: Option<u16>,
@@ -91,16 +75,13 @@ pub struct Tx {
     pub group: Option<u16>,
     pub delivery: Option<u8>,
     pub frag: Option<(u8, u8)>,
-    /// APS data secured with a link key (key identifier 0): (key, frame counter)
     pub aps_sec: Option<(Key, u32)>,
-    // ZCL / ZDO
     pub general: bool,
     pub ddr: bool,
     pub to_client: bool,
     pub mfg: Option<u16>,
     pub seq: Option<u8>,
     pub fc_extra: u8,
-    // Session.zcl / Session.zdo
     pub max_ms: Option<f64>,
     pub sender: Option<NodeId>,
     pub dst: Option<u16>,
@@ -137,7 +118,6 @@ impl Tx {
         self.ack_req = true;
         self
     }
-    /// a general (profile-wide) ZCL command instead of a cluster-specific one
     pub fn general(mut self) -> Self {
         self.general = true;
         self
@@ -162,12 +142,10 @@ pub fn nx(c: &mut u8) -> u8 {
     v
 }
 
-/// A node's MAC and frame builders.
 pub struct Station {
     pub id: NodeId,
     pub channel: i64,
     pub pan: u16,
-    /// None: no network address yet (an end device before association)
     pub short: Option<u16>,
     pub ext: u64,
     pub nwk_key: Key,
@@ -178,25 +156,17 @@ pub struct Station {
     pub aps_ctr: u8,
     pub zdo_seq: u8,
     pub zcl_seq: u8,
-    /// NWK destination -> next hop
     pub via: HashMap<u16, u16>,
-    /// the end device initiator bit of the NWK frames it sends
     pub ed_initiator: bool,
-    /// an end device: everything goes to the parent with an acknowledgement request (R22 3.6.5)
     pub ed_parent: Option<u16>,
-    /// attempts of the layer above after the MAC retries are spent
     pub upper_retries: u32,
     txq: VecDeque<TxEntry>,
     tx_active: Option<TxEntry>,
     pump_at: Option<f64>,
     pub busy_until: f64,
-    /// (ms, mpdu) of unicast frames nobody acknowledged
     pub no_ack: Vec<(f64, Vec<u8>)>,
-    /// (ms, mpdu, acked or None)
     pub tx_log: Vec<(f64, Vec<u8>, Option<bool>)>,
-    /// the pending bit of the acknowledgement of the frame in flight
     pub ack_pending_seen: bool,
-    /// the MPDU queued last (`resend_last`)
     last_queued: Vec<u8>,
 }
 
@@ -249,9 +219,6 @@ impl Station {
         }
     }
 
-    // ---------------------------------------------------------- MAC
-    /// Queues an MPDU (the FCS is appended). `ack_wait`: MAC retries when no ACK
-    /// comes (None: none expected); `upper`: extra attempts 100 ms later.
     pub fn send_psdu(&mut self, air: &mut Air, mpdu: Vec<u8>, delay_ms: f64, ack_wait: Option<u32>, upper: Option<u32>) {
         let upper = upper.unwrap_or(self.upper_retries);
         self.last_queued.clone_from(&mpdu);
@@ -259,9 +226,6 @@ impl Station {
         self.pump(air);
     }
 
-    /// The MPDU queued last, once more `delay_ms` from now, as it was (the
-    /// retransmission of a broadcast, R22 3.6.5: same NWK frame, and here the
-    /// same MAC sequence number too).
     pub fn resend_last(&mut self, air: &mut Air, delay_ms: f64) {
         let mpdu = self.last_queued.clone();
         if !mpdu.is_empty() {
@@ -291,7 +255,7 @@ impl Station {
         self.tx_active = Some(e);
         air.transmit(self.id, psdu, self.channel, now, t1, -40);
         if expects_ack {
-            air.at(t1 + 1.2, Ev::Node(self.id, StationEv::TxCheck)); // macAckWaitDuration is 0.864 ms
+            air.at(t1 + 1.2, Ev::Node(self.id, StationEv::TxCheck));
         } else {
             air.at(t1, Ev::Node(self.id, StationEv::TxDone));
         }
@@ -338,7 +302,6 @@ impl Station {
         }
     }
 
-    /// An immediate MAC acknowledgement, aTurnaroundTime after the frame.
     pub fn send_ack(&mut self, air: &mut Air, seq: u8, t_end: f64, pending: bool) {
         let fcf: u16 = 0x0002 | if pending { 0x10 } else { 0 };
         let mut mpdu = fcf.to_le_bytes().to_vec();
@@ -350,7 +313,6 @@ impl Station {
         air.at(t0, Ev::Node(self.id, StationEv::Transmit { psdu, t0, t1 }));
     }
 
-    /// A MAC data frame (`NodeMixin.tx_mac_data`).
     pub fn tx_mac_data(&mut self, air: &mut Air, dst: u16, nwk_frame: &[u8], ar: Option<bool>, delay: f64,
                        mac_src: Option<u16>, pan: Option<u16>) {
         let ar = ar.unwrap_or(dst < 0xFFF8);
@@ -361,8 +323,6 @@ impl Station {
         self.send_psdu(air, mpdu, delay, if ar { Some(MAC_RETRIES) } else { None }, None);
     }
 
-    // ---------------------------------------------------------- NWK
-    /// Sends an NWK frame; everything in the header can be forced.
     pub fn tx_nwk(&mut self, air: &mut Air, ftype: u8, dst: u16, payload: &[u8], o: &Tx) -> Sent {
         let seq = match o.nwk_seq {
             Some(s) => s,
@@ -421,7 +381,6 @@ impl Station {
         self.tx_nwk(air, NWK_CMD, dst, cmd_payload, o)
     }
 
-    // ---------------------------------------------------------- APS / ZDO / ZCL
     pub fn tx_aps_data(&mut self, air: &mut Air, dst: u16, cluster: u16, payload: &[u8], o: &Tx) -> Sent {
         let delivery = o.delivery.unwrap_or(if o.group.is_some() {
             3
@@ -437,7 +396,6 @@ impl Station {
         let (ep, src_ep, profile) = (o.ep.unwrap_or(EP), o.src_ep.unwrap_or(1), o.profile.unwrap_or(HA));
         let a = match o.aps_sec {
             Some((key, fc)) => {
-                // APS data secured with a link key (key identifier 0), R22 4.4.1.1
                 let hdr = aps_data(ep, cluster, profile, src_ep, counter, &[], delivery, o.ack_req, o.group, o.frag, true);
                 secure(&hdr, payload, &key, self.ext, fc, 0, None, true)
             }
@@ -473,7 +431,6 @@ impl Station {
         r
     }
 
-    /// An APS command; `sec`: (key, key identifier, frame counter, source).
     pub fn tx_aps_cmd(&mut self, air: &mut Air, dst: u16, payload: &[u8], sec: Option<(Key, u8, u32, u64)>, o: &Tx) -> Sent {
         let ctr = nx(&mut self.aps_ctr);
         let a = aps_cmd(ctr, payload, o.ack_req, sec, o.delivery.unwrap_or(0));
@@ -482,7 +439,6 @@ impl Station {
         r
     }
 
-    /// One Link Status frame (R22 3.4.8): entries = (address, incoming cost, outgoing cost).
     pub fn tx_link_status(&mut self, air: &mut Air, entries: &[(u16, u8, u8)], o: &Tx) -> Sent {
         let mut e = entries.to_vec();
         e.sort();

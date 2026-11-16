@@ -1,18 +1,12 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The ADC on the VBAT input and its DMA (DFIFO2) (adc.go).
-
 use crate::error::{emu_err, Error};
 use crate::machine::{Machine, SRAM_BASE};
 use crate::rbg::splitmix64;
 
-/// ADCModes: the VBAT conversions TC32EMU_ADC names and register 0xffe8 numbers.
 pub const ADC_MODES: &[&str] = &["noise", "off", "stuck", "biased", "ramp", "two", "attacker", "never", "level"];
 
-/// 3.3 V through the 1/3 divider against the 1175 mV reference.
 pub const ADC_VBAT_CODE: i64 = 0x1DF5;
 const ADC_SD_X10: i64 = 378372;
 
-/// Python's // for a positive divisor.
 fn floor_div(a: i64, b: i64) -> i64 {
     let mut q = a / b;
     if a % b != 0 && a < 0 {
@@ -211,4 +205,3 @@ impl Machine {
         (self.cycles - t0) / per
     }
 }
-

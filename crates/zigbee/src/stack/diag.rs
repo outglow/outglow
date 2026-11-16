@@ -1,28 +1,8 @@
-//! The Diagnostics cluster (ZCL revision 8, clause 3.15): what the stack
-//! counts while it works, how the counters survive a restart, and the
-//! manufacturer-specific attributes for what the standard set does not say
-//! about a router under load (docs/diagnostics.md).
-//!
-//! Counters live in RAM as `u32` and only grow, wrapping as the text
-//! expects ("many of the counters ... will wrap quickly", 3.15.2.2.2); an
-//! attribute of type uint16 shows the low 16 bits. They are kept across a
-//! restart: a snapshot goes to the non-volatile store about once an hour
-//! and once after a watchdog or software reset (3.15.1 recommends
-//! persistent server attributes so that "what was causing the reset
-//! behavior" can be analysed), the first time half an hour after the start,
-//! and every second into RAM that a warm restart leaves alone
-//! (`Hal::retain`), so a watchdog reset loses at most a second of counting.
-//! A power cut loses what was counted since the last snapshot. NumberOfResets is exact: it is stored at every start, in the
-//! same flash write as the frame counters (`Hal::nv_store_pair`). A factory
-//! reset clears everything (3.15.2.2.1.1); so does the manufacturer-specific
-//! command `CMD_CLEAR` (the server has no commands of its own, 3.15.2.3).
-
 use super::blackbox;
 use super::Stack;
 use crate::hal::{Hal, HalCounters, NvItem, ResetCause, TxStatus};
 use crate::util::{due, Reader};
 
-/// Counter indices (`Diag::n`).
 pub(crate) mod k {
     pub const PERSISTENT_WRITES: usize = 0;
     pub const MAC_RX_BCAST: usize = 1;
@@ -52,11 +32,8 @@ pub(crate) mod k {
     pub const RELAYED_UCAST: usize = 25;
     pub const PHY_TO_MAC_QUEUE_LIMIT: usize = 26;
     pub const PACKET_VALIDATE_DROPS: usize = 27;
-    /// MAC retransmissions of the APS messages this node originated, and
-    /// how many such messages: AverageMACRetryPerAPSMessageSent.
     pub const APS_MAC_RETRIES: usize = 28;
     pub const APS_SENT: usize = 29;
-    // manufacturer-specific
     pub const RELAY_DROP_QUEUE_FULL: usize = 30;
     pub const RELAY_DROP_NO_ROUTE: usize = 31;
     pub const RELAY_DROP_MAC_FAIL: usize = 32;
@@ -76,9 +53,6 @@ pub(crate) mod k {
     pub const COUNT: usize = 46;
 }
 
-/// Bytes each counter takes in the stored snapshot: as wide as its
-/// attribute (the low bits are what the attribute shows), 4 for the two
-/// that make the average.
 const WIDTH: [u8; k::COUNT] = {
     let mut w = [2u8; k::COUNT];
     w[k::MAC_RX_BCAST] = 4;
@@ -97,15 +71,9 @@ const WIDTH: [u8; k::COUNT] = {
 
 const SNAPSHOT_VERSION: u8 = 1;
 const BOOT_VERSION: u8 = 1;
-/// How often the snapshot goes to the non-volatile store, and when the
-/// first one goes after a start: a bulb on a wall switch that is on for
-/// half an hour keeps what it counted, and one switched every few minutes
-/// costs no writes (its NumberOfResets is exact all the same).
 pub(crate) const SNAPSHOT_MS: u32 = 3_600_000;
 pub(crate) const SNAPSHOT_FIRST_MS: u32 = 1_800_000;
-/// How often the snapshot goes to the RAM that survives a warm restart.
 const RETAIN_MS: u32 = 1_000;
-/// Longest stored snapshot: version, then the counters.
 pub(crate) const SNAPSHOT_LEN: usize = 1 + {
     let mut n = 0;
     let mut i = 0;
@@ -116,11 +84,8 @@ pub(crate) const SNAPSHOT_LEN: usize = 1 + {
     n
 };
 
-/// Manufacturer-specific command of the Diagnostics cluster (with our
-/// manufacturer code): sets every counter back to 0, NumberOfResets too.
 pub(crate) const CMD_CLEAR: u8 = 0x00;
 
-/// What a Diagnostics attribute shows.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Src {
     Counter(usize),
@@ -133,13 +98,9 @@ pub(crate) enum Src {
     WatchdogResets,
     Neighbors,
     Children,
-    /// Received frames by signal strength (`RSSI_EDGES`).
     RssiBucket(u8),
-    /// The channel's noise floor, dBm: the last measurement, the highest since the start.
     NoiseNow,
     NoiseMax,
-    /// The way to the coordinator: first hop (0xFFFF none), its link cost,
-    /// whether the route came from a many-to-one request.
     CoordNextHop,
     CoordCost,
     CoordManyToOne,
@@ -147,7 +108,6 @@ pub(crate) enum Src {
     NwkStatusRx,
     LastStatusRx,
     LastStatusTx,
-    // network parameters, to compare with the coordinator's
     Channel,
     Pan,
     ExtPan,
@@ -156,92 +116,61 @@ pub(crate) enum Src {
     FrameCounter,
     Depth,
     Parent,
-    /// What the hardware layer measured: the longest main loop round, the
-    /// longest loan of the radio to BLE, the longest flash erase (µs).
     LoopMax,
     StackFree,
     IrqStackFree,
     BleLendMax,
     FlashBusyMax,
-    /// Bluetooth LE: connections, disconnections, links lost (the central
-    /// went silent), connection events run and skipped.
     Ble(u8),
-    /// Tables in pages (octet strings): the neighbor table and the event log.
     NeighborPage(u8),
-    /// A page of the black box (`blackbox.rs`).
     BoxPage(u16),
     EventPage(u8),
 }
 
-/// RSSI bucket edges, dBm: below -90, -90..-80, -80..-70, -70..-60, -60 and above.
 pub(crate) const RSSI_EDGES: [i8; 4] = [-90, -80, -70, -60];
 pub(crate) const RSSI_BUCKETS: usize = 5;
-/// How often the noise floor is measured (energy detection on the channel in a quiet moment).
 pub(crate) const NOISE_MS: u32 = 60_000;
-/// Neighbor table pages: entries a page, bytes an entry.
 pub(crate) const NEIGHBORS_PER_PAGE: usize = 4;
 pub(crate) const NEIGHBOR_ENTRY: usize = 15;
 pub(crate) const NEIGHBOR_PAGES: usize = super::NEIGHBORS / NEIGHBORS_PER_PAGE;
-/// The event log: entries, entries a page, bytes an entry.
 pub(crate) const EVENTS: usize = 30;
 pub(crate) const EVENTS_PER_PAGE: usize = 5;
 pub(crate) const EVENT_ENTRY: usize = 12;
 pub(crate) const EVENT_PAGES: usize = EVENTS / EVENTS_PER_PAGE;
-/// Bytes of the event log in the RAM a warm restart keeps: head, count, entries.
 pub(crate) const EVENTS_LEN: usize = 2 + EVENTS * EVENT_ENTRY;
 
-/// What the event log records (`Event::kind`); `a` and `b` say more.
 pub mod ev {
-    /// The stack started: a = reset cause, b = NumberOfResets.
     pub const START: u8 = 1;
-    /// On the network: a = our address, b = parent.
     pub const UP: u8 = 2;
-    /// Rejoin started: a = secured (1/0).
     pub const REJOIN: u8 = 3;
-    /// Left the network.
     pub const LEFT: u8 = 4;
-    /// Neighbor added, gone stale, removed: a = its address, b = LQI.
     pub const NEIGHBOR_ADDED: u8 = 5;
     pub const NEIGHBOR_STALE: u8 = 6;
     pub const NEIGHBOR_REMOVED: u8 = 7;
-    /// Route discovery started: a = destination.
     pub const ROUTE_DISCOVERY: u8 = 8;
-    /// Network Status received / sent: a = status code, b = address it is about.
     pub const STATUS_RX: u8 = 9;
     pub const STATUS_TX: u8 = 10;
-    /// Network key switched: a = key sequence number.
     pub const KEY_SWITCH: u8 = 11;
-    /// Channel / PAN identifier changed: a = new value.
     pub const CHANNEL: u8 = 12;
     pub const PAN: u8 = 13;
-    /// Address conflict: a = the address.
     pub const CONFLICT: u8 = 14;
-    /// Bluetooth LE connection opened / closed / lost: a = how many so far.
     pub const BLE_CONNECT: u8 = 15;
     pub const BLE_DISCONNECT: u8 = 16;
     pub const BLE_LOST: u8 = 17;
-    /// Our transmission to a neighbor failed after every retry: a = neighbor, b = status.
     pub const TX_FAIL: u8 = 18;
-    /// The light blinked on request from outside the network (the BLE device page).
     pub const IDENTIFY: u8 = 19;
 }
 
-/// An entry of the event log as `Stack::event` shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoggedEvent {
-    /// One more than the event before.
     pub seq: u16,
-    /// What happened (`ev`), and two values that say more.
     pub kind: u8,
     pub a: u16,
     pub b: u16,
-    /// Seconds since the start it happened in.
     pub t: u32,
-    /// It happened in this start, not in one before a warm restart.
     pub this_start: bool,
 }
 
-/// The MAC unicast counters of the Diagnostics cluster (0x0102..=0x0105).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct MacCounters {
     pub rx_ucast: u32,
@@ -250,19 +179,12 @@ pub struct MacCounters {
     pub tx_ucast_failures: u32,
 }
 
-/// The neighbors of this router: routers heard within the age limit, and
-/// end-device children.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NeighborCounts {
     pub routers: u8,
     pub end_devices: u8,
 }
 
-/// One entry of the event log: its number (one more than the event
-/// before; the log is read in pages, and between two of them new events
-/// move the rest along: the reader keeps each number once), which start it
-/// belongs to (low byte of NumberOfResets), what, when (seconds since that
-/// start), and two values.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Event {
     pub seq: u16,
@@ -274,8 +196,6 @@ pub(crate) struct Event {
 }
 
 impl Event {
-    /// The entry as the log stores and the page shows it: number, start,
-    /// kind, seconds (u32), a, b.
     pub(crate) fn encode(&self, o: &mut [u8]) {
         o[0..2].copy_from_slice(&self.seq.to_le_bytes());
         o[2] = self.epoch;
@@ -293,9 +213,6 @@ pub(crate) const T_I8: u8 = 0x28;
 pub(crate) const T_ENUM8: u8 = 0x30;
 pub(crate) const T_OCTETS: u8 = 0x41;
 
-/// The standard attributes this node counts honestly, in ascending order
-/// (Tables 3-130 and 3-131). Left out: none of the table; see
-/// docs/diagnostics.md for how each is counted.
 pub(crate) const STANDARD: [(u16, u8, Src); 32] = [
     (0x0000, T_U16, Src::Resets),
     (0x0001, T_U16, Src::Counter(k::PERSISTENT_WRITES)),
@@ -331,10 +248,6 @@ pub(crate) const STANDARD: [(u16, u8, Src); 32] = [
     (0x011D, T_I8, Src::Rssi),
 ];
 
-/// The manufacturer-specific attributes (manufacturer code of the
-/// identity, 0x1141), in ascending order. Their identifiers lie apart from
-/// the standard ones, so a client that ignores the manufacturer code cannot
-/// mistake one for the other.
 pub(crate) const MANUFACTURER: [(u16, u8, Src); 63] = [
     (0x5000, T_U32, Src::Uptime),
     (0x5001, T_ENUM8, Src::Cause),
@@ -402,13 +315,10 @@ pub(crate) const MANUFACTURER: [(u16, u8, Src); 63] = [
 ];
 const _: () = assert!(NEIGHBOR_PAGES == 4 && EVENT_PAGES == 6, "the attribute table lists every page");
 
-/// The manufacturer's attributes in `Stack::diag_counters`: the numbers
-/// from 0x5000 up to the first that is not a counter of the start (FlashErases).
 const COUNTERS_MFR: usize = 21;
 const COUNTERS_VERSION: u8 = 1;
 const _: () = assert!(MANUFACTURER[COUNTERS_MFR - 1].0 == 0x5014, "the counters end at FlashErases");
 
-/// Bytes of a numeric attribute value of type `ty`.
 const fn width(ty: u8) -> usize {
     match ty {
         T_U8 | T_I8 | T_ENUM8 => 1,
@@ -418,7 +328,6 @@ const fn width(ty: u8) -> usize {
     }
 }
 
-/// Longest value `Stack::diag_counters` writes.
 pub const DIAG_COUNTERS_MAX: usize = {
     let mut n = 1;
     let mut i = 0;
@@ -436,11 +345,9 @@ pub const DIAG_COUNTERS_MAX: usize = {
     n
 };
 
-/// A diagnostic attribute: (type, what it shows), of the manufacturer's set or the standard one.
 pub(crate) fn attribute(manufacturer: bool, id: u16) -> Option<(u8, Src)> {
     let table: &[(u16, u8, Src)] = if manufacturer { &MANUFACTURER } else { &STANDARD };
     if manufacturer && id.wrapping_sub(blackbox::BOX_FIRST) < blackbox::BOX_PAGES as u16 {
-        // not in the table: read only, by number
         return Some((T_OCTETS, Src::BoxPage(id - blackbox::BOX_FIRST)));
     }
     table.iter().find(|a| a.0 == id).map(|a| (a.1, a.2))
@@ -459,28 +366,21 @@ pub(crate) struct Diag {
     pub resets: u16,
     pub watchdog_resets: u16,
     pub cause: ResetCause,
-    /// How often the last transmission went on the air (`Hal::tx_attempts`).
     pub last_attempts: u8,
-    /// What the hardware layer had counted when `n` last took it over.
     hal_seen: HalCounters,
-    /// When the stack started (for the uptime and the snapshot timer).
     started: u32,
     snapshot_at: u32,
     retain_at: u32,
-    /// Received frames by signal strength since the start.
     pub rssi: [u32; RSSI_BUCKETS],
-    /// Noise floor in dBm (i8::MIN: not measured yet), and when next.
     pub noise_now: i8,
     pub noise_max: i8,
     pub noise_at: u32,
     pub status_rx: u32,
     pub last_status_rx: u8,
     pub last_status_tx: u8,
-    /// The event log: a ring, `head` the next place, `len` entries in it.
     pub events: [Event; EVENTS],
     pub ev_head: u8,
     pub ev_len: u8,
-    /// The number the next event gets.
     pub ev_seq: u16,
 }
 
@@ -528,13 +428,11 @@ impl Diag {
         }
     }
 
-    /// Counts a received frame by its signal strength.
     pub(crate) fn rssi_add(&mut self, rssi: i8) {
         let i = RSSI_EDGES.iter().position(|&e| rssi < e).unwrap_or(RSSI_BUCKETS - 1);
         self.rssi[i] = self.rssi[i].wrapping_add(1);
     }
 
-    /// Puts an event into the log, the oldest giving way.
     pub(crate) fn event(&mut self, now: u32, kind: u8, a: u16, b: u16) {
         let e = Event { seq: self.ev_seq, epoch: self.resets as u8, kind, t: self.uptime_s(now), a, b };
         self.ev_seq = self.ev_seq.wrapping_add(1);
@@ -543,7 +441,6 @@ impl Diag {
         self.ev_len = (self.ev_len as usize + 1).min(EVENTS) as u8;
     }
 
-    /// The `i`-th newest event.
     pub(crate) fn event_newest(&self, i: usize) -> Option<Event> {
         if i >= self.ev_len as usize {
             return None;
@@ -576,7 +473,6 @@ impl Diag {
                 b: u16::from_le_bytes([o[10], o[11]]),
             };
         }
-        // numbering goes on after the newest
         if let Some(newest) = self.event_newest(0) {
             self.ev_seq = newest.seq.wrapping_add(1);
         }
@@ -598,7 +494,6 @@ impl Diag {
         }
     }
 
-    /// Takes over what the hardware layer counted since the last time.
     pub(crate) fn take_hal(&mut self, c: HalCounters) {
         let s = self.hal_seen;
         self.add_n(k::CCA_BUSY, c.cca_busy.wrapping_sub(s.cca_busy));
@@ -611,7 +506,6 @@ impl Diag {
         self.hal_seen = c;
     }
 
-    /// The hardware layer's Bluetooth LE counts that moved since `before`, as events.
     pub(crate) fn ble_events(&mut self, now: u32, before: HalCounters) {
         let c = self.hal_seen;
         if c.ble_connections != before.ble_connections {
@@ -624,7 +518,6 @@ impl Diag {
         }
     }
 
-    /// AverageMACRetryPerAPSMessageSent, rounded to the nearest whole retry.
     pub(crate) fn average_retries(&self) -> u16 {
         let sent = self.n[k::APS_SENT];
         if sent == 0 {
@@ -634,7 +527,6 @@ impl Diag {
         ((r * 2 + sent as u64) / (sent as u64 * 2)).min(0xFFFF) as u16
     }
 
-    /// The average in hundredths, for the Analog Input that shows it.
     pub(crate) fn average_retries_x100(&self) -> u32 {
         let sent = self.n[k::APS_SENT];
         if sent == 0 {
@@ -643,7 +535,6 @@ impl Diag {
         ((self.n[k::APS_MAC_RETRIES] as u64 * 100 / sent as u64).min(u32::MAX as u64)) as u32
     }
 
-    /// Milliseconds the radio was lent to BLE since the start.
     pub(crate) fn ble_ms_since_start(&self) -> u32 {
         self.hal_seen.ble_ms
     }
@@ -652,7 +543,6 @@ impl Diag {
         now.wrapping_sub(self.started) / 1000
     }
 
-    /// Relayed unicasts lost, whatever the cause.
     pub(crate) fn relays_lost(&self) -> u32 {
         self.n[k::RELAY_DROP_QUEUE_FULL]
             .wrapping_add(self.n[k::RELAY_DROP_NO_ROUTE])
@@ -689,14 +579,11 @@ impl Diag {
 }
 
 impl<H: Hal> Stack<H> {
-    /// Every MAC transmission of the stack goes through here: the MAC
-    /// counters of Table 3-131 and the busy channel.
     pub(crate) fn mac_transmit(&mut self, mpdu: &[u8]) -> TxStatus {
         let status = self.hal.transmit(mpdu);
         let attempts = self.hal.tx_attempts();
         self.diag.last_attempts = attempts;
         let unicast = mpdu.first().is_some_and(|fc| fc & 0x20 != 0);
-        // on the air at least once (a busy channel may have kept it off entirely)
         let sent = attempts > 0 || status != TxStatus::ChannelBusy;
         if unicast {
             if sent {
@@ -706,7 +593,6 @@ impl<H: Hal> Stack<H> {
             if status != TxStatus::Ok {
                 self.diag.add(k::MAC_TX_UCAST_FAIL);
             }
-            // per neighbor: a short destination address (destination mode bits 10-11 = 2)
             if mpdu.len() >= 7 && (mpdu[1] >> 2) & 0x03 == 2 {
                 let dst = u16::from_le_bytes([mpdu[5], mpdu[6]]);
                 if let Some(i) = self.neighbor_index(dst) {
@@ -734,10 +620,6 @@ impl<H: Hal> Stack<H> {
         status
     }
 
-    /// At the start: the counters as they were (from the RAM a warm restart
-    /// keeps, else from the last stored snapshot), the reset counted.
-    /// Returns the boot record, which goes to the store with the frame
-    /// counters (`load_counters`).
     pub(crate) fn diag_start(&mut self) -> [u8; 5] {
         let cause = self.hal.reset_cause();
         self.diag.cause = cause;
@@ -747,7 +629,6 @@ impl<H: Hal> Stack<H> {
             if let Some(n) = self.hal.retained(&mut buf) {
                 restored = self.diag.decode(&buf[..n.min(SNAPSHOT_LEN)]);
                 if restored && n >= super::RETAIN_MAX {
-                    // the event log of the starts before, for what led to this one
                     self.diag.decode_events(&buf[SNAPSHOT_LEN..super::RETAIN_MAX]);
                 }
             }
@@ -767,7 +648,6 @@ impl<H: Hal> Stack<H> {
         if cause == ResetCause::Watchdog {
             self.diag.watchdog_resets = self.diag.watchdog_resets.wrapping_add(1);
         }
-        // the hardware layer's counts begin anew with every start
         self.diag.hal_seen = HalCounters::default();
         let now = self.hal.now_ms();
         self.diag.event(now, ev::START, cause as u16, self.diag.resets);
@@ -780,8 +660,6 @@ impl<H: Hal> Stack<H> {
         [BOOT_VERSION, r[0], r[1], w[0], w[1]]
     }
 
-    /// After a start: once the stores have been read, a warm restart's
-    /// counters (which only the RAM had) go to the store too.
     pub(crate) fn diag_started(&mut self) {
         if self.diag.cause != ResetCause::PowerOn {
             self.store_diagnostics();
@@ -796,12 +674,10 @@ impl<H: Hal> Stack<H> {
         self.diag.add(k::PERSISTENT_WRITES);
     }
 
-    /// Counts a record the stack writes to the non-volatile store.
     pub(crate) fn nv_written(&mut self) {
         self.diag.add(k::PERSISTENT_WRITES);
     }
 
-    /// Takes over the hardware layer's counters and the pool's high-water mark.
     pub(crate) fn diag_sync(&mut self) {
         let c = self.hal.counters();
         let before = self.diag.hal_seen;
@@ -810,22 +686,16 @@ impl<H: Hal> Stack<H> {
         self.diag.ble_events(now, before);
     }
 
-    /// Puts an event into the log.
     pub(crate) fn log_event(&mut self, kind: u8, a: u16, b: u16) {
         let now = self.hal.now_ms();
         self.diag.event(now, kind, a, b);
     }
 
-    /// Once a minute, in a quiet moment: the noise floor of our channel.
     pub(crate) fn diag_noise(&mut self, now: u32) {
         if !due(now, self.diag.noise_at) {
             return;
         }
-        // Not with energy detection: that retunes the radio, and a frame
-        // arriving meanwhile would be acknowledged late. The hardware layer
-        // reads the signal strength of the channel it listens on, when quiet.
         let Some(dbm) = self.hal.noise_dbm() else {
-            // traffic: another try in a second
             self.diag.noise_at = now.wrapping_add(1_000);
             return;
         };
@@ -836,7 +706,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// The route to the coordinator: (first hop, its link cost, from a many-to-one request).
     pub(crate) fn coordinator_route(&self) -> (u16, u8, bool) {
         if let Some(i) = self.neighbor_index(0x0000) {
             let n = &self.neighbors[i];
@@ -856,9 +725,7 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// A row of the black box every `blackbox::ROW_MS`.
     pub(crate) fn box_timers(&mut self, now: u32) {
-        // a row comes late rather than while the pages are being read
         let Some(b) = self.hal.black_box() else { return };
         if !due(now, b.row_at) || b.held(now) {
             return;
@@ -894,7 +761,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// An attribute of type octet string: the bytes after the length.
     pub(crate) fn diag_bytes(&mut self, src: Src, out: &mut [u8; 64]) -> usize {
         match src {
             Src::ExtPan => {
@@ -915,11 +781,6 @@ impl<H: Hal> Stack<H> {
                 }
             }
             Src::NeighborPage(p) => {
-                // entry: address, LQI, outgoing cost, age, flags (bit 0 in use, bit 1 relays
-                // broadcasts, bit 2 in our last Link Status, bit 3 also a child, bits 4-6 the
-                // link cost routing uses, bit 7 it is measured), times stale, frames heard,
-                // average and lowest RSSI, our transmissions to it, retries, failures, the
-                // measured probability of delivery (0..=255, the high byte of 0..=65535)
                 let mut n = 0;
                 let from = p as usize * NEIGHBORS_PER_PAGE;
                 for nb in self.neighbors[from..from + NEIGHBORS_PER_PAGE].iter() {
@@ -948,7 +809,6 @@ impl<H: Hal> Stack<H> {
                 n
             }
             Src::EventPage(p) => {
-                // newest first
                 let mut n = 0;
                 for i in 0..EVENTS_PER_PAGE {
                     let Some(e) = self.diag.event_newest(p as usize * EVENTS_PER_PAGE + i) else { break };
@@ -961,7 +821,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Once a second into the RAM a warm restart keeps; once an hour to the store.
     pub(crate) fn diag_timers(&mut self, now: u32) {
         if due(now, self.diag.retain_at) {
             self.diag.retain_at = now.wrapping_add(RETAIN_MS);
@@ -973,7 +832,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// Keeps the counters for the restart that is about to happen (an update).
     pub(crate) fn diag_retain_now(&mut self) {
         self.diag_sync();
         let mut b = [0u8; super::RETAIN_MAX];
@@ -986,14 +844,12 @@ impl<H: Hal> Stack<H> {
         self.hal.retain(&b);
     }
 
-    /// Stores the counters again after the store was wiped (leaving the network).
     pub(crate) fn diag_keep(&mut self) {
         let boot = self.boot_record();
         self.nv_put(NvItem::Boot, &boot);
         self.store_diagnostics();
     }
 
-    /// The manufacturer's command `CMD_CLEAR`: every counter back to 0.
     pub(crate) fn diag_clear(&mut self) {
         self.diag_sync();
         self.diag.n = [0; k::COUNT];
@@ -1004,18 +860,15 @@ impl<H: Hal> Stack<H> {
         self.store_diagnostics();
     }
 
-    /// Seconds since the stack started.
     pub fn uptime_s(&mut self) -> u32 {
         let now = self.hal.now_ms();
         self.diag.uptime_s(now)
     }
 
-    /// Why the chip started this time.
     pub fn reset_cause(&self) -> ResetCause {
         self.diag.cause
     }
 
-    /// NumberOfResets (every start counts) and the watchdog resets among them.
     pub fn resets(&self) -> (u16, u16) {
         (self.diag.resets, self.diag.watchdog_resets)
     }
@@ -1025,8 +878,6 @@ impl<H: Hal> Stack<H> {
         NeighborCounts { routers: self.live_neighbors().min(255) as u8, end_devices: end_devices.min(255) as u8 }
     }
 
-    /// Link quality and signal strength (dBm) of the last frame received
-    /// (LastMessageLQI, LastMessageRSSI).
     pub fn last_signal(&self) -> (u8, i8) {
         self.rx_signal
     }
@@ -1041,54 +892,36 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    /// The `i`-th newest entry of the event log (the log keeps `EVENTS`).
     pub fn event(&self, i: usize) -> Option<LoggedEvent> {
         let e = self.diag.event_newest(i)?;
         Some(LoggedEvent { seq: e.seq, kind: e.kind, a: e.a, b: e.b, t: e.t, this_start: e.epoch == self.diag.resets as u8 })
     }
 
-    /// The number the next event will get: it changes with every new entry.
     pub fn event_seq(&self) -> u16 {
         self.diag.ev_seq
     }
 
-    /// The firmware made the light blink on a request from outside the
-    /// network (`ev::IDENTIFY`).
     pub fn log_identify(&mut self) {
         self.log_event(ev::IDENTIFY, 0, 0);
     }
 
-    /// Keeps the diagnostic counters and the event log for a restart the
-    /// firmware is about to make (`Hal::retain`), as before an update.
     pub fn keep_for_restart(&mut self) {
         self.diag_retain_now();
     }
 
-    /// Takes over the hardware layer's counters now rather than at the next
-    /// second, so that the BLE connections and disconnections they show
-    /// are in the event log at once (the stack does it every second only
-    /// while on a network).
     pub fn sync_hardware_counters(&mut self) {
         self.diag_sync();
     }
 
-    /// Router neighbors heard within the age limit.
     pub(crate) fn live_neighbors(&self) -> usize {
         self.neighbors.iter().filter(|n| n.used && n.age <= super::AGE_LIMIT).count()
     }
 
-    /// The value of a diagnostic attribute, as a number (the type says how wide).
     pub(crate) fn diag_value(&mut self, src: Src) -> u32 {
         self.diag_sync();
         self.diag_value_synced(src)
     }
 
-    /// The Diagnostics cluster's numeric attributes in one go, from the
-    /// values the cluster answers with: the standard ones and the
-    /// manufacturer's first `COUNTERS_MFR` (0x5000..=0x5014). Format 1, then
-    /// per attribute in ascending order its identifier (u16), ZCL type and
-    /// value, little-endian, as wide as the type. `out` takes
-    /// `DIAG_COUNTERS_MAX` bytes; returns how many were written.
     pub fn diag_counters(&mut self, out: &mut [u8]) -> usize {
         if out.len() < DIAG_COUNTERS_MAX {
             return 0;

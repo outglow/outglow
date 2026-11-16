@@ -1,52 +1,20 @@
-//! The diagnostic service for the device page (a web page over Web
-//! Bluetooth), byte for byte the one of the C firmware, so that the page's
-//! decoder reads both (emulator/rs/scenarios/src/sims/ble_diag.rs decodes
-//! it the same way).
-//!
-//! A service of its own after the stock handles (0x20..=0x2c, `att.rs`):
-//!
-//! | UUID | | |
-//! |---|---|---|
-//! | `e6100001-5a4b-4c3d-8e2f-1a2b3c4d5e6f` | info | read: format, variant, flags, release, IEEE, model, firmware |
-//! | `e6100002-…` | state | read: 40 bytes, the firmware refreshes them about every second |
-//! | `e6100003-…` | log | read: the latest events, newest first |
-//! | `e6100004-…` | cmd | write: commands (`parse`) |
-//! | `e6100005-…` | frames | read: the latest ZCL frames to the light (`FrameLog`) |
-//! | `e6100006-…` | config | read: 20 bytes of settings |
-//! | `e6100007-…` | counters | read: the Diagnostics cluster's attributes (`Ble::set_diag_counters`); not in the C firmware |
-//!
-//! Reading and the blink work without a login; every other command needs
-//! the mesh login on this connection, as the AwoX app's commands do. The
-//! result of the last command is state[39]: bits 0..3 the code, bits 4..6 a
-//! counter of commands (the page sees that the result is a new one), bit 7
-//! the connection is logged in. The firmware fills the values
-//! (`Ble::set_diag_*`) and carries out what `Ble::take_diag_command` gives it.
-//! All fields little-endian.
-
 use bulb_core::command::{Command, PowerOnBehavior};
 use zigbee::stack::{ev, LightSettings};
 
 use crate::hal::Hal;
 use crate::{Ble, Identity};
 
-/// Longest info value: 14 bytes and the two strings.
 pub const INFO_MAX: usize = 48;
 pub const STATE_LEN: usize = 40;
-/// Bytes of the state the firmware gives; the light and the command result are the BLE side's own.
 const STATE_FIRMWARE: usize = 35;
 pub const CONFIG_LEN: usize = 20;
-/// Events in the log value: 6 bytes each after a count. (The C firmware
-/// has 9; the page reads as many as there are.)
 pub const LOG_ENTRIES: usize = 16;
 pub const LOG_ENTRY: usize = 6;
 pub const LOG_MAX: usize = 1 + LOG_ENTRIES * LOG_ENTRY;
-/// Frames in the frames value: 12 bytes each after a count of bytes.
 pub const FRAMES: usize = 8;
 pub const FRAME_ENTRY: usize = 12;
 pub const FRAMES_MAX: usize = 1 + FRAMES * FRAME_ENTRY;
-/// Longest counters value (`zigbee::stack::DIAG_COUNTERS_MAX`).
 pub const COUNTERS_MAX: usize = zigbee::stack::DIAG_COUNTERS_MAX;
-/// The time of an event from before this start.
 pub const TIME_PREVIOUS: u32 = 0xFFFF_FFFF;
 
 pub(crate) const RESULT_OK: u8 = 0;
@@ -55,30 +23,19 @@ pub(crate) const RESULT_INVALID: u8 = 2;
 
 const CMD_IDENTIFY: u8 = 0x01;
 
-/// What a command written to the cmd characteristic asks of the firmware.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagCommand {
-    /// Blink for a few seconds (without a login).
     Identify,
-    /// A command for the light: On, Off, Toggle, MoveToLevel (with On/Off: 0
-    /// turns the light off), MoveToColorTemperature, SetPowerOnBehavior,
-    /// SetStartupLevel, SetStartupColorTemperature.
     Light(Command),
-    /// The Options attributes of Level Control and of Color Control, the bits this light has.
     LevelOptions(u8),
     ColorOptions(u8),
-    /// Restart in about half a second.
     Restart,
-    /// Factory reset (the Zigbee network and settings and the BLE mesh) and restart.
     FactoryReset,
 }
 
-/// What the firmware tells of itself, once (info).
 #[derive(Debug, Clone, Copy)]
 pub struct Info<'a> {
-    /// The bulb has a colour temperature (the page's "tw").
     pub tunable: bool,
-    /// The image has the watchdog, motion sensing.
     pub watchdog: bool,
     pub sense: bool,
     pub release: u8,
@@ -87,20 +44,14 @@ pub struct Info<'a> {
     pub firmware: &'a str,
 }
 
-/// The firmware's part of the state value (bytes 0..35). Fields the
-/// firmware has nothing for are 0.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct State {
     pub uptime_s: u32,
-    /// 0 power-on, 1 watchdog, 2 software reset.
     pub reset_cause: u8,
-    /// Resets in a row without a power cut, watchdog resets.
     pub consecutive_resets: u8,
     pub watchdog_resets: u8,
     pub safe_mode: bool,
-    /// Step of the factory reset sequence of power cycles (0 none).
     pub reset_step: u8,
-    /// Starts counted (NumberOfResets).
     pub starts: u16,
     pub joined: bool,
     pub short: u16,
@@ -117,9 +68,6 @@ pub struct State {
     pub mac_failures: u16,
 }
 
-/// An event of the log as the page shows it: when (seconds since the
-/// start, `TIME_PREVIOUS` before it), what (the C firmware's codes, 1..=11;
-/// `zigbee_event` maps the Rust stack's onto them), one byte that says more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LogEntry {
     pub time: u32,
@@ -127,7 +75,6 @@ pub struct LogEntry {
     pub arg: u8,
 }
 
-/// The page's event codes shared with the C firmware.
 pub mod code {
     pub const START: u8 = 1;
     pub const SAFE_MODE: u8 = 2;
@@ -140,13 +87,9 @@ pub mod code {
     pub const BLE_DISCONNECT: u8 = 9;
     pub const IDENTIFY: u8 = 10;
     pub const FAULT: u8 = 11;
-    /// The Rust stack's events without a C counterpart: this plus their own number (`zigbee::stack::ev`).
     pub const RUST: u8 = 32;
 }
 
-/// An event of the Zigbee stack's log (`zigbee::stack::ev`, its values `a`
-/// and `b`) as the page's code and byte. `channel` is the network's channel,
-/// which joining tells in the C firmware.
 pub fn zigbee_event(kind: u8, a: u16, b: u16, channel: u8) -> (u8, u8) {
     match kind {
         ev::START => (code::START, a as u8),
@@ -155,16 +98,11 @@ pub fn zigbee_event(kind: u8, a: u16, b: u16, channel: u8) -> (u8, u8) {
         ev::BLE_CONNECT => (code::BLE_CONNECT, 0),
         ev::BLE_DISCONNECT => (code::BLE_DISCONNECT, 0),
         ev::IDENTIFY => (code::IDENTIFY, 0),
-        // the link quality of the neighbor, the status code, the key sequence number, the channel
         ev::NEIGHBOR_ADDED | ev::NEIGHBOR_STALE | ev::NEIGHBOR_REMOVED | ev::TX_FAIL => (code::RUST + kind, b as u8),
-        // how many links lost so far, whether the rejoin is secured, the rest by its low byte
         _ => (code::RUST + kind, a as u8),
     }
 }
 
-/// The latest ZCL frames to the light, newest first, as the frames value
-/// carries them: [0] bytes of entries, then per frame: seconds since the
-/// start u32, sender u16, cluster u16, command, frame control, LQI, RSSI.
 #[derive(Clone, Copy)]
 pub struct FrameLog {
     bytes: [u8; FRAMES_MAX],
@@ -187,13 +125,11 @@ impl FrameLog {
         self.bytes[0] = (self.bytes[0] as usize + FRAME_ENTRY).min(FRAMES * FRAME_ENTRY) as u8;
     }
 
-    /// The value: the count and the entries there are.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes[..1 + self.bytes[0] as usize]
     }
 }
 
-/// The values of the service, as the BLE side keeps them.
 pub(crate) struct Diag {
     info: [u8; INFO_MAX],
     info_len: u8,
@@ -211,7 +147,6 @@ pub(crate) struct Diag {
 impl Diag {
     pub(crate) const fn new() -> Diag {
         let mut info = [0u8; INFO_MAX];
-        // until the firmware tells: the format and two empty strings
         info[0] = 1;
         let mut state = [0u8; STATE_FIRMWARE];
         state[0] = 1;
@@ -237,21 +172,6 @@ fn u16_at(d: &[u8], i: usize) -> Option<u16> {
     Some(u16::from_le_bytes([*d.get(i)?, *d.get(i + 1)?]))
 }
 
-/// A command as written (after a login), as the C firmware takes it; None:
-/// invalid parameters, or a command this bulb has no use for.
-///
-/// | code | parameters | |
-/// |---|---|---|
-/// | 0x10 | mode | 0 off, 1 on, 2 toggle |
-/// | 0x11 | level, time u16 | Move to Level with On/Off, time in tenths of a second |
-/// | 0x12 | mireds u16, time u16 | Move to Color Temperature (colour temperature bulbs) |
-/// | 0x20 | value | StartUpOnOff (0, 1, 2, 0xFF) |
-/// | 0x21 | value | StartUpCurrentLevel |
-/// | 0x22 | bits | Level Control options (bit 0 execute if off, bit 1 colour follows the level) |
-/// | 0x23 | bits | Color Control options (bit 0) |
-/// | 0x24 | mireds u16 | StartUpColorTemperature (0xFFFF previous) |
-/// | 0x30 | | restart |
-/// | 0x31 | 'R' 'S' 'T' | factory reset |
 pub fn parse(d: &[u8], id: &Identity) -> Option<DiagCommand> {
     let tw = id.tunable;
     let in_range = |m: u16| (id.ct_min..=id.ct_max).contains(&m);
@@ -274,7 +194,6 @@ pub fn parse(d: &[u8], id: &Identity) -> Option<DiagCommand> {
             DiagCommand::Light(Command::SetPowerOnBehavior(PowerOnBehavior::from_u8(v)))
         }
         0x21 => DiagCommand::Light(Command::SetStartupLevel(*d.get(1)?)),
-        // the colour can follow the level only where there is a colour temperature
         0x22 => DiagCommand::LevelOptions(*d.get(1)? & if tw { 0x03 } else { 0x01 }),
         0x23 if tw => DiagCommand::ColorOptions(*d.get(1)? & 0x01),
         0x24 if tw => {
@@ -288,7 +207,6 @@ pub fn parse(d: &[u8], id: &Identity) -> Option<DiagCommand> {
 }
 
 impl<H: Hal> Ble<H> {
-    /// The info value: once, at the start.
     pub fn set_diag_info(&mut self, i: &Info) {
         let d = &mut self.diag;
         let model = &i.model.as_bytes()[..i.model.len().min(INFO_MAX - 15)];
@@ -308,7 +226,6 @@ impl<H: Hal> Ble<H> {
         d.info_len = (f + firmware.len()) as u8;
     }
 
-    /// The firmware's part of the state value: about every second.
     pub fn set_diag_state(&mut self, s: &State) {
         let o = &mut self.diag.state;
         o[0] = 1;
@@ -334,7 +251,6 @@ impl<H: Hal> Ble<H> {
         o[33..35].copy_from_slice(&s.mac_failures.to_le_bytes());
     }
 
-    /// The config value, from the light's settings in the stack.
     pub fn set_diag_config(&mut self, c: &LightSettings) {
         let o = &mut self.diag.config;
         o[0] = 1;
@@ -354,7 +270,6 @@ impl<H: Hal> Ble<H> {
         o[19] = c.max_level;
     }
 
-    /// The log value: the newest events first, as many as fit (`LOG_ENTRIES`).
     pub fn set_diag_log(&mut self, events: impl IntoIterator<Item = LogEntry>) {
         let o = &mut self.diag.log;
         let mut n = 0;
@@ -368,21 +283,16 @@ impl<H: Hal> Ble<H> {
         o[0] = n as u8;
     }
 
-    /// The frames value.
     pub fn set_diag_frames(&mut self, f: &FrameLog) {
         self.diag.frames = *f;
     }
 
-    /// The counters value: format 1, then per attribute of the Diagnostics
-    /// cluster its identifier u16, ZCL type and value (as wide as the type),
-    /// as `zigbee::Stack::diag_counters` writes it. About every second.
     pub fn set_diag_counters(&mut self, value: &[u8]) {
         let n = value.len().min(COUNTERS_MAX);
         self.diag.counters[..n].copy_from_slice(&value[..n]);
         self.diag.counters_len = n as u16;
     }
 
-    /// A command written to the cmd characteristic, for the firmware to carry out.
     pub fn take_diag_command(&mut self) -> Option<DiagCommand> {
         self.diag.pending.take()
     }
@@ -419,7 +329,6 @@ impl<H: Hal> Ble<H> {
         self.diag.frames.bytes()
     }
 
-    /// A write to the cmd characteristic.
     pub(crate) fn diag_write(&mut self, value: &[u8]) {
         let Some(&first) = value.first() else { return };
         let d = if first == CMD_IDENTIFY {

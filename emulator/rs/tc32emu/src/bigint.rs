@@ -1,14 +1,6 @@
-// SPDX-License-Identifier: Apache-2.0
-//! The little unsigned big-integer arithmetic the public key engine's model
-//! needs (Go's math/big in pke.go): every value it computes is reduced
-//! modulo a prime below 2^256, so non-negative integers and modular
-//! subtraction give the same results as big.Int's signed arithmetic followed
-//! by Mod (Euclidean, non-negative).
-
 use std::cmp::Ordering;
 use std::fmt;
 
-/// An unsigned integer, little-endian 32-bit limbs, no high zero limbs.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BigUint {
     limbs: Vec<u32>,
@@ -25,14 +17,12 @@ impl BigUint {
         b
     }
 
-    /// From little-endian 32-bit words.
     pub fn from_words(w: &[u32]) -> BigUint {
         let mut b = BigUint { limbs: w.to_vec() };
         b.norm();
         b
     }
 
-    /// From big-endian bytes (big.Int SetBytes).
     #[allow(dead_code)]
     pub fn from_bytes_be(b: &[u8]) -> BigUint {
         let mut limbs = Vec::with_capacity(b.len() / 4 + 1);
@@ -51,7 +41,6 @@ impl BigUint {
         r
     }
 
-    /// Parses hex digits (big.Int SetString(s, 16)).
     #[allow(dead_code)]
     pub fn from_hex(s: &str) -> Option<BigUint> {
         let mut r = BigUint::zero();
@@ -75,8 +64,6 @@ impl BigUint {
         self.limbs.is_empty()
     }
 
-    /// The low words, n of them (FillBytes into 4n bytes, as words); panics
-    /// when the value does not fit, as Go's FillBytes does.
     pub fn to_words(&self, n: usize) -> Vec<u32> {
         if self.limbs.len() > n {
             panic!("math/big: buffer too small to fit value");
@@ -131,7 +118,6 @@ impl BigUint {
         b
     }
 
-    /// self - o; o must not be larger.
     pub fn sub(&self, o: &BigUint) -> BigUint {
         assert!(self.cmp(o) != Ordering::Less, "BigUint::sub underflow");
         let mut r = Vec::with_capacity(self.limbs.len());
@@ -192,7 +178,6 @@ impl BigUint {
         out
     }
 
-    /// (quotient, remainder); panics on a zero divisor, as Go does.
     pub fn divrem(&self, d: &BigUint) -> (BigUint, BigUint) {
         assert!(!d.is_zero(), "division by zero");
         if self.cmp(d) == Ordering::Less {
@@ -211,7 +196,6 @@ impl BigUint {
             qb.norm();
             return (qb, BigUint::from_u64(rem));
         }
-        // Knuth, TAOCP 4.3.1, algorithm D.
         let s = d.limbs.last().unwrap().leading_zeros() as usize;
         let v = d.shl(s).limbs;
         let mut u = self.shl(s).limbs;
@@ -261,7 +245,6 @@ impl BigUint {
         qb.norm();
         let mut rb = BigUint { limbs: u[..n].to_vec() };
         rb.norm();
-        // Undo the normalization shift.
         let rb = rb.shr(s);
         (qb, rb)
     }
@@ -286,7 +269,6 @@ impl BigUint {
         self.divrem(m).1
     }
 
-    /// (a - b) mod m for any a, b.
     pub fn mod_sub(a: &BigUint, b: &BigUint, m: &BigUint) -> BigUint {
         let (a, b) = (a.rem(m), b.rem(m));
         if a.cmp(&b) != Ordering::Less {
@@ -296,16 +278,12 @@ impl BigUint {
         }
     }
 
-    /// The inverse of g modulo n (big.Int ModInverse); None when g and n
-    /// are not relatively prime.
     pub fn mod_inverse(g: &BigUint, n: &BigUint) -> Option<BigUint> {
-        // Extended Euclid on (g mod n, n), the coefficient kept modulo n.
         let g = g.rem(n);
         let (mut r0, mut r1) = (n.clone(), g);
         let (mut t0, mut t1) = (BigUint::zero(), BigUint::from_u64(1));
         while !r1.is_zero() {
             let (q, r2) = r0.divrem(&r1);
-            // t2 = t0 - q * t1 (mod n)
             let t2 = BigUint::mod_sub(&t0, &q.mul(&t1).rem(n), n);
             r0 = r1;
             r1 = r2;
@@ -314,7 +292,6 @@ impl BigUint {
         }
         if r0.cmp(&BigUint::from_u64(1)) != Ordering::Equal {
             if n.cmp(&BigUint::from_u64(1)) == Ordering::Equal {
-                // Every g is its own inverse (0) modulo 1.
                 return Some(BigUint::zero());
             }
             return None;
@@ -324,7 +301,6 @@ impl BigUint {
 }
 
 impl fmt::LowerHex for BigUint {
-    /// big.Int %x: lowercase, no leading zeros, "0" for zero.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.limbs.is_empty() {
             return f.write_str("0");

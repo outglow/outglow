@@ -1,5 +1,3 @@
-// flash_size_test.go: FlashSize (the address-map bound) is the machine's
-// cfg.flash_size here.
 use super::err_text;
 use crate::{Config, Error, Flash, Machine, FLASH_MEM, REG_BASE};
 

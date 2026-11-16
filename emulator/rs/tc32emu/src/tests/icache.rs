@@ -1,4 +1,3 @@
-// icache_test.go
 use crate::{Flash, Machine, FLASH_MEM, SRAM_BASE};
 
 fn cost(m: &mut Machine, addr: u32, size: usize) -> [i64; 2] {

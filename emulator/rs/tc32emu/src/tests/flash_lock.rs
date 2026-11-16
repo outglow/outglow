@@ -1,5 +1,3 @@
-// flash_lock_test.go (a flash without a machine), TestFlashOnWrite,
-// TestXIPWhileChipSelectLow and TestSRAMFill.
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -208,7 +206,6 @@ fn flash_on_write() {
     assert_eq!(*seen.borrow(), want);
 }
 
-/// Machine::on_flash_write sees the same writes, with the machine.
 #[test]
 fn machine_on_flash_write() {
     let mut fl = Flash::new_jedec(0x80000, [0xC8, 0x60, 0x14]);

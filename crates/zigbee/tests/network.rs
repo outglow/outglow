@@ -1,5 +1,3 @@
-//! The stack on a simulated network: joining, security, control, routing.
-
 mod sim;
 
 use bulb_core::command::Command;
@@ -22,7 +20,6 @@ fn joins_announces_and_exchanges_the_link_key() {
     let d = net.coord.device(short).unwrap();
     assert!(d.announced && d.verified);
     assert_eq!(net.coord.mic_failures, 0);
-    // the router shows up in the neighborhood: it sends link status
     net.run(17_000);
     assert!(net.coord.device(short).unwrap().link_status);
 }
@@ -54,7 +51,6 @@ fn does_not_join_a_closed_network() {
     net.run(30_000);
     assert_ne!(net.nodes[n].stack.state(), State::Up);
     assert!(net.coord.devices.is_empty());
-    // and joins once it opens
     net.coord.permit_join = true;
     net.run_until(30_000, "join after permit", |net| net.nodes[n].stack.state() == State::Up);
 }
@@ -77,16 +73,11 @@ fn on_off_and_level_commands_reach_the_light_and_are_answered() {
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(50);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::Off));
-    // default response: frame control, seq, 0x0B, command, status
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.aps_acks, 1, "the request asked for an APS acknowledgement");
-    // The answer leaves after the light has taken the command (and after
-    // the APS acknowledgement, which says only that the request arrived):
-    // a coordinator that looks at the light when the answer comes sees it off.
     let id = net.nodes[n].id;
     let sent: Vec<usize> = {
         let air = net.air.borrow();
-        // the bulb's unicasts to the coordinator
         air.log.iter().enumerate().filter(|(_, (at, from, f))| *at >= t && *from == id && f[0] & 0x20 != 0 && f[5..7] == [0, 0]).map(|(i, _)| i).collect()
     };
     let took = *net.nodes[n].command_frames.last().unwrap();
@@ -100,20 +91,17 @@ fn on_off_and_level_commands_reach_the_light_and_are_answered() {
     net.coord.zcl(short, ON_OFF, 0x01, 0x02, &[]);
     net.run(50);
     assert!(!net.nodes[n].on);
-    // Move to Level without On/Off does nothing while the light is off
     let before = net.nodes[n].commands.len();
     net.coord.zcl(short, LEVEL, 0x01, 0x00, &[200, 0, 0, 0, 0]);
     net.run(50);
     assert_eq!(net.nodes[n].commands.len(), before);
 
-    // disable-default-response: a successful command stays silent
     let answers = net.coord.zcl_rx.len();
     net.coord.zcl(short, ON_OFF, 0x11, 0x01, &[]);
     net.run(50);
     assert!(net.nodes[n].on);
     assert_eq!(net.coord.zcl_rx.len(), answers);
 
-    // an unknown command is refused even then
     let seq = net.coord.zcl(short, ON_OFF, 0x11, 0x77, &[]);
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x77, 0x81]);
@@ -126,11 +114,9 @@ fn level_move_step_and_stop() {
     let short = net.nodes[n].short();
     net.coord.zcl(short, LEVEL, 0x01, 0x04, &[100, 0, 0, 0, 0]);
     net.run(50);
-    // Step up 20 over 1 s
     net.coord.zcl(short, LEVEL, 0x01, 0x02, &[0, 20, 10, 0, 0, 0]);
     net.run(50);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 120, transition_ms: 1000 }));
-    // Move down at 10 levels a second: 119 levels to go
     net.coord.zcl(short, LEVEL, 0x01, 0x01, &[1, 10, 0, 0]);
     net.run(50);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 1, transition_ms: 11_900 }));
@@ -169,12 +155,10 @@ fn writes_startup_attributes_and_rejects_read_only_ones() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // StartUpOnOff = 1 (on), enum8
     let seq = net.coord.zcl(short, ON_OFF, 0x00, 0x02, &[0x03, 0x40, 0x30, 0x01]);
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x04).unwrap(), vec![0x18, seq, 0x04, 0x00]);
     assert!(net.nodes[n].commands.contains(&Command::SetPowerOnBehavior(bulb_core::PowerOnBehavior::On)));
-    // OnOff itself is read-only; a wrong type is refused too
     let seq = net.coord.zcl(short, ON_OFF, 0x00, 0x02, &[0x00, 0x00, 0x10, 0x01, 0x03, 0x40, 0x20, 0x01]);
     net.run(50);
     assert_eq!(
@@ -191,9 +175,7 @@ fn interview_descriptors() {
     let s = short.to_le_bytes();
     let seq = net.coord.zdo(short, 0x0005, &s);
     net.run(50);
-    // the light, the object endpoints (diagnostic values, settings), Green Power
     assert_eq!(net.coord.last_zdo(short, 0x8005).unwrap(), vec![seq, 0x00, s[0], s[1], 9, 1, 2, 3, 4, 5, 6, 7, 8, 242]);
-    // an object endpoint: Simple Sensor with Analog Input; Configuration Tool with Binary Output
     for (ep, device, cluster) in [(2u8, 0x000Cu16, 0x000Cu16), (7, 0x0005, 0x0010), (8, 0x0005, 0x000D)] {
         let seq = net.coord.zdo(short, 0x0004, &[s[0], s[1], ep]);
         net.run(50);
@@ -208,7 +190,6 @@ fn interview_descriptors() {
     net.run(50);
     assert_eq!(
         net.coord.last_zdo(short, 0x8004).unwrap(),
-        // profile, device, version; Basic, Identify, Groups, Scenes, On/Off, Level, Diagnostics, Touchlink; OTA as client
         vec![
             seq, 0x00, s[0], s[1], 26, 1, 0x04, 0x01, 0x01, 0x01, 1, 8, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00, 0x05, 0x00,
             0x06, 0x00, 0x08, 0x00, 0x05, 0x0B, 0x00, 0x10, 1, 0x19, 0x00
@@ -219,18 +200,15 @@ fn interview_descriptors() {
     let nd = net.coord.last_zdo(short, 0x8002).unwrap();
     assert_eq!(&nd[..7], &[seq, 0x00, s[0], s[1], 0x01, 0x40, 0x8E]);
     assert_eq!(&nd[7..9], &[0x41, 0x11]);
-    // an endpoint that is not in use: NOT_ACTIVE; 0 and 255 are no endpoints to ask about: INVALID_EP
     for (endpoint, status) in [(9, 0x83), (0, 0x82), (255, 0x82)] {
         let seq = net.coord.zdo(short, 0x0004, &[s[0], s[1], endpoint]);
         net.run(50);
         assert_eq!(net.coord.last_zdo(short, 0x8004).unwrap(), vec![seq, status, s[0], s[1], 0]);
     }
-    // an error is for the one who asked the bulb, not for everyone who asked everyone
     net.coord.zdo_rx.clear();
     net.coord.zdo(0xFFFD, 0x0004, &[s[0], s[1], 9]);
     net.run(200);
     assert!(net.coord.last_zdo(short, 0x8004).is_none());
-    // neighbor table: the coordinator, as parent
     net.run(16_000);
     let seq = net.coord.zdo(short, 0x0031, &[0]);
     net.run(50);
@@ -261,7 +239,6 @@ fn reports_bound_attributes_on_change_and_periodically() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     assert_eq!(bind(&mut net, n, ON_OFF)[1], 0x00);
-    // min 0, max 30 s
     let seq = net.coord.zcl(short, ON_OFF, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x10, 0, 0, 30, 0]);
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00]);
@@ -273,12 +250,10 @@ fn reports_bound_attributes_on_change_and_periodically() {
     assert_eq!(&report[2..], &[0x0A, 0x00, 0x00, 0x10, 0x00]);
     let after = net.coord.zcl_rx.iter().filter(|e| e.2.get(2) == Some(&0x0A)).count();
     assert_eq!(after, before + 1);
-    // nothing changes: the next report comes at the maximum interval
     net.run(29_000);
     assert_eq!(net.coord.zcl_rx.iter().filter(|e| e.2.get(2) == Some(&0x0A)).count(), after);
     net.run(2_000);
     assert_eq!(net.coord.zcl_rx.iter().filter(|e| e.2.get(2) == Some(&0x0A)).count(), after + 1);
-    // the configuration reads back, and an unreportable attribute is refused
     let seq = net.coord.zcl(short, ON_OFF, 0x00, 0x08, &[0x00, 0x00, 0x00]);
     net.run(50);
     assert_eq!(
@@ -304,7 +279,6 @@ fn groups_receive_group_casts() {
     assert!(!net.nodes[a].on, "the group member switches off");
     assert!(net.nodes[b].on, "the other node ignores the group");
     assert_eq!(net.nodes[a].commands.iter().filter(|c| **c == Command::Off).count(), 1, "relayed copies are dropped");
-    // membership and removal
     let seq = net.coord.zcl(short, 0x0004, 0x01, 0x02, &[0]);
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, 0x0004, 0x02).unwrap(), vec![0x19, seq, 0x02, 7, 1, 0x34, 0x12]);
@@ -329,12 +303,9 @@ fn state_survives_a_power_cycle() {
     assert_eq!(net.nodes[n].short(), short);
     net.run(2_000);
     assert_eq!(net.coord.devices.len(), joins);
-    // the coordinator asserts that frame counters never go back, so this
-    // exchange proves the counter was resumed above its old value
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
-    // group and binding are still there
     let seq = net.coord.zcl(short, 0x0004, 0x01, 0x02, &[0]);
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, 0x0004, 0x02).unwrap(), vec![0x19, seq, 0x02, 7, 1, 0x34, 0x12]);
@@ -363,7 +334,6 @@ fn replayed_and_forged_frames_are_dropped() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // let the joining traffic end, so that the next frame on the air is the Off
     net.run(100);
     let t = net.now();
     net.coord.zcl(short, ON_OFF, 0x11, 0x00, &[]);
@@ -372,8 +342,6 @@ fn replayed_and_forged_frames_are_dropped() {
     net.coord.zcl(short, ON_OFF, 0x11, 0x01, &[]);
     net.run(50);
     assert!(net.nodes[n].on);
-    // Replay the recorded Off, late enough that only the frame counter can
-    // tell it from a new frame (the APS duplicate filter has forgotten it).
     net.run(4_000);
     let off = net.sent_by(0, t).into_iter().next().unwrap();
     let replays = net.nodes[n].stack.stats.replays;
@@ -381,18 +349,15 @@ fn replayed_and_forged_frames_are_dropped() {
     net.run(50);
     assert!(net.nodes[n].on, "a replayed frame must not switch the light");
     assert_eq!(net.nodes[n].stack.stats.replays, replays + 1);
-    // a frame with a broken MIC
     let mut forged = off.clone();
     let last = forged.len() - 1;
     forged[last] ^= 0x55;
-    // bump the frame counter in the auxiliary header so only the MIC stops it
     forged[9 + 8 + 1] = forged[9 + 8 + 1].wrapping_add(10);
     let bad = net.nodes[n].stack.stats.bad_mic;
     net.air.borrow_mut().transmit(0, &forged);
     net.run(50);
     assert!(net.nodes[n].on);
     assert_eq!(net.nodes[n].stack.stats.bad_mic, bad + 1);
-    // an unsecured NWK frame to a joined node
     let commands = net.nodes[n].commands.len();
     let mut h = net.coord.header(zigbee::nwk::FRAME_DATA, short, 30);
     h.security = false;
@@ -419,7 +384,6 @@ fn network_key_update_and_switch() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.mic_failures, 0);
-    // and the new key is what a power cycle resumes with
     net.power_cycle(n);
     net.run(1_000);
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x01, &[]);
@@ -441,11 +405,9 @@ fn leaves_on_request_and_can_join_again() {
     net.run(1_000);
     assert_ne!(net.nodes[n].stack.state(), State::Up);
     assert!(net.coord.nwk_cmd_rx.iter().any(|(s, c)| *s == short && c[0] == zigbee::nwk::CMD_LEAVE));
-    // a power cycle now finds no network
     net.coord.permit_join = false;
     net.power_cycle(n);
     assert_eq!(net.nodes[n].stack.state(), State::Down);
-    // joining again works, and the frame counter did not restart
     net.coord.permit_join = true;
     net.run_until(30_000, "second join", |net| {
         net.nodes[n].stack.state() == State::Up && net.coord.devices.iter().any(|d| d.ext == ext && d.verified)
@@ -459,17 +421,14 @@ fn nwk_leave_request_is_obeyed() {
     let short = net.nodes[n].short();
     net.coord.permit_join = false;
     let before = net.coord.nwk_cmd_rx.len();
-    // a Leave request (options 0x40: request, no rejoin)
     net.coord.nwk_command(short, 1, &[zigbee::nwk::CMD_LEAVE, 0x40]);
     net.run(1_000);
     assert_ne!(net.nodes[n].stack.state(), State::Up);
-    // it said so: a Leave indication from its address, not a request (R22 3.4.4)
     assert!(
         net.coord.nwk_cmd_rx[before..].iter().any(|(s, c)| *s == short && c[0] == zigbee::nwk::CMD_LEAVE && c[1] & 0x40 == 0),
         "{:?}",
         &net.coord.nwk_cmd_rx[before..]
     );
-    // and it forgot the network: a power cycle finds none
     net.power_cycle(n);
     assert_eq!(net.nodes[n].stack.state(), State::Down);
 }
@@ -492,10 +451,6 @@ fn follows_a_channel_change() {
     assert_eq!(net.nodes[n].stack.channel(), 20);
 }
 
-// ------------------------------------------------------------------ routing
-
-/// Two bulbs; the second is moved out of the coordinator's range after it
-/// joined, so everything to and from it has to go through the first.
 fn line() -> (Net, usize, usize) {
     let mut net = Net::new();
     let a = net.join_node();
@@ -503,7 +458,6 @@ fn line() -> (Net, usize, usize) {
     let (pa, pb) = (net.nodes[a].id, net.nodes[b].id);
     assert_ne!(pa, pb);
     net.link(0, pb, 0);
-    // let the neighbor tables settle on the new topology
     net.run(70_000);
     (net, a, b)
 }
@@ -523,19 +477,15 @@ fn relays_broadcasts_to_nodes_out_of_range() {
 fn discovers_routes_in_both_directions() {
     let (mut net, a, b) = line();
     let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
-    // the coordinator hands the frame to the near node, which has to find the far one
     net.coord.via.insert(sb, sa);
     let seq = net.coord.zcl(sb, ON_OFF, 0x01, 0x00, &[]);
     net.run(3_000);
     assert!(!net.nodes[b].on, "the command arrived over two hops");
-    // the answer needed a route back to the coordinator
     assert_eq!(net.coord.last_zcl(sb, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert!(net.nodes[a].stack.stats.relayed >= 2);
-    // with the routes in place the next exchange is quick
     let seq = net.coord.zcl(sb, ON_OFF, 0x01, 0x01, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(sb, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x01, 0x00]);
-    // the near node's routing table shows the far one
     let seq = net.coord.zdo(sa, 0x0032, &[0]);
     net.run(100);
     let rtg = net.coord.last_zdo(sa, 0x8032).unwrap();
@@ -551,7 +501,6 @@ fn many_to_one_route_and_route_record_then_source_routing() {
     net.coord.many_to_one_route_request(false);
     net.run(2_000);
     assert_eq!(bind(&mut net, a, ON_OFF)[1], 0x00);
-    // the far node reports towards the concentrator: route record first
     net.coord.via.insert(sb, sa);
     net.coord.zcl(sb, ON_OFF, 0x01, 0x00, &[]);
     net.run(3_000);
@@ -559,7 +508,6 @@ fn many_to_one_route_and_route_record_then_source_routing() {
     let record = net.coord.route_records.iter().find(|(src, _)| *src == sb).expect("route record from the far node");
     assert_eq!(record.1, vec![sa], "the relay added itself to the record");
     assert!(net.coord.route_records.iter().any(|(src, relays)| *src == sa && relays.is_empty()));
-    // the concentrator now source-routes
     net.coord.via.clear();
     net.coord.source_route.insert(sb, vec![sa]);
     let seq = net.coord.zcl(sb, ON_OFF, 0x01, 0x01, &[]);
@@ -575,7 +523,6 @@ fn route_repairs_after_the_relay_disappears() {
     let b = net.join_node();
     let c = net.join_node();
     let (pb, pc) = (net.nodes[b].id, net.nodes[c].id);
-    // c hears only a and b; it is out of the coordinator's range
     net.link(0, pc, 0);
     net.run(70_000);
     let sc = net.nodes[c].short();
@@ -584,7 +531,6 @@ fn route_repairs_after_the_relay_disappears() {
     let seq = net.coord.zcl(sc, ON_OFF, 0x01, 0x00, &[]);
     net.run(3_000);
     assert_eq!(net.coord.last_zcl(sc, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
-    // the relay c used goes dark; c has to find the other one
     net.set_power(a, false);
     let _ = pb;
     net.coord.via.insert(sc, sb);
@@ -600,11 +546,8 @@ fn answers_beacon_requests_after_a_random_pause() {
     let n = net.join_node();
     let id = net.nodes[n].id;
     net.coord.permit_join = false;
-    // (after its own join the bulb lets others join for a while: see
-    // the_network_is_opened_for_others_once_the_bulb_has_joined)
     net.run(181_000);
     let t = net.now();
-    // a third radio scans
     let scanner = net.air.borrow_mut().add_port(0x1111);
     net.air.borrow_mut().transmit(scanner, &[0x03, 0x08, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07]);
     net.run(3);
@@ -615,31 +558,18 @@ fn answers_beacon_requests_after_a_random_pause() {
     let (h, off) = zigbee::mac::Header::parse(&beacons[0]).unwrap();
     let b = zigbee::mac::Beacon::parse(&h, &beacons[0][off..]).unwrap();
     assert_eq!((b.pan, b.short, b.ext_pan), (PAN, net.nodes[n].short(), EXT_PAN));
-    // closed for joining, but there is room for children
     assert!(!b.permit_join && b.router_capacity && b.end_device_capacity);
     assert_eq!(b.depth, 1);
 }
 
 #[test]
 fn the_stack_fits_comfortably_in_the_chips_ram() {
-    // 64 KB of SRAM in all; the firmware keeps the stack in .bss and builds it
-    // there with one copy on the main stack on the way (`Stack::new_in`). Most
-    // of it: 32 children and 24 held frames of 125 bytes (docs/rust-radio.md),
-    // and the frames waiting for a route or for another attempt. (The image
-    // leaves about 30 KB of SRAM unused above the 16 KB the linker keeps for
-    // the main stack.) The diagnostics' event log and per-neighbor counts
-    // (docs/diagnostics.md) took it past 13 KB, the black box (frames per
-    // neighbor, frames sent, twelve hours of rows: about 5.9 KB) is kept
-    // outside, by the hardware layer: built on the main stack and copied, it
-    // took the main stack to 2 KB of its end (Diagnostics 0x5043 measures it).
     let size = std::mem::size_of::<zigbee::Stack<SimHal>>();
     assert!(size < 14 * 1024, "Stack is {size} bytes");
 }
 
 #[test]
 fn a_network_key_sent_in_the_clear_is_refused() {
-    // A rogue coordinator answers the association and sends a key without APS
-    // encryption (it does not know the link key).
     let mut net = Net::new();
     net.coord.send_key_in_the_clear = true;
     let n = net.add_node();
@@ -650,7 +580,6 @@ fn a_network_key_sent_in_the_clear_is_refused() {
 
 #[test]
 fn three_hops_route_discovery_and_a_two_relay_source_route() {
-    // coordinator - a - b - c, each hearing only its neighbors in the line
     let mut net = Net::new();
     let a = net.join_node();
     let b = net.join_node();
@@ -661,15 +590,12 @@ fn three_hops_route_discovery_and_a_two_relay_source_route() {
     net.link(pa, pc, 0);
     net.run(70_000);
     let (sa, sb, sc) = (net.nodes[a].short(), net.nodes[b].short(), net.nodes[c].short());
-    // the coordinator lists both relays, the one next to the destination first
     net.coord.source_route.insert(sc, vec![sb, sa]);
     let seq = net.coord.zcl(sc, ON_OFF, 0x01, 0x00, &[]);
     net.run(4_000);
     assert!(!net.nodes[c].on, "the frame went a -> b -> c");
-    // the answer needed a route over three hops, found by a request relayed twice
     assert_eq!(net.coord.last_zcl(sc, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert!(net.nodes[a].stack.stats.relayed >= 2 && net.nodes[b].stack.stats.relayed >= 2);
-    // and a discovered route in the other direction: the coordinator hands the frame to a
     net.coord.source_route.clear();
     net.coord.via.insert(sc, sa);
     let seq = net.coord.zcl(sc, ON_OFF, 0x01, 0x01, &[]);
@@ -686,13 +612,10 @@ fn link_status_lists_live_neighbors_with_both_costs() {
     let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
     net.run(40_000);
     let last = |net: &Net, src: u16| net.coord.nwk_cmd_rx.iter().rev().find(|(s, c)| *s == src && c[0] == nwk::CMD_LINK_STATUS).unwrap().1.clone();
-    // a's list: the coordinator and b, in ascending order, complete in one frame;
-    // incoming cost 1 (best link quality), outgoing cost 1 (what they report about a)
     let (lo, hi) = (sa.min(sb), sa.max(sb));
     let other = if sa == lo { hi } else { lo };
     let o = other.to_le_bytes();
     assert_eq!(last(&net, sa), vec![nwk::CMD_LINK_STATUS, 0x62, 0x00, 0x00, 0x11, o[0], o[1], 0x11]);
-    // b goes silent: after the age limit a stops listing it
     net.set_power(b, false);
     net.run(75_000);
     assert_eq!(last(&net, sa), vec![nwk::CMD_LINK_STATUS, 0x61, 0x00, 0x00, 0x11]);
@@ -703,16 +626,13 @@ fn finds_its_network_again_after_a_channel_change_it_missed() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // the bulb is off while the network moves to channel 23
     net.set_power(n, false);
     net.air.borrow_mut().ports[0].channel = 23;
     net.run(5_000);
     net.power_cycle(n);
     net.set_power(n, true);
     assert_eq!(net.nodes[n].stack.channel(), 11);
-    // silence; after three minutes it goes looking and finds the beacons of its network
     net.run_until(200_000, "back on the network's channel", |net| net.nodes[n].stack.channel() == 23 && net.nodes[n].stack.state() == State::Up);
-    // it tells the network that it is back: a secured rejoin, then its announcement
     let t = net.now();
     net.run(3_000);
     assert!(net.coord.rejoins.iter().any(|(s, secure)| *s == short && *secure), "rejoins {:x?}", net.coord.rejoins);
@@ -722,7 +642,6 @@ fn finds_its_network_again_after_a_channel_change_it_missed() {
     net.run(3_000);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.devices.len(), 1, "no new association was needed");
-    // the new channel is what the next power cycle starts on
     net.power_cycle(n);
     assert_eq!(net.nodes[n].stack.channel(), 23);
 }
@@ -732,7 +651,6 @@ fn a_search_that_finds_nothing_leaves_the_network_settings_alone() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // the coordinator is unreachable for a while (not just on another channel)
     net.air.borrow_mut().ports[0].powered = false;
     net.run(400_000);
     assert_eq!(net.nodes[n].stack.state(), State::Up);
@@ -749,9 +667,8 @@ fn energy_scan_reports_the_level_of_every_requested_channel() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    net.air.borrow_mut().energy[4] = 200; // channel 15
-    net.air.borrow_mut().energy[9] = 37; // channel 20
-    // Mgmt_NWK_Update_req: channels 15, 20 and 26, scan duration 2, one scan
+    net.air.borrow_mut().energy[4] = 200;
+    net.air.borrow_mut().energy[9] = 37;
     let mut p = ((1u32 << 15) | (1 << 20) | (1 << 26)).to_le_bytes().to_vec();
     p.extend_from_slice(&[2, 1]);
     let seq = net.coord.zdo(short, 0x0038, &p);
@@ -760,7 +677,6 @@ fn energy_scan_reports_the_level_of_every_requested_channel() {
     assert_eq!(&rsp[..2], &[seq, 0x00]);
     assert_eq!(&rsp[2..6], &((1u32 << 15) | (1 << 20) | (1 << 26)).to_le_bytes());
     assert_eq!(&rsp[10..], &[3, 200, 37, 0]);
-    // and it is back on its own channel
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
@@ -772,7 +688,6 @@ fn leave_with_rejoin_brings_the_bulb_back_under_its_key() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     net.coord.permit_join = false;
-    // NWK Leave: request, rejoin
     net.coord.nwk_command(short, 1, &[nwk::CMD_LEAVE, 0x60]);
     net.run_until(10_000, "rejoin", |net| !net.coord.rejoins.is_empty());
     assert_eq!(net.coord.rejoins, vec![(short, true)], "one rejoin request, secured with the network key");
@@ -784,7 +699,6 @@ fn leave_with_rejoin_brings_the_bulb_back_under_its_key() {
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(3_000);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
-    // the network settings survived
     net.power_cycle(n);
     assert_eq!(net.nodes[n].stack.state(), State::Up);
 }
@@ -795,28 +709,23 @@ fn a_network_key_change_missed_while_off_is_recovered_through_the_trust_center()
     let n = net.join_node();
     let short = net.nodes[n].short();
     net.coord.permit_join = false;
-    // the bulb is off while the network moves to a new key
     net.set_power(n, false);
     net.coord.key = [0x77; 16];
     net.coord.key_seq = 1;
     net.run(5_000);
     net.power_cycle(n);
     net.set_power(n, true);
-    // it hears its neighbors under a key it does not have, and asks to be let back in
     net.run_until(200_000, "Trust Center rejoin", |net| !net.coord.rejoins.is_empty());
     assert_eq!(net.coord.rejoins, vec![(short, false)], "a rejoin request in the clear");
     net.run(2_000);
     assert_eq!(net.nodes[n].stack.state(), State::Up);
-    // (coming back is not joining: the network is not opened for others)
     assert!(!beacon_of(&mut net, n).permit_join);
-    // (until here the coordinator could not read what the bulb sent under the old key)
     let unreadable = net.coord.mic_failures;
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(20_000);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.mic_failures, unreadable, "everything since is under the new key");
     assert_eq!(net.coord.devices.len(), 1);
-    // the new key is stored
     net.power_cycle(n);
     net.run(1_000);
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x01, &[]);
@@ -835,11 +744,9 @@ fn data_encrypted_with_the_link_key_is_read_and_answered_in_kind() {
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.aps_encrypted_rx, 2, "the acknowledgement and the default response came encrypted");
     assert_eq!(net.coord.mic_failures, 0);
-    // a plain request still gets a plain answer
     net.coord.zcl(short, ON_OFF, 0x01, 0x01, &[]);
     net.run(100);
     assert_eq!(net.coord.aps_encrypted_rx, 2);
-    // encrypted with a key that is not the bulb's link key: dropped
     net.coord.devices[0].tclk = [9; 16];
     let commands = net.nodes[n].commands.len();
     net.coord.zcl_encrypted(short, ON_OFF, 0x01, 0x00, &[]);
@@ -847,9 +754,6 @@ fn data_encrypted_with_the_link_key_is_read_and_answered_in_kind() {
     assert_eq!(net.nodes[n].commands.len(), commands);
 }
 
-// ------------------------------------------------------------ address and PAN identifier conflicts
-
-/// Network Status commands the coordinator received with status "address conflict": (sender, address).
 fn conflicts(net: &Net) -> Vec<(u16, u16)> {
     net.coord
         .nwk_cmd_rx
@@ -865,14 +769,12 @@ fn another_device_under_the_bulbs_address_makes_it_take_a_new_one() {
     let n = net.join_node();
     let old = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
-    // a device that joined elsewhere and by chance drew the same address announces itself
     let mut other = Zed::new(&net.air, false);
     assert!(other.join(&mut net, 0x0000));
     other.short = old;
     other.parent = old;
     other.announce();
     net.run(1_000);
-    // the bulb tells the network, takes another address and announces it
     assert_eq!(conflicts(&net), vec![(old, old)]);
     let new = net.nodes[n].short();
     assert_ne!(new, old);
@@ -882,7 +784,6 @@ fn another_device_under_the_bulbs_address_makes_it_take_a_new_one() {
     let seq = net.coord.zcl(new, ON_OFF, 0x01, 0x00, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(new, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
-    // it is the stored address
     net.power_cycle(n);
     net.run(1_000);
     assert_eq!(net.nodes[n].short(), new);
@@ -902,7 +803,6 @@ fn a_reported_conflict_about_its_own_address_is_obeyed() {
     let seq = net.coord.zcl(new, ON_OFF, 0x01, 0x01, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(new, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x01, 0x00]);
-    // a report about some other address changes nothing
     net.coord.nwk_command(0xFFFD, 30, &[0x03, 0x0D, 0x34, 0x12]);
     net.run(1_000);
     assert_eq!(net.nodes[n].short(), new);
@@ -917,14 +817,12 @@ fn two_other_devices_under_one_address_are_reported_once() {
     assert!(first.join(&mut net, 0x0000));
     let mut second = Zed::new(&net.air, false);
     assert!(second.join(&mut net, 0x0000));
-    // both send through the bulb from here on
     first.parent = me;
     second.parent = me;
     first.announce();
     second.announce();
     net.run(500);
     assert!(conflicts(&net).is_empty());
-    // the second one turns up under the first one's address
     second.short = first.short;
     second.announce();
     net.run(500);
@@ -942,7 +840,6 @@ fn a_foreign_network_under_the_same_pan_identifier_is_reported_to_the_manager() 
     let n = net.join_node();
     let me = net.nodes[n].short();
     let reports = |net: &Net| net.coord.nwk_cmd_rx.iter().filter(|(_, p)| p.first() == Some(&0x09)).cloned().collect::<Vec<_>>();
-    // a router of another network (another extended PAN identifier) answers somebody's beacon request
     let stranger = net.air.borrow_mut().add_port(0x00AA_0000_0000_0001);
     let beacon = |ext_pan: u64| {
         let mut f = zigbee::util::Buf::new();
@@ -962,7 +859,6 @@ fn a_foreign_network_under_the_same_pan_identifier_is_reported_to_the_manager() 
         .write(7, &mut f);
         f.as_slice().to_vec()
     };
-    // our own network's beacons are no conflict
     net.air.borrow_mut().transmit(stranger, &beacon(EXT_PAN));
     net.run(500);
     assert!(reports(&net).is_empty());
@@ -971,12 +867,10 @@ fn a_foreign_network_under_the_same_pan_identifier_is_reported_to_the_manager() 
     let got = reports(&net);
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].0, me);
-    // Network Report: one PAN identifier, type "PAN identifier conflict"; our network; the identifier
     let mut want = vec![0x09, 0x01];
     want.extend_from_slice(&EXT_PAN.to_le_bytes());
     want.extend_from_slice(&PAN.to_le_bytes());
     assert_eq!(got[0].1, want);
-    // not for every beacon
     net.air.borrow_mut().transmit(stranger, &beacon(0x1122_3344_5566_7788));
     net.run(500);
     assert_eq!(reports(&net).len(), 1);
@@ -988,7 +882,6 @@ fn a_trust_center_that_knows_the_install_code_is_joined_under_its_key() {
     let key = zigbee::crypto::install_code_key(&code);
     let mut net = Net::new();
     net.identity = zigbee::stack::Identity { install_code: Some(code), ..IDENTITY };
-    // the Trust Center sends the network key under the code's key, not the well-known one
     net.coord.join_key = key;
     let n = net.join_node();
     let short = net.nodes[n].short();
@@ -996,8 +889,6 @@ fn a_trust_center_that_knows_the_install_code_is_joined_under_its_key() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert!(net.coord.devices.iter().any(|d| d.verified), "the link key exchange ran under the install code's key");
-    // once the link key has been exchanged, the install code's key is good for nothing:
-    // a network key sent under it is not taken, so a switch to it changes nothing
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
     let current = net.coord.devices.iter().find(|d| d.ext == ext).unwrap().tclk;
     net.coord.devices.iter_mut().find(|d| d.ext == ext).unwrap().tclk = key;
@@ -1009,12 +900,10 @@ fn a_trust_center_that_knows_the_install_code_is_joined_under_its_key() {
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x01, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x01, 0x00]);
-    // a bulb with an install code still joins a Trust Center that does not ask for it
     let mut net = Net::new();
     net.identity = zigbee::stack::Identity { install_code: Some(code), ..IDENTITY };
     let n = net.join_node();
     assert_eq!(net.nodes[n].stack.state(), State::Up);
-    // one without the code cannot join a Trust Center that insists on it
     let mut net = Net::new();
     net.coord.join_key = key;
     let n = net.add_node();
@@ -1025,7 +914,6 @@ fn a_trust_center_that_knows_the_install_code_is_joined_under_its_key() {
 #[test]
 fn encrypted_data_is_taken_once_and_only_from_the_trust_center() {
     let mut net = Net::new();
-    // an old Trust Center: the link key stays the one everybody knows
     net.coord.stack_revision = 20;
     let n = net.join_node();
     let short = net.nodes[n].short();
@@ -1033,8 +921,6 @@ fn encrypted_data_is_taken_once_and_only_from_the_trust_center() {
     net.coord.zcl_encrypted(short, ON_OFF, 0x11, 0x00, &[]);
     net.run(100);
     assert_eq!(net.nodes[n].commands.iter().filter(|c| **c == Command::Off).count(), 1);
-    // the same APS frame again in a new NWK frame, long after and with enough traffic in between
-    // that the bulb no longer remembers its APS counter: the security frame counter gives it away
     let again = net.coord.last_encrypted.clone();
     for _ in 0..40 {
         net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
@@ -1044,7 +930,6 @@ fn encrypted_data_is_taken_once_and_only_from_the_trust_center() {
     net.coord.nwk_data(short, &again);
     net.run(100);
     assert_eq!(net.nodes[n].commands.iter().filter(|c| **c == Command::Off).count(), 1);
-    // another device on the network, which knows that key too, sends data encrypted with it
     let mut other = Zed::new(&net.air, false);
     assert!(other.join(&mut net, 0x0000));
     other.parent = short;
@@ -1078,7 +963,6 @@ fn a_refused_rejoin_changes_nothing() {
     let short = net.nodes[n].short();
     net.coord.permit_join = false;
     net.coord.refuse_rejoin = true;
-    // the network moves to a new key while the bulb is off
     net.set_power(n, false);
     net.coord.key = [0x77; 16];
     net.coord.key_seq = 1;
@@ -1087,7 +971,6 @@ fn a_refused_rejoin_changes_nothing() {
     net.set_power(n, true);
     net.run_until(200_000, "Trust Center rejoin attempt", |net| !net.coord.rejoins.is_empty());
     net.run(2_000);
-    // turned away: it keeps its address and stays where it is, to try again
     assert_eq!((net.nodes[n].stack.state(), net.nodes[n].short()), (State::Up, short));
     assert_eq!(net.air.borrow().ports[net.nodes[n].id].short, short);
     net.coord.refuse_rejoin = false;
@@ -1104,7 +987,6 @@ fn a_retransmitted_aps_frame_is_acknowledged_again_but_acted_on_once() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // Toggle with an APS acknowledgement requested; the sender, missing the ack, sends the same APS frame again
     let aps = net.coord.aps_frame(0x40, 1, ON_OFF, 0x0104, 1, &[0x11, 0x42, 0x02]);
     let before = net.nodes[n].commands.len();
     let acks = |net: &Net| net.sent_by(net.nodes[n].id, 0).len();
@@ -1123,7 +1005,6 @@ fn a_leave_request_must_be_addressed_to_the_bulb() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // Leave with the request bit, broadcast: nobody is asked in particular, nobody goes
     net.coord.nwk_command(0xFFFD, 1, &[0x04, 0x40]);
     net.run(1_000);
     assert_eq!(net.nodes[n].stack.state(), State::Up);
@@ -1131,8 +1012,6 @@ fn a_leave_request_must_be_addressed_to_the_bulb() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
 }
-
-// ------------------------------------------------------------ keys and their frame counters
 
 #[test]
 fn a_trust_center_that_counts_from_zero_under_the_new_link_key_is_still_heard() {
@@ -1142,20 +1021,16 @@ fn a_trust_center_that_counts_from_zero_under_the_new_link_key_is_still_heard() 
     let short = net.nodes[n].short();
     net.run(500);
     assert_eq!(net.coord.aps_fc, 1, "the Confirm Key went out with frame counter 0");
-    // data under the new key, with the counters that follow
     let seq = net.coord.zcl_encrypted(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(100);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::Off));
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
-    // the new key's counter guards against replays as the old one's did: the same APS frame
-    // in a new NWK frame, after the duplicate filter has forgotten it
     let again = net.coord.last_encrypted.clone();
     net.run(5_000);
     let (commands, replays) = (net.nodes[n].commands.len(), net.nodes[n].stack.stats.replays);
     net.coord.nwk_data(short, &again);
     net.run(100);
     assert_eq!((net.nodes[n].commands.len(), net.nodes[n].stack.stats.replays), (commands, replays + 1));
-    // and the exchange is not started over after a power cycle
     net.power_cycle(n);
     net.run(5_000);
     let seq = net.coord.zcl_encrypted(short, ON_OFF, 0x01, 0x01, &[]);
@@ -1163,8 +1038,6 @@ fn a_trust_center_that_counts_from_zero_under_the_new_link_key_is_still_heard() 
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x01, 0x00]);
 }
 
-/// The bulb and the coordinator move to a new network key; the coordinator
-/// counts its frames from 0 under it.
 fn rotate_key(net: &mut Net, n: usize, key: &[u8; 16], seq: u8) {
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
@@ -1181,13 +1054,11 @@ fn frame_counters_start_anew_under_a_new_network_key() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     net.run(100);
-    // a command under the first key, kept for later
     let t = net.now();
     net.coord.zcl(short, ON_OFF, 0x11, 0x02, &[]);
     net.run(50);
     let under_old_key = net.sent_by(0, t).into_iter().next().unwrap();
     assert!(!net.nodes[n].on, "toggled");
-    // new key: the Trust Center's counter is back at 0, far below what it was
     rotate_key(&mut net, n, &[0x5A; 16], 1);
     assert_eq!(net.coord.fc, 0);
     let t = net.now();
@@ -1195,15 +1066,12 @@ fn frame_counters_start_anew_under_a_new_network_key() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.mic_failures, 0);
-    // under the new key the counter does what it did under the old one
     let under_new_key = net.sent_by(0, t).into_iter().next().unwrap();
     net.run(5_000);
     let (commands, replays) = (net.nodes[n].commands.len(), net.nodes[n].stack.stats.replays);
     net.air.borrow_mut().transmit(0, &under_new_key);
     net.run(50);
     assert_eq!((net.nodes[n].commands.len(), net.nodes[n].stack.stats.replays), (commands, replays + 1));
-    // The old key is still read, but not from a sender that has been heard under the new one:
-    // the recorded frame, whose counter is above anything used under the new key, stays a replay.
     net.air.borrow_mut().transmit(0, &under_old_key);
     net.run(50);
     assert_eq!((net.nodes[n].commands.len(), net.nodes[n].stack.stats.replays), (commands, replays + 2));
@@ -1218,13 +1086,11 @@ fn a_frame_under_the_new_network_key_switches_to_it_without_a_switch_key() {
     let new_key = [0x5A; 16];
     net.coord.transport_network_key(short, ext, &new_key, 1, true);
     net.run(100);
-    // the Switch Key never reaches the bulb; everyone else is on the new key
     net.coord.use_key(&new_key, 1, true);
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00], "answered under the new key");
     assert_eq!(net.coord.mic_failures, 0);
-    // and that is what a power cycle resumes with
     net.power_cycle(n);
     net.run(1_000);
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x01, &[]);
@@ -1233,7 +1099,6 @@ fn a_frame_under_the_new_network_key_switches_to_it_without_a_switch_key() {
     assert_eq!(net.coord.mic_failures, 0);
 }
 
-/// A device on the network that sends through the bulb `n`.
 fn device_behind(net: &mut Net, n: usize) -> Zed {
     let mut other = Zed::new(&net.air, false);
     assert!(other.join(net, 0x0000));
@@ -1250,13 +1115,11 @@ fn frames_under_the_previous_network_key_are_still_read() {
     other.zcl_to_coordinator(ON_OFF, &report);
     net.run(100);
     assert_eq!(net.coord.zcl_rx.iter().filter(|(s, _, _)| *s == other.short).count(), 1);
-    // the bulb and the coordinator move on; the other device has not heard of the new key yet
     rotate_key(&mut net, n, &[0x5A; 16], 1);
     other.zcl_to_coordinator(ON_OFF, &report);
     net.run(100);
     assert_eq!(net.coord.zcl_rx.iter().filter(|(s, _, _)| *s == other.short).count(), 2, "read under the old key, passed on under the new");
     assert_eq!(net.coord.mic_failures, 0, "the bulb itself sends under the new key only");
-    // and no Switch Key takes it back to the old one
     net.coord.switch_key(0);
     net.run(100);
     let short = net.nodes[n].short();
@@ -1264,13 +1127,11 @@ fn frames_under_the_previous_network_key_are_still_read() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.mic_failures, 0);
-    // a power cycle does not lose the old key
     net.power_cycle(n);
     net.run(1_000);
     other.zcl_to_coordinator(ON_OFF, &report);
     net.run(100);
     assert_eq!(net.coord.zcl_rx.iter().filter(|(s, _, _)| *s == other.short).count(), 3);
-    // the key after that retires it
     rotate_key(&mut net, n, &[0x6B; 16], 2);
     other.zcl_to_coordinator(ON_OFF, &report);
     net.run(100);
@@ -1283,11 +1144,9 @@ fn a_key_sequence_number_that_comes_round_again_starts_its_counters_anew() {
     let n = net.join_node();
     let mut other = device_behind(&mut net, n);
     let report = [0x18, 7, 0x0A, 0x00, 0x00, 0x10, 0x01];
-    // heard under the key with sequence number 0, at a counter of a hundred and some
     other.zcl_to_coordinator(ON_OFF, &report);
     net.run(100);
     rotate_key(&mut net, n, &[0x5A; 16], 1);
-    // a Trust Center that numbers its keys 0, 1, 0, ...: another key 0, and the device has it too
     let third = [0x6B; 16];
     rotate_key(&mut net, n, &third, 0);
     other.key = Some(third);
@@ -1305,12 +1164,8 @@ fn a_network_key_broadcast_by_the_trust_center_is_taken_and_no_other() {
     let short = net.nodes[n].short();
     let mut other = device_behind(&mut net, n);
     net.run(100);
-    // Keys without APS encryption that are not the Trust Center's broadcast:
-    // sent to the bulb alone,
     net.coord.network_key_update(short, &[0x71; 16], 1, COORD_EXT);
-    // broadcast, but naming another device as its source,
     net.coord.network_key_update(0xFFFF, &[0x72; 16], 1, other.ext);
-    // broadcast by another node of the network, which names the Trust Center
     let mut aps = vec![0x09, 0x33, 0x05, 0x01];
     aps.extend_from_slice(&[0x73; 16]);
     aps.push(1);
@@ -1319,14 +1174,12 @@ fn a_network_key_broadcast_by_the_trust_center_is_taken_and_no_other() {
     let h = other.header(nwk::FRAME_DATA, 0xFFFF);
     other.nwk_send(h, &aps);
     net.run(1_000);
-    // none was taken: a Switch Key changes nothing
     net.coord.switch_key(1);
     net.run(1_000);
     let seq = net.coord.zcl(short, ON_OFF, 0x01, 0x00, &[]);
     net.run(20_000);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x00]);
     assert_eq!(net.coord.mic_failures, 0, "the bulb still sends under the key it had");
-    // the Trust Center's broadcast, and the switch
     let new_key = [0x5A; 16];
     net.coord.network_key_update(0xFFFF, &new_key, 1, COORD_EXT);
     net.run(1_000);
@@ -1347,15 +1200,12 @@ fn a_replayed_transport_key_does_not_bring_an_old_key_back() {
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
     net.run(100);
-    // the Trust Center sends a new network key, and then another in its place
     let t = net.now();
     net.coord.transport_network_key(short, ext, &[0x71; 16], 1, true);
     net.run(100);
     let new_key = [0x5A; 16];
     net.coord.transport_network_key(short, ext, &new_key, 1, true);
     net.run(100);
-    // A node of the network sends the first command again, as it was (it can read
-    // the NWK frame, not what the link key hides), in a NWK frame of its own.
     let mpdu = net.sent_by(0, t).into_iter().next().unwrap();
     let (h, hl) = nwk::Header::parse(&mpdu[9..]).unwrap();
     let aux = nwk::parse_aux(&mpdu[9..], hl).unwrap();
@@ -1367,7 +1217,6 @@ fn a_replayed_transport_key_does_not_bring_an_old_key_back() {
     net.coord.nwk_data(short, &transport_key);
     net.run(100);
     assert_eq!(net.nodes[n].stack.stats.replays, replays + 1);
-    // the key the bulb switches to is the one sent last
     net.coord.switch_key(1);
     net.coord.use_key(&new_key, 1, true);
     net.run(100);
@@ -1377,9 +1226,6 @@ fn a_replayed_transport_key_does_not_bring_an_old_key_back() {
     assert_eq!(net.coord.mic_failures, 0);
 }
 
-// ------------------------------------------------------------ PAN identifier update
-
-/// Network Update command: PAN identifier update for our network.
 fn pan_update(update_id: u8, pan: u16) -> Vec<u8> {
     let mut p = vec![nwk::CMD_NETWORK_UPDATE, 0x01];
     p.extend_from_slice(&EXT_PAN.to_le_bytes());
@@ -1388,7 +1234,6 @@ fn pan_update(update_id: u8, pan: u16) -> Vec<u8> {
     p
 }
 
-/// The beacon the bulb answers a beacon request with.
 fn beacon_of(net: &mut Net, n: usize) -> zigbee::mac::Beacon {
     let id = net.nodes[n].id;
     let t = net.now();
@@ -1408,8 +1253,6 @@ fn a_new_pan_identifier_is_taken_once_the_update_has_been_everywhere() {
     let new = 0x2B3C;
     let t = net.now();
     net.coord.nwk_command(0xFFFF, 30, &pan_update(7, new));
-    // The far bulb hears of it from the near one, which therefore has to pass
-    // the command on under the old identifier, and to stay on it meanwhile.
     net.run(8_800);
     assert_eq!((net.nodes[a].stack.pan_id(), net.nodes[b].stack.pan_id()), (PAN, PAN));
     let sent = net.sent_by(pa, t);
@@ -1419,7 +1262,6 @@ fn a_new_pan_identifier_is_taken_once_the_update_has_been_everywhere() {
     assert_eq!((net.nodes[a].stack.pan_id(), net.nodes[b].stack.pan_id()), (new, new));
     assert_eq!(net.air.borrow().ports[pa].pan, new, "the radio listens on it");
     net.coord.set_pan(new);
-    // the network goes on under the new identifier, which is also the stored one
     net.coord.via.insert(sb, sa);
     let seq = net.coord.zcl(sb, ON_OFF, 0x01, 0x00, &[]);
     net.run(3_000);
@@ -1435,19 +1277,16 @@ fn a_new_pan_identifier_is_taken_once_the_update_has_been_everywhere() {
 fn the_update_identifier_is_the_network_managers_to_set() {
     let mut net = Net::new();
     let n = net.join_node();
-    // another node becomes the network manager (Mgmt_NWK_Update_req, update id 3)
     let mut p = 0u32.to_le_bytes().to_vec();
     p.extend_from_slice(&[0xFF, 3, 0x34, 0x12]);
     net.coord.zdo(0xFFFD, 0x0038, &p);
     net.run(500);
     assert_eq!(beacon_of(&mut net, n).update_id, 3);
-    // a PAN identifier update from the coordinator is followed; its update id is not the manager's
     net.coord.nwk_command(0xFFFF, 30, &pan_update(9, 0x2B3C));
     net.run(10_000);
     net.coord.set_pan(0x2B3C);
     let beacon = beacon_of(&mut net, n);
     assert_eq!((beacon.pan, beacon.update_id), (0x2B3C, 3));
-    // the coordinator is the manager again
     let mut p = 0u32.to_le_bytes().to_vec();
     p.extend_from_slice(&[0xFF, 4, 0x00, 0x00]);
     net.coord.zdo(0xFFFD, 0x0038, &p);
@@ -1459,9 +1298,6 @@ fn the_update_identifier_is_the_network_managers_to_set() {
     assert_eq!((beacon.pan, beacon.update_id), (0x2B3D, 10));
 }
 
-// ------------------------------------------------------------ routing among routers of other makes
-
-/// A scripted router in the bulb's range and out of the coordinator's.
 fn peer(net: &mut Net, n: usize, short: u16) -> Zed {
     let me = net.nodes[n].short();
     let z = Zed::router(&net.air, short, me);
@@ -1469,7 +1305,6 @@ fn peer(net: &mut Net, n: usize, short: u16) -> Zed {
     z
 }
 
-/// The same after an exchange of Link Status: the bulb knows that the router hears it.
 fn neighbor(net: &mut Net, n: usize, short: u16) -> Zed {
     let me = net.nodes[n].short();
     let mut z = peer(net, n, short);
@@ -1478,19 +1313,16 @@ fn neighbor(net: &mut Net, n: usize, short: u16) -> Zed {
     z
 }
 
-/// A NWK command from a scripted router to everyone in range.
 fn broadcast_command(z: &mut Zed, payload: &[u8]) {
     let h = z.header(nwk::FRAME_CMD, 0xFFFC);
     z.mac_send(0xFFFF, h, payload);
 }
 
-/// Route Request from `z` for `target`.
 fn route_request(z: &mut Zed, options: u8, id: u8, target: u16) {
     let t = target.to_le_bytes();
     broadcast_command(z, &[nwk::CMD_ROUTE_REQUEST, options, id, t[0], t[1], 0]);
 }
 
-/// What the bulb sent of the route request `id` since `since`: (time, path cost).
 fn relayed_requests(net: &Net, n: usize, id: u8, since: u32) -> Vec<(u32, u8)> {
     net.timed_nwk_sent_by(net.nodes[n].id, since)
         .iter()
@@ -1499,7 +1331,6 @@ fn relayed_requests(net: &Net, n: usize, id: u8, since: u32) -> Vec<(u32, u8)> {
         .collect()
 }
 
-/// The bulb's routing table, as it reports it: (destination, status and flags, next hop).
 fn routes(net: &mut Net, n: usize) -> Vec<(u16, u8, u16)> {
     let short = net.nodes[n].short();
     net.coord.zdo(short, 0x0032, &[0]);
@@ -1508,7 +1339,6 @@ fn routes(net: &mut Net, n: usize) -> Vec<(u16, u8, u16)> {
     rtg[5..].chunks(5).map(|e| (u16::from_le_bytes([e[0], e[1]]), e[2], u16::from_le_bytes([e[3], e[4]]))).collect()
 }
 
-/// Network Status commands the bulb sent since `since`: (MAC destination, NWK destination, payload after the identifier).
 fn statuses(net: &Net, n: usize, since: u32) -> Vec<(u16, u16, Vec<u8>)> {
     net.nwk_sent_by(net.nodes[n].id, since)
         .iter()
@@ -1523,19 +1353,15 @@ fn a_route_request_is_taken_only_over_a_link_known_to_work_both_ways() {
     let n = net.join_node();
     let me = net.nodes[n].short();
     let mut x = peer(&mut net, n, 0x2B02);
-    // The bulb hears the router, but not from it how it is heard there: a
-    // many-to-one request from it is neither passed on nor made a route.
     let t = net.now();
     route_request(&mut x, 0x08, 1, 0xFFFC);
     net.run(1_500);
     assert!(relayed_requests(&net, n, 1, t).is_empty());
     assert!(!routes(&mut net, n).iter().any(|r| r.0 == x.short));
-    // nor is a request for the bulb itself answered
     route_request(&mut x, 0x00, 2, me);
     net.run(500);
     x.drain();
     assert!(!x.rx.iter().any(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY));
-    // its Link Status says how it hears the bulb: now its requests count
     x.link_status(&[(me, 1)]);
     net.run(50);
     let t = net.now();
@@ -1547,7 +1373,6 @@ fn a_route_request_is_taken_only_over_a_link_known_to_work_both_ways() {
     net.run(500);
     x.drain();
     assert!(x.rx.iter().any(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY && p[2] == 4));
-    // a Link Status that does not list the bulb any more: the way back is unknown again
     x.link_status(&[(0x0000, 1)]);
     net.run(50);
     let t = net.now();
@@ -1563,7 +1388,6 @@ fn route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say() {
     let short = net.nodes[n].short();
     let me = short;
     let mut x = neighbor(&mut net, n, 0x2B02);
-    // Passing one on: after twice 2 to 128 ms, then twice more, 254 ms apart; the cost of the link added.
     let t = net.now();
     route_request(&mut x, 0x00, 7, 0x5E01);
     net.run(2_000);
@@ -1572,7 +1396,6 @@ fn route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say() {
     assert!((4..=256).contains(&(relays[0].0 - t)), "first relay after {} ms", relays[0].0 - t);
     assert_eq!((relays[1].0 - relays[0].0, relays[2].0 - relays[1].0), (254, 254));
     assert!(relays.iter().all(|r| r.1 == 1));
-    // the jitter is spread over its range
     let mut delays = vec![];
     for id in 20..36 {
         let t = net.now();
@@ -1581,10 +1404,6 @@ fn route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say() {
         delays.push(relayed_requests(&net, n, id, t)[0].0 - t);
     }
     assert!(delays.iter().all(|d| (4..=256).contains(d)) && delays.iter().any(|d| *d > 64), "delays {delays:?}");
-    // The bulb follows six discoveries at a time, each for 10 s. While all
-    // six are running, a request it has not seen yet is not taken (R22
-    // 3.6.3.2: no "route discovery table capacity"), and those it follows
-    // are still known: a late copy of one, by a worse way, is not passed on again.
     net.run(10_000);
     x.link_status(&[(me, 1)]);
     net.run(50);
@@ -1600,8 +1419,6 @@ fn route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say() {
     x.mac_send(0xFFFF, h, &[nwk::CMD_ROUTE_REQUEST, 0x00, 40, 0x01, 0x5E, 2]);
     net.run(1_000);
     assert_eq!(relayed_requests(&net, n, 40, t).len(), 3);
-    // Starting one: the answer to a request from an address nobody knows needs a route.
-    // The first transmission and nwkcInitialRREQRetries (3) repeats, 254 ms apart.
     net.run(10_000);
     let t = net.now();
     let ask = |net: &mut Net| {
@@ -1620,8 +1437,6 @@ fn route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say() {
         .collect();
     assert_eq!(own.len(), 4);
     assert!(own.windows(2).all(|w| w[1] - w[0] == 254), "at {own:?}");
-    // A discovery lasts nwkcRouteDiscoveryTime (10 s): a second frame for the
-    // same destination within that time does not start another.
     net.run(4_000);
     ask(&mut net);
     net.run(2_000);
@@ -1629,7 +1444,6 @@ fn route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say() {
         net.nwk_sent_by(net.nodes[n].id, t).iter().filter(|(_, h, p)| h.src == short && p[0] == nwk::CMD_ROUTE_REQUEST && h.frame_type == nwk::FRAME_CMD).count()
     };
     assert_eq!(requests(&net), 4);
-    // after it, one does
     net.run(2_000);
     ask(&mut net);
     net.run(2_000);
@@ -1643,7 +1457,6 @@ fn the_destination_of_a_route_request_answers_with_the_cost_of_the_link_and_both
     let me = net.nodes[n].short();
     let my_ext = net.air.borrow().ports[net.nodes[n].id].ext;
     let mut x = neighbor(&mut net, n, 0x2B02);
-    // a poor link: cost 3 by the LQI (the vendor's table, 70..=94)
     net.link(net.nodes[n].id, x.id, 80);
     for _ in 0..12 {
         x.link_status(&[(me, 1)]);
@@ -1654,10 +1467,8 @@ fn the_destination_of_a_route_request_answers_with_the_cost_of_the_link_and_both
     net.run(300);
     x.drain();
     let (h, p) = x.rx.iter().find(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY).expect("a route reply");
-    // to the router the request came from, by both of its addresses (R22 3.4.2.2)
     assert_eq!((h.src, h.dst, h.radius), (me, x.short, 30));
     assert_eq!((h.src_ext, h.dst_ext), (Some(my_ext), Some(x.ext)));
-    // originator and responder with their IEEE addresses; path cost: that of the link the reply leaves on
     let mut want = vec![nwk::CMD_ROUTE_REPLY, 0x30, 0x53];
     want.extend_from_slice(&x.short.to_le_bytes());
     want.extend_from_slice(&me.to_le_bytes());
@@ -1675,18 +1486,15 @@ fn a_route_reply_is_passed_back_with_the_cost_of_the_next_link_and_a_smaller_rad
     let mut x = neighbor(&mut net, n, 0x2B02);
     let mut y = neighbor(&mut net, n, 0x3C03);
     net.link(x.id, y.id, 0);
-    // the bulb hears x poorly (cost 3 by the LQI), y well
     net.link(net.nodes[n].id, x.id, 80);
     for _ in 0..12 {
         x.link_status(&[(me, 1)]);
         net.run(20);
     }
-    // x looks for y; the bulb passes the request on with the cost of the link from x
     let t = net.now();
     route_request(&mut x, 0x00, 0x52, y.short);
     net.run(400);
     assert_eq!(relayed_requests(&net, n, 0x52, t)[0].1, 3);
-    // y answers: the cost of its link to the bulb (say 2), radius 30
     let reply = |id: u8, orig: u16, resp: u16, cost: u8| {
         let (o, r) = (orig.to_le_bytes(), resp.to_le_bytes());
         vec![nwk::CMD_ROUTE_REPLY, 0x00, id, o[0], o[1], r[0], r[1], cost]
@@ -1698,12 +1506,10 @@ fn a_route_reply_is_passed_back_with_the_cost_of_the_next_link_and_a_smaller_rad
     net.run(100);
     x.drain();
     let (h, p) = x.rx.iter().find(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY).expect("the reply passed on");
-    // 2 + the cost of the link the reply goes on by (3); one hop less to go; addressed to the next hop
     assert_eq!(p, &reply(0x52, x.short, y.short, 5));
     assert_eq!((h.src, h.dst, h.radius, h.dst_ext), (me, x.short, 29, Some(x.ext)));
     let table = routes(&mut net, n);
     assert!(table.contains(&(y.short, 0x00, y.short)) && table.contains(&(x.short, 0x00, x.short)), "routes both ways: {table:x?}");
-    // a reply that arrives with radius 1 goes on with radius 1 (R22 3.4.2.2), if it is no worse
     x.rx.clear();
     let mut h = y.header(nwk::FRAME_CMD, me);
     h.radius = 1;
@@ -1711,16 +1517,12 @@ fn a_route_reply_is_passed_back_with_the_cost_of_the_next_link_and_a_smaller_rad
     net.run(100);
     x.drain();
     assert_eq!(x.rx.iter().filter(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY).map(|(h, _)| h.radius).collect::<Vec<_>>(), vec![1]);
-    // a worse one is dropped
     x.rx.clear();
     let h = y.header(nwk::FRAME_CMD, me);
     y.nwk_send(h, &reply(0x52, x.short, y.short, 4));
     net.run(100);
     x.drain();
     assert!(!x.rx.iter().any(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY));
-    // A reply to a discovery the bulb knows nothing of is not passed on,
-    // and one that names the bulb as the originator of such a discovery
-    // makes no route.
     let h = y.header(nwk::FRAME_CMD, me);
     y.nwk_send(h, &reply(0x77, x.short, 0x4D4D, 1));
     let h = y.header(nwk::FRAME_CMD, me);
@@ -1729,9 +1531,6 @@ fn a_route_reply_is_passed_back_with_the_cost_of_the_next_link_and_a_smaller_rad
     x.drain();
     assert!(!x.rx.iter().any(|(_, p)| p[0] == nwk::CMD_ROUTE_REPLY));
     assert!(!routes(&mut net, n).iter().any(|r| r.0 == 0x4D4D || r.0 == 0x4E4E));
-    // Nor does a reply to a discovery of the bulb's own that is about
-    // another address than the one the bulb is looking for; and the
-    // discovery is over with it: the right answer, coming late, is not taken.
     let t = net.now();
     let aps = net.coord.aps_frame(0x00, 1, ON_OFF, 0x0104, 1, &[0x00, 9, 0x00, 0x00, 0x00]);
     let mut h = net.coord.header(nwk::FRAME_DATA, me, 30);
@@ -1745,7 +1544,6 @@ fn a_route_reply_is_passed_back_with_the_cost_of_the_next_link_and_a_smaller_rad
     y.nwk_send(h, &reply(id, me, 0x5E02, 1));
     net.run(100);
     assert!(!routes(&mut net, n).iter().any(|r| r.0 == 0x4E4F || (r.0 == 0x5E02 && r.1 & 7 == 0)));
-    // A Route Reply addressed to someone else is nobody's: it is not relayed.
     let t = net.now();
     let h = y.header(nwk::FRAME_CMD, x.short);
     y.nwk_send(h, &reply(0x52, x.short, y.short, 1));
@@ -1753,7 +1551,6 @@ fn a_route_reply_is_passed_back_with_the_cost_of_the_next_link_and_a_smaller_rad
     assert!(!net.nwk_sent_by(net.nodes[n].id, t).iter().any(|(_, _, p)| p[0] == nwk::CMD_ROUTE_REPLY));
 }
 
-/// A data frame from a scripted router through the bulb to `dst`.
 fn data_through(z: &mut Zed, dst: u16, discover: u8) -> TxStatus {
     let mut h = z.header(nwk::FRAME_DATA, dst);
     h.discover = discover;
@@ -1769,14 +1566,10 @@ fn a_frame_that_cannot_be_passed_on_is_reported_to_its_source() {
     let mut x = neighbor(&mut net, n, 0x2B02);
     let mut y = neighbor(&mut net, n, 0x3C03);
     net.link(x.id, y.id, 0);
-    // y is a neighbor: frames for it go straight there
     assert_eq!(data_through(&mut x, y.short, 0), TxStatus::Ok);
     net.run(50);
     y.drain();
     assert_eq!(y.rx.iter().filter(|(h, _)| h.src == x.short && h.frame_type == nwk::FRAME_DATA).count(), 1);
-    // y stops answering. The link has failed: the source is told so, with the
-    // destination of its frame (R22 3.6.3.7.1, 3.4.3.3.2). The frame did not
-    // allow a route discovery, and none is made.
     net.air.borrow_mut().ports[y.id].powered = false;
     let t = net.now();
     data_through(&mut x, y.short, 0);
@@ -1784,13 +1577,10 @@ fn a_frame_that_cannot_be_passed_on_is_reported_to_its_source() {
     let y_bytes = y.short.to_le_bytes();
     assert_eq!(statuses(&net, n, t), vec![(x.short, x.short, vec![nwk::STATUS_LINK_FAILURE, y_bytes[0], y_bytes[1]])]);
     assert!(net.nwk_sent_by(net.nodes[n].id, t).iter().all(|(_, _, p)| p[0] != nwk::CMD_ROUTE_REQUEST));
-    // No route at all, and none may be looked for: "no route available".
     let t = net.now();
     data_through(&mut x, 0x4D4D, 0);
     net.run(2_000);
     assert_eq!(statuses(&net, n, t), vec![(x.short, x.short, vec![nwk::STATUS_NO_ROUTE, 0x4D, 0x4D])]);
-    // A route may be looked for: the frame waits for the discovery, and
-    // when that finds nothing the source hears of it.
     let t = net.now();
     data_through(&mut x, 0x4D4E, 1);
     net.run(4_000);
@@ -1798,10 +1588,8 @@ fn a_frame_that_cannot_be_passed_on_is_reported_to_its_source() {
     assert_eq!(net.nwk_sent_by(net.nodes[n].id, t).iter().filter(|(_, _, p)| p[0] == nwk::CMD_ROUTE_REQUEST).count(), 4);
     net.run(2_000);
     assert_eq!(statuses(&net, n, t), vec![(x.short, x.short, vec![nwk::STATUS_NO_ROUTE, 0x4E, 0x4D])]);
-    // The status is addressed to the source by both of its addresses.
     let report = net.nwk_sent_by(net.nodes[n].id, t).into_iter().find(|(_, _, p)| p[0] == nwk::CMD_NETWORK_STATUS).unwrap();
     assert_eq!(report.1.dst_ext, Some(x.ext));
-    // The bulb's own frames are not reported to anyone when they fail.
     let t = net.now();
     net.set_power(n, true);
     net.air.borrow_mut().ports[x.id].powered = false;
@@ -1811,7 +1599,6 @@ fn a_frame_that_cannot_be_passed_on_is_reported_to_its_source() {
     assert!(statuses(&net, n, t).is_empty());
 }
 
-/// Data frames from `y` that reached the scripted router `z` since its queue was last cleared.
 fn data_from(z: &mut Zed, src: u16) -> usize {
     z.drain();
     z.rx.iter().filter(|(h, _)| h.src == src && h.frame_type == nwk::FRAME_DATA).count()
@@ -1824,10 +1611,6 @@ fn a_missed_acknowledgement_is_tried_again_and_does_not_cost_the_link() {
     let mut x = neighbor(&mut net, n, 0x2B02);
     let mut y = neighbor(&mut net, n, 0x3C03);
     net.link(x.id, y.id, 0);
-    // y misses the frame the bulb passes on to it (all MAC retries): the
-    // bulb tries again a moment later, and y has it; nobody is told of a
-    // failure. A delivered frame sets the failure counter back: a missed
-    // acknowledgement now and then never adds up to a failed link.
     let t = net.now();
     y.rx.clear();
     for k in 1..=4 {
@@ -1842,7 +1625,6 @@ fn a_missed_acknowledgement_is_tried_again_and_does_not_cost_the_link() {
     }
     assert!(statuses(&net, n, t).is_empty());
     y.rx.clear();
-    // the same for the next relay of a source route
     net.air.borrow_mut().ports[y.id].powered = false;
     net.coord.source_route.insert(y.short, vec![net.nodes[n].short()]);
     net.coord.zcl(y.short, ON_OFF, 0x01, 0x00, &[]);
@@ -1852,8 +1634,6 @@ fn a_missed_acknowledgement_is_tried_again_and_does_not_cost_the_link() {
     assert_eq!(data_from(&mut y, 0x0000), 1, "the source-routed frame got there on the next attempt");
     assert!(net.coord.statuses.is_empty());
     net.coord.source_route.clear();
-    // The link is not given up: the next frame goes straight to y again,
-    // and y's route requests are still taken (its Link Status said how it hears the bulb).
     data_through(&mut x, y.short, 0);
     net.run(50);
     assert_eq!(data_from(&mut y, x.short), 1);
@@ -1861,8 +1641,6 @@ fn a_missed_acknowledgement_is_tried_again_and_does_not_cost_the_link() {
     route_request(&mut y, 0x00, 0x41, 0x5E01);
     net.run(1_000);
     assert!(!relayed_requests(&net, n, 0x41, t).is_empty());
-    // Three attempts in a row fail: the link has failed, and the source hears
-    // of it. Until y is heard again, a frame for it gets one attempt.
     net.air.borrow_mut().ports[y.id].powered = false;
     let t = net.now();
     data_through(&mut x, y.short, 0);
@@ -1877,7 +1655,6 @@ fn a_missed_acknowledgement_is_tried_again_and_does_not_cost_the_link() {
     net.run(500);
     assert_eq!(to_y(&net, t), 1);
     assert_eq!(statuses(&net, n, t), failure);
-    // y is heard again: a link like any other, a missed acknowledgement is tried again
     net.air.borrow_mut().ports[y.id].powered = true;
     y.link_status(&[(net.nodes[n].short(), 1)]);
     net.run(50);
@@ -1896,7 +1673,6 @@ fn a_neighbor_that_does_not_know_the_link_gets_a_link_status_at_once() {
     let me = net.nodes[n].short();
     let id = net.nodes[n].id;
     net.run(20_000);
-    // the bulb's Link Status frames since `t`: (time, neighbors listed)
     let sent = |net: &Net, t: u32| -> Vec<(u32, Vec<u16>)> {
         net.timed_nwk_sent_by(id, t)
             .into_iter()
@@ -1904,18 +1680,12 @@ fn a_neighbor_that_does_not_know_the_link_gets_a_link_status_at_once() {
             .map(|(at, _, _, p)| (at, p[2..].chunks(3).map(|e| u16::from_le_bytes([e[0], e[1]])).collect()))
             .collect()
     };
-    // A router that has just come up hears the bulb and lists it; the bulb
-    // did not list it in its last Link Status. Waiting a whole period would
-    // leave the router turning away the bulb's route requests (and the bulb
-    // its) for that long: the bulb's Link Status comes within a second and a half.
     let mut x = peer(&mut net, n, 0x2B02);
     let t = net.now();
     x.link_status(&[(me, 1)]);
     net.run_until(1_500, "an early Link Status", |net| !sent(net, t).is_empty());
     let early = sent(&net, t);
     assert!(early[0].1.contains(&x.short));
-    // Right then the router restarts and knows nothing of the bulb: its Link
-    // Status lists nobody. Again an early one, a second after the last at the soonest.
     net.run(1);
     let t = net.now();
     x.link_status(&[]);
@@ -1923,7 +1693,6 @@ fn a_neighbor_that_does_not_know_the_link_gets_a_link_status_at_once() {
     let again = sent(&net, t);
     assert_eq!(again.len(), 1, "{again:?}");
     assert!(again[0].0 - early[0].0 >= 1_000, "{} ms apart", again[0].0 - early[0].0);
-    // Both know the link: nothing early.
     let t = net.now();
     x.link_status(&[(me, 1)]);
     net.run(1_500);
@@ -1945,8 +1714,6 @@ fn after_a_power_cycle_the_links_are_known_both_ways_within_seconds() {
             .map(|(at, _, _, p)| (at, p[2..].chunks(3).map(|e| u16::from_le_bytes([e[0], e[1]])).collect()))
             .collect()
     };
-    // A neighboring router announces itself (it has just come back): the
-    // bulb's Link Status goes early, so the router learns at once how the bulb hears it.
     let t = net.now();
     let h = x.header(nwk::FRAME_DATA, 0xFFFD);
     let s = x.short.to_le_bytes();
@@ -1958,8 +1725,6 @@ fn after_a_power_cycle_the_links_are_known_both_ways_within_seconds() {
     let early = ls(&net, t);
     assert_eq!(early.len(), 1, "{early:?}");
     assert!(early[0].1.contains(&x.short));
-    // The bulb itself comes back: its first Link Status waits until it has
-    // heard its neighbors (here x's, answering the bulb's Device_annce), and lists them.
     net.run(15_000);
     net.power_cycle(n);
     let t = net.now();
@@ -1980,10 +1745,6 @@ fn every_frame_waiting_for_a_route_is_accounted_for() {
     let mut net = Net::new();
     let n = net.join_node();
     let mut x = neighbor(&mut net, n, 0x2B02);
-    // more frames than there is room for, each to a destination nobody knows,
-    // each allowing a route discovery: when there is no room, the frame that
-    // has waited longest makes room and its source is told; when the
-    // discoveries find nothing, the source of every other one is told too
     let t = net.now();
     for k in 0..14u16 {
         data_through(&mut x, 0x4D00 + k, 1);
@@ -2005,7 +1766,6 @@ fn a_failed_source_route_is_reported_with_the_destination_of_the_frame() {
     let n = net.join_node();
     let me = net.nodes[n].short();
     let mut y = neighbor(&mut net, n, 0x3C03);
-    // the coordinator sends through the bulb and y to a device behind y; y does not answer
     net.air.borrow_mut().ports[y.id].powered = false;
     let t = net.now();
     net.coord.source_route.insert(0x5E01, vec![y.short, me]);
@@ -2013,7 +1773,6 @@ fn a_failed_source_route_is_reported_with_the_destination_of_the_frame() {
     net.run(500);
     assert_eq!(net.coord.statuses, vec![(me, nwk::STATUS_SOURCE_ROUTE_FAILURE, vec![0x01, 0x5E])], "the frame's destination, not the relay that failed");
     let _ = (t, &mut y);
-    // a Network Status that fails on a source route is not reported in its turn
     net.coord.statuses.clear();
     let mut h = net.coord.header(nwk::FRAME_CMD, 0x5E01, 30);
     h.src_ext = Some(COORD_EXT);
@@ -2030,37 +1789,25 @@ fn a_failed_route_to_a_concentrator_is_reported_towards_it_and_not_repaired() {
     let mut x = neighbor(&mut net, n, 0x2B02);
     let mut y = neighbor(&mut net, n, 0x3C03);
     net.link(x.id, y.id, 0);
-    // y passes on the many-to-one request of a concentrator behind it
     let mut h = y.header(nwk::FRAME_CMD, 0xFFFC);
     h.src = 0x5E01;
     h.src_ext = Some(0x00124B00_5E010000);
     y.mac_send(0xFFFF, h, &[nwk::CMD_ROUTE_REQUEST, 0x08, 9, 0xFC, 0xFF, 3]);
     net.run(1_000);
     assert!(routes(&mut net, n).contains(&(0x5E01, 0x30, y.short)));
-    // x sends to the concentrator through the bulb; y has gone
     net.air.borrow_mut().ports[y.id].powered = false;
     let t = net.now();
     data_through(&mut x, 0x5E01, 1);
     net.run(3_000);
-    // "Many-to-one route failure": for the concentrator, about the source
-    // of the frame, by way of some other router (R22 3.6.3.7.1). There are
-    // two the bulb has a link with: the coordinator and x.
     let x_bytes = x.short.to_le_bytes();
     let sent = statuses(&net, n, t);
     assert_eq!(sent.len(), 1);
     assert!([0x0000, x.short].contains(&sent[0].0), "to a router neighbor, not {:#06x}", sent[0].0);
     assert_eq!((sent[0].1, &sent[0].2), (0x5E01, &vec![nwk::STATUS_MANY_TO_ONE_FAILURE, x_bytes[0], x_bytes[1]]));
-    // The route is not looked for anew on behalf of someone else. The frame
-    // goes on by another router, which has a route of its own to the
-    // concentrator (here the coordinator; x is where it came from), and the
-    // route stays for the concentrator's next many-to-one request to set.
     assert!(net.nwk_sent_by(net.nodes[n].id, t).iter().all(|(_, _, p)| p[0] != nwk::CMD_ROUTE_REQUEST));
     let rerouted = net.nwk_sent_by(net.nodes[n].id, t).into_iter().filter(|(m, h, _)| h.frame_type == nwk::FRAME_DATA && h.src == x.short && m.dst == zigbee::mac::Addr::Short(0x0000)).count();
     assert_eq!(rerouted, 1);
     assert!(routes(&mut net, n).contains(&(0x5E01, 0x30, y.short)));
-    // Such a report on its way through the bulb, whose route to the
-    // concentrator leads over the failed link: on to another router than the
-    // one it came from.
     let t = net.now();
     let h = x.header(nwk::FRAME_CMD, 0x5E01);
     x.nwk_send(h, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_MANY_TO_ONE_FAILURE, 0x99, 0x77]);
@@ -2068,14 +1815,11 @@ fn a_failed_route_to_a_concentrator_is_reported_towards_it_and_not_repaired() {
     let passed: Vec<_> = net.nwk_sent_by(net.nodes[n].id, t).into_iter().filter(|(_, _, p)| p[0] == nwk::CMD_NETWORK_STATUS).collect();
     assert_eq!(passed.len(), 1);
     assert_eq!((passed[0].0.dst, passed[0].1.src, passed[0].1.dst, passed[0].1.radius), (zigbee::mac::Addr::Short(0x0000), x.short, 0x5E01, 29));
-    // any other status without a route is dropped, and nobody is told
     let t = net.now();
     let h = x.header(nwk::FRAME_CMD, 0x5E01);
     x.nwk_send(h, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_LINK_FAILURE, 0x99, 0x77]);
     net.run(200);
     assert!(net.nwk_sent_by(net.nodes[n].id, t).is_empty());
-    // With no other router to take it either (the coordinator is gone too), a
-    // frame of someone else for the concentrator is still not discovered a route for.
     net.air.borrow_mut().ports[0].powered = false;
     let t = net.now();
     data_through(&mut x, 0x5E01, 1);
@@ -2091,7 +1835,6 @@ fn what_a_concentrator_announced_outlives_an_ordinary_route_discovery() {
     net.coord.many_to_one_route_request(false);
     net.run(2_000);
     assert!(routes(&mut net, a).contains(&(0x0000, 0x30, 0x0000)), "a route to a concentrator, route record required");
-    // the bulb's frames to the concentrator are preceded by a route record, every one of them
     let records = |net: &Net, src: u16| net.coord.route_records.iter().filter(|(s, _)| *s == src).count();
     let before = records(&net, sa);
     for _ in 0..3 {
@@ -2099,15 +1842,10 @@ fn what_a_concentrator_announced_outlives_an_ordinary_route_discovery() {
         net.run(200);
     }
     assert_eq!(records(&net, sa) - before, 3 * 2, "one before each acknowledgement and each answer");
-    // the concentrator looks for the bulb the ordinary way: the bulb answers, and what it knew stays
     net.coord.nwk_command(0xFFFC, 30, &[nwk::CMD_ROUTE_REQUEST, 0x00, 0x61, sa.to_le_bytes()[0], sa.to_le_bytes()[1], 0]);
     net.run(500);
     assert!(net.coord.nwk_cmd_rx.iter().any(|(s, p)| *s == sa && p[0] == nwk::CMD_ROUTE_REPLY && p[2] == 0x61));
     assert!(routes(&mut net, a).contains(&(0x0000, 0x30, 0x0000)));
-    // The same many-to-one request again changes nothing about the route.
-    // A source-routed frame of the concentrator that the bulb passes on
-    // shows that the concentrator has the route (it keeps routes): from
-    // then on no route record is needed (R22 3.6.3.3.2).
     net.coord.source_route.insert(sb, vec![sa]);
     net.coord.zcl(sb, ON_OFF, 0x01, 0x00, &[]);
     net.run(1_000);
@@ -2119,7 +1857,6 @@ fn what_a_concentrator_announced_outlives_an_ordinary_route_discovery() {
     net.coord.many_to_one_route_request(false);
     net.run(2_000);
     assert!(routes(&mut net, a).contains(&(0x0000, 0x10, 0x0000)), "unchanged route: still no record required");
-    // a concentrator that keeps no routes gets one before every frame, whatever it sent before
     net.coord.many_to_one_route_request(true);
     net.run(2_000);
     net.coord.zcl(sb, ON_OFF, 0x01, 0x00, &[]);
@@ -2142,8 +1879,6 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     let copies = |net: &Net, src: u16, seq: u8, since: u32| {
         net.timed_nwk_sent_by(id, since).into_iter().filter(|(_, _, h, _)| h.src == src && h.seq == seq).map(|e| e.0).collect::<Vec<u32>>()
     };
-    // A broadcast passed on: once after a jitter, and nwkMaxBroadcastRetries (1) time more
-    // nwkPassiveAckTimeout (150 ms) later, as the bulb's own: no neighbor here passes broadcasts on.
     let t = net.now();
     let h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
     let seq = h.seq;
@@ -2153,10 +1888,8 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     let sent = copies(&net, 0x0000, seq, t);
     assert_eq!(sent.len(), 2);
     assert!(sent[0] - t <= 64 && sent[1] - sent[0] == 150, "at {sent:?} after {t}");
-    // a data frame to everyone asks for no route discovery (R22 Table 3-45): the bulb's own announcement
     let own = net.nwk_sent_by(id, 0).into_iter().find(|(_, h, _)| h.src == me && h.dst == 0xFFFD && h.frame_type == nwk::FRAME_DATA).unwrap();
     assert_eq!(own.1.discover, 0);
-    // Broadcast addresses that are not a router's are not passed on (R22 Table 3-69).
     for dst in [0xFFFB, 0xFFFE, 0xFFF8] {
         let t = net.now();
         let h = net.coord.header(nwk::FRAME_DATA, dst, 5);
@@ -2165,9 +1898,6 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
         net.run(1_500);
         assert!(copies(&net, 0x0000, seq, t).is_empty(), "{dst:#06x}");
     }
-    // The table of broadcasts seen has 80 records, each kept for 9 s. Link
-    // Status frames take none of them: after 100 of those a broadcast still
-    // gets through.
     let mut x = neighbor(&mut net, n, 0x2B02);
     for _ in 0..100 {
         x.link_status(&[(me, 1)]);
@@ -2177,10 +1907,6 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     net.coord.zcl(0xFFFD, ON_OFF, 0x01, 0x02, &[]);
     net.run(1_500);
     assert_eq!(net.nodes[n].commands.len(), before + 1);
-    // 80 more broadcasts within 1.6 s fill the table; the next one is
-    // dropped: not acted on, not passed on (R22 3.6.5). The record of one
-    // it would have displaced still does its work: a late copy of that is
-    // recognised.
     net.run(9_000);
     let first = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
     let toggle = net.coord.aps_frame(0x08, 1, ON_OFF, 0x0104, 1, &[0x01, 1, 0x02]);
@@ -2202,17 +1928,11 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     net.coord.nwk_send(first, &toggle, None);
     net.run(100);
     assert_eq!(net.nodes[n].commands.len(), before, "the first one is still remembered");
-    // In a storm the oldest record makes room once it is 2 s old: no copy
-    // of a broadcast is to be expected that late, and a command among the
-    // broadcasts is not lost.
     net.run(300);
     let h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
     net.coord.nwk_send(h, &toggle, None);
     net.run(100);
     assert_eq!(net.nodes[n].commands.len(), before + 1, "the oldest record made room");
-    // Passive acknowledgement: once x has been heard passing a broadcast on,
-    // the bulb's retransmission waits for x's copy. Without it: the relay and
-    // one more; with it before the retransmission is due: the relay alone.
     net.run(9_000);
     let mut relayed = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 4);
     relayed.src = 0x5E07;
@@ -2234,9 +1954,6 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     x.mac_send(0xFFFF, copy, &aps);
     net.run(1_500);
     assert_eq!(copies(&net, 0x0000, seq, t).len(), 1, "x passed it on: no retransmission");
-    // route requests go out as often as the text says, acknowledged or not
-    // (route_requests_are_repeated_as_often_and_as_fast_as_the_constants_say)
-    // the bulb's own broadcasts are sent and remembered all the same: their echo is not taken for another device's
     let t = net.now();
     net.coord.nwk_command(0xFFFC, 30, &[nwk::CMD_ROUTE_REQUEST, 0x00, 0x33, 0x01, 0x5E, 0]);
     let aps = net.coord.aps_frame(0x00, 1, ON_OFF, 0x0104, 1, &[0x00, 9, 0x00, 0x00, 0x00]);
@@ -2253,13 +1970,6 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     assert_eq!(net.nodes[n].short(), me);
 }
 
-/// Two broadcasts from two different devices, both new to the bulb, a few
-/// milliseconds apart: each is passed on, within nwkcMaxBroadcastJitter
-/// (64 ms) of its arrival, and once more nwkPassiveAckTimeout later (no
-/// neighbour here is known to pass broadcasts on), and then never again
-/// (R22 3.6.5). Two records in the broadcast transaction table at once. The
-/// stock firmware lost one of two such broadcasts, or kept sending a copy of
-/// it, behind the address conflicts of docs/address-conflicts.md (§2).
 #[test]
 fn two_broadcasts_of_two_devices_close_together_are_both_passed_on_and_then_left() {
     let mut net = Net::new();
@@ -2272,8 +1982,6 @@ fn two_broadcasts_of_two_devices_close_together_are_both_passed_on_and_then_left
         net.timed_nwk_sent_by(id, since).into_iter().filter(|(_, _, h, _)| h.src == src && h.seq == seq).map(|e| e.0).collect::<Vec<u32>>()
     };
     for gap in [0u32, 2, 5, 10, 15, 20] {
-        // the coordinator's, and x's own (x is a router that has passed nothing
-        // on: the bulb waits for no neighbour's copy), each with its own sequence number
         let t = net.now();
         let a = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
         net.coord.nwk_send(a, &aps, None);
@@ -2292,16 +2000,9 @@ fn two_broadcasts_of_two_devices_close_together_are_both_passed_on_and_then_left
             assert!(sent[0] - at <= 64, "{gap} ms apart: {what} first passed on {} ms after it arrived", sent[0] - at);
             assert_eq!(sent[1] - sent[0], 150, "{gap} ms apart: {what} again after nwkPassiveAckTimeout");
         }
-        // and nothing more of either, however long
         net.run(10_000);
         assert!(copies(&net, 0x0000, a.seq, end).is_empty() && copies(&net, 0x2B02, b.seq, end).is_empty(), "{gap} ms apart: sent again late");
     }
-    // The same with x passing on a broadcast of a device behind it (0x5E07):
-    // x is then known to pass broadcasts on, and each record keeps its own
-    // passive acknowledgements. x's copy is the only one the bulb waits for
-    // on that broadcast: passed on once. x never passes the coordinator's
-    // on: that one goes again after nwkPassiveAckTimeout. (x keeps up its
-    // Link Status, as a router does: a neighbour gone quiet is not waited for.)
     let me = net.nodes[n].short();
     for gap in [0u32, 2, 5, 10, 15, 20] {
         x.link_status(&[(me, 1)]);
@@ -2326,13 +2027,6 @@ fn two_broadcasts_of_two_devices_close_together_are_both_passed_on_and_then_left
     }
 }
 
-/// Passive acknowledgement (R22 3.6.5) waits for the neighbours known to
-/// pass broadcasts on. A router at the edge of a network that has just
-/// formed may have passed on nothing but route requests, or the bulb's own
-/// announcement; it counts all the same. In the emulator's `mixed_chain` a
-/// stock router behind the Rust bulb, deaf to the bulb's relay of a
-/// broadcast On (its own BLE advertising), never got a second copy: it had
-/// been heard relaying route requests only.
 #[test]
 fn a_neighbor_seen_passing_on_a_route_request_or_our_own_broadcast_is_waited_for() {
     let mut net = Net::new();
@@ -2343,15 +2037,12 @@ fn a_neighbor_seen_passing_on_a_route_request_or_our_own_broadcast_is_waited_for
     let copies = |net: &Net, seq: u8, since: u32| {
         net.timed_nwk_sent_by(id, since).into_iter().filter(|(_, _, h, _)| h.src == 0x0000 && h.seq == seq).count()
     };
-    // x passes broadcasts on (it relayed one of the coordinator's) and passes the next on as well
     let mut x = neighbor(&mut net, n, 0x2B02);
     let aps = net.coord.aps_frame(0x08, 1, 0x0003, 0x0104, 1, &[0x01, 1, 0x01]);
     let mut relayed = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 4);
     relayed.src = 0x5E07;
     x.mac_send(0xFFFF, relayed, &aps);
     net.run(1_500);
-    // y has relayed a route request of the coordinator's and nothing else;
-    // z has passed on the bulb's own announcement and nothing else
     let mut y = neighbor(&mut net, n, 0x2B03);
     let mut request = net.coord.header(nwk::FRAME_CMD, 0xFFFC, 29);
     request.src = 0x0000;
@@ -2364,7 +2055,6 @@ fn a_neighbor_seen_passing_on_a_route_request_or_our_own_broadcast_is_waited_for
     z.mac_send(0xFFFF, echo, &own.2);
     net.run(1_500);
     for (y_quiet, what) in [(true, "a route request"), (false, "our own broadcast")] {
-        // the coordinator's broadcast: x passes it on, and y or z, the other stays silent
         let t = net.now();
         let h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
         let seq = h.seq;
@@ -2381,7 +2071,6 @@ fn a_neighbor_seen_passing_on_a_route_request_or_our_own_broadcast_is_waited_for
         net.run(1_500);
         assert_eq!(copies(&net, seq, t), 2, "a neighbour seen passing on {what} did not pass this on: retransmitted");
     }
-    // all of them heard: no retransmission
     let t = net.now();
     let h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
     let seq = h.seq;
@@ -2396,12 +2085,6 @@ fn a_neighbor_seen_passing_on_a_route_request_or_our_own_broadcast_is_waited_for
     assert_eq!(copies(&net, seq, t), 1, "every neighbour that relays passed it on");
 }
 
-/// The AwoX stock firmware forgets a broadcast within a second and sometimes
-/// relays a copy many seconds late; the other stock bulbs then pass that copy
-/// on as a new one (docs/address-conflicts.md). A copy of the bulb's own
-/// broadcast that comes back after nwkNetworkBroadcastDeliveryTime is still
-/// its own: no conflict, no new address. A broadcast of another device under
-/// its address still is a conflict (R22 3.6.1.9.2).
 #[test]
 fn a_late_copy_of_its_own_broadcast_is_not_a_conflict() {
     let mut net = Net::new();
@@ -2410,8 +2093,6 @@ fn a_late_copy_of_its_own_broadcast_is_not_a_conflict() {
     let id = net.nodes[n].id;
     net.run(20_000);
     let mut x = neighbor(&mut net, n, 0x2B02);
-    // its own route request, relayed back by the neighbour 10 s and 30 s later,
-    // with the source IEEE field (every NWK command has it) and without
     let t = net.now();
     net.coord.nwk_command(0xFFFC, 30, &[nwk::CMD_ROUTE_REQUEST, 0x00, 0x34, 0x01, 0x5E, 0]);
     let aps = net.coord.aps_frame(0x00, 1, ON_OFF, 0x0104, 1, &[0x00, 9, 0x00, 0x00, 0x00]);
@@ -2433,8 +2114,6 @@ fn a_late_copy_of_its_own_broadcast_is_not_a_conflict() {
         assert!(conflicts(&net).is_empty(), "a copy {late} ms late");
         assert_eq!(net.nodes[n].short(), me, "a copy {late} ms late");
     }
-    // another device's broadcast under its address: a sequence number the bulb
-    // has not used lately, no IEEE address in the header
     let mut other = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
     other.src = me;
     other.seq = net.nwk_sent_by(id, 0).iter().rev().find(|(_, h, _)| h.src == me).map(|(_, h, _)| h.seq).unwrap().wrapping_add(128);
@@ -2449,7 +2128,6 @@ fn addresses_in_the_header_are_checked_and_unknown_commands_answered() {
     let n = net.join_node();
     let me = net.nodes[n].short();
     let mut x = neighbor(&mut net, n, 0x2B02);
-    // An unknown command sent to the bulb: Network Status "unknown command" with its identifier (R22 3.6.13).
     x.rx.clear();
     let h = x.header(nwk::FRAME_CMD, me);
     x.nwk_send(h, &[0x3F, 1, 2]);
@@ -2457,7 +2135,6 @@ fn addresses_in_the_header_are_checked_and_unknown_commands_answered() {
     x.drain();
     let commands = |x: &Zed| x.rx.iter().filter(|(h, _)| h.frame_type == nwk::FRAME_CMD && h.dst == x.short).map(|(h, p)| (h.dst, p.clone())).collect::<Vec<_>>();
     assert_eq!(commands(&x), vec![(x.short, vec![nwk::CMD_NETWORK_STATUS, 0x13, 0x3F])]);
-    // not when it was sent to everyone, and not for a command that is merely of no use to a router
     x.rx.clear();
     broadcast_command(&mut x, &[0x3F, 1, 2]);
     let h = x.header(nwk::FRAME_CMD, me);
@@ -2465,9 +2142,6 @@ fn addresses_in_the_header_are_checked_and_unknown_commands_answered() {
     net.run(100);
     x.drain();
     assert!(commands(&x).is_empty());
-    // A frame for the bulb's address that names another device as its
-    // destination: two devices use the address (R22 3.6.1.9.2). The frame
-    // is not acted on; the bulb reports the conflict and moves.
     let before = net.nodes[n].commands.len();
     let t = net.now();
     let aps = net.coord.aps_frame(0x00, 1, ON_OFF, 0x0104, 1, &[0x01, 1, 0x02]);
@@ -2478,9 +2152,7 @@ fn addresses_in_the_header_are_checked_and_unknown_commands_answered() {
     assert_eq!(net.nodes[n].commands.len(), before);
     assert_eq!(conflicts(&net), vec![(me, me)]);
     assert_ne!(net.nodes[n].short(), me);
-    // (nor is it passed on to the other device, for which the bulb would have to find a route)
     assert!(net.nwk_sent_by(net.nodes[n].id, t).iter().all(|(_, _, p)| p[0] != nwk::CMD_ROUTE_REQUEST));
-    // its own address there is as it should be
     let me = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
     let mut h = net.coord.header(nwk::FRAME_DATA, me, 30);
@@ -2497,8 +2169,6 @@ fn a_broadcast_under_the_bulbs_address_that_it_never_sent_is_another_devices() {
     let n = net.join_node();
     let me = net.nodes[n].short();
     let toggle = net.coord.aps_frame(0x08, 1, ON_OFF, 0x0104, 1, &[0x01, 1, 0x02]);
-    // While the bulb has been up for less than a broadcast is remembered, it
-    // may be one of its own from before a restart: not acted on, no alarm.
     net.power_cycle(n);
     net.run(2_000);
     let before = net.nodes[n].commands.len();
@@ -2508,7 +2178,6 @@ fn a_broadcast_under_the_bulbs_address_that_it_never_sent_is_another_devices() {
     net.run(1_000);
     assert_eq!(net.nodes[n].commands.len(), before);
     assert!(conflicts(&net).is_empty());
-    // later it is somebody else's: an address conflict (R22 3.6.1.9.2)
     net.run(10_000);
     let mut h = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
     h.src = me;
@@ -2519,10 +2188,6 @@ fn a_broadcast_under_the_bulbs_address_that_it_never_sent_is_another_devices() {
     assert_ne!(net.nodes[n].short(), me);
 }
 
-// ------------------------------------------------------------ joining and commissioning
-
-/// A coordinator of another network (PAN 0x2222) that is open, but never
-/// gets a joining device its network key: it sends it in the clear.
 fn other_network(net: &Net) -> Coord {
     let mut other = Coord::new(&net.air);
     other.set_pan(0x2222);
@@ -2531,7 +2196,6 @@ fn other_network(net: &Net) -> Coord {
     other
 }
 
-/// Runs the network and the second coordinator until `done` holds; false after `max_ms`.
 fn run_both(net: &mut Net, other: &mut Coord, max_ms: u32, done: impl Fn(&Net) -> bool) -> bool {
     for _ in 0..max_ms {
         if done(net) {
@@ -2550,12 +2214,10 @@ fn a_network_that_does_not_let_the_bulb_in_is_followed_by_the_next_one() {
     let n = net.add_node();
     let id = net.nodes[n].id;
     let ext = net.air.borrow().ports[id].ext;
-    // both on one channel; the other network's beacon is the stronger one
     net.link(0, id, 150);
     assert!(run_both(&mut net, &mut other, 20_000, |net| net.nodes[n].stack.state() == State::Up), "joined");
     assert_eq!(net.nodes[n].stack.pan_id(), PAN);
     assert!(other.devices.iter().any(|d| d.ext == ext), "the stronger network was tried first");
-    // one scan was enough: each channel's beacon request went out once before the join
     let scans = net.sent_by(id, 0).iter().filter(|f| f[0] & 7 == 3 && f.last() == Some(&0x07)).count();
     assert_eq!(scans, 4, "the four primary channels, once");
     assert_eq!(beacon_of(&mut net, n).depth, 1);
@@ -2566,7 +2228,6 @@ fn a_network_that_does_not_answer_the_association_is_followed_by_the_next_one() 
     let mut net = Net::new();
     let mut other = other_network(&net);
     other.ignore_associations = true;
-    // (ours is as deep as a network gets: the bulb's depth is the same, not one more that no beacon can say)
     net.coord.depth = 15;
     let n = net.add_node();
     net.link(0, net.nodes[n].id, 150);
@@ -2579,7 +2240,6 @@ fn a_network_that_does_not_answer_the_association_is_followed_by_the_next_one() 
 fn a_network_on_a_primary_channel_does_not_hide_one_on_another_channel() {
     let mut net = Net::new();
     let mut other = other_network(&net);
-    // ours is on channel 12, which is scanned only after the four primary channels
     net.air.borrow_mut().ports[0].channel = 12;
     let n = net.add_node();
     assert!(run_both(&mut net, &mut other, 30_000, |net| net.nodes[n].stack.state() == State::Up), "joined");
@@ -2593,7 +2253,6 @@ fn a_parent_that_does_not_answer_is_followed_by_the_next_router_of_the_network()
     let a = net.join_node();
     net.coord.permit(180);
     net.run(500);
-    // the newcomer hears the first bulb better than the coordinator, and the first bulb does not hear it
     let b = net.add_node();
     let (pa, pb) = (net.nodes[a].id, net.nodes[b].id);
     net.link(0, pb, 150);
@@ -2602,7 +2261,6 @@ fn a_parent_that_does_not_answer_is_followed_by_the_next_router_of_the_network()
     assert_eq!(net.coord.devices.iter().find(|d| d.short == net.nodes[b].short()).unwrap().parent, None);
 }
 
-/// Mgmt_Permit_Joining_req broadcasts of a bulb: (destination, payload after the sequence number).
 fn permit_requests(net: &Net, n: usize) -> Vec<(u16, Vec<u8>)> {
     let me = net.nodes[n].short();
     net.nwk_sent_by(net.nodes[n].id, 0)
@@ -2617,11 +2275,9 @@ fn the_network_is_opened_for_others_once_the_bulb_has_joined() {
     let mut net = Net::new();
     let n = net.join_node();
     net.run(1_000);
-    // BDB 8.2 step 14: everyone is asked to permit joining for the commissioning time ...
     let sent = permit_requests(&net, n);
     assert_eq!(sent[0], (0xFFFC, vec![180, 0x01]));
     assert!(sent.iter().all(|s| *s == sent[0]) && sent.len() == 2, "one broadcast, repeated like any other");
-    // ... after the announcement and the link key exchange
     let order: Vec<u16> = net
         .nwk_sent_by(net.nodes[n].id, 0)
         .into_iter()
@@ -2630,13 +2286,11 @@ fn the_network_is_opened_for_others_once_the_bulb_has_joined() {
         .collect();
     let at = |cluster: u16| order.iter().position(|c| *c == cluster).unwrap();
     assert!(at(0x0013) < at(0x0036) && at(0x0002) < at(0x0036), "clusters in order: {order:x?}");
-    // step 15: the bulb lets devices join through it for that time
     assert!(beacon_of(&mut net, n).permit_join);
     net.run(170_000);
     assert!(beacon_of(&mut net, n).permit_join);
     net.run(10_000);
     assert!(!beacon_of(&mut net, n).permit_join);
-    // not after a power cycle, and not after a rejoin
     net.power_cycle(n);
     net.run(5_000);
     assert!(!beacon_of(&mut net, n).permit_join);
@@ -2668,7 +2322,6 @@ fn a_failed_link_key_exchange_ends_in_leaving_the_network() {
     let short = net.nodes[n].short();
     net.coord.permit_join = false;
     net.run(20_000);
-    // Request Key three times, bdbcTCLinkKeyExchangeTimeout (5 s) apart (BDB 10.2.5 steps 7 and 8) ...
     let requests: Vec<u32> = net
         .timed_nwk_sent_by(id, 0)
         .into_iter()
@@ -2677,14 +2330,12 @@ fn a_failed_link_key_exchange_ends_in_leaving_the_network() {
         .collect();
     assert_eq!(requests.len(), 3);
     assert!(requests.windows(2).all(|w| (5_000..5_010).contains(&(w[1] - w[0]))), "at {requests:?}");
-    // ... and then the bulb leaves and forgets the network (BDB 8.2 step 12)
     assert_ne!(net.nodes[n].stack.state(), State::Up);
     let leave = net.coord.nwk_cmd_rx.iter().find(|(s, p)| *s == short && p[0] == nwk::CMD_LEAVE).expect("a Leave");
     assert_eq!(leave.1, vec![nwk::CMD_LEAVE, 0x00]);
     assert!(permit_requests(&net, n).is_empty(), "the network is not opened by a node that is on its way out");
     net.power_cycle(n);
     assert_eq!(net.nodes[n].stack.state(), State::Down);
-    // it looks for a network anew, and a Trust Center that answers is joined for good
     net.coord.mute_key_exchange = false;
     net.coord.permit_join = true;
     net.run_until(30_000, "joined again", |net| net.nodes[n].stack.state() == State::Up && net.coord.devices.iter().any(|d| d.verified));
@@ -2709,7 +2360,6 @@ fn leave_requests_and_bindings_sent_to_everyone_are_not_taken() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
-    // Mgmt_Leave_req, broadcast: for this device by its address, and for "the device addressed"
     for who in [ext, 0] {
         let mut p = who.to_le_bytes().to_vec();
         p.push(0);
@@ -2718,7 +2368,6 @@ fn leave_requests_and_bindings_sent_to_everyone_are_not_taken() {
         assert_eq!(net.nodes[n].stack.state(), State::Up);
     }
     assert!(net.coord.last_zdo(short, 0x8034).is_none());
-    // Bind_req and Unbind_req, broadcast
     let mut p = ext.to_le_bytes().to_vec();
     p.extend_from_slice(&[1, 0x06, 0x00, 3]);
     p.extend_from_slice(&COORD_EXT.to_le_bytes());
@@ -2746,17 +2395,14 @@ fn remove_device_naming_the_bulb_makes_it_leave() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
-    // without APS encryption it is nobody's command (R22 4.4.1.3, Table 4-6)
     let mut clear = vec![0x01, 0x55, 0x07];
     clear.extend_from_slice(&ext.to_le_bytes());
     net.coord.nwk_data(short, &clear);
     net.run(2_000);
     assert_eq!(net.nodes[n].stack.state(), State::Up);
-    // one about a device the bulb has nothing to do with is dropped
     net.coord.remove_device(short, 0x00124B00_DEAD0001);
     net.run(2_000);
     assert_eq!(net.nodes[n].stack.state(), State::Up);
-    // from the Trust Center, under the link key, naming the bulb: it announces its leave and goes (R22 4.6.3.6.2)
     net.coord.permit_join = false;
     net.coord.remove_device(short, ext);
     net.run(2_000);
@@ -2770,7 +2416,6 @@ fn what_was_learned_and_configured_in_a_network_is_gone_after_leaving_it() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
-    // reporting of OnOff reconfigured: 5 to 20 s
     let seq = net.coord.zcl(short, ON_OFF, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x10, 5, 0, 20, 0]);
     net.run(200);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00]);
@@ -2780,12 +2425,10 @@ fn what_was_learned_and_configured_in_a_network_is_gone_after_leaving_it() {
         net.coord.last_zcl(short, ON_OFF, 0x09).unwrap()[3..].to_vec()
     };
     assert_eq!(read_config(&mut net, short), vec![0x00, 0x00, 0x00, 0x00, 0x10, 5, 0, 20, 0]);
-    // another node is made network manager
     let mut p = 0u32.to_le_bytes().to_vec();
     p.extend_from_slice(&[0xFF, 3, 0x34, 0x12]);
     net.coord.zdo(0xFFFD, 0x0038, &p);
     net.run(500);
-    // leave, join again
     let mut p = ext.to_le_bytes().to_vec();
     p.push(0);
     net.coord.zdo(short, 0x0034, &p);
@@ -2794,16 +2437,12 @@ fn what_was_learned_and_configured_in_a_network_is_gone_after_leaving_it() {
     });
     let short = net.nodes[n].short();
     assert_eq!(read_config(&mut net, short), vec![0x00, 0x00, 0x00, 0x00, 0x10, 0, 0, 0x10, 0x0E], "the default: 0 to 3600 s");
-    // a PAN identifier update from the coordinator counts as the network manager's again
     net.coord.nwk_command(0xFFFF, 30, &pan_update(9, 0x2B3C));
     net.run(10_000);
     net.coord.set_pan(0x2B3C);
     assert_eq!(beacon_of(&mut net, n).update_id, 9);
 }
 
-// ------------------------------------------------------------ who may send key commands
-
-/// The bulb answers under the network key with this sequence number.
 fn answers_under(net: &mut Net, n: usize, key_seq: u8) -> bool {
     let short = net.nodes[n].short();
     let t = net.now();
@@ -2837,21 +2476,15 @@ fn a_network_key_comes_from_the_trust_center_under_its_link_key_and_from_nobody_
         net.run(500);
         assert!(answers_under(net, n, 0), "the key was not taken");
     };
-    // Under the link key of networks without a Trust Center, which
-    // everybody knows: not in a network that has one (R22 4.4.1.3).
     link(&mut net, DISTRIBUTED_LINK_KEY);
     try_key(&mut net, n, &[0x51; 16]);
     link(&mut net, own);
-    // Under the right key, but secured in another device's name.
     net.coord.aps_ext = 0x00124B00_DEAD0005;
     try_key(&mut net, n, &[0x52; 16]);
     net.coord.aps_ext = COORD_EXT;
-    // Under the right key, naming another device than the Trust Center as the key's source.
     net.coord.tc_ext = 0x00124B00_DEAD0006;
     try_key(&mut net, n, &[0x53; 16]);
     net.coord.tc_ext = COORD_EXT;
-    // The Trust Center's key is taken. A Switch Key from another node of
-    // the network does not make it the active one; the Trust Center's does.
     let new_key = [0x54; 16];
     net.coord.transport_network_key(short, ext, &new_key, 1, true);
     net.run(200);
@@ -2873,8 +2506,6 @@ fn a_key_transport_recorded_earlier_is_not_taken_by_a_bulb_waiting_for_its_key_a
     let n = net.join_node();
     let short = net.nodes[n].short();
     net.coord.permit_join = false;
-    // The network key changes while the bulb hears nothing: it asks the
-    // Trust Center to let it back in, and gets the key under its link key.
     let away = |net: &mut Net, key: [u8; 16], seq: u8| {
         net.set_power(n, false);
         net.coord.key = key;
@@ -2889,14 +2520,11 @@ fn a_key_transport_recorded_earlier_is_not_taken_by_a_bulb_waiting_for_its_key_a
     away(&mut net, [0x77; 16], 1);
     net.run(2_000);
     assert!(answers_under(&mut net, n, 1));
-    // somebody recorded that key transport (an unsecured NWK frame for the bulb)
     let recorded = net
         .sent_by(0, t)
         .into_iter()
         .find(|f| f[0] & 7 == 1 && f[5..7] == short.to_le_bytes() && nwk::Header::parse(&f[9..]).is_some_and(|(h, hl)| !h.security && f[9 + hl] == 0x21))
         .expect("the Transport Key of the first rejoin");
-    // The same again; this time the Trust Center's answer does not reach
-    // the bulb in a form it takes, and the recording is played to it.
     net.coord.send_key_in_the_clear = true;
     away(&mut net, [0x78; 16], 2);
     net.run(100);
@@ -2904,7 +2532,6 @@ fn a_key_transport_recorded_earlier_is_not_taken_by_a_bulb_waiting_for_its_key_a
     net.air.borrow_mut().transmit(0, &recorded);
     net.run(500);
     assert_eq!(net.nodes[n].stack.state(), State::WaitKey, "an old key transport is no key transport");
-    // nor is one that names another device than the Trust Center the bulb knows
     net.coord.send_key_in_the_clear = false;
     net.coord.tc_ext = 0x00124B00_DEAD0006;
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
@@ -2917,16 +2544,11 @@ fn a_key_transport_recorded_earlier_is_not_taken_by_a_bulb_waiting_for_its_key_a
     assert!(answers_under(&mut net, n, 2));
 }
 
-// ------------------------------------------------------------ duplicates
-
 #[test]
 fn every_retransmission_of_an_aps_frame_is_known_for_one() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
-    // A Toggle with an acknowledgement requested, and a sender that hears
-    // none of the acknowledgements: it repeats the frame apscMaxFrameRetries
-    // (3) times, apscAckWaitDuration (1.6 s) apart (R22 2.2.8.4.4).
     let aps = net.coord.aps_frame(0x40, 1, ON_OFF, 0x0104, 1, &[0x11, 0x42, 0x02]);
     let before = net.nodes[n].commands.len();
     net.coord.nwk_data(short, &aps);
@@ -2936,20 +2558,16 @@ fn every_retransmission_of_an_aps_frame_is_known_for_one() {
     }
     net.run(200);
     assert_eq!(net.nodes[n].commands.len(), before + 1);
-    // the last repeat alone, the others lost on the way
     let aps = net.coord.aps_frame(0x40, 1, ON_OFF, 0x0104, 1, &[0x11, 0x43, 0x02]);
     net.coord.nwk_data(short, &aps);
     net.run(4_800);
     net.coord.nwk_data(short, &aps);
     net.run(200);
     assert_eq!(net.nodes[n].commands.len(), before + 2);
-    // Long after, the same APS counter is another frame (it is a byte, and
-    // comes round): the first copy is not remembered for good.
     net.run(2_000);
     net.coord.nwk_data(short, &aps);
     net.run(200);
     assert_eq!(net.nodes[n].commands.len(), before + 3);
-    // sixteen other frames in between do not push a frame out of memory
     let aps = net.coord.aps_frame(0x40, 1, ON_OFF, 0x0104, 1, &[0x11, 0x44, 0x02]);
     net.coord.nwk_data(short, &aps);
     for _ in 0..15 {
@@ -2961,8 +2579,6 @@ fn every_retransmission_of_an_aps_frame_is_known_for_one() {
     assert_eq!(net.nodes[n].commands.len(), before + 4);
 }
 
-// ------------------------------------------------------------ rejoining
-
 #[test]
 fn a_rejoin_that_one_router_does_not_grant_is_asked_of_the_next() {
     let mut net = Net::new();
@@ -2972,21 +2588,17 @@ fn a_rejoin_that_one_router_does_not_grant_is_asked_of_the_next() {
     let (pa, pb) = (net.nodes[a].id, net.nodes[b].id);
     let ext_b = net.air.borrow().ports[pb].ext;
     net.run(181_000);
-    // b hears the coordinator better than the other bulb, so the coordinator is asked first
     net.link(pa, pb, 180);
     net.coord.permit_join = false;
     let through_a = |net: &Net| net.coord.updates.iter().filter(|u| *u == &(sa, ext_b, 0x00)).count();
-    // b is told to leave and come back; the coordinator turns it away, the other bulb takes it
     net.coord.refuse_rejoin = true;
     net.coord.nwk_command(sb, 1, &[nwk::CMD_LEAVE, 0x60]);
     net.run(10_000);
     assert_eq!(net.coord.rejoins, vec![(sb, true)], "the coordinator was asked, once");
-    // (the request says what the bulb is, and that it has its address: "allocate address" 0)
     assert!(net.coord.nwk_cmd_rx.iter().any(|(s, p)| *s == sb && p == &vec![nwk::CMD_REJOIN_REQUEST, 0x0E]));
     assert_eq!(through_a(&net), 1, "then the next router, which told the Trust Center of the rejoin");
     assert_eq!(net.nodes[b].stack.state(), State::Up);
     assert_eq!(beacon_of(&mut net, b).depth, 2, "one deeper than its new parent");
-    // again; this time the coordinator does not answer at all
     net.coord.refuse_rejoin = false;
     net.coord.ignore_rejoin = true;
     net.coord.rejoins.clear();
@@ -3005,7 +2617,6 @@ fn a_rejoin_response_has_to_be_for_this_device() {
     let short = net.nodes[n].short();
     let ext = net.air.borrow().ports[net.nodes[n].id].ext;
     net.coord.permit_join = false;
-    // the bulb misses a key change and asks to be let back in; the answer is slow in coming
     net.coord.ignore_rejoin = true;
     net.set_power(n, false);
     net.coord.key = [0x77; 16];
@@ -3014,7 +2625,6 @@ fn a_rejoin_response_has_to_be_for_this_device() {
     net.air.borrow_mut().ports[net.nodes[n].id].queue.clear();
     net.set_power(n, true);
     net.run_until(200_000, "Trust Center rejoin", |net| !net.coord.rejoins.is_empty());
-    // a response under the bulb's network address that names another device (R22 3.6.1.4.2)
     let respond = |net: &mut Net, to: u64| {
         let mut h = net.coord.header(nwk::FRAME_CMD, short, 1);
         h.security = false;
@@ -3065,12 +2675,10 @@ fn for_a_rejoin_the_router_nearest_the_coordinator_is_asked_first() {
     let ext_b = net.air.borrow().ports[pb].ext;
     net.run(181_000);
     net.coord.permit_join = false;
-    // b hears the other bulb (depth 1) better than the coordinator (depth 0), both well enough
     net.link(0, pb, 170);
     net.coord.nwk_command(sb, 1, &[nwk::CMD_LEAVE, 0x60]);
     net.run(10_000);
     assert_eq!(net.coord.rejoins, vec![(sb, true)], "the coordinator, although the bulb is heard better");
-    // a router heard too poorly for a good link (cost above 3: 5 by the LQI) comes after one that is not
     net.coord.rejoins.clear();
     net.link(0, pb, 60);
     net.coord.nwk_command(sb, 1, &[nwk::CMD_LEAVE, 0x60]);
@@ -3086,7 +2694,6 @@ fn of_several_routers_that_notice_an_address_conflict_one_reports_it() {
     let a = net.join_node();
     let b = net.join_node();
     let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
-    // two devices that everyone hears; each announces itself to all in range
     let announce = |z: &mut Zed| {
         let mut aps = vec![0x08, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x31, 0x32];
         aps.extend_from_slice(&z.short.to_le_bytes());
@@ -3101,12 +2708,10 @@ fn of_several_routers_that_notice_an_address_conflict_one_reports_it() {
     announce(&mut second);
     net.run(2_000);
     assert!(conflicts(&net).is_empty());
-    // the second one turns up under the first one's address: both bulbs hear it
     let t = net.now();
     second.short = first.short;
     announce(&mut second);
     net.run(2_000);
-    // each waits a random moment before it says so (R22 3.6.1.9.3) ...
     let reports: Vec<(u32, u16)> = [a, b]
         .iter()
         .flat_map(|n| net.timed_nwk_sent_by(net.nodes[*n].id, t))
@@ -3115,16 +2720,13 @@ fn of_several_routers_that_notice_an_address_conflict_one_reports_it() {
         .collect();
     let first_at = reports.iter().map(|r| r.0).min().expect("a report");
     assert!(first_at > t && first_at - t <= 64, "after {} ms", first_at - t);
-    // ... and the one that hears the other's report meanwhile keeps its own to itself
     let reporters: std::collections::HashSet<u16> = reports.iter().map(|r| r.1).collect();
     assert_eq!(reporters.len(), 1, "reports: {reports:?}");
     assert_eq!(conflicts(&net).len(), 1);
-    // nor does it report the conflict when it sees more of it
     announce(&mut first);
     announce(&mut second);
     net.run(2_000);
     assert_eq!(conflicts(&net).len(), 1);
-    // the wait is a random one: over a few conflicts it is not always the shortest
     let mut waits = vec![];
     for k in 1..6u16 {
         let mut first = Zed::router(&net.air, 0x4000 + k, sa);
@@ -3145,8 +2747,6 @@ fn of_several_routers_that_notice_an_address_conflict_one_reports_it() {
         waits.push(sent);
     }
     assert!(waits.iter().all(|w| *w <= 65) && waits.iter().any(|w| *w > 2), "waits {waits:?}");
-    // A router that only heard of a conflict from another one's report
-    // does not report it either when it then sees it for itself.
     let before = conflicts(&net).len();
     let mut first = Zed::router(&net.air, 0x4100, sa);
     let mut second = Zed::router(&net.air, 0x5100, sa);
@@ -3173,17 +2773,14 @@ fn a_link_key_exchange_cut_short_by_a_power_cycle_is_tried_again_and_costs_nothi
     let n = net.add_node();
     net.run_until(20_000, "associated", |net| net.nodes[n].stack.state() == State::Up);
     let short = net.nodes[n].short();
-    // the power goes while the bulb waits for its new link key, and the Trust Center is no more talkative after
     net.run(3_000);
     net.power_cycle(n);
     let t = net.now();
     net.run(30_000);
     let requests = net.nwk_sent_by(net.nodes[n].id, t).into_iter().filter(|(_, h, p)| h.frame_type == nwk::FRAME_DATA && h.dst == 0x0000 && p[0] == 0x21).count();
     assert_eq!(requests, 3, "Request Key, three times");
-    // The bulb has been on the network since before the power cycle: it stays (the join that BDB 8.2 step 12 ends is long over).
     assert_eq!(net.nodes[n].stack.state(), State::Up);
     assert!(!net.coord.nwk_cmd_rx.iter().any(|(s, p)| *s == short && p[0] == nwk::CMD_LEAVE));
-    // and the next power cycle finds a Trust Center that answers
     net.coord.mute_key_exchange = false;
     net.power_cycle(n);
     net.run_until(30_000, "link key exchanged", |net| net.coord.devices.iter().any(|d| d.verified));
@@ -3191,12 +2788,6 @@ fn a_link_key_exchange_cut_short_by_a_power_cycle_is_tried_again_and_costs_nothi
 
 #[test]
 fn early_link_status_frames_do_not_age_the_neighbors() {
-    // nwkRouterAgeLimit counts link status *periods* (R22 3.6.3.4.2), not
-    // Link Status frames: a neighbor that keeps to the 15 s period stays
-    // live however often this router sends early ones. (On a bulb, a
-    // router that did not list it made it send one every second or two,
-    // and every one aged every entry: the coordinator, heard well, went
-    // stale within seconds and the way to it went through a poor link.)
     let mut net = Net::new();
     let n = net.join_node();
     let id = net.nodes[n].id;
@@ -3208,8 +2799,6 @@ fn early_link_status_frames_do_not_age_the_neighbors() {
             .map(|(at, _, _, p)| (at, p[2..].chunks(3).map(|e| u16::from_le_bytes([e[0], e[1]])).collect()))
             .collect()
     };
-    // a router in range that does not hear the bulb: its Link Status, every
-    // two seconds, never lists it, and each one asks for an early Link Status
     let mut x = peer(&mut net, n, 0x2B02);
     let t = net.now();
     for _ in 0..45 {
@@ -3218,7 +2807,6 @@ fn early_link_status_frames_do_not_age_the_neighbors() {
     }
     let frames = sent(&net, t);
     assert!(frames.len() > 12, "early Link Status frames went out: {}", frames.len());
-    // the coordinator, whose Link Status comes every 15 s, is listed in every one
     let missing: Vec<u32> = frames.iter().filter(|f| !f.1.contains(&0x0000)).map(|f| f.0 - t).collect();
     assert!(missing.is_empty(), "the coordinator left out of the Link Status at {missing:?} ms of {} frames", frames.len());
 }

@@ -1,8 +1,3 @@
-//! Events that change the bulb's place in the network; each test has a session
-//! of its own: leaving (R22 3.6.1.10, 2.4.3.3.5, BDB 9.3/9.4), rejoining
-//! (3.6.1.4.2, 3.4.6/3.4.7), address conflict (3.6.1.9), PAN identifier update
-//! (3.6.1.13.3), channel change (2.4.3.3.9). Ported from emulator/spec/nwk_network.py.
-
 use super::{SessionDef, Test};
 use crate::air::{Air, NodeId};
 use crate::coord::Coord;
@@ -180,7 +175,7 @@ fn ignored_or_gone(s: &mut Session) -> R<String> {
 }
 
 fn leave_request(s: &mut Session) -> R<String> {
-    s.w.coord.permit_join = None; // no beacons: the bulb cannot come back unnoticed
+    s.w.coord.permit_join = None;
     let i = s.mark();
     let (dut, ext) = (s.dut_short, s.dut_ext);
     let (c, air) = tc(s);
@@ -210,7 +205,6 @@ fn leave_request_rejoin(s: &mut Session) -> R<String> {
 
 fn rejoin_after_leave(s: &mut Session) -> R<String> {
     if !s.has_note("leave_mark") {
-        // run alone (--exact): the leave with rejoin of NWK-LEAVE-02 first, judged there
         if let Err(e @ (Stop::Error(_) | Stop::SessionLost(_))) = leave_request_rejoin(s) {
             return Err(e);
         }
@@ -233,7 +227,6 @@ fn rejoin_after_leave(s: &mut Session) -> R<String> {
     expect(n.radius == 1, format!("radius {}", n.radius))?;
     expect(n.src_ieee == Some(s.dut_ext), "no source IEEE address in the NWK header of the Rejoin Request")?;
     expect(cap & 0x02 != 0 && cap & 0x08 != 0, format!("capability information {cap:#04x} of a router"))?;
-    // the parent's answer (3.4.7): same security level as the request, both IEEE addresses, radius 1
     let short = n.src;
     let ext = s.dut_ext;
     let lk = s.tclk();
@@ -245,7 +238,6 @@ fn rejoin_after_leave(s: &mut Session) -> R<String> {
     rsp.push(0x00);
     c.tx_nwk_cmd(air, short, &rsp, &o);
     if !n.secured {
-        // Trust Center rejoin: the active network key, APS-encrypted with the device's link key
         let mut body = vec![0x05, 0x01];
         body.extend_from_slice(&c.st.nwk_key);
         body.push(c.st.key_seq);
@@ -271,7 +263,7 @@ fn tc_rejoin_after_missed_key(s: &mut Session) -> R<String> {
     ];
     {
         let (c, air) = tc(s);
-        c.use_network_key(air, new_key, 1, false); // the network moved on; the bulb was not told
+        c.use_network_key(air, new_key, 1, false);
     }
     let i = s.mark();
     let mut f = None;
@@ -279,7 +271,7 @@ fn tc_rejoin_after_missed_key(s: &mut Session) -> R<String> {
     let dut = s.dut_short;
     while s.now() - t0 < 100000.0 && f.is_none() {
         let (c, air) = tc(s);
-        c.st.tx_link_status(air, &[(dut, 1, 1)], &Tx::new()); // what a neighbour under the new key sounds like
+        c.st.tx_link_status(air, &[(dut, 1, 1)], &Tx::new());
         f = s.wait(
             |f| f.nwk_cmd() == Some(0x06) && !f.nwk.as_ref().unwrap().secured,
             5000.0,
@@ -329,7 +321,6 @@ fn leave_request_broadcast(s: &mut Session) -> R<String> {
     s.w.coord.permit_join = None;
     let i = s.mark();
     for _ in 0..3 {
-        // three copies, so that a lost frame cannot pass the test
         let (c, air) = tc(s);
         c.tx_nwk_cmd(air, 0xFFFD, &[0x04, 0x40], &Tx::new().radius(1));
         s.run(1000.0)?;
@@ -423,8 +414,6 @@ fn address_conflict(s: &mut Session) -> R<String> {
     let mut st = conflict_status(s, i);
     let mut how = "a frame for the bulb's address with another device's IEEE address in the NWK header";
     if st.is_empty() {
-        // second way to learn of it (3.6.1.9.2): a new broadcast whose NWK source is the bulb's own address,
-        // received more than nwkNetworkBroadcastDeliveryTime after the bulb started operating
         let wait = 20000.0 - (s.now() - s.t_joined);
         if wait > 0.0 {
             s.run(wait)?;

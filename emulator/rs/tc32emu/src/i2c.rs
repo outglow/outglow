@@ -1,12 +1,7 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Hardware I2C master (i2c.go).
-
 use crate::machine::Machine;
 
-/// A register-file I2C slave on the master bus.
 #[derive(Clone, Debug)]
 pub struct I2cDevice {
-    /// 7-bit slave address.
     pub addr: u8,
     pub mem: [u8; 256],
     pub(crate) ptr: u8,

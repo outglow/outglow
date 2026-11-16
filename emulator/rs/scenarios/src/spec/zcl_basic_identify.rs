@@ -1,8 +1,3 @@
-//! Basic and Identify clusters of a light (ZCL rev 8 clauses 3.2 and 3.5; ZLO
-//! device specification 15-0014-05 clause 7.2 for what a dimmable light must
-//! have; BDB 3.0.1 clauses 8.4/8.5 for the finding & binding target). Ported
-//! from emulator/spec/zcl_basic_identify.py.
-
 use super::zcl_foundation::{fin, int, opt_str, py_float, py_floats, py_hex, py_round, py_strs, records, retry,
                             sorted_set, type_error, Records};
 use super::Test;
@@ -109,12 +104,10 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ------------------------------------------------------------------ helpers
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// `{id: (status, type, value)}` read two at a time (strings may not fit one frame together).
 fn read_all(s: &mut Session, cluster: u16, attrs: &[u16]) -> R<Records> {
     let mut out = Records::new();
     for pair in attrs.chunks(2) {
@@ -148,7 +141,6 @@ fn stop_identify(s: &mut Session) -> R<()> {
     s.run(300.0)
 }
 
-/// `st if st is None else hex(st)`; a frame cannot be formatted (TypeError in Python).
 fn status_text(a: &CmdAnswer) -> R<String> {
     match a {
         CmdAnswer::None => Ok("None".into()),
@@ -161,8 +153,6 @@ fn is_status(a: &CmdAnswer, v: u8) -> bool {
     matches!(a, CmdAnswer::Status(x) if *x == v)
 }
 
-/// A broadcast or groupcast request for which an answer is expected, repeated
-/// before 'no answer' is concluded (a single copy can be lost on the air).
 fn ask_broadcast(s: &mut Session, cluster: u16, cmd: u8, payload: &[u8], tries: usize, o: Tx) -> R<Option<CapFrame>> {
     let mut f = None;
     for _ in 0..tries {
@@ -198,7 +188,6 @@ fn get(r: &Records, a: u16) -> (Option<u8>, Option<u8>, Option<ZclValue>) {
     }
 }
 
-// ------------------------------------------------------------------ Basic
 fn basic_mandatory(s: &mut Session) -> R<String> {
     s.need_cluster(BASIC)?;
     let r = read_all(s, BASIC, &[0x0000, 0x0007])?;
@@ -364,7 +353,6 @@ fn basic_reset(s: &mut Session) -> R<String> {
     fin(r, cleanup)
 }
 
-// ------------------------------------------------------------------ Identify
 fn identify_time_attr(s: &mut Session) -> R<String> {
     s.need_cluster(IDENTIFY)?;
     let r = (|| {
@@ -440,10 +428,8 @@ fn identify_query_idle(s: &mut Session) -> R<String> {
     stop_identify(s)?;
     let v = identify_time(s)?;
     expect(v == 0, "precondition: IdentifyTime is 0")?;
-    // sent with Disable Default Response = 1, so that nothing at all may come back
     let f = s.zcl(IDENTIFY, 0x01, &[], Tx::new().ddr().max_ms(1500.0))?;
     expect(f.is_none(), format!("answer to Identify Query while not identifying: {}", text(&f)))?;
-    // negative control: the same query is answered once the device identifies
     let r = (|| {
         identify(s, 30)?;
         let g = s.zcl(IDENTIFY, 0x01, &[], Tx::new().ddr())?;
@@ -555,7 +541,7 @@ fn trigger_effect(s: &mut Session) -> R<String> {
     let before = duty_samples(s, 500.0, 100.0)?;
     let st = s.cmd(IDENTIFY, 0x40, &[0x00, 0x00])?;
     let during = duty_samples(s, 2500.0, 100.0)?;
-    s.zcl(IDENTIFY, 0x40, &[0xFF, 0x00], Tx::new().ddr().max_ms(300.0))?; // stop effect
+    s.zcl(IDENTIFY, 0x40, &[0xFF, 0x00], Tx::new().ddr().max_ms(300.0))?;
     s.run(1500.0)?;
     expect(!matches!(st, CmdAnswer::None), "no Default Response to Trigger Effect")?;
     let CmdAnswer::Status(x) = st else { return Err(type_error("unsupported format string passed to Frame")) };
@@ -566,7 +552,6 @@ fn trigger_effect(s: &mut Session) -> R<String> {
     let mut all = during.clone();
     all.extend(&before);
     let changed = sorted_set(&all).len() > 1;
-    // how an effect looks is left to the implementer (3.5.2.3.3), so the output is reported, not judged
     Ok(if changed {
         format!("output values during the effect: {} %", py_floats(&sorted_set(&during)))
     } else {

@@ -1,32 +1,3 @@
-//! The bulb as a parent under load: many sleepy end devices joined through
-//! it, polling at different intervals, while the coordinator sends them
-//! unicasts and broadcasts (no Python original; a measurement of the parent
-//! role of whatever image is under test, the Rust one by default).
-//!
-//! The bulb joins the coordinator; 24 scripted end devices (receiver off when
-//! idle) join through it, a third each polling every 1 s, 5 s and 30 s. A
-//! poll is a MAC Data Request; when the frame the bulb then hands over says
-//! "frame pending", the device polls again at once, as end devices do. Four
-//! phases of traffic from the coordinator:
-//!
-//! 1. steady: one unicast every 1.5 s to the children in turn, three broadcasts
-//!    (each on the air three times, 500 ms apart, as routers retransmit them);
-//! 2. flood: eight unicasts at once to one child polling every 5 s, one to
-//!    each child polling every 1 s right after;
-//! 3. burst: two unicasts to every child at once, and a broadcast;
-//! 4. BLE: the steady traffic again while a BLE central is connected to the
-//!    bulb at a 7.5 ms interval (the radio is away from 802.15.4 for most of
-//!    every connection event).
-//!
-//! Every frame for a child is followed to its fate: delivered on a poll,
-//! dropped (the child polled within the persistence time, 7.68 s, and did
-//! not get it: the parent had no room for it or lost it), expired (no poll in
-//! time: nothing a parent can do), or never acknowledged by the bulb. The
-//! requirements are few and clear (all join; a child polling every second
-//! gets every unicast; nothing dropped in steady traffic; broadcasts reach the
-//! children that poll within the persistence time; one child's flood does not
-//! push out the others' frames); the rest is printed as observations.
-
 use std::collections::VecDeque;
 
 use super::{ble_central, SimCtx, SimDef};
@@ -41,12 +12,8 @@ pub fn def() -> SimDef {
 const N_EDS: usize = 24;
 const EVERY: [f64; 3] = [1000.0, 5000.0, 30000.0];
 const EXT: u64 = 0x00124B00EE000000;
-/// macTransactionPersistenceTime.
 const PERSISTENCE_MS: f64 = 7680.0;
-/// A poll this close to the end of the persistence time does not count as a
-/// chance to deliver (the frame was queued a little after it reached the bulb).
 const MARGIN_MS: f64 = 150.0;
-/// macAckWaitDuration (54 symbols).
 const ACK_WAIT_US: f64 = 864.0;
 const PHASES: [&str; 4] = ["steady", "flood", "burst", "BLE"];
 
@@ -56,9 +23,7 @@ struct Ed {
     every: f64,
     short: Option<u16>,
     next: f64,
-    /// (time, acknowledged, frame pending in the acknowledgement, frames received)
     polls: Vec<(f64, bool, bool, usize)>,
-    /// frames received after a poll: (time, NWK source, NWK destination, NWK sequence number)
     got: Vec<(f64, u16, u16, u8)>,
 }
 
@@ -68,7 +33,6 @@ enum Act {
     Broadcast,
 }
 
-/// A frame the coordinator sent: phase, child (None: broadcast), NWK sequence number, when.
 struct Sent {
     phase: usize,
     child: Option<usize>,
@@ -105,7 +69,6 @@ fn class_name(every: f64) -> String {
     format!("every {:.0} s", every / 1000.0)
 }
 
-/// A poll, and again at once while the frames handed over say more are pending.
 fn poll(s: &mut Session, ed: &mut Ed) -> R<()> {
     for _ in 0..8 {
         let p = s.ed_poll(ed.id, 30.0, false)?;
@@ -124,14 +87,11 @@ fn poll(s: &mut Session, ed: &mut Ed) -> R<()> {
     Ok(())
 }
 
-/// Runs polls and the coordinator's actions (times from now) for `ms`.
 fn drive(s: &mut Session, eds: &mut [Ed], acts: &[(f64, Act)], ms: f64, phase: usize, sent: &mut Vec<Sent>) -> R<()> {
     let t0 = s.now();
     let end = t0 + ms;
     let mut acts: VecDeque<(f64, Act)> = acts.iter().map(|(t, a)| (t0 + t, *a)).collect();
     for (i, ed) in eds.iter_mut().enumerate().filter(|(_, e)| e.next == 0.0) {
-        // the first phase: the children of a class spread evenly over their
-        // interval; from then on each keeps its own rhythm across the phases
         let (k, n) = ((i / EVERY.len()) as f64, N_EDS.div_ceil(EVERY.len()) as f64);
         ed.next = t0 + ed.every * (k + 0.5) / n;
     }
@@ -165,8 +125,6 @@ fn drive(s: &mut Session, eds: &mut [Ed], acts: &[(f64, Act)], ms: f64, phase: u
                 }
                 Act::Broadcast => {
                     let r = s.tx_zcl(0x0003, 0x01, &[], Tx::new().ddr().radius(4).dst(0xFFFF));
-                    // and twice more, as a router retransmits a broadcast (nwkMaxBroadcastRetries 2,
-                    // R22 3.6.5): the bulb may be away on BLE when one goes by
                     for k in 1..3 {
                         s.w.coord.st.resend_last(&mut s.w.air, 500.0 * k as f64);
                     }
@@ -180,7 +138,6 @@ fn drive(s: &mut Session, eds: &mut [Ed], acts: &[(f64, Act)], ms: f64, phase: u
     }
 }
 
-/// The steady traffic: a unicast every 1.5 s to the children in turn, broadcasts at 10, 25 and 40 s.
 fn steady(n_joined: &[usize]) -> Vec<(f64, Act)> {
     let mut v: Vec<(f64, Act)> = Vec::new();
     if !n_joined.is_empty() {
@@ -195,7 +152,6 @@ fn steady(n_joined: &[usize]) -> Vec<(f64, Act)> {
     v
 }
 
-/// The coordinator's frame (an acknowledged copy) and when it ended, for a unicast.
 fn on_air(cap: &[CapFrame], x: &Sent, short: u16) -> Option<f64> {
     let copies: Vec<&CapFrame> = cap
         .iter()
@@ -218,8 +174,6 @@ fn on_air(cap: &[CapFrame], x: &Sent, short: u16) -> Option<f64> {
     None
 }
 
-/// When the coordinator's broadcast ended on the air, if the bulb took it in
-/// (it passed it on, by broadcast or to a child).
 fn bcast_on_air(cap: &[CapFrame], x: &Sent) -> Option<f64> {
     let is = |f: &CapFrame| {
         f.t0 >= x.t - 1.0 && f.t0 < x.t + 3000.0 && f.nwk.as_ref().is_some_and(|n| n.src == 0 && n.dst == 0xFFFF && n.seq == x.seq)
@@ -279,10 +233,8 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let mut sent: Vec<Sent> = Vec::new();
     let mut t_phase = [0.0f64; 4];
 
-    // 1. steady
     t_phase[0] = s.now();
     drive(&mut s, &mut eds, &steady(&joined), 47_000.0, 0, &mut sent)?;
-    // 2. flood: eight frames at once to a child polling every 5 s, then one to each child polling every second
     t_phase[1] = s.now();
     let flooded = joined.iter().copied().find(|i| eds[*i].every == 5000.0);
     let mut acts: Vec<(f64, Act)> = Vec::new();
@@ -295,7 +247,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         acts.push((300.0 + 5.0 * k as f64, Act::Unicast(*c)));
     }
     drive(&mut s, &mut eds, &acts, 12_000.0, 1, &mut sent)?;
-    // 3. burst: two frames to every child at once, and a broadcast
     t_phase[2] = s.now();
     let mut acts: Vec<(f64, Act)> = Vec::new();
     for round in 0..2 {
@@ -306,7 +257,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     acts.push((900.0, Act::Broadcast));
     acts.sort_by(|a, b| a.0.total_cmp(&b.0));
     drive(&mut s, &mut eds, &acts, 12_000.0, 2, &mut sent)?;
-    // 4. the steady traffic with a BLE central connected at 7.5 ms
     t_phase[3] = s.now();
     ble_central::connect_central(&mut s.w, NodeId::Dut, 6, None);
     let connected = s.run_until(15_000.0, 20.0, |s| s.w.tap(NodeId::Dut).is_some_and(|t| zbnode::bleatt::started(&t.q)))?;
@@ -323,7 +273,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
     s.sync();
     let cap = s.cap.clone();
 
-    // fates
     let mut uni = vec![[Fate::default(); N_EDS]; PHASES.len()];
     let mut bc = vec![[Fate::default(); N_EDS]; PHASES.len()];
     for x in &sent {
@@ -388,9 +337,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         ));
     }
 
-    // acknowledgements of the polls
-    // (every transmission of a Data Request, retries included; an acknowledgement
-    // counts when it starts within macAckWaitDuration after the request)
     let ed_ids: Vec<NodeId> = eds.iter().map(|e| e.id).collect();
     let mut delays: [Vec<f64>; 2] = [Vec::new(), Vec::new()];
     let mut no_ack = [0usize; 2];
@@ -422,16 +368,11 @@ fn run(cx: &mut SimCtx) -> R<()> {
         delays[1].len(),
         no_ack[1]
     ));
-    // (A frame that reaches the bulb just before a poll, and is taken from the
-    // receive queue just after it, is not in the acknowledgement yet; the
-    // bulb sends it anyway. A sleeping child would miss it and the frame
-    // wait for its next poll.)
     cx.say(&format!("   polls that got frames without the pending bit: {no_bit}; with the bit and nothing: {idle_bit}"));
     let (sent_n, recv_n, why) = {
         let r = s.w.air.dut.radio.b();
         (r.sent, r.received, r.dropped.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join(", "))
     };
-    // the firmware's own count of frames its receive queue had no room for (Rust image)
     let overflow = img.symbol("RADIO_DROPPED").and_then(|a| {
         let m = &s.w.air.dut.m;
         let o = a.checked_sub(0x840000)? as usize;
@@ -443,7 +384,6 @@ fn run(cx: &mut SimCtx) -> R<()> {
         overflow.map_or("-".to_string(), |n| n.to_string())
     ));
 
-    // requirements
     let now = s.now();
     let one_s = class(&uni[0], 1000.0, None);
     cx.check(now, "steady traffic: a child polling every 1 s gets every unicast", one_s.sent > 0 && one_s.delivered == one_s.sent,

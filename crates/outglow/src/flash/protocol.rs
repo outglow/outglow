@@ -1,44 +1,7 @@
-//! The firmware update protocol of AwoX/EGLO Connect.Z bulbs over Bluetooth
-//! (Telink mesh profile + AwoX OTA channel), independent of the transport.
-//! First a port of the Python awox_ota.py; site/src/flasher/awox-ota.ts is the same
-//! protocol in the browser.
-//!
-//! Flow:
-//! 1. Optional Telink mesh login on ...1914: write `0c || rnd8 ||
-//!    AES(rnd, name^password)[:8]`, read ...1914 -> `0d || server rnd8`
-//!    (`0e` = refused). The OTA channel needs no login (the original firmware
-//!    takes the whole transfer without one, in the emulator and on hardware).
-//! 2. Erase on ...1915: a (D+4)-byte packet, all zeros but `[2] = len/4096 + 2`.
-//!    Then ...1915 is read every 3 s until `status[0] == 2`.
-//! 3. Data on ...1915: `idx LE16 || D bytes (the last padded with 0xFF) ||
-//!    CRC-16/MODBUS LE` over what comes before the CRC. Every 8 writes the
-//!    status is read.
-//! 4. End: `count LE16 || CRC (4 bytes)`, then a status read: `status[1] == 0`
-//!    is success.
-//!
-//! Block size D: 16 at the default ATT_MTU 23 (MTU-7). The original firmware
-//! takes D from the length of the erase packet and then accepts only data
-//! packets of exactly D+4 bytes. Limits measured in the emulator: the original
-//! firmware up to 240, Outglow (C and Rust) up to 57.
-//!
-//! Status read from ...1915, two layouts told apart by the length:
-//! - original firmware (9 B): state, error, last written idx LE16 (0xFFFF =
-//!   none), last received idx LE16, consecutive errors, erased sectors, 0.
-//!   State 0 idle, 1 erasing, 2 erased, 3 receiving, 4 done; error 0 ok, 1 CRC,
-//!   2 sequence, 3 idx beyond the buffer, 4 packet in the wrong state, 5 flash
-//!   read-back differs. Errors 1 and 2 are recoverable: the bulb keeps the
-//!   blocks up to "last written" and takes the next one.
-//! - Outglow (20 B): state, result (2 = failed, final), blocks received LE16
-//!   (twice), 0, percent, 0.
-//!
-//! The "unpaired" mesh password of current products (0x20xx, firmware >= 3.0.0)
-//! is SHA-256(MAC6 || 56E850EDCFDD8B99 || 0000)[:16]; older ones use "1234".
-
 use aes::cipher::{BlockEncrypt, KeyInit};
 use anyhow::{anyhow, bail, Result};
 use sha2::{Digest, Sha256};
 
-/// Short codes of the Telink mesh characteristics (`00010203-...-0d19xx`).
 pub const STATUS: u8 = 0x11;
 pub const COMMAND: u8 = 0x12;
 pub const OTA_OLD: u8 = 0x13;
@@ -47,7 +10,6 @@ pub const OTA: u8 = 0x15;
 
 pub const AWOX_SECRET: [u8; 8] = [0x56, 0xE8, 0x50, 0xED, 0xCF, 0xDD, 0x8B, 0x99];
 pub const DEFAULT_MTU: usize = 23;
-/// The original firmware takes an erase packet shorter than 20 B as no erase packet.
 pub const CHUNK_MIN: usize = 16;
 
 pub fn telink_uuid(short: u8) -> uuid::Uuid {
@@ -77,8 +39,6 @@ pub fn unhex(s: &str) -> Result<Vec<u8>> {
     }
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| anyhow!("{s}: {e}"))).collect()
 }
-
-// ---- packets ---------------------------------------------------------------------
 
 pub fn crc16_modbus(data: &[u8]) -> u16 {
     let mut crc = 0xFFFFu16;
@@ -120,9 +80,6 @@ pub fn end_packet(img_len: usize, d: usize) -> Vec<u8> {
     p
 }
 
-// ---- mesh login ------------------------------------------------------------------
-
-/// Telink `aes_att_encryption`: AES-128 on the reversed bytes of key and data.
 pub fn telink_aes(key: &[u8; 16], data: &[u8; 16]) -> [u8; 16] {
     let mut k = *key;
     k.reverse();
@@ -163,8 +120,6 @@ pub fn session_key(name: &[u8], password: &[u8], rnd8: &[u8; 8], resp8: &[u8; 8]
     telink_aes(&name_pass(name, password), &d)
 }
 
-/// The "unpaired" password in secure mode; `mac6` in display order
-/// (aa:bb:..:ff -> bytes aa..ff).
 pub fn secure_password(mac6: &[u8; 6]) -> [u8; 16] {
     let mut h = Sha256::new();
     h.update(mac6);
@@ -173,10 +128,6 @@ pub fn secure_password(mac6: &[u8; 6]) -> [u8; 16] {
     h.finalize()[..16].try_into().unwrap()
 }
 
-// ---- status ------------------------------------------------------------------------
-
-/// Which OTA handler answers: the original firmware (9-byte status), Outglow
-/// (20 bytes) or something else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
     Stock,
@@ -185,7 +136,6 @@ pub enum Target {
 }
 
 impl Target {
-    /// From the idle status read.
     pub fn detect(idle_status: &[u8]) -> Target {
         match idle_status.len() {
             9 => Target::Stock,
@@ -194,7 +144,6 @@ impl Target {
         }
     }
 
-    /// The largest block the target's OTA handler takes.
     pub fn chunk_cap(self) -> usize {
         match self {
             Target::Stock => 240,
@@ -212,11 +161,9 @@ impl Target {
     }
 }
 
-/// A status read of ...1915 in either layout.
 #[derive(Clone, Debug)]
 pub struct Status {
     pub raw: Vec<u8>,
-    /// Stock for the 9-byte layout, Outglow for any longer one.
     pub layout: Target,
     pub state: Option<u8>,
     pub error: Option<u8>,
@@ -245,8 +192,6 @@ impl Status {
         }
     }
 
-    /// The original firmware rejected a block (CRC or sequence) and takes the
-    /// next one after `last_ok`.
     pub fn resumable(&self) -> bool {
         self.layout == Target::Stock && self.state == Some(3) && matches!(self.error, Some(1 | 2))
     }
@@ -255,7 +200,6 @@ impl Status {
         self.last_ok.map(|l| l.wrapping_add(1) as usize)
     }
 
-    /// Nothing more can come of this transfer: the bulb gave up or refuses.
     pub fn failed(&self) -> bool {
         if self.layout == Target::Stock {
             matches!(self.error, Some(3..=5)) || self.state == Some(0)
@@ -290,8 +234,6 @@ impl Status {
     }
 }
 
-/// Block size for an ATT_MTU: MTU-7, at most what the target's handler takes.
-/// An explicit chunk is checked against the same limits. Returns (chunk, reason).
 pub fn pick_chunk(mtu: usize, target: Target, chunk: Option<usize>) -> Result<(usize, String)> {
     let room = mtu.saturating_sub(7);
     let cap = target.chunk_cap();
@@ -309,9 +251,6 @@ pub fn pick_chunk(mtu: usize, target: Target, chunk: Option<usize>) -> Result<(u
     Ok((d, why))
 }
 
-// ---- the transfer ----------------------------------------------------------------
-
-/// GATT access to a bulb's Telink characteristics (by short code).
 #[allow(async_fn_in_trait)]
 pub trait Transport {
     async fn write(&mut self, ch: u8, data: &[u8]) -> Result<()>;
@@ -319,7 +258,6 @@ pub trait Transport {
     async fn sleep(&mut self, ms: u64);
 }
 
-/// Mesh login on ...1914; returns the session key (not needed for OTA).
 pub async fn login<T: Transport>(
     t: &mut T,
     name: &[u8],
@@ -337,13 +275,10 @@ pub async fn login<T: Transport>(
 }
 
 pub struct OtaOptions {
-    /// data block size D
     pub chunk: usize,
-    /// ATT_MTU, only for the log
     pub mtu: usize,
     pub read_every: usize,
     pub erase_timeout_s: u64,
-    /// resends from the same block in a row without progress before giving up
     pub max_resends: u32,
 }
 
@@ -353,8 +288,6 @@ impl Default for OtaOptions {
     }
 }
 
-/// Erase, data with resends after the original firmware's CRC or sequence
-/// errors, end. Returns the final status.
 pub async fn run_ota<T: Transport>(t: &mut T, img: &[u8], o: &OtaOptions, log: &mut dyn FnMut(&str)) -> Result<Vec<u8>> {
     let d = o.chunk;
     if d < CHUNK_MIN {
@@ -451,7 +384,6 @@ pub async fn run_ota<T: Transport>(t: &mut T, img: &[u8], o: &OtaOptions, log: &
 mod tests {
     use super::*;
 
-    // Expected values from the earlier Python flasher (awox_ota.py).
     const MAC6: [u8; 6] = [0xa4, 0xc1, 0x38, 0x12, 0x34, 0x56];
     const RND8: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
@@ -539,11 +471,6 @@ mod tests {
         assert_eq!(Target::detect(&[0; 2]), Target::Unknown);
     }
 
-    /// A model of the original firmware's OTA handler: erasing for two status
-    /// reads, CRC and sequence checks with the 9-byte status, packets after an
-    /// error ignored until the status is read. `damage` corrupts the CRC of
-    /// the first transmission of those blocks, `drop` loses it. The same model
-    /// in Python (driving the earlier awox_ota.py) gave the trace hashes below.
     struct FakeStock {
         img: Vec<u8>,
         d: usize,
@@ -722,7 +649,6 @@ mod tests {
     async fn a_refusing_bulb_aborts() {
         let img = img();
         let mut f = FakeStock::new(&img, 16, &[], &[]);
-        // erased, then "packet in the wrong state" on the first poll
         f.fail_reads = false;
         let o = OtaOptions::default();
         struct Refuse(FakeStock, u32);

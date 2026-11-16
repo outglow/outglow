@@ -1,6 +1,3 @@
-//! ZDO server services a Zigbee router must provide (R22 2.4.3 / 2.4.4) and
-//! their status codes, ported from emulator/spec/zdo_services.py.
-
 use super::Test;
 use crate::session::{expect, Session, Stop, R};
 use crate::station::Tx;
@@ -12,7 +9,6 @@ const INVALID_EP: u8 = 0x82;
 const NOT_ACTIVE: u8 = 0x83;
 const NOT_SUPPORTED: u8 = 0x84;
 const NO_ENTRY: u8 = 0x88;
-/// a network address nobody has in these sessions
 const ABSENT: u16 = 0x5AF3;
 const ABSENT_EXT: u64 = 0x00124B00DEAD0001;
 const S: &str = "zdo";
@@ -94,7 +90,6 @@ pub fn tests() -> Vec<Test> {
     ]
 }
 
-// ---- helpers
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -122,7 +117,6 @@ fn py_list(v: &[u8]) -> String {
     format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", "))
 }
 
-/// The payload of the ZDO response; FAIL when there is none.
 fn rsp(s: &mut Session, cluster: u16, payload: &[u8]) -> R<Vec<u8>> {
     match s.zdo(cluster, payload, 2000.0)? {
         Some(f) => Ok(f.zdo().unwrap().payload),
@@ -134,7 +128,6 @@ fn short_le(a: u16) -> Vec<u8> {
     a.to_le_bytes().to_vec()
 }
 
-// ---- tests
 fn node_desc(s: &mut Session) -> R<String> {
     let p = rsp(s, 0x0002, &short_le(s.dut_short))?;
     expect(b(&p, 0) == SUCCESS, format!("status {:#04x}", b(&p, 0)))?;
@@ -387,7 +380,6 @@ fn nwk_addr_extended(s: &mut Session) -> R<String> {
     Ok(String::new())
 }
 
-/// A binding (unicast to an extended address) of the bulb's endpoint 1.
 fn bind_payload(s: &Session, cluster: u16, dst_ext: Option<u64>, dst_ep: u8) -> Vec<u8> {
     let mut v = s.dut_ext.to_le_bytes().to_vec();
     v.push(1);
@@ -398,7 +390,6 @@ fn bind_payload(s: &Session, cluster: u16, dst_ext: Option<u64>, dst_ep: u8) -> 
     v
 }
 
-/// (src ext, src ep, cluster, mode, dst, dst ep)
 type Entry = (u64, u8, u16, u8, u64, Option<u8>);
 
 fn entry_py(e: &Entry) -> String {
@@ -410,7 +401,6 @@ fn table_py(t: &[Entry]) -> String {
     format!("[{}]", t.iter().map(entry_py).collect::<Vec<_>>().join(", "))
 }
 
-/// The binding table as raw entries.
 fn mgmt_bind(s: &mut Session) -> R<(u8, Vec<Entry>)> {
     let mut out = Vec::new();
     let mut start: usize = 0;
@@ -494,7 +484,6 @@ fn mgmt_bind_empty(s: &mut Session) -> R<String> {
         return Err(Stop::NotApplicable("the optional Mgmt_Bind_req is answered NOT_SUPPORTED".into()));
     }
     for e in &table {
-        // leftovers of other tests in this session
         let mut pl = e.0.to_le_bytes().to_vec();
         pl.push(e.1);
         pl.extend_from_slice(&e.2.to_le_bytes());
@@ -515,7 +504,6 @@ fn mgmt_bind_empty(s: &mut Session) -> R<String> {
 }
 
 fn mgmt_lqi(s: &mut Session) -> R<String> {
-    // (epid, ext, short, type)
     let mut entries: Vec<(u64, u64, u16, u8)> = Vec::new();
     let mut start: usize = 0;
     loop {

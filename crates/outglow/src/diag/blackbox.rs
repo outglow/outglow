@@ -1,8 +1,3 @@
-//! The black box decoded (layout: crates/zigbee/src/stack/blackbox.rs).
-//! The blob describes its own sizes in the header, so the decoder follows
-//! the header; the frame kind bits and the header length come from the
-//! firmware's own definitions.
-
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -10,7 +5,6 @@ use anyhow::{bail, Result};
 use serde::Serialize;
 use zigbee::stack::blackbox::{kind, HEADER};
 
-/// Offset in the header of the blob's length in bytes (u16).
 pub const TOTAL_AT: usize = 20;
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -29,14 +23,12 @@ pub struct Header {
     pub ring_written: u32,
 }
 
-/// The unicasts to one neighbour, oldest first: (attempts, acknowledged).
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Link {
     pub address: String,
     pub frames: Vec<(u8, bool)>,
 }
 
-/// The outcome of a frame sent: a known one by name, else its code.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum Status {
@@ -44,7 +36,6 @@ pub enum Status {
     Code(u8),
 }
 
-/// A frame sent.
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Frame {
     pub ago_ms: u32,
@@ -63,7 +54,6 @@ pub struct Frame {
     pub status: Status,
 }
 
-/// A row (every `row_s` seconds).
 #[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Row {
     pub minute: u16,
@@ -86,7 +76,6 @@ impl Row {
         "coord_delivery", "stale", "noise",
     ];
 
-    /// The cells of a CSV row, as Python's `csv` writes them.
     pub fn cells(&self) -> Vec<String> {
         let b = |v: bool| if v { "True" } else { "False" }.to_string();
         vec![
@@ -159,7 +148,6 @@ fn cluster(id: u16) -> Option<&'static str> {
     })
 }
 
-/// The outcomes the firmware records (net.rs `box_frame`).
 const STATUS: [&str; 4] = ["ok", "no ack", "channel busy", "held for child"];
 
 fn u16le(b: &[u8], at: usize) -> u16 {
@@ -174,7 +162,6 @@ fn addr(v: u16) -> String {
     format!("0x{v:04x}")
 }
 
-/// The blob's length as page 0 states it.
 pub fn total_len(page0: &[u8]) -> Option<usize> {
     (page0.len() >= TOTAL_AT + 2).then(|| u16le(page0, TOTAL_AT) as usize)
 }
@@ -273,7 +260,6 @@ pub fn decode(b: &[u8]) -> Result<BlackBox> {
     Ok(BlackBox { header: h, links, ring, rows })
 }
 
-/// Python's `repr()` of a dict of ints.
 fn dict_repr(m: &BTreeMap<usize, usize>) -> String {
     format!("{{{}}}", m.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join(", "))
 }
@@ -297,7 +283,6 @@ pub fn report(bx: &BlackBox, missing: &[usize]) -> String {
     );
     for l in &bx.links {
         let seq: String = l.frames.iter().map(|&(a, ok)| if ok { char::from(b'0' + a) } else { 'x' }).collect();
-        // every attempt on the air: lost ones, then the acknowledged last
         let mut att = Vec::new();
         for &(a, ok) in &l.frames {
             let lost = if ok { a.saturating_sub(1) } else { a };
@@ -398,11 +383,8 @@ pub fn unhex(s: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
 
-    /// A blob read from a bulb, its short addresses rewritten (crates/outglow/src/diag/testdata).
     const BLOB: &str = include_str!("testdata/box.hex");
-    /// What the earlier Python tool (bulb-diag.py) made of the same blob.
     const DECODED: &str = include_str!("testdata/box.decoded.json");
-    /// And its `report_box`.
     const REPORT: &str = include_str!("testdata/box.report.txt");
 
     #[test]
@@ -428,7 +410,7 @@ mod tests {
     #[test]
     fn frame_fields() {
         let mut b = vec![0u8; HEADER + 16];
-        b[3] = 1; // ring of one
+        b[3] = 1;
         b[4] = 1;
         b[5] = 16;
         b[12..16].copy_from_slice(&5000u32.to_le_bytes());
@@ -450,12 +432,11 @@ mod tests {
     #[test]
     fn link_nibbles_and_runs_of_losses() {
         let mut b = vec![0u8; HEADER + 36];
-        b[1] = 1; // one neighbour slot
+        b[1] = 1;
         b[2] = 36;
         let e = &mut b[HEADER..];
         e[0..2].copy_from_slice(&0x1001u16.to_le_bytes());
         e[2] = 3;
-        // oldest first, low nibble first: 2 acknowledged, 3 lost, 1 acknowledged
         e[4] = (2 | 8) | 3 << 4;
         e[5] = 1 | 8;
         let bx = decode(&b).unwrap();

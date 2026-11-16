@@ -1,8 +1,3 @@
-//! Not a spec: tables of what the detector does across the measured range of
-//! noise, for choosing the expectations of `measured.rs` (and for the owner,
-//! when the defaults are revisited). `cargo test --release -p sense --test
-//! explore -- --ignored --nocapture`.
-
 mod harness;
 mod model;
 
@@ -10,7 +5,6 @@ use harness::{Room, Sender};
 use model::*;
 
 fn on_share(room: &Room, t0: u32) -> f64 {
-    // share of the time from t0 with some line ON
     let mut on_ms = 0u64;
     let mut prev = (t0, 0u16);
     for &(t, m) in room.log.iter().filter(|e| e.0 >= t0) {
@@ -35,7 +29,6 @@ fn explore() {
         println!("{} - {}: level {:.1} sigma {:.2}..{:.2} loss {:.2}", l.a, l.b, l.level, l.sigma_lo, l.sigma_hi, l.loss);
     }
     println!("headroom {} margin {}", sense::CAL_HEADROOM, sense::CAL_MARGIN);
-    // the measured links with everything of the model: loss, ordinary frames, drift, bursts
     let weak = link_from(&WEAK, "K2", "W1");
     for l in links().iter().chain([weak].iter()) {
         for (name, sigma) in [("lo", l.sigma_lo), ("hi", l.sigma_hi)] {

@@ -1,5 +1,3 @@
-// timer_capture_test.go: TimerCaptureBelow is the machine's
-// cfg.timer_capture_below here.
 use std::cell::RefCell;
 use std::rc::Rc;
 

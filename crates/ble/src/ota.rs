@@ -1,21 +1,3 @@
-//! Firmware update in AwoX's format, on the two update characteristics of
-//! the mesh service: what the AwoX app and `outglow ble push` speak.
-//!
-//! - data packet `index (LE16), block, crc16 (LE)`: CRC-16/MODBUS over index
-//!   and block; the block goes to `index * block size` of the staging area,
-//!   the block size being that of the first packet
-//! - erase packet `00 00, sectors, zeros`: erases that many 4 KB sectors first
-//! - end packet `FF FF, crc16` (the app) or `block count, crc16` (our updater)
-//! - a read gives the status: state, result, packets received (twice), 0,
-//!   percent, 0. States: 0 idle, 1 erasing, 2 erased, 3 receiving, 4 done;
-//!   result 0 good, 2 failed
-//!
-//! The image is written with byte 8 (the "K" of "KNLT" that marks it
-//! bootable) left blank. After the end packet the image is checked the way
-//! the bootloader will check it (its own size at 0x18, "KNLT", CRC-32 at
-//! the end); a second later the mark is written and the chip restarts. The
-//! flash then looks as after the stock firmware's own update.
-
 use crate::crypto::{crc16_modbus, crc32_update};
 use crate::hal::{Hal, TICKS_PER_MS};
 use crate::{reached, Ble};
@@ -41,12 +23,9 @@ pub(crate) struct Ota {
     received: u16,
     next: u16,
     block: u16,
-    /// The staging area is erased up to this offset.
     erased: u32,
     erase_goal: u32,
-    /// Size the image declares at 0x18 (0: not seen yet).
     declared: u32,
-    /// Image bytes taken so far.
     bytes: u32,
     marked: bool,
     crc: u32,
@@ -82,7 +61,6 @@ impl Ota {
         self.state = State::Done;
     }
 
-    /// Follows the image as its bytes go by: header fields and the checksum.
     fn account(&mut self, offset: u32, data: &[u8]) -> bool {
         for (i, b) in data.iter().enumerate() {
             let at = offset + i as u32;
@@ -103,7 +81,6 @@ impl Ota {
     }
 
     fn image_good(&self) -> bool {
-        // an image cut short has no checksum where its header says it ends
         self.marked && self.declared >= 0x40 && u32::from_le_bytes(self.tail) == self.crc
     }
 }
@@ -141,30 +118,24 @@ impl<H: Hal> Ble<H> {
         }
         self.ota.timer = None;
         match self.ota.state {
-            // one sector at a time: an erase stops everything for tens of milliseconds
             State::Erasing if self.ota.erased < self.ota.erase_goal => {
                 self.ota_erase_to(self.ota.erased + SECTOR);
                 self.ota.timer = Some(self.hal.now().wrapping_add(ERASE_STEP));
             }
             State::Erasing => self.ota.state = State::Ready,
             State::Done if !self.ota.failed => {
-                // on the chip this does not return when the image is good
                 self.ota.failed = !self.hal.ota_activate();
             }
             _ => {}
         }
     }
 
-    /// Whether stopping BLE now would cut a firmware update short: a
-    /// transfer in progress, a good image waiting for its restart, or the
-    /// connection an update ran in, whose central reads the final status.
     pub fn ota_busy(&self) -> bool {
         self.ota.active()
             || (self.ota.state == State::Done && !self.ota.failed)
             || (self.link.state == crate::LinkState::Connected && self.ota_this_link)
     }
 
-    /// The connection ended: an unfinished transfer starts over next time.
     pub(crate) fn ota_link_lost(&mut self) {
         self.ota_this_link = false;
         if self.ota.active() {
@@ -175,10 +146,8 @@ impl<H: Hal> Ble<H> {
     pub(crate) fn ota_write(&mut self, d: &[u8]) {
         self.ota_this_link = true;
         if self.ota.state == State::Done && !self.ota.failed {
-            // waiting for the restart
             return;
         }
-        // the end packet: four bytes with a good checksum and no data
         if d.len() == 4 {
             let index = u16::from_le_bytes([d[0], d[1]]);
             let good = crc16_modbus(&d[..2]) == u16::from_le_bytes([d[2], d[3]])
@@ -206,7 +175,6 @@ impl<H: Hal> Ble<H> {
         }
         let (body, crc) = d.split_at(d.len() - 2);
         if crc16_modbus(body) != u16::from_le_bytes([crc[0], crc[1]]) {
-            // damaged: ignored, the sender reads the status
             return;
         }
         let index = u16::from_le_bytes([body[0], body[1]]);
@@ -216,12 +184,10 @@ impl<H: Hal> Ble<H> {
                 if index != 0 {
                     return;
                 }
-                // no erase packet: sectors are erased as the image reaches them
                 self.ota = Ota::new();
                 self.ota.state = State::Ready;
             }
             State::Erasing => {
-                // the sender did not wait for the erase
                 let goal = self.ota.erase_goal;
                 self.ota_erase_to(goal);
                 self.ota.state = State::Ready;
@@ -239,7 +205,6 @@ impl<H: Hal> Ble<H> {
             self.ota.state = State::Receiving;
         }
         if index.wrapping_add(1) == self.ota.next {
-            // the last block again
             return;
         }
         let offset = index as u32 * self.ota.block as u32;
@@ -256,7 +221,6 @@ impl<H: Hal> Ble<H> {
             self.ota.fail();
             return;
         }
-        // the bootable mark stays blank in flash until the image is complete
         if offset <= BOOT_MARK && end > BOOT_MARK {
             buf[(BOOT_MARK - offset) as usize] = 0xff;
         }

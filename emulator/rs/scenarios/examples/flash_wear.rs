@@ -1,9 +1,3 @@
-//! How often an image writes and erases its flash: join, then an hour of use
-//! (a light command every 30 s, a power cycle every 15 min), counted per 4 KB
-//! sector from the emulator's flash log.
-//!
-//!   cargo run --release -p scenarios --example flash_wear -- stock=../../stock/stock-dimm.bin [cpi]
-
 use std::collections::BTreeMap;
 
 use scenarios::image::Image;
@@ -44,7 +38,6 @@ fn main() {
     for (a, (e, p, b)) in &by {
         println!("   {a:#07x}: {e} erases, {p} programs, {b} B");
     }
-    // an hour of use
     let mut cmds = 0;
     let mut cycles = 0;
     let t0 = s.now();

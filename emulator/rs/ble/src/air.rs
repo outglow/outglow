@@ -1,13 +1,8 @@
-// SPDX-License-Identifier: Apache-2.0
-//! Air (air.go): packets lost on their way, a central clock at another rate,
-//! jittered connection events.
-
 use std::collections::BTreeSet;
 
 use crate::pyrandom::PyRandom;
 use crate::round3;
 
-/// Probabilities are whole millionths.
 pub const MILLION: i64 = 1_000_000;
 
 pub const TO_KEYBOARD: usize = 0;
@@ -15,7 +10,6 @@ pub const TO_HOST: usize = 1;
 
 pub const WAY_NAMES: [&str; 2] = ["keyboard", "host"];
 
-/// One lost packet (Air.losses).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AirLoss {
     pub ms: f64,
@@ -25,7 +19,6 @@ pub struct AirLoss {
 
 pub struct Air {
     pub seed: u32,
-    /// Millionths: TO_KEYBOARD, TO_HOST.
     pub loss: [i64; 2],
     pub bad: BTreeSet<u8>,
     pub bad_loss: i64,
@@ -39,7 +32,6 @@ pub struct Air {
     pub losses: Vec<AirLoss>,
 }
 
-/// Millionths is a probability 0..1 as whole millionths.
 pub fn millionths(p: f64) -> Result<i64, String> {
     let n = (p * MILLION as f64).round_ties_even() as i64;
     if n < 0 || n > MILLION {
@@ -49,8 +41,6 @@ pub fn millionths(p: f64) -> Result<i64, String> {
 }
 
 impl Air {
-    /// NewAir: the probabilities are millionths, bad the channel indexes
-    /// (0-39) that take bad_loss when it is higher.
     pub fn new(seed: u32, loss_keyboard: i64, loss_host: i64, bad: &[u8], bad_loss: i64, clock_ppm: f64, jitter_us: i64) -> Result<Air, String> {
         for (name, n) in [("loss_keyboard", loss_keyboard), ("loss_host", loss_host), ("bad_loss", bad_loss)] {
             if n < 0 || n > MILLION {
@@ -83,12 +73,10 @@ impl Air {
         })
     }
 
-    /// The central's time for one unit of the chip's.
     pub fn clock(&self) -> f64 {
         1.0 + self.clock_ppm / MILLION as f64
     }
 
-    /// Whether the packet sent now on channel index ch is lost on its way.
     pub fn lost(&mut self, way: usize, ch: u8, now_ms: f64) -> bool {
         self.sent[way] += 1;
         let mut p = self.loss[way];
@@ -109,7 +97,6 @@ impl Air {
         gone
     }
 
-    /// How far the next connection event starts off its time, in ms.
     pub fn jitter_ms(&mut self) -> f64 {
         if self.jitter_us <= 0 {
             return 0.0;

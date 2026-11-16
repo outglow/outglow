@@ -1,12 +1,3 @@
-//! L2CAP and the attribute server.
-//!
-//! The attribute table is the stock bulb's, handle for handle (GATT audit of
-//! the stock firmware in the emulator): GAP, Device Information and the
-//! Telink mesh service with its status, command, update and pairing
-//! characteristics. Apps address these by handle. After it, at 0x20..=0x2c
-//! as in the C firmware, the diagnostic service of the device page (`diag`),
-//! and its counters characteristic at 0x2d..=0x2e, which the C firmware lacks.
-
 use crate::hal::{Hal, LL_PAYLOAD_MAX};
 use crate::ll::{LinkState, TX_RESERVE};
 use crate::pdu;
@@ -16,14 +7,11 @@ pub(crate) const CID_ATT: u16 = 4;
 pub(crate) const CID_SIGNALING: u16 = 5;
 const CID_SMP: u16 = 6;
 
-/// The largest attribute protocol packet accepted and sent.
 pub(crate) const MTU_MAX: usize = 64;
 const MTU_DEFAULT: usize = 23;
 const FRAME_MAX: usize = MTU_MAX + 4;
-/// The largest signalling packet taken (MTUsig): what fits the frame buffer.
 const SIG_MTU: u16 = MTU_MAX as u16;
 
-// attribute protocol opcodes; a response's opcode is its request's plus one
 const ERROR_RSP: u8 = 0x01;
 const MTU_REQ: u8 = 0x02;
 const MTU_RSP: u8 = 0x03;
@@ -56,12 +44,10 @@ const CHARACTERISTIC: u16 = 0x2803;
 const USER_DESCRIPTION: u16 = 0x2901;
 const CLIENT_CONFIGURATION: u16 = 0x2902;
 
-/// 00010203-0405-0607-0809-0a0b0c0d19xx, least significant byte first.
 const fn telink(short: u8) -> [u8; 16] {
     [short, 0x19, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00]
 }
 
-/// Characteristic declaration: properties, value handle, 128-bit UUID.
 const fn declaration(properties: u8, value_handle: u8, short: u8) -> [u8; 19] {
     let u = telink(short);
     let mut d = [0u8; 19];
@@ -82,12 +68,10 @@ const UUID_OTA_CLASSIC: [u8; 16] = telink(0x13);
 const UUID_PAIR: [u8; 16] = telink(0x14);
 const UUID_OTA: [u8; 16] = telink(0x15);
 
-/// e61000xx-5a4b-4c3d-8e2f-1a2b3c4d5e6f, least significant byte first.
 const fn diag_uuid(short: u8) -> [u8; 16] {
     [0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, short, 0x00, 0x10, 0xe6]
 }
 
-/// Characteristic declaration of the diagnostic service.
 const fn diag_declaration(properties: u8, value_handle: u8, short: u8) -> [u8; 19] {
     let u = diag_uuid(short);
     let mut d = [0u8; 19];
@@ -116,9 +100,6 @@ const WRITE: u8 = 0x08;
 const NOTIFY: u8 = 0x10;
 const INDICATE: u8 = 0x20;
 
-/// The bits of a Client Characteristic Configuration a characteristic with
-/// `properties` takes (Core Vol 3 Part G 3.3.3.3, Table 3.11: Notification
-/// only with Notify, Indication only with Indicate); the others are not kept.
 const fn cccd_bits(properties: u8) -> u8 {
     (if properties & NOTIFY != 0 { 0x01 } else { 0 }) | (if properties & INDICATE != 0 { 0x02 } else { 0 })
 }
@@ -153,7 +134,6 @@ impl Uuid {
         match (self, wanted) {
             (Uuid::Short(a), Wanted::Short(b)) => a == b,
             (Uuid::Long(a), Wanted::Long(b)) => a[..] == b[..],
-            // a 16-bit UUID written out in full on the Bluetooth base UUID
             (Uuid::Short(a), Wanted::Long(b)) => {
                 b[..12] == [0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00]
                     && b[12..] == [*a as u8, (*a >> 8) as u8, 0, 0]
@@ -163,7 +143,6 @@ impl Uuid {
     }
 }
 
-/// The attribute type a request asks for.
 enum Wanted {
     Short(u16),
     Long([u8; 16]),
@@ -198,15 +177,12 @@ enum Value {
     DiagInfo,
     DiagState,
     DiagLog,
-    /// Written, never read (its declaration has only Write).
     DiagCommand,
     DiagFrames,
     DiagConfig,
     DiagCounters,
 }
 
-/// Room for a value made up when it is read (the update status, the
-/// diagnostic state); the others are read where they are kept.
 const SCRATCH: usize = crate::diag::STATE_LEN;
 
 struct Attribute {
@@ -235,16 +211,13 @@ const fn fixed_long(value: &'static [u8; 16]) -> Attribute {
     Attribute { uuid: Uuid::Short(PRIMARY_SERVICE), value: Value::Fixed(value), writable: false }
 }
 
-/// Attribute `n` of the table has handle `n + 1`.
 static TABLE: [Attribute; 46] = [
-    // Generic Access, 0x01..=0x06
     fixed(PRIMARY_SERVICE, &[0x00, 0x18]),
     fixed(CHARACTERISTIC, &[READ, 0x03, 0x00, 0x00, 0x2a]),
     read_only(0x2a00, Value::Name),
     fixed(USER_DESCRIPTION, b"name"),
     fixed(CHARACTERISTIC, &[READ, 0x06, 0x00, 0x01, 0x2a]),
     fixed(0x2a01, &[0x00, 0x00]),
-    // Device Information, 0x07..=0x0f
     fixed(PRIMARY_SERVICE, &[0x0a, 0x18]),
     fixed(CHARACTERISTIC, &[READ, 0x09, 0x00, 0x26, 0x2a]),
     read_only(0x2a26, Value::FirmwareRevision),
@@ -254,7 +227,6 @@ static TABLE: [Attribute; 46] = [
     read_only(0x2a24, Value::Model),
     fixed(CHARACTERISTIC, &[READ, 0x0f, 0x00, 0x27, 0x2a]),
     read_only(0x2a27, Value::HardwareRevision),
-    // Telink mesh, 0x10..=0x1f
     fixed(PRIMARY_SERVICE, &UUID_MESH),
     fixed(CHARACTERISTIC, &DECL_STATUS),
     mesh_value(&UUID_STATUS, Value::Status),
@@ -271,7 +243,6 @@ static TABLE: [Attribute; 46] = [
     fixed(CHARACTERISTIC, &DECL_PAIR),
     mesh_value(&UUID_PAIR, Value::Pair),
     fixed(USER_DESCRIPTION, b"pair"),
-    // the diagnostic service of the device page, 0x20..=0x2c
     fixed_long(&UUID_DIAG),
     fixed(CHARACTERISTIC, &DECL_DIAG_INFO),
     diag_value(&UUID_DIAG_INFO, Value::DiagInfo),
@@ -285,7 +256,6 @@ static TABLE: [Attribute; 46] = [
     diag_value(&UUID_DIAG_FRAMES, Value::DiagFrames),
     fixed(CHARACTERISTIC, &DECL_DIAG_CONFIG),
     diag_value(&UUID_DIAG_CONFIG, Value::DiagConfig),
-    // not in the C firmware's service: the Diagnostics cluster's counters
     fixed(CHARACTERISTIC, &DECL_DIAG_COUNTERS),
     diag_value(&UUID_DIAG_COUNTERS, Value::DiagCounters),
 ];
@@ -306,24 +276,20 @@ fn is_service(handle: u16) -> bool {
     attribute(handle).is_some_and(|a| a.uuid == Uuid::Short(PRIMARY_SERVICE))
 }
 
-/// The last handle of the service that starts at `handle`.
 fn group_end(handle: u16) -> u16 {
     (handle + 1..=LAST_HANDLE).find(|h| is_service(*h)).map_or(LAST_HANDLE, |h| h - 1)
 }
 
 pub(crate) struct Host {
-    /// An L2CAP frame being put together from link layer fragments.
     frame: [u8; FRAME_MAX],
     have: usize,
     want: usize,
-    /// A frame has started and is not complete yet.
     open: bool,
     pub mtu: usize,
     configuration: [u8; 2],
 }
 
 impl Host {
-    /// Whether the client enabled notifications in the status characteristic's configuration.
     pub fn notifications_enabled(&self) -> bool {
         self.configuration[0] & 0x01 != 0
     }
@@ -333,7 +299,6 @@ impl Host {
     }
 }
 
-/// A response being written, cut at the connection's MTU.
 struct Out {
     buf: [u8; MTU_MAX],
     len: usize,
@@ -373,8 +338,6 @@ impl<H: Hal> Ble<H> {
         self.link_idle();
     }
 
-    /// Sends an L2CAP frame, in link layer fragments. False (and nothing
-    /// sent) when the transmit queue has no room for all of it.
     pub(crate) fn send_l2cap(&mut self, cid: u16, data: &[u8]) -> bool {
         let mut frame = [0u8; FRAME_MAX];
         let n = data.len().min(MTU_MAX);
@@ -391,9 +354,7 @@ impl<H: Hal> Ble<H> {
         true
     }
 
-    /// A notification of the status characteristic. False when it could not be queued.
     pub(crate) fn notify_status(&mut self, value: &[u8; 20]) -> bool {
-        // a little room stays for answers to the central's requests
         if self.hal.tx_free() < TX_RESERVE {
             return false;
         }
@@ -412,12 +373,10 @@ impl<H: Hal> Ble<H> {
         } else if !h.open {
             return;
         }
-        // the first FRAME_MAX octets are kept, `have` counts all of them
         let at = h.have.min(FRAME_MAX);
         let n = data.len().min(FRAME_MAX - at);
         h.frame[at..at + n].copy_from_slice(&data[..n]);
         h.have += data.len();
-        // the length is in the first two bytes; even the header may come in pieces
         if h.have < 4 {
             return;
         }
@@ -426,8 +385,6 @@ impl<H: Hal> Ble<H> {
             return;
         }
         h.open = false;
-        // fragments that carry more than the Length field: the frame is
-        // discarded (Vol 3 Part A 7.2.2)
         if h.have > h.want {
             return;
         }
@@ -436,8 +393,6 @@ impl<H: Hal> Ble<H> {
         h.have = 0;
         let cid = u16_at(&frame, 2);
         if len > FRAME_MAX {
-            // Too long to be kept. A signalling packet over MTUsig gets a
-            // Command Reject "signalling MTU exceeded" with our MTUsig (Part A 4).
             if cid == CID_SIGNALING {
                 let mut reject = [0x01, frame[5], 0x04, 0x00, 0x01, 0x00, 0, 0];
                 reject[6..].copy_from_slice(&SIG_MTU.to_le_bytes());
@@ -449,10 +404,6 @@ impl<H: Hal> Ble<H> {
         match cid {
             CID_ATT => self.on_att(payload),
             CID_SIGNALING => self.on_signaling(payload),
-            // No pairing (the mesh has its own login, as on the stock): any
-            // security manager command but a Pairing Failed gets Pairing
-            // Failed, "pairing not supported". Codes past the last command
-            // (0x0e) and 0x00 are reserved and ignored (Vol 3 Part H 3.3).
             CID_SMP if payload.first().is_some_and(|code| (0x01..=0x0e).contains(code) && *code != 0x05) => {
                 self.send_l2cap(CID_SMP, &[0x05, 0x05]);
             }
@@ -465,10 +416,7 @@ impl<H: Hal> Ble<H> {
             return;
         }
         match p[0] {
-            // responses (the one to our parameter update request among them)
-            // and the credit indication, which has no answer
             0x01 | 0x13 | 0x15 | 0x16 | 0x18 | 0x1a => {}
-            // a request this device has no answer to: Command Reject, "not understood"
             _ => {
                 self.send_l2cap(CID_SIGNALING, &[0x01, p[1], 0x02, 0x00, 0x00, 0x00]);
             }
@@ -480,7 +428,6 @@ impl<H: Hal> Ble<H> {
         match a.value {
             Value::Fixed(v) => v,
             Value::Name => {
-                // an empty name still reads as one byte, as in the C firmware
                 let name = self.mesh.name();
                 if name.is_empty() {
                     &[0]
@@ -523,10 +470,7 @@ impl<H: Hal> Ble<H> {
                 if value.len() != 2 {
                     return Err(ERR_INVALID_LENGTH);
                 }
-                // notifications enabled the standard way count like the app's own switch
                 let was = self.mesh_status_enabled();
-                // the write is taken; what the status characteristic (Notify
-                // only) cannot do is not kept, so the Indication bit reads 0
                 self.host.configuration = [value[0] & cccd_bits(DECL_STATUS[0]), 0];
                 self.mesh_status_switched(was);
             }
@@ -545,7 +489,6 @@ impl<H: Hal> Ble<H> {
         let result = self.att_request(opcode, p, &mut out);
         match result {
             Ok(()) => {}
-            // commands (bit 6) are never answered
             Err(_) if opcode & 0x40 != 0 => return,
             Err((handle, code)) => {
                 out.len = 0;
@@ -560,12 +503,8 @@ impl<H: Hal> Ble<H> {
     }
 
     fn att_request(&mut self, opcode: u8, p: &[u8], out: &mut Out) -> Result<(), (u16, u8)> {
-        // Vol 3 Part F 3.3: a request of the wrong length is answered with
-        // Invalid PDU and handle 0x0000; `need` for the requests with a
-        // variable field at the end, `exact` for those without one
         let need = |n: usize| if p.len() >= n { Ok(()) } else { Err((0, ERR_INVALID_PDU)) };
         let exact = |n: usize| if p.len() == n { Ok(()) } else { Err((0, ERR_INVALID_PDU)) };
-        // the handle range of the discovery requests
         let range = |p: &[u8]| -> Result<(u16, u16), (u16, u8)> {
             let (start, end) = (u16_at(p, 1), u16_at(p, 3));
             if start == 0 || start > end {
@@ -632,7 +571,6 @@ impl<H: Hal> Ble<H> {
             }
             READ_BY_TYPE_REQ | READ_BY_GROUP_TYPE_REQ => {
                 need(7)?;
-                // a type neither 2 nor 16 octets long makes the PDU the wrong length (3.3)
                 let kind = Wanted::parse(&p[5..]).ok_or((0, ERR_INVALID_PDU))?;
                 let (start, end) = range(p)?;
                 let grouped = opcode == READ_BY_GROUP_TYPE_REQ;
@@ -647,7 +585,6 @@ impl<H: Hal> Ble<H> {
                         continue;
                     }
                     if !a.readable() {
-                        // the first one found stops the search with its error, a later one ends the response
                         if each == 0 {
                             return Err((handle, ERR_READ_NOT_PERMITTED));
                         }
@@ -656,7 +593,6 @@ impl<H: Hal> Ble<H> {
                     let value = self.att_value(handle, &mut scratch);
                     let n = value.len();
                     if each == 0 {
-                        // all entries of a response have the first one's length
                         each = n.min(out.limit - 2 - head);
                         out.put(&[opcode + 1, (head + each) as u8]);
                     } else if n != each || out.room() < head + each {

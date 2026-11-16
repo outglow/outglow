@@ -1,11 +1,3 @@
-//! The integration scenarios of emulator/*_sim.py in Rust: several emulated
-//! bulbs (any images) on one 802.15.4 air with the plain coordinator, driven
-//! in lockstep. Each scenario prints its checks in the Python script's own
-//! format (`[  12.3 s] PASS: what  detail`), so the two outputs can be
-//! compared line for line, and passes when all its checks pass.
-//!
-//! `cargo test -p scenarios --test sims [-- filters] [--cpi N] [-v]`.
-
 pub mod addr_conflict;
 pub mod ble_central;
 pub mod ble_diag;
@@ -50,7 +42,6 @@ use crate::frames::Keys;
 use crate::image::Image;
 use crate::session::{Light, Stop, R};
 
-/// A scenario: its name (the Python script's, without `_sim.py`) and body.
 pub struct SimDef {
     pub name: &'static str,
     pub doc: &'static str,
@@ -90,12 +81,6 @@ pub fn sims() -> Vec<SimDef> {
     v
 }
 
-/// Measurements of the original firmware: their checks hold whatever the
-/// numbers (they produce the tables of the address conflict study, the lab's
-/// docs/address-conflicts.md) and fail only when the bulbs do not join, so
-/// they run once a week in CI, not every night. `cargo sims` leaves them out;
-/// `cargo sims -- --weekly` (`cargo sims-weekly`) runs these alone, and one
-/// named exactly (`cargo sims -- addr_conflict_house`) runs as any other.
 pub const WEEKLY: &[&str] = &[
     "addr_conflict",
     "addr_conflict_child",
@@ -112,9 +97,6 @@ pub fn is_weekly(name: &str) -> bool {
     WEEKLY.contains(&name.trim_start_matches("sims::"))
 }
 
-/// A default image path (repository-relative): in the repository, else in
-/// the first of the directories of `SCENARIOS_IMAGE_DIRS` (separated as PATH)
-/// that has it, so that images kept elsewhere need no `--image` each time.
 pub fn image_path(rel: &str) -> std::path::PathBuf {
     let here = crate::runner::repo_root().join(rel);
     if here.exists() {
@@ -126,13 +108,8 @@ pub fn image_path(rel: &str) -> std::path::PathBuf {
         .unwrap_or(here)
 }
 
-/// The directory of the original firmware images kept apart from this
-/// repository (a checkout of outglow/original-firmware: `firmware/<board>.bin`).
 pub const STOCK_DIR_VAR: &str = "OUTGLOW_STOCK_DIR";
 
-/// The board whose original image a default `stock/...` path names:
-/// stock/stock-dimm.bin and stock/stock-tw.bin (the filament bulbs),
-/// stock/apk/smartlightz/<model>__<rev>.bin (tools/extract-stock-images.sh).
 pub fn stock_board_of(rel: &str) -> Option<String> {
     match rel {
         "stock/stock-dimm.bin" => Some("ESMLFzm_w6_Dimm-4.63".into()),
@@ -145,30 +122,23 @@ pub fn stock_board_of(rel: &str) -> Option<String> {
     }
 }
 
-/// A default `stock/...` path found in `OUTGLOW_STOCK_DIR` (its `firmware/`
-/// subdirectory or the directory itself), when it is there.
 pub fn stock_dir_path(rel: &str) -> Option<std::path::PathBuf> {
     let dir = std::path::PathBuf::from(std::env::var_os(STOCK_DIR_VAR)?);
     let board = stock_board_of(rel)?;
     [dir.join("firmware").join(format!("{board}.bin")), dir.join(format!("{board}.bin"))].into_iter().find(|p| p.exists())
 }
 
-/// What a scenario gets from the runner.
 pub struct SimCtx {
     pub cpi: i64,
     pub verbose: u8,
-    /// image overrides: label -> image (`--image R=path`)
     pub images: Vec<Image>,
     pub out: String,
     pub results: Vec<(String, bool, String)>,
     pub t_wall: Instant,
-    /// default images asked for that are not on disk: a scenario that then
-    /// stops is reported as skipped, not failed
     pub missing: std::cell::RefCell<Vec<String>>,
 }
 
 impl SimCtx {
-    /// The image for a role: an override with that label, else the default path (repo-relative).
     pub fn image(&self, label: &str, default: &str) -> Image {
         self.images
             .iter()
@@ -184,7 +154,6 @@ impl SimCtx {
             })
     }
 
-    /// Where a missing default image comes from.
     pub fn how_to_get(path: &str) -> &'static str {
         if path.starts_with("stock/") {
             "the original firmware: OUTGLOW_STOCK_DIR=<checkout of outglow/original-firmware>, or tools/extract-stock-images.sh"
@@ -210,7 +179,6 @@ impl SimCtx {
     }
 }
 
-/// Bulbs, the coordinator and the clock of one scenario (`lockstep(both, ...)`).
 pub struct Sim {
     pub w: World,
     pub quantum: f64,
@@ -225,8 +193,6 @@ pub fn node_of(img: &Image, cpi: i64) -> R<Node> {
 }
 
 impl Sim {
-    /// The first bulb (it owns the schedule) and the coordinator; the coordinator's
-    /// Link Status starts when `start` is called.
     pub fn new(first: Node, name: &str, coord: Coord, log: Option<Log>, quantum: f64) -> Sim {
         let mut w = World::new(first, coord, Keys::default(), log);
         w.air.dut_name = name.to_string();
@@ -242,7 +208,6 @@ impl Sim {
         self.w.lockstep(t, self.quantum).map_err(emu)
     }
 
-    /// Runs until `cond` holds (checked every `step` ms) or `max_ms` passed.
     pub fn run_until(&mut self, max_ms: f64, step: f64, mut cond: impl FnMut(&Sim) -> bool) -> R<bool> {
         let end = self.now() + max_ms;
         while self.now() < end {
@@ -259,7 +224,6 @@ impl Sim {
         crate::session::light_of(self.w.node(id))
     }
 
-    /// The short address of an announced device with this extended address.
     pub fn announced(&self, ext: u64) -> Option<u16> {
         self.w.coord.devices.iter().find(|d| d.ext == ext && d.announced).map(|d| d.short)
     }
@@ -268,7 +232,6 @@ impl Sim {
         self.w.coord.events.iter().filter(|e| e.kind == kind).cloned().collect()
     }
 
-    /// (sent, received, dropped reasons) of a bulb's radio (`GoEngine.stats`).
     pub fn stats(&self, id: NodeId) -> (i64, i64, String) {
         let r = self.w.node(id).radio.b();
         let why = if r.dropped.is_empty() {
@@ -281,7 +244,6 @@ impl Sim {
 }
 
 impl SimCtx {
-    /// A check, printed as the Python scripts print it.
     pub fn check(&mut self, now_ms: f64, name: &str, ok: bool, detail: &str) -> bool {
         self.results.push((name.to_string(), ok, detail.to_string()));
         let line = format!("[{:7.1} s] {}: {name}  {detail}", now_ms / 1000.0, if ok { "PASS" } else { "FAIL" });
@@ -289,7 +251,6 @@ impl SimCtx {
         ok
     }
 
-    /// The closing lines (`finish` of the scripts): result and per-bulb radio statistics.
     pub fn finish(&mut self, sim: &Sim, nodes: &[(NodeId, &str)]) {
         let ok = self.results.iter().filter(|r| r.1).count();
         let n = self.results.len();

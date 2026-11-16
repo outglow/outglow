@@ -1,9 +1,3 @@
-//! The BLE side of the integration scenarios: the scripted central of the
-//! emulator node (BLECONNECT / BLESTATE / ATT / ... of the zbnode protocol,
-//! `GoEngine.ble_*` in emulator/engines.py) in-process, the attribute
-//! transport and discovery of emulator/ble_ota_sim.py, and the app side of
-//! the AwoX protocol (crates/outglow/src/flash/protocol.rs, emulator/awox_mesh.py).
-
 use std::rc::Rc;
 
 use zbnode::Node;
@@ -23,7 +17,6 @@ pub fn unhx(s: &str) -> Vec<u8> {
     (0..s.len() / 2).filter_map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect()
 }
 
-/// `rsp.hex() if rsp else rsp` of the Python scripts.
 pub fn hex_or_empty(b: &[u8]) -> String {
     if b.is_empty() {
         "b''".into()
@@ -36,17 +29,13 @@ fn r3(x: f64) -> f64 {
     format!("{x:.3}").parse().unwrap()
 }
 
-/// Bulbs (with their centrals), optionally a coordinator, one clock.
 pub struct Bench {
     pub w: World,
-    /// several bulbs tied with a BLE air: every run is `lockstep` (`ble_air.cluster`)
     pub cluster: bool,
 }
 
 pub const QUANTUM: f64 = 0.5;
 
-/// BLECONNECT on any world (`Bench::ble_connect`): the central connects at
-/// the next advertisement; with scan_ms it first scans actively for that long.
 pub fn connect_central(w: &mut World, id: NodeId, interval: i64, scan_ms: Option<f64>) {
     let mut op = ble::default_options();
     op.log = None;
@@ -71,7 +60,6 @@ pub fn connect_central(w: &mut World, id: NodeId, interval: i64, scan_ms: Option
 }
 
 impl Bench {
-    /// One bulb alone (an empty Medium in Python), or with the plain coordinator when `coord`.
     pub fn new(first: Node, name: &str, coord: bool, log: Option<Log>) -> Bench {
         let c = Coord::new_plain(11, NWK_KEY);
         let mut w = World::new(first, c, Keys::default(), log);
@@ -84,7 +72,6 @@ impl Bench {
         Bench { w, cluster: false }
     }
 
-    /// Ties all bulbs together with one BLE air (`ble_air.cluster`).
     pub fn cluster(&mut self) {
         self.w.air.ble_air = Some(BleAir::default());
         self.cluster = true;
@@ -94,7 +81,6 @@ impl Bench {
         self.w.bulb_t(id)
     }
 
-    /// `GoEngine.run_ms` of that bulb.
     pub fn run_ms(&mut self, id: NodeId, target: f64) -> R<()> {
         let r = if self.cluster {
             self.w.lockstep_from(id, target, QUANTUM)
@@ -125,12 +111,10 @@ impl Bench {
         self.w.bulb_resets(id)
     }
 
-    /// FLASH addr n.
     pub fn flash(&self, id: NodeId, a: usize, n: usize) -> Vec<u8> {
         self.w.node(id).m.flash.mem[a..a + n].to_vec()
     }
 
-    /// MEM addr n (SRAM, registers or flash).
     pub fn mem(&self, id: NodeId, a: usize, n: usize) -> Vec<u8> {
         let m = &self.w.node(id).m;
         if a >= 0x840000 && a + n <= 0x840000 + m.sram.len() {
@@ -146,14 +130,10 @@ impl Bench {
         self.w.node_mut(id).write_flash(a, data);
     }
 
-    // ---------------------------------------------------------- the central
-    /// BLECONNECT: the central connects at the next advertisement; with scan_ms
-    /// it first scans actively for that long.
     pub fn ble_connect(&mut self, id: NodeId, interval: i64, scan_ms: Option<f64>) {
         connect_central(&mut self.w, id, interval, scan_ms);
     }
 
-    /// BLESTATE: (state, AdvA as text or "-", ATT started).
     pub fn ble_state(&self, id: NodeId) -> (String, String, bool) {
         match self.w.tap(id) {
             None => ("none".into(), "-".into(), false),
@@ -178,7 +158,6 @@ impl Bench {
         Ok(None)
     }
 
-    /// BLEDISCONNECT, then waits until the state goes to terminated.
     pub fn ble_disconnect(&mut self, id: NodeId, wait_ms: f64) -> R<String> {
         if let Some(t) = self.w.tap(id) {
             t.c.borrow_mut().terminate(0x13);
@@ -195,7 +174,6 @@ impl Bench {
         Ok(self.ble_state(id).0)
     }
 
-    /// BLEADV: the ADV_IND data (without header and AdvA) the central connected with.
     pub fn ble_adv(&self, id: NodeId) -> Vec<u8> {
         match self.w.tap(id) {
             Some(t) if t.c.borrow().adv_pdu.len() >= 8 => t.c.borrow().adv_pdu[8..].to_vec(),
@@ -203,7 +181,6 @@ impl Bench {
         }
     }
 
-    /// BLESTAT counters.
     pub fn ble_stats(&self, id: NodeId) -> BleStats {
         let st = self.w.tap(id).map(|t| t.c.borrow().stats).unwrap_or_default();
         let br = self.w.node(id).ble_radio.b();
@@ -221,7 +198,6 @@ impl Bench {
         }
     }
 
-    /// BLERF: (ms, command, channel) and (ms, channel, pdu) since a time.
     pub fn ble_rf(&self, id: NodeId, since_ms: f64) -> (Vec<(f64, u8, u8)>, Vec<(f64, u8, Vec<u8>)>) {
         let br = self.w.node(id).ble_radio.b();
         (
@@ -230,14 +206,12 @@ impl Bench {
         )
     }
 
-    /// BLECRCERR: from now on every `every`-th data packet has a wrong CRC; how many so far.
     pub fn ble_crc_errors(&mut self, id: NodeId, every: i64) -> i64 {
         let n = self.w.node(id);
         n.crc_err_every.set(every);
         n.crc_errs.get()
     }
 
-    /// BLELOG 0: the radio model's reasons for the central's last missed packets.
     pub fn ble_misses(&self, id: NodeId) -> Vec<String> {
         let br = self.w.node(id).ble_radio.b();
         br.misses[br.misses.len().saturating_sub(8)..]
@@ -249,7 +223,6 @@ impl Bench {
             .collect()
     }
 
-    /// BLEAIR: "ok=N miss=M ..." of the bulb's air receiver (`ble_air_stats`).
     pub fn ble_air_stats(&self, id: NodeId) -> String {
         let br = self.w.node(id).ble_radio.b();
         let mut s = format!("ok={} miss={}", br.air_rx_ok, br.air_rx_miss.len());
@@ -259,7 +232,6 @@ impl Bench {
         s
     }
 
-    /// ATT: sends a request, waits for the response (Err: Python's TimeoutError text).
     pub fn att(&mut self, id: NodeId, pdu: &[u8], timeout_ms: f64, step_ms: f64) -> R<Result<Vec<u8>, String>> {
         let n0 = self.w.tap(id).map(|t| t.rsps.len()).unwrap_or(0);
         {
@@ -280,7 +252,6 @@ impl Bench {
         Ok(Ok(tap.rsps[n0].1.clone()))
     }
 
-    /// ATT with the defaults (3 s, 2 ms steps); a timeout ends the scenario as in Python.
     pub fn att_ok(&mut self, id: NodeId, pdu: &[u8]) -> R<Vec<u8>> {
         self.att(id, pdu, 3000.0, 2.0)?.map_err(|e| Stop::Error(format!("TimeoutError: {e}")))
     }
@@ -308,8 +279,6 @@ pub struct BleStats {
     pub scanreqs: i64,
 }
 
-// ---------------------------------------------------------- transport and discovery (ble_ota_sim.py)
-/// What can go wrong on the transport: awox_ota.OtaError or a TimeoutError of `att`.
 #[derive(Clone, Debug)]
 pub enum TrErr {
     Ota(String),
@@ -326,7 +295,6 @@ impl TrErr {
 
 pub type TrR<T> = R<Result<T, TrErr>>;
 
-/// `EmuTransport`: writes and reads of Telink characteristics by short UUID.
 pub struct Transport {
     pub id: NodeId,
     pub h: Vec<(u8, u16)>,
@@ -377,7 +345,6 @@ impl Transport {
     }
 }
 
-/// Unwraps a transport result: an error ends the scenario as the uncaught exception does in Python.
 pub fn ok<T>(r: Result<T, TrErr>) -> R<T> {
     r.map_err(|e| match e {
         TrErr::Ota(s) => Stop::Error(format!("OtaError: {s}")),
@@ -385,7 +352,6 @@ pub fn ok<T>(r: Result<T, TrErr>) -> R<T> {
     })
 }
 
-/// A characteristic found by `discover`.
 #[derive(Clone, Debug)]
 pub struct Chr {
     pub vh: u16,
@@ -393,8 +359,6 @@ pub struct Chr {
     pub uuid: Vec<u8>,
 }
 
-/// `discover`: Read By Type 0x2803 over all handles; (characteristics by value
-/// handle, {short Telink UUID: value handle}, the log lines it prints).
 pub fn discover(b: &mut Bench, id: NodeId) -> R<(Vec<Chr>, Vec<(u8, u16)>, Vec<String>)> {
     let mut chars: Vec<Chr> = Vec::new();
     let mut start: u32 = 1;
@@ -448,21 +412,18 @@ pub fn tel_get(tel: &[(u8, u16)], k: u8) -> Option<u16> {
     tel.iter().find(|(c, _)| *c == k).map(|(_, v)| *v)
 }
 
-/// `sorted(tel.items())` as `k->v` text.
 pub fn tel_text(tel: &[(u8, u16)]) -> String {
     let mut t = tel.to_vec();
     t.sort();
     t.iter().map(|(k, v)| format!("{k:#x}->{v:#06x}")).collect::<Vec<_>>().join(", ")
 }
 
-// ---------------------------------------------------------- awox_ota.py
 pub const STATUS: u8 = 0x11;
 pub const COMMAND: u8 = 0x12;
 pub const OTA_OLD: u8 = 0x13;
 pub const PAIR: u8 = 0x14;
 pub const OTA: u8 = 0x15;
 
-/// The login's random value (os.urandom(8) in Python; it changes only the bytes of the exchange).
 pub const RND8: [u8; 8] = [0x5a, 0x17, 0xc3, 0x8e, 0x21, 0x9b, 0x40, 0xf6];
 
 pub fn pad16(b: &[u8]) -> [u8; 16] {
@@ -510,7 +471,6 @@ pub fn secure_pw(mac6: &[u8]) -> Vec<u8> {
     secure_password(mac6).to_vec()
 }
 
-/// `awox_ota.login`: the session key, or the OtaError text.
 pub fn login(b: &mut Bench, t: &mut Transport, name: &[u8], password: &[u8], rnd8: &[u8; 8]) -> TrR<[u8; 16]> {
     if let Err(e) = t.write(b, PAIR, &login_packet(name, password, rnd8))? {
         return Ok(Err(e));
@@ -525,7 +485,6 @@ pub fn login(b: &mut Bench, t: &mut Transport, name: &[u8], password: &[u8], rnd
     Ok(Ok(session_key(name, password, rnd8, &rsp[1..9])))
 }
 
-/// The "logged in" line `awox_ota.login` logs (with log=print).
 pub fn login_line(rsp9: &[u8]) -> String {
     format!("logged in (response {})", hx(rsp9))
 }
@@ -561,7 +520,6 @@ pub fn end_packet(img_len: usize, mtu: usize) -> Vec<u8> {
     p
 }
 
-// ---------------------------------------------------------- awox_mesh.py
 pub const OP_POWER: u8 = 0xD0;
 pub const OP_WHITE_BRIGHTNESS: u8 = 0xF1;
 pub const OP_WHITE_TEMPERATURE: u8 = 0xF0;
@@ -599,7 +557,6 @@ fn crypt(key: &[u8; 16], nonce8: &[u8], payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The decrypted 20 octets of a notification, or None (wrong key/checksum).
 pub fn decrypt_notification(key: &[u8; 16], mac_le: &[u8], pkt: &[u8]) -> Option<Vec<u8>> {
     if pkt.len() < 20 {
         return None;
@@ -617,7 +574,6 @@ pub fn decrypt_notification(key: &[u8; 16], mac_le: &[u8], pkt: &[u8]) -> Option
     }
 }
 
-/// `parse_status` (home-assistant-awox): 0xDB response and 0xDC change.
 #[derive(Clone, Debug)]
 pub struct Status {
     pub op: u8,
@@ -631,7 +587,6 @@ pub struct Status {
 }
 
 impl Status {
-    /// The dict's `str()`.
     pub fn repr(&self) -> String {
         if self.mesh_id.is_none() {
             return format!("{{'op': {}}}", self.op);
@@ -672,7 +627,6 @@ pub fn parse_status(dec: &[u8]) -> Status {
     }
 }
 
-/// Three writes on ...1914: 0x04 name, 0x05 password, 0x06 LTK (AES with the session key).
 pub fn set_mesh_packets(session_key: &[u8; 16], name: &[u8], password: &[u8], ltk: &[u8]) -> Vec<Vec<u8>> {
     let enc = |v: &[u8]| telink_aes(session_key, &pad16(v));
     let mut out = Vec::new();
@@ -700,7 +654,6 @@ pub fn crc8_6c(data: &[u8]) -> u8 {
     crc
 }
 
-/// The ZCL tunnel of the AwoX HomeControl app (`zcl_tunnel_packet`).
 pub fn zcl_tunnel_packet(session_key: &[u8; 16], addr: u16, cluster: u16, zcl_args: &[u8]) -> Vec<u8> {
     let (hi, lo) = ((addr >> 8) as u8, addr as u8);
     let mut payload = vec![hi, lo, 0x01, cluster as u8, (cluster >> 8) as u8];
@@ -727,7 +680,6 @@ pub fn zcl_color_temp(key: &[u8; 16], addr: u16, mireds: u16) -> Vec<u8> {
     zcl_tunnel_packet(key, addr, 0x0300, &[0x0a, mireds as u8, (mireds >> 8) as u8, 2, 0])
 }
 
-/// `MeshClient`: a mesh session over a transport.
 pub struct MeshClient {
     pub mac_le: Vec<u8>,
     pub key: Option<[u8; 16]>,
@@ -758,13 +710,11 @@ impl MeshClient {
         decrypt_notification(&self.key.unwrap_or([0; 16]), &self.mac_le, raw)
     }
 
-    /// The statuses among notifications (`[parse_status(d) for ... if (d := cl.decrypt(...))]`).
     pub fn statuses(&self, ntfs: &[(f64, i64, String)]) -> Vec<Status> {
         ntfs.iter().filter_map(|(_, _, v)| self.decrypt(&unhx(&v.replace('_', "")))).map(|d| parse_status(&d)).collect()
     }
 }
 
-/// `fmt_light` of zigbee_sim.py.
 pub fn fmt_light(s: &Light) -> String {
     let mut out = format!(
         "PWM0 {} {:5.1}% ({}/{})",

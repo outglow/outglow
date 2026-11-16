@@ -1,17 +1,3 @@
-//! Stress and load scenarios for the bulb as a Zigbee router: a router-heavy
-//! house mesh (emulated bulbs of any images plus scripted routers), traffic
-//! to and through the bulbs at rising rates, a lossy and noisy channel,
-//! routers that vanish and come back (a room switched off at the wall, a
-//! bulb power-cycled), broadcast storms. Each scenario runs on whatever
-//! images it is given (`--image dut=...`, every second bulb `--image
-//! mix=...`; default: all Rust) and reports measured numbers per phase plus
-//! a few checks phrased as requirements.
-//!
-//! Variants: quick (default; 4 bulbs, 3 scripted routers) or `STRESS=full`
-//! (9 bulbs as in a real home network, 3 scripted routers). `STRESS_SEED=n`
-//! (default 1) seeds the channel model and the traffic. The comparison over
-//! images is `cargo test -p scenarios --test stress` (`report.rs`).
-
 pub mod account;
 pub mod diag;
 pub mod net;
@@ -35,7 +21,6 @@ pub fn defs() -> Vec<SimDef> {
     ]
 }
 
-/// One row of a result table: a phase of a scenario.
 #[derive(Clone, Debug, Default)]
 pub struct Row {
     pub phase: String,
@@ -44,13 +29,10 @@ pub struct Row {
     pub p50: Option<f64>,
     pub p95: Option<f64>,
     pub max: Option<f64>,
-    /// (flow tag, ok, sent)
     pub flows: Vec<(String, usize, usize)>,
-    /// answers seen with more than one APS counter: the request executed again
     pub dup: usize,
     pub air: AirCount,
     pub resets: u32,
-    /// scenario-specific numbers (name, value text)
     pub extra: Vec<(String, String)>,
 }
 
@@ -97,8 +79,6 @@ impl StressResult {
 
 pub type Scenario = fn(&mut Mesh, &mut StressResult) -> R<()>;
 
-/// Builds the mesh and runs a scenario on it; an emulation error ends it
-/// (recorded) but the numbers so far are kept.
 pub fn execute(cfg: Cfg, name: &str, f: Scenario, log: Option<crate::air::Log>) -> StressResult {
     let t0 = std::time::Instant::now();
     let mut res = StressResult::new(name, &cfg);
@@ -200,7 +180,6 @@ fn run_one(cx: &mut SimCtx, name: &str, f: Scenario) -> R<()> {
     Ok(())
 }
 
-/// The table row of the messages sent in phase `p`.
 pub fn row(m: &Mesh, p: usize) -> Row {
     let ph = &m.phases[p];
     let msgs: Vec<_> = m.msgs.iter().filter(|x| x.phase == p).collect();

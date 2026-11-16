@@ -1,18 +1,3 @@
-//! Diagnostics and black box of a bulb on Outglow, read through Zigbee2MQTT
-//! with the external converter z2m/outglow.mjs (docs/diagnostics.md).
-//!
-//! `diag` presses `diagnostics_refresh` (every counter and table read anew),
-//! waits for the state and prints: the start (uptime, resets, why), the
-//! network parameters, the way to the coordinator, the radio (noise floor,
-//! RSSI histogram, MAC retries), Bluetooth, the timing worst cases, the
-//! neighbour table and the event log. With an earlier run on record
-//! (~/.cache/bulb-diag/<ieee>.json) the counters show how much they grew.
-//!
-//! `box` reads the black box (crates/zigbee/src/stack/blackbox.rs): its
-//! pages, one Read Attributes each, about a minute; the bulb records nothing
-//! new meanwhile. Saved with the raw blob to
-//! ~/.cache/bulb-diag/<ieee>-box-<time>.json.
-
 mod blackbox;
 mod py;
 mod report;
@@ -31,15 +16,15 @@ use zigbee::stack::blackbox::BOX_PAGE;
 
 #[derive(clap::Args)]
 pub struct Conn {
-    /// MQTT broker of Zigbee2MQTT (default: $MQTT_BROKER, else localhost)
+    #[doc = " MQTT broker of Zigbee2MQTT (default: $MQTT_BROKER, else localhost)"]
     #[arg(long)]
     broker: Option<String>,
     #[arg(long, default_value_t = 1883)]
     port: u16,
-    /// Zigbee2MQTT base topic
+    #[doc = " Zigbee2MQTT base topic"]
     #[arg(long, default_value = "zigbee2mqtt")]
     base_topic: String,
-    /// Seconds to wait for the answers
+    #[doc = " Seconds to wait for the answers"]
     #[arg(long, default_value_t = 30.0)]
     timeout: f64,
 }
@@ -49,17 +34,17 @@ pub struct Conn {
                         outglow diag 0xa4c1380000123456 --broker HOST --watch 60 --csv diag.csv   # a row a minute\n\n\
                         Reads only: the refresh is 13 + 10 Read Attributes frames.")]
 pub struct DiagArgs {
-    /// IEEE address of the bulb (its Zigbee2MQTT name), e.g. 0xa4c1380000123456
+    #[doc = " IEEE address of the bulb (its Zigbee2MQTT name), e.g. 0xa4c1380000123456"]
     ieee: String,
     #[command(flatten)]
     conn: Conn,
-    /// Print the raw state instead of the report
+    #[doc = " Print the raw state instead of the report"]
     #[arg(long)]
     json: bool,
-    /// Every this many seconds, a row of counters (to --csv, else to the terminal)
+    #[doc = " Every this many seconds, a row of counters (to --csv, else to the terminal)"]
     #[arg(long, value_name = "SECONDS")]
     watch: Option<f64>,
-    /// With --watch: the file the rows are appended to
+    #[doc = " With --watch: the file the rows are appended to"]
     #[arg(long, value_name = "PATH", requires = "watch")]
     csv: Option<PathBuf>,
 }
@@ -70,18 +55,18 @@ pub struct DiagArgs {
                         Reads the pages (one Read Attributes each, about a minute); reading page 0 freezes the \
                         records until the last page or 60 s.")]
 pub struct BoxArgs {
-    /// IEEE address of the bulb (its Zigbee2MQTT name), e.g. 0xa4c1380000123456
+    #[doc = " IEEE address of the bulb (its Zigbee2MQTT name), e.g. 0xa4c1380000123456"]
     #[arg(required_unless_present = "from")]
     ieee: Option<String>,
     #[command(flatten)]
     conn: Conn,
-    /// Also write the rows (one every two minutes) to this CSV file
+    #[doc = " Also write the rows (one every two minutes) to this CSV file"]
     #[arg(long, value_name = "PATH")]
     csv: Option<PathBuf>,
-    /// Where to save the decoded box and the raw blob (default: ~/.cache/bulb-diag/<ieee>-box-<time>.json)
+    #[doc = " Where to save the decoded box and the raw blob (default: ~/.cache/bulb-diag/<ieee>-box-<time>.json)"]
     #[arg(long, value_name = "PATH")]
     json: Option<PathBuf>,
-    /// Decode a box saved earlier (by this tool or the earlier bulb-diag.py --dump) instead of reading the bulb
+    #[doc = " Decode a box saved earlier (by this tool or the earlier bulb-diag.py --dump) instead of reading the bulb"]
     #[arg(long, value_name = "PATH", conflicts_with = "ieee")]
     from: Option<PathBuf>,
 }
@@ -93,7 +78,6 @@ fn cache_dir() -> Result<PathBuf> {
     Ok(d)
 }
 
-/// Local time with a `strftime` format.
 fn local_time(fmt: &str) -> String {
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -101,8 +85,6 @@ fn local_time(fmt: &str) -> String {
         .unwrap_or(0) as libc::time_t;
     let fmt = std::ffi::CString::new(fmt).unwrap_or_default();
     let mut buf = [0u8; 64];
-    // SAFETY: `tm` is written by localtime_r before strftime reads it; the
-    // buffer and its length are ours, and strftime NUL-terminates within it.
     let n = unsafe {
         let mut tm: libc::tm = std::mem::zeroed();
         if libc::localtime_r(&t, &mut tm).is_null() {
@@ -119,7 +101,6 @@ enum Msg {
     Failed(String),
 }
 
-/// A connection to the broker, subscribed to the bulb's state.
 struct Mqtt {
     client: Client,
     rx: mpsc::Receiver<Msg>,
@@ -131,7 +112,6 @@ impl Mqtt {
         let broker = c.broker.clone().or_else(|| std::env::var("MQTT_BROKER").ok()).unwrap_or_else(|| "localhost".into());
         let mut o = MqttOptions::new(format!("outglow-diag-{}", std::process::id()), broker.clone(), c.port);
         o.set_keep_alive(Duration::from_secs(30));
-        // a state carries the tables and the event log: well over the default 10 KB
         o.set_max_packet_size(1 << 20, 1 << 20);
         let (client, mut conn) = Client::new(o, 64);
         let topic = format!("{}/{ieee}", c.base_topic);
@@ -170,7 +150,6 @@ impl Mqtt {
         }
     }
 
-    /// The next message within `wait`; None when it passed.
     fn next(&self, wait: Duration) -> Result<Option<Msg>> {
         match self.rx.recv_timeout(wait) {
             Ok(Msg::Failed(e)) => bail!(e),
@@ -180,7 +159,6 @@ impl Mqtt {
         }
     }
 
-    /// Drops what came in so far.
     fn drain(&self) -> Result<()> {
         while self.next(Duration::ZERO)?.is_some() {}
         Ok(())
@@ -191,8 +169,6 @@ impl Mqtt {
         Ok(())
     }
 
-    /// Presses the refresh and returns the state once the reads have
-    /// settled (no new state for 3 s after the first that came in), flat.
     fn fetch(&self, timeout: f64) -> Result<report::State> {
         self.drain()?;
         self.set(json!({"diagnostics_refresh": "refresh"}))?;
@@ -213,8 +189,6 @@ impl Mqtt {
         }
     }
 
-    /// Reads every page of the black box; returns the blob and the pages
-    /// that did not come.
     fn fetch_box(&self, timeout: f64) -> Result<(Vec<u8>, Vec<usize>)> {
         self.drain()?;
         let mut pages: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
@@ -250,7 +224,6 @@ impl Mqtt {
                 }
             }
             if !pages.is_empty() && last.elapsed() > Duration::from_secs(20) {
-                // a page lost: ask for the missing ones again, a few at a time
                 let want = (0..total.unwrap_or(0).div_ceil(BOX_PAGE)).filter(|p| !pages.contains_key(p));
                 for p in want.take(5) {
                     self.set(json!({"black_box_read": p}))?;
@@ -330,7 +303,6 @@ pub fn run_diag(a: DiagArgs) -> Result<()> {
     let mut before = None;
     if let Ok(text) = fs::read_to_string(&file) {
         if let Ok(Value::Object(prev)) = serde_json::from_str::<Value>(&text) {
-            // only the same start of the bulb: the counters do not survive a power cut
             if py::eq(prev.get("number_of_resets"), s.map.get("number_of_resets")) {
                 println!("(growth since {})", py::get(&prev, "_when"));
                 before = Some(prev);

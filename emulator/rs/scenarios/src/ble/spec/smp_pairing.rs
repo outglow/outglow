@@ -1,12 +1,8 @@
-//! Security Manager: a device without pairing (Core 5.4 Vol 3 Part H 2.3, 3.3,
-//! 3.5.5); emulator/spec_ble/smp_pairing.py.
-
 use crate::ble::harness::{hx, BleSession, LinkOpts, CID_SMP};
 use crate::ble::BleTest;
 use crate::session::{expect, Stop, R};
 
 const DOC: &str = "Core 5.4 Vol 3 Part H";
-/// NoInputNoOutput, no OOB, bonding, 16-octet key.
 const PAIRING_REQ: [u8; 7] = [0x01, 0x03, 0x00, 0x01, 0x10, 0x00, 0x01];
 
 pub fn tests() -> Vec<BleTest> {
@@ -60,9 +56,6 @@ fn open(s: &mut BleSession) -> R<()> {
 }
 
 fn pairing_request(s: &mut BleSession) -> R<String> {
-    // 2.3: "If the responding device does not support pairing or pairing cannot be performed then the
-    // responding device shall respond using the Pairing Failed message with the error code 'Pairing Not
-    // Supported' otherwise it responds with a Pairing Response message."
     open(s)?;
     let rsp = smp(s, &PAIRING_REQ, 4000.0)?;
     expect(rsp.is_some(), "Pairing Request: no answer on the Security Manager channel")?;
@@ -79,9 +72,6 @@ fn pairing_request(s: &mut BleSession) -> R<String> {
 }
 
 fn any_command(s: &mut BleSession) -> R<String> {
-    // 3.3: "If a device does not support pairing then it shall respond with a Pairing Failed command with
-    // the reason set to 'Pairing Not Supported' ... when any command is received." Commands of Table 3.3
-    // other than the Pairing Request, each with its defined length (Pairing Failed itself is left out).
     open(s)?;
     let first = smp(s, &PAIRING_REQ, 4000.0)?;
     if first.as_ref().is_some_and(|f| f.first() == Some(&0x02)) {
@@ -125,8 +115,6 @@ fn any_command(s: &mut BleSession) -> R<String> {
 }
 
 fn reserved_code(s: &mut BleSession) -> R<String> {
-    // 3.3: "If a packet is received with a Code that is reserved for future use it shall be ignored."
-    // Table 3.3 ends at 0x0E.
     open(s)?;
     let mut got = Vec::new();
     for code in [0x0Fu8, 0x00, 0x40, 0xFF] {

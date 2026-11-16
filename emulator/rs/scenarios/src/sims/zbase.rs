@@ -1,8 +1,3 @@
-//! The one-bulb harness of emulator/zigbee_sim.py (`Sim`, `light`,
-//! `fmt_light`, `decode_attrs`, `finish`), used by the scripts built on it
-//! (migrate_sim.py). Its log prints everything: every coordinator event and
-//! every check, in one stream, as the Python `Sim.log` (print) does.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -16,7 +11,6 @@ use crate::session::{light_of, Light, R};
 
 pub const EP: u8 = 1;
 
-/// One output stream shared by the coordinator's log and the script's prints.
 #[derive(Clone)]
 pub struct Out {
     pub buf: Rc<RefCell<String>>,
@@ -39,14 +33,11 @@ impl Out {
         let o = self.clone();
         Rc::new(move |s: &str| o.say(s))
     }
-    /// Hands the collected text to the runner.
     pub fn into_ctx(&self, cx: &mut SimCtx) {
         cx.out.push_str(&self.buf.borrow());
     }
 }
 
-/// zigbee_sim.Sim: the bulb, the plain coordinator (channel 11, the session
-/// network key, stack revision 22), a results list.
 pub struct ZSim {
     pub w: World,
     pub out: Out,
@@ -64,7 +55,6 @@ impl ZSim {
         Ok(ZSim { w, out, results: Vec::new(), resets: 0, t_wall: Instant::now() })
     }
 
-    /// The bulb's clock (`self.m.ms()`, GoEngine.t).
     pub fn ms(&self) -> f64 {
         self.w.air.t
     }
@@ -98,7 +88,6 @@ impl ZSim {
         self.run_until(max_ms, 20.0, move |s| s.w.coord.events[n0..].iter().any(|e| e.kind == kind))
     }
 
-    /// Sends, then waits for a ZCL frame of `cluster` with a command in `kinds`; those frames.
     pub fn zcl_and_wait(&mut self, send: impl FnOnce(&mut ZSim), cluster: u16, kinds: &[u8], max_ms: f64)
                         -> R<Vec<crate::coord::ZclRsp>> {
         let n0 = self.w.coord.zcl_rsp.len();
@@ -129,7 +118,6 @@ pub fn fmt_light(s: &Light) -> String {
     out
 }
 
-/// A Read Attributes Response body in words.
 pub fn decode_attrs(b: &[u8]) -> String {
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -168,7 +156,6 @@ pub fn decode_attrs(b: &[u8]) -> String {
     out.join(", ")
 }
 
-/// zigbee_sim.finish: summary, the steps again, the radio's drops, the non-empty flash sectors.
 pub fn finish(s: &ZSim) {
     let n_ok = s.results.iter().filter(|r| r.1).count();
     let node = s.w.node(NodeId::Dut);

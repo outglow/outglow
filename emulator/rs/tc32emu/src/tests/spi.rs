@@ -1,4 +1,3 @@
-// spi_test.go
 use super::{hex, rbg_machine, sha256};
 use crate::{Machine, SRAM_BASE};
 

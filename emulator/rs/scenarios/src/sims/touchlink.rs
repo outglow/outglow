@@ -1,8 +1,3 @@
-//! What the touchlink scenarios share: the touchlink master key read at run
-//! time from the C firmware's ELF (it is not in this repository; the Telink
-//! library carries it, emulator/elf_symbol.py), inter-PAN frame parsing, the
-//! key transport of key index 4 and NWK frame decryption.
-
 use tc32emu::aes128;
 
 use crate::crypto::ccm_decrypt;
@@ -30,8 +25,6 @@ pub fn command_name(c: u8) -> Option<&'static str> {
     })
 }
 
-/// Contents of the data object `name` in an ELF file (`length` bytes, else its
-/// symbol's size); None when there is no such symbol (`elf_symbol.symbol_bytes`).
 pub fn symbol_bytes(path: &std::path::Path, name: &str, length: Option<usize>) -> Option<Vec<u8>> {
     let d = std::fs::read(path).ok()?;
     if d.get(..4)? != b"\x7fELF" || *d.get(4)? != 1 || *d.get(5)? != 1 {
@@ -44,7 +37,7 @@ pub fn symbol_bytes(path: &std::path::Path, name: &str, length: Option<usize>) -
     let sec = |k: usize, f: usize| u32_at(shoff + k * shentsize + 4 * f);
     for k in 0..shnum {
         if sec(k, 1)? != 2 {
-            continue; // SHT_SYMTAB
+            continue;
         }
         let (off, size, link, entsize) = (sec(k, 4)?, sec(k, 5)?, sec(k, 6)?, sec(k, 9)?);
         let strtab = sec(link, 4)?;
@@ -65,15 +58,12 @@ pub fn symbol_bytes(path: &std::path::Path, name: &str, length: Option<usize>) -
     None
 }
 
-/// The master key from the ELF next to a .bin (`os.path.splitext(bin)[0] + ".elf"`).
 pub fn master_key(bin: &std::path::Path) -> (std::path::PathBuf, Option<[u8; 16]>) {
     let elf = bin.with_extension("elf");
     let k = if elf.exists() { symbol_bytes(&elf, "touchLinkKeyMaster", Some(16)) } else { None };
     (elf, k.filter(|k| !k.is_empty()).and_then(|k| k.try_into().ok()))
 }
 
-/// (ZCL command, payload after it, MAC fields) of a touchlink inter-PAN frame
-/// (`interpan` of rust_touchlink_initiator_sim.py).
 pub fn interpan(psdu: &[u8]) -> Option<(u8, Vec<u8>, Mac)> {
     let f = mac_parse(psdu)?;
     let p = &f.payload;
@@ -91,8 +81,6 @@ pub fn interpan(psdu: &[u8]) -> Option<(u8, Vec<u8>, Mac)> {
     Some((cmd, rest, f))
 }
 
-/// The key transport key of key index 4: the master key's encryption of the
-/// transaction and response identifiers, each twice (big-endian).
 pub fn transport_key(master: &[u8; 16], transaction: u32, response: u32) -> [u8; 16] {
     let (t, r) = (transaction.to_be_bytes(), response.to_be_bytes());
     let mut b = [0u8; 16];
@@ -103,7 +91,6 @@ pub fn transport_key(master: &[u8; 16], transaction: u32, response: u32) -> [u8;
     aes128::encrypt(master, &b)
 }
 
-/// The network key as an initiator sends it under key index 4.
 pub fn encrypted_key(master: &[u8; 16], key: &[u8; 16], transaction: u32, response: u32) -> [u8; 16] {
     aes128::encrypt(&transport_key(master, transaction, response), key)
 }
@@ -112,8 +99,6 @@ pub fn decrypted_key(master: &[u8; 16], encrypted: &[u8], transaction: u32, resp
     aes128::decrypt(&transport_key(master, transaction, response), encrypted)
 }
 
-/// A secured NWK frame (MAC payload `q`) decrypted with `key`: (header fcf, src, dst, payload or None).
-/// None when it is not a secured NWK frame of the expected length.
 pub fn nwk_decrypt(q: &[u8], key: &[u8; 16]) -> Option<(u16, u16, u16, Option<Vec<u8>>)> {
     if q.len() < 8 + 14 + 4 {
         return None;
