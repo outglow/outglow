@@ -253,7 +253,7 @@ storms.
 cargo stress                                                     # 4 scenarios x stock, rust, rust+stock
 cargo stress -- --full --out stress-results.md                   # 9 bulbs
 cargo stress -- --sets rust stress_churn --dump /tmp/a.txt
-cargo sims -- stress_traffic --cpi 24 --image dut=path [--image mix=path]   # one image set
+cargo sims -- stress_diag --cpi 24 --image dut=path [--image mix=path]      # one image set (stress_traffic's phases, the Diagnostics counters)
 ```
 
 Options: `--cpi` (24 by default here), `--jobs` (4), `--seed` (channel model

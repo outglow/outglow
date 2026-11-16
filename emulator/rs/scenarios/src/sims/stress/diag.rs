@@ -1,5 +1,8 @@
-//! `stress_diag`: the stress traffic on the house mesh, with the Diagnostics
-//! cluster of every bulb read over ZCL before and after, and its counters
+//! `stress_diag`: the stress traffic on the house mesh (the phases of
+//! `stress_traffic` of `cargo stress`, with its table and its checks: no
+//! reset, nobody moved, nothing executed twice, the light as last answered),
+//! and the Diagnostics cluster of every bulb read over ZCL before and after,
+//! its counters
 //! held against what the harness itself sees on the air (`net.rs`, the
 //! accounting of `STRESS_ACCOUNT`): MAC unicasts and their retransmissions,
 //! MAC broadcasts, relayed frames and the relayed frames lost. A bulb whose
@@ -8,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use super::net::Mesh;
-use super::scen::{traffic_phases, warm_up};
+use super::scen::{final_checks, rows_from, traffic_phases, warm_up};
 use super::StressResult;
 use crate::session::R;
 
@@ -158,9 +161,11 @@ pub fn run(m: &mut Mesh, res: &mut StressResult) -> R<()> {
     let before = snapshot(m)?;
     m.tick(1000.0)?;
     let t0 = m.now();
-    traffic_phases(m)?;
+    let light = traffic_phases(m)?;
     m.end_phase();
     let t1 = m.now();
+    rows_from(m, res, 0);
+    final_checks(m, res, light, false);
     m.tick(1000.0)?;
     let after = snapshot(m)?;
     let mut checked = 0;

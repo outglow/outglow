@@ -55,7 +55,7 @@ fn light_mismatch(m: &Mesh, since: f64) -> (usize, Vec<String>) {
 }
 
 /// The checks every scenario ends with.
-fn final_checks(m: &Mesh, res: &mut StressResult, light: (usize, Vec<String>), churn: bool) {
+pub(super) fn final_checks(m: &Mesh, res: &mut StressResult, light: (usize, Vec<String>), churn: bool) {
     let resets = m.resets();
     res.check("no watchdog or software reset of any bulb", resets == 0, format!("{resets} reset(s)"));
     let c = m.air_count(m.t_formed, f64::MAX, None);
@@ -81,7 +81,7 @@ fn final_checks(m: &Mesh, res: &mut StressResult, light: (usize, Vec<String>), c
               if bad.is_empty() { format!("{n} bulb state(s) checked") } else { bad.join("; ") });
 }
 
-fn rows_from(m: &Mesh, res: &mut StressResult, from: usize) {
+pub(super) fn rows_from(m: &Mesh, res: &mut StressResult, from: usize) {
     for p in from..m.phases.len() {
         res.rows.push(row(m, p));
     }
