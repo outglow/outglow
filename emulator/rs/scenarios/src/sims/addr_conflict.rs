@@ -1114,16 +1114,59 @@ fn relays_of(net: &Net, mark: usize, src: u16, seq: u8) -> usize {
     net.cap[mark..].iter().filter(|f| f.who == NodeId::Dut && f.nwk.as_ref().is_some_and(|n| n.src == src && n.seq == seq)).count()
 }
 
-/// How long a bulb remembers a broadcast (R22 3.6.5 broadcast transaction table):
-/// the same frame (NWK source, sequence number) again after a gap; does the bulb relay it again?
+/// Device_annce of `short` with `ext` from `who` (NWK broadcast 0xFFFD).
+fn annce(net: &mut Net, who: NodeId, short: u16, ext: u64) {
+    let mut body = short.to_le_bytes().to_vec();
+    body.extend_from_slice(&ext_bytes(ext));
+    body.push(0x8E);
+    let (st, air) = net.s.w.st(who);
+    st.tx_zdo(air, 0xFFFD, 0x0013, &body, &Tx::new());
+}
+
+/// R22 3.6.5: nwkcMaxBroadcastJitter (0x40 ms), and the slack the conformance
+/// test of broadcast relaying allows on top (a transmission of its own in progress,
+/// CSMA-CA backoffs).
+const RELAY_BOUND_MS: f64 = 75.0;
+/// How long after the original a copy of it still counts as a relay (the
+/// originator's and the relays' passive-acknowledgement retries, R22 3.6.5:
+/// nwkMaxBroadcastRetries 2 x nwkPassiveAckTimeout 500 ms, end before).
+const LATE_MS: f64 = 1500.0;
+/// How long each round watches the air: the stock firmware's late copies came
+/// up to 7.8 s after the original in the house.
+const WATCH_MS: f64 = 10000.0;
+const BTT_OFFSETS_MS: [f64; 6] = [0.0, 2.0, 5.0, 10.0, 15.0, 20.0];
+
+/// The house problem in small (the lab's docs/address-conflicts.md): two
+/// broadcasts from two senders a few ms apart, as when a router's Device_annce
+/// and the coordinator's Mgmt_Permit_Joining_req (Zigbee2MQTT's answer to a
+/// bulb coming back) meet. The stock firmware drops one of them or relays it
+/// seconds later; an EmberZNet neighbour whose broadcast record has expired
+/// then takes the late copy of its own broadcast for an address conflict.
+///
+/// r, an Ember-like router out of the coordinator's range, announces itself;
+/// 0, 2, 5, 10, 15 and 20 ms after that frame has left the air the coordinator
+/// opens (closes) the network. (Frames that overlap at the bulb are lost to
+/// both, a hidden-terminal collision no relay can mend: real senders defer
+/// while a neighbour transmits, and the originators send again.)
+/// Per offset the bulb (default: the Rust firmware) must relay both, each
+/// within the jitter bound, and send no copy of either later than 1.5 s.
+///
+/// `ADDR_CONFLICT_BTT_FULL=1` adds the measurements of the study (how long the
+/// bulb remembers a broadcast, eviction, Route Request duplicates, Device_annce
+/// conflict checks, the house's announce-and-permit-join cases with relayed
+/// copies), for `--image bulb=stock/stock-dimm.bin`; about 700 s of air.
 fn run_btt(cx: &mut SimCtx) -> R<()> {
-    let img = cx.image("bulb", "stock/stock-dimm.bin");
+    let img = cx.image("bulb", "target/tc32/bulb-tc32.bin");
     cx.say(&format!("image: {}", super::util::rel(&img)));
     let b = bulb_node(&img, cx.cpi, "B", 0xa4c1380000000011)?;
     let mut net = Net::new(b, Coord::new_plain(11, NWK_KEY), cx.verbose > 0);
     let ok = net.run_until(60000.0, |n| n.short_of_bulb("B").is_some())?;
     cx.check(net.now(), "bulb joins", ok, "");
-    net.run(5000.0)?;
+    if !ok {
+        return Ok(());
+    }
+    net.run(3000.0)?;
+    let bs = net.short_of_bulb("B").unwrap();
     let c = &net.s.w.coord.st;
     let mut st = Station::new(NodeId::Coord, c.channel, c.pan, Some(0x4444), 0x00124B00AA004444, NWK_KEY, (1, 2, 3, 4, 5), 0x500, 0);
     st.key_seq = c.key_seq;
@@ -1131,18 +1174,75 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
     net.s.w.air.keys.learn(Some(0x4444), Some(0x00124B00AA004444));
     // the coordinator does not hear r: only the bulb's relays count
     net.out_of_range(rid, NodeId::Coord, true);
-    let mut seq = 0x60u8;
+    // r becomes a neighbour with an IEEE address: its own announce and Link Status
+    annce(&mut net, rid, 0x4444, 0x00124B00AA004444);
+    for _ in 0..2 {
+        let (st, air) = net.s.w.st(rid);
+        st.tx_link_status(air, &[(bs, 1, 1)], &Tx::new());
+        net.run(3000.0)?;
+    }
+    for lead in BTT_OFFSETS_MS {
+        net.run(1000.0)?;
+        let m = net.cap.len();
+        annce(&mut net, rid, 0x4444, 0x00124B00AA004444);
+        let aseq = net.s.w.peers[peer_ix(rid)].st.nwk_seq.wrapping_sub(1);
+        // the second sender defers while the first frame is on the air (CSMA-CA)
+        net.run_until(50.0, |n| n.cap[m..].iter().any(|f| f.who == rid && f.t1 <= n.now()))?;
+        if lead > 0.0 {
+            net.run(lead)?;
+        }
+        net.s.w.coord.permit_joining(&mut net.s.w.air, 0);
+        let pseq = net.s.w.coord.st.nwk_seq.wrapping_sub(1);
+        net.run(WATCH_MS)?;
+        let mut parts = Vec::new();
+        let mut good = true;
+        for (what, who, src, seq) in [("r's Device_annce", rid, 0x4444u16, aseq), ("the coordinator's permit-join", NodeId::Coord, 0x0000, pseq)] {
+            let is = |f: &CapFrame| f.nwk.as_ref().is_some_and(|n| n.src == src && n.seq == seq && n.dst >= 0xFFF8);
+            let Some(orig) = net.cap[m..].iter().find(|f| f.who == who && is(f)).map(|f| f.t1) else {
+                parts.push(format!("{what}: not sent"));
+                good = false;
+                continue;
+            };
+            let copies: Vec<f64> = net.cap[m..].iter().filter(|f| f.who == NodeId::Dut && is(f)).map(|f| f.t0 - orig).collect();
+            let first = copies.first().copied();
+            let late = copies.iter().filter(|d| **d > LATE_MS).count();
+            good &= first.is_some_and(|d| d <= RELAY_BOUND_MS) && late == 0;
+            let ds: Vec<String> = copies.iter().map(|d| format!("{d:.1}")).collect();
+            parts.push(format!("{what} (seq {seq}) relayed after [{}] ms", ds.join(", ")));
+        }
+        cx.check(
+            net.now(),
+            &format!("permit-join {lead:.0} ms after a Device_annce: the bulb relays both within {RELAY_BOUND_MS:.0} ms, no copy after {:.1} s", LATE_MS / 1000.0),
+            good,
+            &parts.join("; "),
+        );
+    }
+    if std::env::var_os("ADDR_CONFLICT_BTT_FULL").is_some() {
+        for l in btt_measurements(&mut net, rid)? {
+            cx.say(&format!("   {l}"));
+        }
+    }
+    Ok(())
+}
+
+/// The measurements of the study (`ADDR_CONFLICT_BTT_FULL`): how long a bulb
+/// remembers a broadcast (R22 3.6.5 broadcast transaction table), the same
+/// frame (NWK source, sequence number) again after a gap, eviction, two
+/// broadcasts of one sender close together, Route Request duplicates,
+/// Device_annce conflict checks, the house's announce-and-permit-join cases.
+fn btt_measurements(net: &mut Net, rid: NodeId) -> R<Vec<String>> {
     let mut lines = Vec::new();
+    let mut seq = 0x60u8;
     for gap in [500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 4000.0, 6000.0, 9000.0] {
         seq = seq.wrapping_add(1);
         let m1 = net.cap.len();
-        r_tx_bcast(&mut net, rid, seq);
+        r_tx_bcast(net, rid, seq);
         net.run(gap)?;
-        let n1 = relays_of(&net, m1, 0x4444, seq);
+        let n1 = relays_of(net, m1, 0x4444, seq);
         let m2 = net.cap.len();
-        r_tx_bcast(&mut net, rid, seq);
+        r_tx_bcast(net, rid, seq);
         net.run(3000.0)?;
-        let n2 = relays_of(&net, m2, 0x4444, seq);
+        let n2 = relays_of(net, m2, 0x4444, seq);
         lines.push(format!("gap {gap:5.0} ms: first copy relayed {n1}x, second copy relayed {n2}x"));
         net.run(10000.0)?;
     }
@@ -1151,17 +1251,17 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
         seq = seq.wrapping_add(20);
         let first = seq;
         let m1 = net.cap.len();
-        r_tx_bcast(&mut net, rid, first);
+        r_tx_bcast(net, rid, first);
         net.run(100.0)?;
         for j in 0..k {
-            r_tx_bcast(&mut net, rid, first.wrapping_add(1 + j));
+            r_tx_bcast(net, rid, first.wrapping_add(1 + j));
             net.run(40.0)?;
         }
-        let n1 = relays_of(&net, m1, 0x4444, first);
+        let n1 = relays_of(net, m1, 0x4444, first);
         let m2 = net.cap.len();
-        r_tx_bcast(&mut net, rid, first);
+        r_tx_bcast(net, rid, first);
         net.run(3000.0)?;
-        let n2 = relays_of(&net, m2, 0x4444, first);
+        let n2 = relays_of(net, m2, 0x4444, first);
         lines.push(format!(
             "{k:2} other broadcasts in between (within {:.2} s): first copy relayed {n1}x, second copy relayed {n2}x",
             (100.0 + 40.0 * k as f64) / 1000.0
@@ -1174,10 +1274,10 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
         let (a, b) = (seq, seq.wrapping_add(1));
         let m = net.cap.len();
         let t0 = net.now();
-        r_tx_bcast(&mut net, rid, a);
+        r_tx_bcast(net, rid, a);
         net.run(gap)?;
         let tb = net.now();
-        r_tx_bcast(&mut net, rid, b);
+        r_tx_bcast(net, rid, b);
         net.run(15000.0)?;
         let when = |s: u8| -> String {
             let v: Vec<String> = net.cap[m..]
@@ -1207,14 +1307,14 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
             st.tx_nwk_cmd(air, 0xFFFC, &body, &o);
         }
         net.run(gap)?;
-        let n1 = count(&net, m1);
+        let n1 = count(net, m1);
         let m2 = net.cap.len();
         {
             let (st, air) = net.s.w.st(rid);
             st.tx_nwk_cmd(air, 0xFFFC, &body, &o);
         }
         net.run(3000.0)?;
-        let n2 = count(&net, m2);
+        let n2 = count(net, m2);
         lines.push(format!("Route Request, same id again after {gap:5.0} ms: first relayed {n1}x, second relayed {n2}x"));
         net.run(10000.0)?;
     }
@@ -1225,20 +1325,6 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
     sx.key_seq = c.key_seq;
     let xid = net.s.w.add_peer_node(Peer::bare_ack(sx, "x"));
     net.out_of_range(xid, NodeId::Coord, true);
-    let annce = |net: &mut Net, who: NodeId, short: u16, ext: u64| {
-        let mut body = short.to_le_bytes().to_vec();
-        body.extend_from_slice(&ext_bytes(ext));
-        body.push(0x8E);
-        let (st, air) = net.s.w.st(who);
-        st.tx_zdo(air, 0xFFFD, 0x0013, &body, &Tx::new());
-    };
-    // r becomes a neighbour with an IEEE address: its own announce and Link Status
-    annce(&mut net, rid, 0x4444, 0x00124B00AA004444);
-    for _ in 0..3 {
-        let (st, air) = net.s.w.st(rid);
-        st.tx_link_status(air, &[(bs, 1, 1)], &Tx::new());
-        net.run(5000.0)?;
-    }
     let lqi = net.lqi_text(bs)?;
     lines.push(format!("neighbour table with r: {lqi}"));
     for (what, short, ext) in [
@@ -1246,7 +1332,7 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
         ("Device_annce from x: the bulb's own address with x's IEEE", bs, 0x00124B00AA007777),
     ] {
         let m = net.cap.len();
-        annce(&mut net, xid, short, ext);
+        annce(net, xid, short, ext);
         net.run(6000.0)?;
         let st: Vec<String> = net.cap[m..]
             .iter()
@@ -1261,7 +1347,7 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
         net.run(12000.0)?;
         let m = net.cap.len();
         let t0 = net.now();
-        annce(&mut net, rid, 0x4444, 0x00124B00AA004444);
+        annce(net, rid, 0x4444, 0x00124B00AA004444);
         let aseq = net.s.w.peers[peer_ix(rid)].st.nwk_seq.wrapping_sub(1);
         if lead > 0.0 {
             net.run(lead)?;
@@ -1291,10 +1377,7 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
             v.join(", ")
         ));
     }
-    for l in lines {
-        cx.say(&format!("   {l}"));
-    }
-    Ok(())
+    Ok(lines)
 }
 
 
@@ -1399,8 +1482,18 @@ fn run_echo(cx: &mut SimCtx) -> R<()> {
 /// The Ember router joined through K1 (K1's child). A conflict is reported on its
 /// address (Network Status 0x0d from the coordinator, as an Ember coordinator
 /// broadcasts it) while K1 is on: what do K1 and the others do?
+///
+/// Weekly, on the original firmware (the default image), the checks hold what
+/// was measured (the lab's docs/address-conflicts.md): K1 keeps the router's
+/// old address and every command through K1 to the new one is lost (0 of 4 x
+/// 3). On an Outglow image (`--image bulb=target/tc32/bulb-tc32.bin`) they
+/// hold what Outglow does, which the host test
+/// `a_neighbouring_router_that_takes_a_new_address_is_reached_under_it`
+/// (crates/zigbee/tests/conflicts.rs) checks for every change: the new address
+/// only, every command through.
 fn run_child(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
+    let outglow = super::util::is_outglow(&img);
     let echo = cx.verbose > 0;
     cx.say(&format!("image: {}", super::util::rel(&img)));
     let mut it = vec![
@@ -1450,6 +1543,7 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
     let new = net.ember_short();
     let t_move = net.ember.as_ref().unwrap().moves.last().map(|m| m.0).unwrap_or(0.0);
     let mut rows = Vec::new();
+    let (mut reached, mut sent, mut listed_new, mut listed_old) = (0, 0, true, true);
     for (k, at) in [70.0, 180.0, 300.0, 600.0].iter().enumerate() {
         let wait = t_move + at * 1000.0 - net.now();
         if wait > 0.0 {
@@ -1462,21 +1556,48 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
             net.run(3000.0)?;
         }
         let got = net.ember.as_ref().unwrap().zcl_answers - n0;
+        reached += got.min(3);
+        sent += 3;
         if k == 0 {
             cx.say(&format!("-- On/Off to the ikea at {new:#06x} through K1, {at:.0} s after it moved"));
             show_from(cx, &net, mark, None, true);
         }
         let t = net.lqi_text(k1s)?;
         let entry = t.split("; ").filter(|e| e.contains("180df9fffef90302")).collect::<Vec<_>>().join("; ");
+        // the ikea's entries in K1's table: its new address, and only that
+        let ikea_shorts: Vec<Option<u16>> = t
+            .split("; ")
+            .filter(|e| e.contains("180df9fffef90302"))
+            .map(|e| e.split(' ').next().and_then(|x| u16::from_str_radix(x.trim_start_matches("0x"), 16).ok()))
+            .collect();
+        listed_new &= !ikea_shorts.is_empty() && ikea_shorts.iter().all(|s| *s == Some(new));
+        listed_old &= !ikea_shorts.is_empty() && ikea_shorts.iter().all(|s| *s == Some(old));
         rows.push(format!("+{at:.0} s: {got} of 3 reached the ikea; K1 lists it as [{entry}]"));
     }
-    cx.check(net.now(), "after the ikea moved: through K1", true, &rows.join(" | "));
     for n in net.notes.clone() {
         cx.say(&format!("[{:9.3} s] {}", n.ms / 1000.0, n.text));
     }
     let _ = eid;
     let moves = net.ember.as_ref().unwrap().moves.len();
-    cx.check(net.now(), "observed", true, &format!("ikea address changes {moves}, bad pairs {}", net.bad.len()));
+    cx.check(net.now(), "the ikea took a new address once (the conflict report)", moves == 1 && new != old,
+             &format!("address changes {moves}: {old:#06x} -> {new:#06x}"));
+    // pairs stated after the conflict report (before it, a pair of a bulb not yet
+    // announced counts as unknown: the ground truth learns it from its frames)
+    let bad: Vec<String> = net.bad.iter().filter(|b| b.0 >= mark).map(|b| format!("{:#06x} = {:#018x} ({})", b.1.short, b.1.ext, b.2)).collect();
+    let pairs = format!("bad pairs since the report {} [{}], before it {}", bad.len(), bad.join("; "), net.bad.len() - bad.len());
+    if outglow {
+        cx.check(net.now(), "after the ikea moved: K1 lists it at its new address only (70 s, 3, 5 and 10 min later)", listed_new,
+                 &rows.join(" | "));
+        cx.check(net.now(), "after the ikea moved: every command through K1 reaches it", reached == sent,
+                 &format!("{reached} of {sent}: {}", rows.join(" | ")));
+        cx.check(net.now(), "no frame after the conflict report pairs an address with another device's IEEE address", bad.is_empty(), &pairs);
+    } else {
+        cx.check(net.now(), "original firmware, as measured: K1 keeps the ikea's old address (70 s, 3, 5 and 10 min later)", listed_old,
+                 &rows.join(" | "));
+        cx.check(net.now(), "original firmware, as measured: every command through K1 to the new address is lost", reached == 0,
+                 &format!("{reached} of {sent}: {}", rows.join(" | ")));
+        cx.check(net.now(), "original firmware, as measured: K1 states the stale pair (old address, the ikea's IEEE)", !bad.is_empty(), &pairs);
+    }
     Ok(())
 }
 
@@ -1796,6 +1917,12 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
 /// after the bulb used it, with or without the source IEEE field (the bulb's
 /// own IEEE address). Does the bulb take it for an address conflict (R22
 /// 3.6.1.9.2: a new broadcast record with its own address as source)?
+///
+/// Neither firmware may: the original one (the default image, weekly) does not
+/// apply the rule at all; Outglow recognises the copy by its own IEEE address
+/// or one of its recent sequence numbers (`own_late_copy` in the zigbee crate,
+/// checked by the host test `late_copies_of_its_own_announcement_are_no_conflict`
+/// in crates/zigbee/tests/conflicts.rs).
 fn run_victim(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
     cx.say(&format!("image: {}", super::util::rel(&img)));
@@ -1810,39 +1937,47 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
     let rid = net.s.w.add_peer_node(Peer::bare_ack(st, "r"));
     net.s.w.air.keys.learn(Some(0x4444), Some(0x00124B00AA004444));
     let ext = net.bulb("B").ext.unwrap();
-    let mut changes = 0usize;
+    let (mut changes, mut reactions, mut sent, mut cases) = (0usize, 0usize, 0usize, 0usize);
+    let mut untested = Vec::new();
     for with_ieee in [false, true] {
         for d in [2.0, 5.0, 10.0, 20.0, 60.0] {
+            cases += 1;
             // a fresh broadcast of the bulb, the way it happens in a conflict: the coordinator reports
             // a conflict on the bulb's address, the bulb (if it reacts) takes a new one and announces it
             net.run(12000.0)?;
             let me0 = net.short_of_bulb("B").unwrap();
+            let mark0 = net.cap.len();
             {
                 let c = &mut net.s.w.coord;
                 c.st.tx_nwk_cmd(&mut net.s.w.air, 0xFFFD, &[0x03, 0x0D, me0 as u8, (me0 >> 8) as u8], &Tx::new().radius(30).mac_dst(0xFFFF));
             }
-            net.run(3000.0)?;
-            let me = net.short_of_bulb("B").unwrap();
             // the last broadcast (radius > 1) the bulb originated: the frame a stock bulb would relay late
-            let last = net
-                .cap
-                .iter()
-                .rev()
-                .find(|f| {
-                    f.who == NodeId::Dut
-                        && f.nwk.as_ref().is_some_and(|n| n.src == me && n.dst >= 0xFFF8 && n.radius > 1)
-                        && f.mac.as_ref().is_some_and(|m| m.src == Some(me as u64))
-                })
-                .map(|f| (f.nwk.as_ref().unwrap().seq, f.t0));
+            let own_bcast = |f: &CapFrame, me: u16| {
+                f.who == NodeId::Dut
+                    && f.nwk.as_ref().is_some_and(|n| n.src == me && n.dst >= 0xFFF8 && n.radius > 1)
+                    && f.mac.as_ref().is_some_and(|m| m.src == Some(me as u64))
+            };
+            // up to 3 s for the bulb's answer to the report (the 2 s copy must not start later than that)
+            net.run_until(3000.0, |n| {
+                let me = n.short_of_bulb("B").unwrap();
+                n.cap[mark0..].iter().any(|f| own_bcast(f, me))
+            })?;
+            net.run(100.0)?;
+            let me = net.short_of_bulb("B").unwrap();
+            let last = net.cap.iter().rev().find(|f| own_bcast(f, me)).map(|f| (f.nwk.as_ref().unwrap().seq, f.t0));
             let Some((seq, t_used)) = last else {
                 cx.say(&format!("   no broadcast of the bulb under {me:#06x} to copy"));
+                untested.push(format!("{d:.0} s"));
                 continue;
             };
             let wait = t_used + d * 1000.0 - net.now();
             if wait <= 0.0 {
+                cx.say(&format!("   the bulb's last broadcast (seq {seq}) is {:.1} s old: no {d:.0} s copy of it", (net.now() - t_used) / 1000.0));
+                untested.push(format!("{d:.0} s"));
                 continue;
             }
             net.run(wait)?;
+            sent += 1;
             let mark = net.cap.len();
             let mut body = me.to_le_bytes().to_vec();
             body.extend_from_slice(&ext_bytes(ext));
@@ -1871,6 +2006,9 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
             if now_short != me {
                 changes += 1;
             }
+            if !reacted.is_empty() {
+                reactions += 1;
+            }
             cx.say(&format!(
                 "   copy of its broadcast seq {seq} {:.1} s after it was sent, source IEEE field {}: {}",
                 (net.cap[mark].t0 - t_used) / 1000.0,
@@ -1885,7 +2023,10 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
             ));
         }
     }
-    cx.check(net.now(), "observed", true, &format!("address changes: {changes}"));
+    cx.check(net.now(), "a copy of every delay (2 to 60 s, with and without its IEEE address) reached the bulb", sent == cases,
+             &format!("{sent} of {cases}{}", if untested.is_empty() { String::new() } else { format!("; not sent: {}", untested.join(", ")) }));
+    cx.check(net.now(), "no late copy of its own broadcast is taken for an address conflict (no new address, no Network Status 0x0d)",
+             changes == 0 && reactions == 0, &format!("address changes {changes}, copies answered with a conflict report or a new address {reactions}, of {sent}"));
     Ok(())
 }
 
@@ -1896,8 +2037,18 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
 /// and follows. B comes back on channel 11 with its old network in flash:
 /// does it find the network, how (rejoin or a new association), and with
 /// which address? Once with the network closed to new devices, once open.
+///
+/// A follows the change. Weekly, on the original firmware (the default image),
+/// the checks hold what was measured: B stays on channel 11 and silent (no
+/// Beacon Request, no rejoin) for the whole wait (`CH_WAIT_S`, default 240 s).
+/// On an Outglow image they hold what Outglow does, which the host test
+/// `a_bulb_off_during_a_channel_change_rejoins_on_the_new_channel_while_the_network_is_closed`
+/// (crates/zigbee/tests/conflicts.rs) checks for every change: B scans the
+/// channels, finds the network on 25, rejoins it secured (no new association)
+/// with the address it had (183 s here).
 fn run_channel(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bulb", "stock/stock-dimm.bin");
+    let outglow = super::util::is_outglow(&img);
     cx.say(&format!("image: {}", super::util::rel(&img)));
     for open in [false, true] {
         let a = bulb_node(&img, cx.cpi, "A", 0xa4c1380000000081)?;
@@ -1957,10 +2108,21 @@ fn run_channel(cx: &mut SimCtx) -> R<()> {
             let z = f.zdo().unwrap().payload;
             u16::from_le_bytes([z[0], z[1]])
         });
+        let net_state = if open { "open" } else { "closed" };
+        cx.check(net.now(), &format!("A, on, follows the coordinator to channel 25 (network {net_state})"), a_on_25,
+                 &format!("A {a0:#06x}"));
         cx.check(
             net.now(),
-            &format!("B back after the channel change (network {})", if open { "open" } else { "closed" }),
-            true,
+            &if outglow {
+                format!("B, off during the change, rejoins on channel 25 with its address, no new association (network {net_state})")
+            } else {
+                format!("original firmware, as measured: B, off during the change, stays silent on channel 11 (network {net_state})")
+            },
+            if outglow {
+                back && b1 == Some(b0) && rejoin > 0 && assoc == 0
+            } else {
+                !back && chans == [11] && beacons == 0 && rejoin == 0 && assoc == 0
+            },
             &format!(
                 "A followed to 25: {a_on_25} (address {a0:#06x}); B: {} after {:.0} s; channels it used {chans:?}; Beacon Requests {beacons}, \
                  Association Requests {assoc}, Rejoin Requests {rejoin}; address before {b0:#06x}, after {}",

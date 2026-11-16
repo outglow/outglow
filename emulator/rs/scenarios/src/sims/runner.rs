@@ -1,12 +1,16 @@
 //! Runs the integration scenarios and reports them as `cargo test` does: one
 //! `test sims::NAME ... ok|FAILED` per scenario after its own output (the
 //! Python script's lines), then `test result:`.
+//!
+//! `--weekly` runs only the weekly measurements (`super::WEEKLY`), which are
+//! otherwise left out unless a filter names one exactly; `--exact` matches
+//! the name with or without its `sims::` prefix.
 
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
-use super::{sims, SimCtx, SimDef};
+use super::{is_weekly, sims, SimCtx, SimDef};
 use crate::runner::{parse_args_with, Args};
 use crate::session::Stop;
 
@@ -14,13 +18,28 @@ fn no_images() -> Vec<crate::image::Image> {
     Vec::new()
 }
 
-fn selected(a: &Args, name: &str) -> bool {
-    (a.filters.is_empty() || a.filters.iter().any(|f| if a.exact { name == f } else { name.contains(f.as_str()) }))
-        && !a.skip.iter().any(|f| name.contains(f.as_str()))
+fn named(a: &Args, name: &str, f: &str) -> bool {
+    let short = name.trim_start_matches("sims::");
+    if a.exact {
+        name == f || short == f
+    } else {
+        name.contains(f)
+    }
+}
+
+/// Chosen by the filters and `--skip`; a weekly scenario only with `--weekly`
+/// or when a filter is its very name, and with `--weekly` nothing else.
+fn selected(a: &Args, weekly: bool, name: &str) -> bool {
+    let by_name = a.filters.iter().any(|f| f == name || f == name.trim_start_matches("sims::"));
+    let kind = if weekly { is_weekly(name) } else { !is_weekly(name) || by_name };
+    kind && (a.filters.is_empty() || a.filters.iter().any(|f| named(a, name, f))) && !a.skip.iter().any(|f| name.contains(f.as_str()))
 }
 
 /// Rough wall time of the long scenarios [s] (one core, cpi 3), to balance
-/// `--shard`; every other scenario counts as `OTHER_S`.
+/// `--shard` and to start the long ones first; every other scenario counts
+/// as `OTHER_S`. The weekly ones (house, child, echo, channel,
+/// enddev_wallswitch*: the original firmware) are never sharded, only
+/// started first.
 const COST_S: &[(&str, u32)] = &[
     ("addr_conflict_house", 620),
     ("addr_conflict_child", 260),
@@ -29,7 +48,6 @@ const COST_S: &[(&str, u32)] = &[
     ("addr_conflict_channel", 160),
     ("enddev_wallswitch", 115),
     ("back_to_stock_ble", 95),
-    ("ble_ota", 55),
     ("rust_sense", 50),
 ];
 const OTHER_S: u32 = 20;
@@ -64,7 +82,9 @@ pub fn main_with(argv: &[String]) -> i32 {
 
 /// `main_with` with scenarios defined outside this crate next to these.
 pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
-    let a = match parse_args_with(argv, no_images) {
+    let weekly = argv.iter().any(|x| x == "--weekly");
+    let argv: Vec<String> = argv.iter().filter(|x| *x != "--weekly").cloned().collect();
+    let a = match parse_args_with(&argv, no_images) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("scenarios sims: {e}");
@@ -74,7 +94,7 @@ pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
     let mut all = sims();
     all.extend(extra);
     let names: Vec<String> = all.iter().map(|d| format!("sims::{}", d.name)).collect();
-    let mut chosen: Vec<usize> = (0..all.len()).filter(|i| selected(&a, &names[*i])).collect();
+    let mut chosen: Vec<usize> = (0..all.len()).filter(|i| selected(&a, weekly, &names[*i])).collect();
     if let Some((k, n)) = a.shard {
         chosen = shard(chosen, &names, k, n);
     }
@@ -211,11 +231,39 @@ mod tests {
         }
     }
 
+    fn nightly(names: &[String]) -> Vec<usize> {
+        let a = parse_args_with(&[], no_images).unwrap();
+        (0..names.len()).filter(|&i| selected(&a, false, &names[i])).collect()
+    }
+
     #[test]
     fn no_other_long_scenario_shares_the_longest_ones_shard() {
         let names: Vec<String> = sims().iter().map(|d| format!("sims::{}", d.name)).collect();
-        let part = shard((0..names.len()).collect(), &names, 1, 6);
-        assert!(part.iter().any(|&i| names[i] == "sims::addr_conflict_house"));
-        assert!(part.iter().all(|&i| names[i] == "sims::addr_conflict_house" || cost(&names[i]) == OTHER_S), "{part:?}");
+        let idx = nightly(&names);
+        let longest = *idx.iter().max_by_key(|&&i| cost(&names[i])).unwrap();
+        let part = (1..=6).map(|k| shard(idx.clone(), &names, k, 6)).find(|p| p.contains(&longest)).unwrap();
+        assert!(part.iter().all(|&i| i == longest || cost(&names[i]) == OTHER_S), "{part:?}");
+    }
+
+    #[test]
+    fn weekly_scenarios_only_with_weekly_or_by_their_name() {
+        let names: Vec<String> = sims().iter().map(|d| format!("sims::{}", d.name)).collect();
+        for w in super::super::WEEKLY {
+            assert!(names.iter().any(|n| n == &format!("sims::{w}")), "{w} is no scenario");
+        }
+        let pick = |argv: &[&str], weekly: bool| -> Vec<String> {
+            let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+            let a = parse_args_with(&argv, no_images).unwrap();
+            names.iter().filter(|n| selected(&a, weekly, n)).map(|n| n.trim_start_matches("sims::").to_string()).collect()
+        };
+        let all = pick(&[], false);
+        assert!(!all.is_empty() && all.iter().all(|n| !is_weekly(n)), "{all:?}");
+        let weekly = pick(&[], true);
+        assert_eq!(weekly.len(), super::super::WEEKLY.len());
+        assert_eq!(pick(&["addr_conflict_house"], false), ["addr_conflict_house"]);
+        assert_eq!(pick(&["addr_conflict_ch"], false), Vec::<String>::new());
+        assert_eq!(pick(&["addr_conflict_ch"], true), ["addr_conflict_child", "addr_conflict_channel"]);
+        assert_eq!(pick(&["--exact", "rust_fw", "sims::ota_rust"], false), ["rust_fw", "ota_rust"]);
+        assert_eq!(pick(&["house"], true), ["addr_conflict_house"]);
     }
 }

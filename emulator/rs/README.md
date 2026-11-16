@@ -29,8 +29,9 @@ From the repository root (aliases in `.cargo/config.toml`):
 ```sh
 cargo spec                       # Zigbee conformance suite on the Rust image
 cargo ble-spec                   # BLE conformance suite on the Rust image
-cargo sims                       # integration scenarios
+cargo sims                       # integration scenarios (but the weekly ones)
 cargo sims-quick                 # a few scenarios for every change
+cargo sims-weekly                # the measurements of the original firmware (weekly in CI)
 cargo stress                     # the house mesh under loss, noise and power cuts
 ```
 
@@ -93,16 +94,26 @@ NotApplicable}` are the verdicts.
 
 ```sh
 cargo sims -- --list
-cargo sims -- rust_diag ble_ota                  # some (substring of the name)
+cargo sims -- rust_diag rust_staging             # some (substring of the name)
 cargo sims -- --skip stress --skip addr_conflict # all but the long ones
 cargo sims -- zigbee --image bin=path/to/x.bin   # another image for a role
 cargo sims -- rust_fw -v                         # every line as it happens
+cargo sims -- --exact rust_fw ota_rust           # these, by their whole name
+cargo sims -- --weekly                           # only the weekly ones
+cargo sims -- addr_conflict_house                # a weekly one, by its whole name
 ```
+
+The weekly ones (`WEEKLY` in `scenarios/src/sims/mod.rs`: `addr_conflict`,
+`_child`, `_victim`, `_channel`, `_echo`, `_multihop`, `_house`,
+`enddev_wallswitch`, `_edinit`) measure the original firmware for the
+address conflict study, so CI runs them once a week, not every night. What
+Outglow does in child, victim and channel the host tests of
+`crates/zigbee/tests/conflicts.rs` check.
 
 Among them: joining, light and OTA of the Rust firmware (`rust_fw`,
 `ota_rust`, `power_cut`), Zigbee and BLE together (`rust_ble`,
 `rust_ble_switch`), the first update over BLE from the original firmware
-(`ble_ota`), the vendor app's mesh and colour commands (`ble_mesh`, `mesh`,
+and back (`migrate`, `back_to_stock_ble`, `back_to_stock_ota`), the vendor app's mesh and colour commands (`ble_mesh`, `mesh`,
 `interop`, `app_colour`), the parent role under load (`parent_load`),
 diagnostics (`rust_diag`, `stress_diag`; the device page's BLE service,
 `ble_diag`, with `BLE_DIAG_DUMP=<file>` for the values it read), every board against its original
@@ -124,16 +135,19 @@ flash as it was at that moment.
 | Scenario | What |
 |---|---|
 | `addr_conflict` | a router joined through a bulb changes its address while the bulb is off; probes after power-up |
-| `addr_conflict_btt` | how long a bulb remembers a broadcast; two broadcasts at once; Route Request duplicates; Device_annce checks |
+| `addr_conflict_btt` | the house problem in small: a Device_annce and the coordinator's permit-join 0-20 ms apart, both relayed in time and never late (Rust by default: checked; in the pull request set); `ADDR_CONFLICT_BTT_FULL=1`: how long a bulb remembers a broadcast, Route Request duplicates, Device_annce checks |
 | `addr_conflict_echo` | how long one broadcast is relayed in a full mesh |
 | `addr_conflict_child` | a neighbouring router changes its address while the bulb is on |
 | `addr_conflict_multihop` | the router reached through two bulbs; route discovery, a power cycle |
 | `addr_conflict_house` | nine bulbs, a corridor out of the coordinator's range; `ADDR_CONFLICT_ROUNDS`, `ADDR_CONFLICT_MINUTES` |
 | `addr_conflict_victim` | late copies of the bulb's own broadcast: does it change its address? |
 | `addr_conflict_channel` | a channel change while a bulb is off (`CH_WAIT_S`, `CH_DUMP`) |
-| `enddev_wallswitch`, `_first`, `_edinit` | a sleepy end device whose parent bulb is switched off and on: lost presses, rejoin, stale child entries |
+| `enddev_wallswitch`, `_edinit` | a sleepy end device whose parent bulb is switched off and on: lost presses, rejoin, stale child entries |
 
-Images: `--image bulb=…` (and `--image tw=…` for the tunable white bulbs).
+Images: `--image bulb=…` (and `--image tw=…` for the tunable white bulbs);
+the original firmware by default, but for `addr_conflict_btt`, which runs
+the Rust firmware. The checks of child, victim and channel hold what was
+measured on the original firmware and, on an Outglow image, what Outglow does.
 Original bulbs need a valid factory MAC record at 0xFF000 in the image
 (BLE MAC little endian, OUI a4:c1:38 last); anything else is replaced by a
 "random" one that is the same in every emulated bulb.
@@ -241,7 +255,7 @@ storms.
 cargo stress                                                     # 4 scenarios x stock, rust, rust+stock
 cargo stress -- --full --out stress-results.md                   # 9 bulbs
 cargo stress -- --sets rust stress_churn --dump /tmp/a.txt
-cargo sims -- stress_traffic --cpi 24 --image dut=path [--image mix=path]   # one image set
+cargo sims -- stress_diag --cpi 24 --image dut=path [--image mix=path]      # one image set (stress_traffic's phases, the Diagnostics counters)
 ```
 
 Options: `--cpi` (24 by default here), `--jobs` (4), `--seed` (channel model

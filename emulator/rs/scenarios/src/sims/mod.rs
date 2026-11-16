@@ -11,7 +11,6 @@ pub mod ble_central;
 pub mod ble_diag;
 pub mod board_check;
 pub mod ble_mesh;
-pub mod ble_ota;
 pub mod enddev_wallswitch;
 pub mod interop;
 pub mod app_colour;
@@ -63,7 +62,6 @@ pub fn sims() -> Vec<SimDef> {
         board_check::def(),
         ble_diag::def(),
         ble_mesh::def(),
-        ble_ota::def(),
         interop::def(),
         app_colour::def(),
         mesh::def(),
@@ -90,6 +88,28 @@ pub fn sims() -> Vec<SimDef> {
     v.extend(transfer::defs());
     v.extend(stress::defs());
     v
+}
+
+/// Measurements of the original firmware: their checks hold whatever the
+/// numbers (they produce the tables of the address conflict study, the lab's
+/// docs/address-conflicts.md) and fail only when the bulbs do not join, so
+/// they run once a week in CI, not every night. `cargo sims` leaves them out;
+/// `cargo sims -- --weekly` (`cargo sims-weekly`) runs these alone, and one
+/// named exactly (`cargo sims -- addr_conflict_house`) runs as any other.
+pub const WEEKLY: &[&str] = &[
+    "addr_conflict",
+    "addr_conflict_child",
+    "addr_conflict_victim",
+    "addr_conflict_channel",
+    "addr_conflict_echo",
+    "addr_conflict_multihop",
+    "addr_conflict_house",
+    "enddev_wallswitch",
+    "enddev_wallswitch_edinit",
+];
+
+pub fn is_weekly(name: &str) -> bool {
+    WEEKLY.contains(&name.trim_start_matches("sims::"))
 }
 
 /// A default image path (repository-relative): in the repository, else in

@@ -24,13 +24,12 @@ use net::{pct, AirCount, Cfg, Flow, Mesh};
 
 pub fn defs() -> Vec<SimDef> {
     vec![
-        SimDef { name: "stress_traffic", doc: "traffic to and through the bulbs at rising rates", run: |cx| run_one(cx, "stress_traffic", scen::traffic) },
         SimDef { name: "stress_noise", doc: "the same traffic over a lossy and noisy channel", run: |cx| run_one(cx, "stress_noise", scen::noise) },
         SimDef { name: "stress_churn", doc: "routers vanish and return, rooms switched off, the bulb power-cycled", run: |cx| run_one(cx, "stress_churn", scen::churn) },
         SimDef { name: "stress_broadcast", doc: "group commands to all bulbs, broadcast storms", run: |cx| run_one(cx, "stress_broadcast", scen::broadcast) },
         SimDef {
             name: "stress_diag",
-            doc: "the traffic of stress_traffic, with the Diagnostics counters read over ZCL against the air",
+            doc: "traffic to and through the bulbs at rising rates, with the Diagnostics counters read over ZCL against the air",
             run: |cx| run_one(cx, "stress_diag", diag::run),
         },
     ]

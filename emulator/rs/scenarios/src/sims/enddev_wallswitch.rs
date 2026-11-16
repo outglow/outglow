@@ -5,8 +5,9 @@
 //! polls it, and sends a press (On/Off Toggle to the coordinator) every few
 //! seconds. Like real end devices it takes its parent for lost after a few
 //! failed MAC transmissions and rejoins: Beacon Request, a parent chosen from
-//! the beacons (the previous parent when heard, else the best link; or simply
-//! the first beacon), secured NWK Rejoin Request, Rejoin Response by poll,
+//! the beacons (the previous parent when heard, else the best link; with the
+//! parent off only one beacon is heard, so taking simply the first beacon
+//! would make no difference), secured NWK Rejoin Request, Rejoin Response by poll,
 //! Device_annce; when no parent answers it tries again 3 s later.
 //!
 //! The parent is switched off, the button finds another router (an always-on
@@ -29,7 +30,6 @@ use crate::station::{nx, SrcIeee, Station, Tx, MAC_RETRIES};
 pub fn defs() -> Vec<SimDef> {
     vec![
         SimDef { name: "enddev_wallswitch", doc: "a sleepy end device whose parent bulb is switched off and on (parent choice: previous, else best link)", run: run_prev },
-        SimDef { name: "enddev_wallswitch_first", doc: "the same, the end device takes the first beacon it hears", run: run_first },
         SimDef { name: "enddev_wallswitch_edinit", doc: "the same, the end device sets the end device initiator bit (R21 and later)", run: run_nodst },
     ]
 }
@@ -46,8 +46,6 @@ const LOST_AFTER: u32 = 3;
 pub enum Choice {
     /// the previous parent if its beacon is heard, else the best link
     PrevThenBest,
-    /// the first beacon
-    First,
     /// as PrevThenBest, with the end device initiator bit set in the NWK frames it sends (R21 and later)
     EdInitiator,
 }
@@ -265,14 +263,11 @@ impl Button {
             }
         }
         let q = |id: NodeId| self.quality.iter().find(|x| x.0 == id).map(|x| x.1).unwrap_or(100);
-        let pick = match self.choice {
-            Choice::First => beacons.first().copied(),
-            Choice::PrevThenBest | Choice::EdInitiator => beacons.iter().find(|b| b.0 == self.parent_id).copied().or_else(|| {
-                let mut v = beacons.clone();
-                v.sort_by(|a, b| q(b.0).cmp(&q(a.0)).then(a.2.cmp(&b.2)));
-                v.first().copied()
-            }),
-        };
+        let pick = beacons.iter().find(|b| b.0 == self.parent_id).copied().or_else(|| {
+            let mut v = beacons.clone();
+            v.sort_by(|a, b| q(b.0).cmp(&q(a.0)).then(a.2.cmp(&b.2)));
+            v.first().copied()
+        });
         let heard: Vec<String> = beacons.iter().map(|b| format!("{} {:#06x} depth {}", net.name_of(b.0), b.1, b.2)).collect();
         let t = net.now();
         let Some((pid, pshort, _)) = pick else {
@@ -405,10 +400,6 @@ fn run_nodst(cx: &mut SimCtx) -> R<()> {
     run_with(cx, Choice::EdInitiator)
 }
 
-fn run_first(cx: &mut SimCtx) -> R<()> {
-    run_with(cx, Choice::First)
-}
-
 /// Neighbour table entries of a bulb about the button: (text, is a child entry).
 fn button_entry(net: &mut Net, bulb: &str) -> R<String> {
     let Some(s) = net.short_of_bulb(bulb) else { return Ok("?".into()) };
@@ -516,8 +507,7 @@ fn probe(net: &mut Net, b: &mut Button, label: &str) -> R<String> {
 
 fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
     let img = cx.image("bulb", "stock/stock-tw.bin");
-    // the Rust firmware, not a Telink stack: its images carry the board tag
-    let telink_free = img.bytes().map(|b| b.windows(16).any(|w| w == b"outglow-board:")).unwrap_or(false);
+    let telink_free = super::util::is_outglow(&img);
     let echo = cx.verbose > 0;
     let off_s: f64 = std::env::var("ENDDEV_OFF_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120.0);
     cx.say(&format!("image: {}; parent choice {choice:?}; parent off for {off_s} s", super::util::rel(&img)));

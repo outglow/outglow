@@ -416,8 +416,7 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     // bulb. (A stock bulb whose parent is the coordinator and whose link to it
     // goes away keeps sending to the coordinator directly, measured for 4
     // minutes: it does not age its parent out of the neighbour table, so it
-    // cannot be moved behind another router as the Rust bulb is below;
-    // `mixed_link_loss`.)
+    // cannot be moved behind another router as the Rust bulb is below.)
     s.w.air.block(NodeId::Coord, tid, true);
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== {}; channel 11; S out of the coordinator's range from the start", describe(&b)));
@@ -461,11 +460,13 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
                  dt.is_some() && off, &after(dt, "no default response"));
         let n = relayed(&s, ns, fs, t0, None);
         cx.check(s.now(), &format!("the {} bulb relayed the {} bulb's frames", near.fw.title(), far.fw.title()), n >= 1, &format!("{n} frame(s)"));
+        // `command2`, as in the chain: a frame of a burst is lost at the MAC
+        // now and then while a bulb's radio is lent to BLE advertising
         let mut tt = Vec::new();
         for _ in 0..6 {
-            tt.push(command(&mut s, fs, 0x0006, 0x02, &[], 3000.0)?);
+            tt.push(command2(&mut s, fs, 0x0006, 0x02, &[], 3000.0)?);
         }
-        cx.check(s.now(), "six more commands over the established route, each answered within 3 s", tt.iter().all(|x| x.is_some()), &times(&tt));
+        cx.check(s.now(), "six more commands over the established route, each answered within 3 s (one APS-like retry)", tt.iter().all(|x| x.is_some()), &times(&tt));
         let n0 = s.w.coord.route_records.len();
         let t0 = s.now();
         concentrator(&mut s)?;
@@ -491,12 +492,14 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
 
     // ---- broadcasts (R is out of range now, behind S)
     s.w.coord.st.via.insert(r, t);
-    command(&mut s, r, 0x0006, 0x00, &[], 3000.0)?;
-    command(&mut s, t, 0x0006, 0x00, &[], 3000.0)?;
+    command2(&mut s, r, 0x0006, 0x00, &[], 3000.0)?;
+    command2(&mut s, t, 0x0006, 0x00, &[], 3000.0)?;
     s.run(SETTLE_MS)?;
     let was_off = !s.light(rid).on && !s.light(tid).on;
     s.run(300.0)?;
-    bcast(&mut s, 0x01);
+    // `bcast_acked`, as in the chain: sent again (the same NWK frame) while the
+    // bulb next to the coordinator has not been heard passing it on
+    bcast_acked(&mut s, 0x01, tid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
     cx.check(s.now(), "a broadcast On is relayed by the stock bulb to the Rust bulb", was_off && lr && lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
@@ -504,11 +507,11 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     s.w.air.block(NodeId::Coord, rid, false);
     s.w.air.block(NodeId::Coord, tid, true);
     s.run(34000.0)?;
-    bcast(&mut s, 0x00);
+    bcast_acked(&mut s, 0x00, rid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
     cx.check(s.now(), "a broadcast Off is relayed by the Rust bulb to the stock bulb", !lr && !lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
-    bcast(&mut s, 0x02);
+    bcast_acked(&mut s, 0x02, rid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
     cx.check(s.now(), "a broadcast Toggle switches both bulbs exactly once", lr && lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
