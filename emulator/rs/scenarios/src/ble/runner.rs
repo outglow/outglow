@@ -141,6 +141,9 @@ pub fn run(a: &Args, on: &mut dyn FnMut(&Outcome)) -> Vec<Outcome> {
 
 /// The `ble` test binary's main.
 pub fn main_with(argv: &[String]) -> i32 {
+    if let Some(code) = crate::runner::sweep_main(argv, "ble-spec") {
+        return code;
+    }
     let a = match parse_args_with(argv, default_images) {
         Ok(a) => a,
         Err(e) => {

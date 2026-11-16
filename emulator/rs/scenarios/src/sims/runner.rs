@@ -82,6 +82,9 @@ pub fn main_with(argv: &[String]) -> i32 {
 
 /// `main_with` with scenarios defined outside this crate next to these.
 pub fn main_with_extra(argv: &[String], extra: Vec<SimDef>) -> i32 {
+    if let Some(code) = crate::runner::sweep_main(argv, "sims") {
+        return code;
+    }
     let weekly = argv.iter().any(|x| x == "--weekly");
     let argv: Vec<String> = argv.iter().filter(|x| *x != "--weekly").cloned().collect();
     let a = match parse_args_with(&argv, no_images) {

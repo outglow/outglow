@@ -10,8 +10,10 @@
 //! `--shard K/N` (the scenarios only: the K-th of N parts, for parallel CI jobs),
 //! `--expect NAME|FILE` (the committed verdicts the run must match, see [`Expect`];
 //! default on the default image: expect/<suite>-dimm.txt), `--no-expect`,
-//! `--write-expect` (rewrite that file from this run).
-//! Environment: SCENARIO_IMAGES=label=path,... SCENARIO_CPI, SCENARIO_JOBS (or RUST_TEST_THREADS), NO_COLOR.
+//! `--write-expect` (rewrite that file from this run), `--sweep N` (the run N times
+//! over other starts of the bulbs' system timer, see [`sweep_main`]).
+//! Environment: SCENARIO_IMAGES=label=path,... SCENARIO_CPI, SCENARIO_JOBS (or RUST_TEST_THREADS), NO_COLOR,
+//! TC32EMU_TICK_OFFSET (where the system timer starts, what `--sweep` varies).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -349,8 +351,102 @@ pub fn run(a: &Args, on: &mut dyn FnMut(&Outcome)) -> Vec<Outcome> {
     out
 }
 
+/// The system timer's start for run `j` (1-based) of `--sweep`: spread over
+/// the first 16 s of the timer (golden-ratio steps), so that the firmware's
+/// timer-seeded random numbers come out different in every run, while the
+/// timer stays far from its wrap (268 s) at power-on, as on the chip.
+pub fn sweep_offset(j: u32) -> u32 {
+    j.wrapping_mul(0x9E37_79B9) & 0x0FFF_FFF8
+}
+
+/// `--sweep N`: runs this test binary again N times with the same other
+/// arguments, each with the system timer of every emulated chip starting
+/// elsewhere (`TC32EMU_TICK_OFFSET`, `sweep_offset`), one run after the
+/// other; prints each run's output and then which runs failed where, with
+/// the command that repeats one. `None` without `--sweep` (a plain run).
+///
+/// A firmware draws its random advertising delays, back-offs and jitter
+/// from a seed stirred with the system timer, so another start of the timer
+/// gives other draws and so another timing of the same code: what a change
+/// of code layout does (CI's build put the advertising, and with it the
+/// connection, elsewhere than a local one, and a test that depended on where
+/// failed only there). The plain run is offset 0.
+pub fn sweep_main(argv: &[String], cargo_alias: &str) -> Option<i32> {
+    use std::io::BufRead;
+    let i = argv.iter().position(|x| x == "--sweep")?;
+    let n: u32 = match argv.get(i + 1).and_then(|v| v.parse().ok()) {
+        Some(n) if n > 0 => n,
+        _ => {
+            eprintln!("scenarios: --sweep needs a number of runs (1 or more)");
+            return Some(2);
+        }
+    };
+    let rest: Vec<String> = argv.iter().enumerate().filter(|(k, _)| *k != i && *k != i + 1).map(|(_, x)| x.clone()).collect();
+    if rest.iter().any(|x| x == "--write-expect" || x == "--json" || x == "--list") {
+        eprintln!("scenarios: --sweep runs the tests, not with --write-expect, --json or --list");
+        return Some(2);
+    }
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("scenarios: --sweep: {e}");
+            return Some(2);
+        }
+    };
+    let t0 = Instant::now();
+    let mut runs: Vec<(u32, i32, Vec<String>)> = Vec::new();
+    for j in 1..=n {
+        let off = sweep_offset(j);
+        println!("\n==== sweep {j}/{n}: TC32EMU_TICK_OFFSET={off:#x}");
+        let child = std::process::Command::new(&exe)
+            .args(&rest)
+            .env("TC32EMU_TICK_OFFSET", format!("{off:#x}"))
+            .stdout(std::process::Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("scenarios: --sweep: {e}");
+                return Some(2);
+            }
+        };
+        let mut failed = Vec::new();
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                println!("{line}");
+                // libtest's line of a failed test: `test NAME ... FAILED[, why]`
+                if let Some(name) = line.strip_prefix("test ").and_then(|l| l.split_once(" ... FAILED")).map(|(n, _)| n) {
+                    failed.push(name.to_string());
+                }
+            }
+        }
+        let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(1);
+        runs.push((off, code, failed));
+    }
+    println!("\n==== sweep over {n} timer offsets ({:.0} s)", t0.elapsed().as_secs_f64());
+    let mut bad = 0;
+    for (off, code, failed) in &runs {
+        if *code == 0 {
+            println!("  {off:#010x}  ok");
+            continue;
+        }
+        bad += 1;
+        let what = if failed.is_empty() { format!("exit code {code}") } else { failed.join(", ") };
+        println!("  {off:#010x}  FAILED: {what}");
+    }
+    if bad > 0 {
+        let args = rest.join(" ");
+        let (off, _, _) = runs.iter().find(|r| r.1 != 0).unwrap();
+        println!("{bad} of {n} runs failed; to repeat one: TC32EMU_TICK_OFFSET={off:#x} cargo {cargo_alias} -- {args}");
+    }
+    Some(if bad > 0 { 1 } else { 0 })
+}
+
 /// The test binary's main: list or run, print, exit code.
 pub fn main_with(argv: &[String]) -> i32 {
+    if let Some(code) = sweep_main(argv, "spec") {
+        return code;
+    }
     let a = match parse_args(argv) {
         Ok(a) => a,
         Err(e) => {

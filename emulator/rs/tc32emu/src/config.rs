@@ -198,6 +198,13 @@ pub struct Config {
     pub flash_tse_us: i64,
     pub flash_tbe32_us: i64,
     pub flash_tbe64_us: i64,
+    /// TC32EMU_TICK_OFFSET (default 0): where the system timer starts at
+    /// every reset. Not in Go. Firmware that seeds its random numbers from
+    /// the timer (advertising delays, back-offs, jitter, nonces) draws
+    /// other values, so a scenario runs on another timing of the same
+    /// code, as a change of code layout gives one (`--sweep` of the
+    /// scenario runners). Decimal or 0x hex, taken modulo 2^32.
+    pub tick_offset: u32,
 }
 
 impl Config {
@@ -280,6 +287,17 @@ impl Config {
             flash_tse_us: size_from_env("TC32EMU_FLASH_TSE_US", 0),
             flash_tbe32_us: size_from_env("TC32EMU_FLASH_TBE32_US", 0),
             flash_tbe64_us: size_from_env("TC32EMU_FLASH_TBE64_US", 0),
+            tick_offset: {
+                let s = env::var("TC32EMU_TICK_OFFSET").unwrap_or_default();
+                if s.is_empty() {
+                    0
+                } else {
+                    match parse_go_uint(&s) {
+                        Some(v) => v as u32,
+                        None => panic!("TC32EMU_TICK_OFFSET: {}", s),
+                    }
+                }
+            },
         }
     }
 

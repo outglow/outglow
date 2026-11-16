@@ -770,13 +770,13 @@ impl Machine {
         self.ms_base = 0.0;
         self.ms_base_cyc = 0;
         self.flash.busy_until = self.flash_busy_until(busy_left, busy_hz);
-        self.tick_base = 0;
+        self.tick_base = self.cfg.tick_offset;
         self.tick_base_cy = 0;
         self.stimer_on = false;
         self.stimer_cmp = 0;
         self.irq_latch = 0;
         self.gpio_req = false;
-        self.last_tick = 0;
+        self.last_tick = self.cfg.tick_offset & !7;
         self.tick2_base = 0;
         self.tmr_on = [false; 2];
         self.tmr_base = [0; 2];
