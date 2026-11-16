@@ -1,0 +1,11 @@
+# The expected verdicts of `cargo spec` on the Outglow image of the tunable white filament bulb (cargo xtask build --board ESMLFzm_w6_TW-4.63).
+# One line per test that does not PASS: TEST-ID  VERDICT  reason (a deviation, not applicable
+# by design, a known red test). Every test not listed must PASS. Any other verdict fails the
+# run, a test that newly passes too, so that this file always says what the image does.
+# Checked by: the nightly conformance job (cargo spec -- --image rust=target/tc32-tw/bulb-tc32.bin --expect zigbee-tw).
+# After an intended change: cargo spec -- --image rust=target/tc32-tw/bulb-tc32.bin --expect zigbee-tw --write-expect,
+# then replace every TODO it leaves with the reason (emulator/rs/scenarios/src/runner.rs, Expect).
+
+APS-RETRY-01  N/A           Outglow sends its responses without APS acknowledgement request, so no retransmission to count
+APS-RETRY-02  N/A           Outglow sends its responses without APS acknowledgement request, so no retransmission to time
+ZCL-LEVEL-03  N/A           OnOffTransitionTime (optional) not implemented; the test still requires the level to be reached

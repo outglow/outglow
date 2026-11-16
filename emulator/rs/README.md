@@ -69,6 +69,21 @@ be judged on this image). `--matrix` gives verdicts per image; the original
 firmware fails some clauses by design (certified against older revisions).
 `-v -v` logs the coordinator's events.
 
+On the default image the run is checked against the committed verdicts in
+`scenarios/expect/zigbee-dimm.txt` (`ble-dimm.txt` for `cargo ble-spec`): one
+line per test that does not pass, `TEST-ID  VERDICT  reason`; every test not
+listed must pass. Any other verdict fails the run, a test that newly passes
+too, and so does a run in which a session could not start or nothing passed.
+Another image names its file: `--expect zigbee-tw` (`scenarios/expect/NAME.txt`
+or a path); `--no-expect` turns the check off. After an intended change
+`--write-expect` rewrites the file from the run and leaves `TODO` where a
+reason has to be written; the check refuses a file with `TODO` in it.
+
+```sh
+cargo spec -- --write-expect                     # the dimmable image's baseline from this run
+cargo spec -- --image rust=target/tc32-tw/bulb-tc32.bin --expect zigbee-tw   # the tunable white image
+```
+
 Adding a test: a `fn(&mut Session) -> R<String>` in a module under
 `scenarios/src/spec/`, registered in its `tests()` with ID, document, clause
 and requirement; `expect(cond, msg)?` and `Stop::{Fail, Inconclusive,
