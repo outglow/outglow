@@ -309,7 +309,7 @@ pub fn run(a: Args) -> Result<()> {
         "outglow": {
             "commit": commit,
             "commit_date": git(&root, &["log", "-1", "--format=%cs"]),
-            "describe": git(&root, &["describe", "--tags", "--always"]),
+            "describe": git(&root, &["describe", "--tags", "--match", "v*", "--always"]),
             "url": format!("https://github.com/outglow/outglow/commit/{}", commit.trim_end_matches("+changes")),
         },
         "cpi": a.cpi,
