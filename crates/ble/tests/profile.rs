@@ -681,6 +681,9 @@ fn the_apps_zigbee_installation_pairs_and_is_told_it_is_done() {
         v.extend_from_slice(&whole[head..]);
         v
     };
+    // the key's write is 21 octets: more than ATT_MTU 23 leaves for a value,
+    // so the phone raises the MTU first (Android writes at most MTU - 3)
+    assert_eq!(rig.att(&[0x02, 247, 0]), [0x03, 64, 0]);
     rig.central().notifications.clear();
     let network = [0x03, 0x14, 0x31, 0x32, 0x36, 0x35, 0x34, 0x33, 0x32, 0x31, 0xc1, 0xa4, 0, 0, 0, 0, 0];
     rig.write(COMMAND, &long(&network));
