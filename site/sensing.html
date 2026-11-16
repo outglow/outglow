@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion sensing · Outglow</title>
+<meta name="description" content="How Outglow bulbs notice someone walking between them from the strength of the radio signal they send each other.">
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/src/style.css">
+<link rel="stylesheet" href="/src/sensing.css">
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="./"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
+  <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
+  <nav id="site-nav">
+    <a href="./">Overview</a>
+    <a href="why.html">Compare</a>
+    <a href="bulbs.html">Supported bulbs</a>
+    <a href="install.html">Install</a>
+    <a href="flasher/">Flasher</a>
+    <a href="console/">Console</a>
+    <a href="https://github.com/outglow/outglow">Source</a>
+  </nav>
+</header>
+<main>
+  <h1>How motion sensing works</h1>
+  <p class="lead">Bulbs that can hear each other can also tell when someone walks between them. A body absorbs and
+    reflects radio waves at 2.4 GHz, so the signal from one bulb to another wobbles while a person moves through it.
+    Outglow listens for that wobble. No camera, no extra sensor: only the radios the bulbs already have.</p>
+  <div class="note"><strong>Experimental.</strong> Motion sensing has been tuned and tested in the Outglow emulator on a
+    radio model built from signal levels measured between real bulbs. It has not yet run on a real bulb.</div>
+
+  <figure class="sense-figure">
+    <canvas id="room" aria-label="Three bulbs in a room exchanging short radio frames; a person walks across the link between two of them and the link lights up"></canvas>
+    <figcaption>
+      <span class="state" id="room-state">Empty</span>
+      Three bulbs send each other short frames (the moving dots). When someone crosses the line between two bulbs, that
+      link's signal starts to wobble and the bulbs report motion.
+      <button type="button" class="pause" id="pause" aria-pressed="false">Pause</button>
+    </figcaption>
+  </figure>
+
+  <h2>1. The bulbs talk to each other</h2>
+  <p>With sensing on, every bulb sends a short frame several times a second (5 by default). The frames go to a separate
+    network address of their own (PAN <code>0x5E55</code>), so the rest of your Zigbee network ignores them; they carry
+    nothing but the sender's light state.</p>
+  <p>Every bulb measures the signal strength (RSSI) of each of these frames it hears. Each sender it hears is one
+    <em>link</em>; a bulb keeps up to 10 of them. A link exists only between two bulbs that both have sensing on and
+    hear each other.</p>
+
+  <h2>2. From the signal to motion</h2>
+  <p>Below is one link, from bulb A to bulb B, as the receiving bulb sees it while the person above walks around. The
+    chart computes exactly what the firmware computes.</p>
+
+  <figure class="sense-figure">
+    <canvas id="link" aria-label="Signal strength of one link over the last ten seconds, its median, the threshold band, the weight of each sample and when the link reports motion"></canvas>
+    <figcaption class="legend">
+      <span><i class="k-sample"></i>signal strength of each frame</span>
+      <span><i class="k-median"></i>median of the 5 before</span>
+      <span><i class="k-band"></i>± threshold</span>
+      <span><i class="k-motion"></i>motion</span>
+    </figcaption>
+    <div class="sensitivity">
+      <label for="s">Sensitivity <output id="s-out">40</output></label>
+      <input type="range" id="s" min="1" max="100" value="40">
+      <p class="params" id="params">threshold 3 dB · M = 8 · held for 600 ms</p>
+    </div>
+  </figure>
+
+  <ol class="sense-steps">
+    <li><strong>One sample at a time.</strong> The receiver keeps at most 12.5 frames a second per link and ignores frames
+      weaker than −90 dBm.</li>
+    <li><strong>Compared with the recent past.</strong> Each new sample is compared with the median of the five before it.
+      The difference, in dB, divided by a <em>threshold</em> and rounded down, is the sample's weight: 0, 1, 2, or at
+      most 3.</li>
+    <li><strong>Enough wobble, for long enough.</strong> When the weights of the last 16 samples add up to at least
+      <em>M</em>, and keep doing so for a while, the link reports motion. A single disturbed frame is not enough.</li>
+    <li><strong>Sensitivity sets all three.</strong> One number from 1 to 100 picks the threshold, M and how long the rule
+      must hold (10 ms × (100 − sensitivity)): higher is more sensitive. Try the slider above. Each link has its own.</li>
+  </ol>
+
+  <h2>3. Presence</h2>
+  <p>The bulb reports <em>occupied</em> as soon as any of its links sees motion, and <em>unoccupied</em> once none has for
+    the off delay (30 s by default; the demo above uses 3 s). It reports through the standard Zigbee Occupancy Sensing
+    cluster (<code>0x0406</code>), so any Zigbee hub shows it like a motion sensor; the settings live in an Outglow
+    cluster (<code>0xFC5E</code>).</p>
+
+  <h2>4. Calibration</h2>
+  <p>Every link is noisy in its own way: distance, walls, Wi-Fi on the same frequencies. So every link gets its own
+    sensitivity:</p>
+  <ul class="sense-list">
+    <li><strong>Automatic, on the first day.</strong> For a day after sensing is switched on, the bulb watches every link
+      hour by hour. Then each link takes the sensitivity its quietest hour allowed: the most sensitive setting at which
+      nothing fired that hour.</li>
+    <li><strong>By hand.</strong> With the room empty, start a calibration: for 60 seconds the bulb records the noise and
+      gives each link the most sensitive setting at which the rule never fired, minus a margin.</li>
+    <li><strong>Self-tuning, if you want it.</strong> Once a day each link may move its sensitivity one step with its
+      noise, never more than two steps from where calibration put it.</li>
+  </ul>
+  <p>Setting a sensitivity yourself turns the automatic calibration off for that bulb.</p>
+
+  <h2>What it cannot do</h2>
+  <ul class="sense-list">
+    <li>Someone sitting still is not seen: it needs movement in the signal. That is why presence switches off after the
+      off delay.</li>
+    <li>It needs at least two bulbs with sensing on that hear each other, ideally with the room between them.</li>
+    <li>Radio goes through walls: a link can catch movement in the next room.</li>
+    <li>For 1.5 s after a bulb's light changes (its own or the sender's) the link ignores the signal.</li>
+    <li>Every bulb with sensing on adds its frames to the channel, 5 a second each, next to your Zigbee traffic.</li>
+  </ul>
+
+  <h2>Switching it on</h2>
+  <p>Sensing is switched off until you switch it on, in Zigbee2MQTT with the <a href="install.html#converter">Outglow
+    converter</a>. Switch it on for two or more bulbs in the same room, then let the first day calibrate it or calibrate
+    by hand with the room empty.</p>
+</main>
+<footer class="site">
+  Outglow is free software under the GNU GPL version 3 or later.
+  EGLO, AwoX, Telink and Zigbee are trademarks of their owners; Outglow is not affiliated with or endorsed by them.
+</footer>
+<script type="module" src="/src/sensing.ts"></script>
+<script type="module" src="/src/nav.ts"></script>
+</body>
+</html>
