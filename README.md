@@ -26,6 +26,12 @@ Written from scratch in Rust, with no vendor code: the chip start-up, the
 - **Bluetooth LE kept**: the bulb still speaks the vendor app's profile, so the
   vendor app and the BLE update path keep working; BLE can be switched off or
   limited to a window after power-on from Zigbee.
+- **Motion sensing (experimental, off until switched on)**: the bulbs can
+  notice people moving from how the radio signal between them changes, and
+  report it as occupancy. Switch it on in at least two bulbs in a room (the
+  converter's `motion_sensing`), then let it calibrate itself for a day, or
+  calibrate it by hand with the room empty. In the emulator only so far, not
+  yet run on a real bulb.
 - **Behaves like the original** where it matters: the same brightness and
   colour curves, the same power-on behaviour and factory-reset sequence
   (checked against the original firmware in the emulator).
@@ -62,6 +68,7 @@ cargo xtask toolchain                          # downloads llvm-tc32 (Linux x86-
 cargo xtask build                              # dimmable filament bulb
 cargo xtask build --board EGLO_ZM_TW-4.62      # any board of crates/bulb-tc32/boards.tsv
 cargo xtask build --all                        # every board
+cargo xtask build --no-sense                   # without motion sensing (target/tc32-nosense)
 ```
 
 Other tasks: `cargo xtask boards` (the board table from the stock profiles),
