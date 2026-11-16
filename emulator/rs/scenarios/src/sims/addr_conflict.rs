@@ -1483,14 +1483,17 @@ fn run_echo(cx: &mut SimCtx) -> R<()> {
 /// address (Network Status 0x0d from the coordinator, as an Ember coordinator
 /// broadcasts it) while K1 is on: what do K1 and the others do?
 ///
-/// The checks are what Outglow does (default image: the Rust firmware): K1
-/// learns the router's new address from its Device_annce and Link Status,
-/// lists it at the new address only, and every command through K1 reaches it
-/// (4 x 3). The stock firmware keeps the old address and loses every one of
-/// them (`--image bulb=stock/stock-dimm.bin`: those checks fail, as measured
-/// in the lab's docs/address-conflicts.md).
+/// Weekly, on the original firmware (the default image), the checks hold what
+/// was measured (the lab's docs/address-conflicts.md): K1 keeps the router's
+/// old address and every command through K1 to the new one is lost (0 of 4 x
+/// 3). On an Outglow image (`--image bulb=target/tc32/bulb-tc32.bin`) they
+/// hold what Outglow does, which the host test
+/// `a_neighbouring_router_that_takes_a_new_address_is_reached_under_it`
+/// (crates/zigbee/tests/conflicts.rs) checks for every change: the new address
+/// only, every command through.
 fn run_child(cx: &mut SimCtx) -> R<()> {
-    let img = cx.image("bulb", "target/tc32/bulb-tc32.bin");
+    let img = cx.image("bulb", "stock/stock-dimm.bin");
+    let outglow = super::util::is_outglow(&img);
     let echo = cx.verbose > 0;
     cx.say(&format!("image: {}", super::util::rel(&img)));
     let mut it = vec![
@@ -1540,7 +1543,7 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
     let new = net.ember_short();
     let t_move = net.ember.as_ref().unwrap().moves.last().map(|m| m.0).unwrap_or(0.0);
     let mut rows = Vec::new();
-    let (mut reached, mut sent, mut listed_new) = (0, 0, true);
+    let (mut reached, mut sent, mut listed_new, mut listed_old) = (0, 0, true, true);
     for (k, at) in [70.0, 180.0, 300.0, 600.0].iter().enumerate() {
         let wait = t_move + at * 1000.0 - net.now();
         if wait > 0.0 {
@@ -1568,6 +1571,7 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
             .map(|e| e.split(' ').next().and_then(|x| u16::from_str_radix(x.trim_start_matches("0x"), 16).ok()))
             .collect();
         listed_new &= !ikea_shorts.is_empty() && ikea_shorts.iter().all(|s| *s == Some(new));
+        listed_old &= !ikea_shorts.is_empty() && ikea_shorts.iter().all(|s| *s == Some(old));
         rows.push(format!("+{at:.0} s: {got} of 3 reached the ikea; K1 lists it as [{entry}]"));
     }
     for n in net.notes.clone() {
@@ -1577,15 +1581,23 @@ fn run_child(cx: &mut SimCtx) -> R<()> {
     let moves = net.ember.as_ref().unwrap().moves.len();
     cx.check(net.now(), "the ikea took a new address once (the conflict report)", moves == 1 && new != old,
              &format!("address changes {moves}: {old:#06x} -> {new:#06x}"));
-    cx.check(net.now(), "after the ikea moved: K1 lists it at its new address only (70 s, 3, 5 and 10 min later)", listed_new,
-             &rows.join(" | "));
-    cx.check(net.now(), "after the ikea moved: every command through K1 reaches it", reached == sent,
-             &format!("{reached} of {sent}: {}", rows.join(" | ")));
     // pairs stated after the conflict report (before it, a pair of a bulb not yet
     // announced counts as unknown: the ground truth learns it from its frames)
     let bad: Vec<String> = net.bad.iter().filter(|b| b.0 >= mark).map(|b| format!("{:#06x} = {:#018x} ({})", b.1.short, b.1.ext, b.2)).collect();
-    cx.check(net.now(), "no frame after the conflict report pairs an address with another device's IEEE address", bad.is_empty(),
-             &format!("bad pairs since the report {} [{}], before it {}", bad.len(), bad.join("; "), net.bad.len() - bad.len()));
+    let pairs = format!("bad pairs since the report {} [{}], before it {}", bad.len(), bad.join("; "), net.bad.len() - bad.len());
+    if outglow {
+        cx.check(net.now(), "after the ikea moved: K1 lists it at its new address only (70 s, 3, 5 and 10 min later)", listed_new,
+                 &rows.join(" | "));
+        cx.check(net.now(), "after the ikea moved: every command through K1 reaches it", reached == sent,
+                 &format!("{reached} of {sent}: {}", rows.join(" | ")));
+        cx.check(net.now(), "no frame after the conflict report pairs an address with another device's IEEE address", bad.is_empty(), &pairs);
+    } else {
+        cx.check(net.now(), "original firmware, as measured: K1 keeps the ikea's old address (70 s, 3, 5 and 10 min later)", listed_old,
+                 &rows.join(" | "));
+        cx.check(net.now(), "original firmware, as measured: every command through K1 to the new address is lost", reached == 0,
+                 &format!("{reached} of {sent}: {}", rows.join(" | ")));
+        cx.check(net.now(), "original firmware, as measured: K1 states the stale pair (old address, the ikea's IEEE)", !bad.is_empty(), &pairs);
+    }
     Ok(())
 }
 
@@ -1906,12 +1918,13 @@ fn run_house(cx: &mut SimCtx) -> R<()> {
 /// own IEEE address). Does the bulb take it for an address conflict (R22
 /// 3.6.1.9.2: a new broadcast record with its own address as source)?
 ///
-/// Outglow (the default image) must not: the copy carries its own IEEE address
-/// or one of its recent sequence numbers (`own_late_copy` in the zigbee
-/// crate), so no copy may move it or make it report a conflict. The stock
-/// firmware does not apply the rule at all and passes too.
+/// Neither firmware may: the original one (the default image, weekly) does not
+/// apply the rule at all; Outglow recognises the copy by its own IEEE address
+/// or one of its recent sequence numbers (`own_late_copy` in the zigbee crate,
+/// checked by the host test `late_copies_of_its_own_announcement_are_no_conflict`
+/// in crates/zigbee/tests/conflicts.rs).
 fn run_victim(cx: &mut SimCtx) -> R<()> {
-    let img = cx.image("bulb", "target/tc32/bulb-tc32.bin");
+    let img = cx.image("bulb", "stock/stock-dimm.bin");
     cx.say(&format!("image: {}", super::util::rel(&img)));
     let b = bulb_node(&img, cx.cpi, "B", 0xa4c1380000000071)?;
     let mut net = Net::new(b, Coord::new_plain(11, NWK_KEY), cx.verbose > 0);
@@ -2025,14 +2038,17 @@ fn run_victim(cx: &mut SimCtx) -> R<()> {
 /// does it find the network, how (rejoin or a new association), and with
 /// which address? Once with the network closed to new devices, once open.
 ///
-/// The checks are what Outglow does (default image: the Rust firmware): A
-/// follows the change; B, hearing nothing on channel 11, scans the channels,
-/// finds the network on 25, rejoins it secured (no new association) and
-/// announces itself there with the address it had, within the wait
-/// (`CH_WAIT_S`, default 240 s; measured 183 s). The stock firmware stays
-/// silent on channel 11 (`--image bulb=stock/stock-dimm.bin`: B's checks fail).
+/// A follows the change. Weekly, on the original firmware (the default image),
+/// the checks hold what was measured: B stays on channel 11 and silent (no
+/// Beacon Request, no rejoin) for the whole wait (`CH_WAIT_S`, default 240 s).
+/// On an Outglow image they hold what Outglow does, which the host test
+/// `a_bulb_off_during_a_channel_change_rejoins_on_the_new_channel_while_the_network_is_closed`
+/// (crates/zigbee/tests/conflicts.rs) checks for every change: B scans the
+/// channels, finds the network on 25, rejoins it secured (no new association)
+/// with the address it had (183 s here).
 fn run_channel(cx: &mut SimCtx) -> R<()> {
-    let img = cx.image("bulb", "target/tc32/bulb-tc32.bin");
+    let img = cx.image("bulb", "stock/stock-dimm.bin");
+    let outglow = super::util::is_outglow(&img);
     cx.say(&format!("image: {}", super::util::rel(&img)));
     for open in [false, true] {
         let a = bulb_node(&img, cx.cpi, "A", 0xa4c1380000000081)?;
@@ -2097,8 +2113,16 @@ fn run_channel(cx: &mut SimCtx) -> R<()> {
                  &format!("A {a0:#06x}"));
         cx.check(
             net.now(),
-            &format!("B, off during the change, rejoins on channel 25 with its address, no new association (network {net_state})"),
-            back && b1 == Some(b0) && rejoin > 0 && assoc == 0,
+            &if outglow {
+                format!("B, off during the change, rejoins on channel 25 with its address, no new association (network {net_state})")
+            } else {
+                format!("original firmware, as measured: B, off during the change, stays silent on channel 11 (network {net_state})")
+            },
+            if outglow {
+                back && b1 == Some(b0) && rejoin > 0 && assoc == 0
+            } else {
+                !back && chans == [11] && beacons == 0 && rejoin == 0 && assoc == 0
+            },
             &format!(
                 "A followed to 25: {a_on_25} (address {a0:#06x}); B: {} after {:.0} s; channels it used {chans:?}; Beacon Requests {beacons}, \
                  Association Requests {assoc}, Rejoin Requests {rejoin}; address before {b0:#06x}, after {}",

@@ -37,15 +37,17 @@ fn selected(a: &Args, weekly: bool, name: &str) -> bool {
 
 /// Rough wall time of the long scenarios [s] (one core, cpi 3), to balance
 /// `--shard` and to start the long ones first; every other scenario counts
-/// as `OTHER_S`. The weekly ones (house, echo, enddev_wallswitch*: the
-/// original firmware) are never sharded, only started first.
+/// as `OTHER_S`. The weekly ones (house, child, echo, channel,
+/// enddev_wallswitch*: the original firmware) are never sharded, only
+/// started first.
 const COST_S: &[(&str, u32)] = &[
     ("addr_conflict_house", 620),
+    ("addr_conflict_child", 260),
     ("addr_conflict_echo", 215),
     ("migrate", 190),
+    ("addr_conflict_channel", 160),
     ("enddev_wallswitch", 115),
     ("back_to_stock_ble", 95),
-    ("addr_conflict_child", 65),
     ("rust_sense", 50),
 ];
 const OTHER_S: u32 = 20;
@@ -259,7 +261,8 @@ mod tests {
         let weekly = pick(&[], true);
         assert_eq!(weekly.len(), super::super::WEEKLY.len());
         assert_eq!(pick(&["addr_conflict_house"], false), ["addr_conflict_house"]);
-        assert_eq!(pick(&["addr_conflict_ch"], false), ["addr_conflict_child", "addr_conflict_channel"]);
+        assert_eq!(pick(&["addr_conflict_ch"], false), Vec::<String>::new());
+        assert_eq!(pick(&["addr_conflict_ch"], true), ["addr_conflict_child", "addr_conflict_channel"]);
         assert_eq!(pick(&["--exact", "rust_fw", "sims::ota_rust"], false), ["rust_fw", "ota_rust"]);
         assert_eq!(pick(&["house"], true), ["addr_conflict_house"]);
     }

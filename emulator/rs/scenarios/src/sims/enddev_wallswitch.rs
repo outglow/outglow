@@ -507,10 +507,7 @@ fn probe(net: &mut Net, b: &mut Button, label: &str) -> R<String> {
 
 fn run_with(cx: &mut SimCtx, choice: Choice) -> R<()> {
     let img = cx.image("bulb", "stock/stock-tw.bin");
-    // the Rust firmware, not a Telink stack: its images carry the board tag
-    // (outglow_image::board::TAG)
-    const TAG: &[u8] = b"outglow-board:";
-    let telink_free = img.bytes().map(|b| b.windows(TAG.len()).any(|w| w == TAG)).unwrap_or(false);
+    let telink_free = super::util::is_outglow(&img);
     let echo = cx.verbose > 0;
     let off_s: f64 = std::env::var("ENDDEV_OFF_S").ok().and_then(|v| v.parse().ok()).unwrap_or(120.0);
     cx.say(&format!("image: {}; parent choice {choice:?}; parent off for {off_s} s", super::util::rel(&img)));

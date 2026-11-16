@@ -15,6 +15,13 @@ pub fn hex_list(v: &[u16]) -> String {
     format!("[{}]", v.iter().map(|x| format!("'{x:#x}'")).collect::<Vec<_>>().join(", "))
 }
 
+/// An Outglow (Rust firmware) image, not a Telink stack: it carries the board
+/// tag (outglow_image::board::TAG).
+pub fn is_outglow(img: &Image) -> bool {
+    const TAG: &[u8] = b"outglow-board:";
+    img.bytes().map(|b| b.windows(TAG.len()).any(|w| w == TAG)).unwrap_or(false)
+}
+
 /// The image path relative to the repository root (`os.path.relpath(path, REPO)`).
 pub fn rel(i: &Image) -> String {
     let root = crate::runner::repo_root();
