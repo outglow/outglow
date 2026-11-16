@@ -391,14 +391,17 @@ fn broadcast_relay(s: &mut Session) -> R<String> {
     let i = s.mark();
     let r = s.tx_zcl(0x0003, 0x01, &[], Tx::new().dst(0xFFFD).ddr().radius(5));
     s.run(300.0)?;
-    let Some(orig) = s
-        .frames(i, Some(NodeId::Coord), |f| f.nwk.as_ref().is_some_and(|n| n.seq == r.nwk_seq && n.dst == 0xFFFD))
-        .into_iter()
-        .next()
-    else {
+    // (a copy that began while the bulb's radio was lent to BLE goes again: `World::ble_retry`)
+    let copies = s.frames(i, Some(NodeId::Coord), |f| f.nwk.as_ref().is_some_and(|n| n.seq == r.nwk_seq && n.dst == 0xFFFD));
+    if copies.is_empty() {
         return Err(Stop::Error("StopIteration: the Trust Center's broadcast is not on the air".into()));
-    };
+    }
     let rel = s.frames(i, DUT, |f| nwk_is(f, 0, 0xFFFD, r.nwk_seq));
+    // the copy the bulb passed on: the last one before its retransmission
+    let orig = match rel.first() {
+        Some(f) => copies.iter().filter(|c| c.t1 <= f.t0).last().unwrap_or(&copies[0]).clone(),
+        None => copies[0].clone(),
+    };
     expect(!rel.is_empty(), "the broadcast was not retransmitted")?;
     let f = &rel[0];
     let n = f.nwk.as_ref().unwrap();

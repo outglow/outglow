@@ -203,7 +203,12 @@ fn run_group(image: &Image, session: &str, tests: &[&Test], cpi: i64, verbose: u
         let _ = out.send(Outcome { image: image.label.clone(), id, verdict, obs, sim_s });
     };
     let mut s = match Session::new(image, SessionOpts { cpi, join: def.join, log, tc: def.tc, ..Default::default() }) {
-        Ok(s) => s,
+        Ok(mut s) => {
+            // a broadcast lost to the bulb's BLE event is sent again (`World::ble_retry`)
+            s.w.dut_rx_log();
+            s.w.ble_retry = true;
+            s
+        }
         Err(e) => {
             let (v, why) = match e {
                 Stop::Error(m) => (Verdict::Error, m),

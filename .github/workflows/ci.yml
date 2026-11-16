@@ -175,6 +175,46 @@ jobs:
       - name: Scenarios (the long ones with the original firmware among them)
         run: cargo sims -- --shard ${{ matrix.shard }}/6
 
+  # what pull requests do not run: the Zigbee conformance tests at full
+  # fidelity (pull requests: --cpi 24), the Bluetooth conformance tests, and
+  # the Zigbee2MQTT converter against the published zigbee-herdsman-converters
+  firmware-nightly-conformance:
+    name: Conformance (full fidelity) and the Zigbee2MQTT converter
+    needs: nightly-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/tc32-toolchain
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-every
+          path: target
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Zigbee conformance
+        run: cargo spec
+      # gatt_cccd_gates_notifications: Outglow notifies with the descriptor off
+      # on purpose, as the stock does, because the vendor app never writes it
+      # (see the comparison page's losses)
+      - name: Bluetooth conformance (but for the vendor app's notifications)
+        run: cargo ble-spec -- --skip gatt_cccd_gates_notifications
+      - name: The Zigbee2MQTT converter against zigbee-herdsman-converters
+        env:
+          ZHC_VERSION: 26.132.0
+        run: |
+          mkdir -p "$RUNNER_TEMP/zhc" && cd "$RUNNER_TEMP/zhc"
+          npm init -y >/dev/null && npm install --silent "zigbee-herdsman-converters@$ZHC_VERSION"
+          cd "$GITHUB_WORKSPACE/emulator/rs"
+          cargo run -q --release -p scenarios --example device_model -- rust=../../target/tc32/bulb-tc32.bin > "$RUNNER_TEMP/model.json"
+          cd "$GITHUB_WORKSPACE"
+          ZHC="$RUNNER_TEMP/zhc/node_modules/zigbee-herdsman-converters" node tools/z2m-converter-check.mjs "$RUNNER_TEMP/model.json"
+
   firmware-nightly-tw:
     name: Tunable white scenarios
     needs: nightly-build
