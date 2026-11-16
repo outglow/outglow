@@ -120,3 +120,36 @@ fn a_reset_that_is_not_a_power_on_does_not_count() {
     assert_eq!(c.store().w, before);
     assert_eq!(c.step(), 0);
 }
+
+#[test]
+fn a_count_the_stock_firmware_left_carries_on() {
+    // the stock firmware walks the same words; past slot 0 its layout is this one's
+    let mut store = Words::new(64);
+    store.w[..3].fill(0x0000);
+    store.w[3] = 0xFFF8; // three short power-ons
+    let (store, _) = power(store, 12);
+    assert_eq!(store.w[3], 0xFFE0);
+    let (store, _) = power(store, 12);
+    let (_, factory) = power(store, 1);
+    assert!(factory);
+}
+
+#[test]
+fn a_sector_that_is_not_as_this_counter_leaves_it_starts_over() {
+    let starts_over = |store: Words| {
+        let (store, factory) = power(store, 1);
+        assert!(!factory, "{:04X?}", store.w);
+        assert_eq!(store.erases, 1);
+        assert_eq!(store.w[..3], [0x0000, 0xFFFE, 0xFFFF]);
+    };
+    // a count in slot 0, as the stock firmware starts a fresh sector
+    let mut store = Words::new(16);
+    store.w[0] = 0xFF80;
+    starts_over(store);
+    // stray bits after the active word, as an erase cut short leaves them
+    let mut store = Words::new(16);
+    store.w[0] = 0x0000;
+    store.w[1] = 0xFF80;
+    store.w[9] = 0xFFFE;
+    starts_over(store);
+}

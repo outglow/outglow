@@ -4,9 +4,10 @@
 //!
 //! Every store is run once and its flash operations recorded; then, for each
 //! operation, the flash is rebuilt as it was just before it and the power is
-//! cut there: before the operation, after it, and part way through it (a page
-//! program with only a prefix of its bytes or bits, or random bits, done; an
-//! erase with half of the sector or random bits erased). After each cut the
+//! cut there: before the operation, after it, and part way through it
+//! (`bulb_sim::cut`: a page program with only a prefix of its bytes or bits,
+//! or random bits, done; an erase with half of the sector, random bits or all
+//! but a few bits erased). After each cut the
 //! bulb "boots" on that flash: the record it finds must be the one being
 //! stored or the one before it, never none once a record had been stored.
 //! From many of the cut states the store then carries on through more sector
@@ -19,25 +20,12 @@
 use bulb_core::config::{Config, BLOCK_LEN};
 use bulb_core::store::LightLog;
 use bulb_core::{Bulb, Command, PowerOnBehavior};
+use bulb_sim::cut::{cuts, Rng};
 use bulb_sim::{FlashOp, MockClock, MockPwm, MockRadio, NorFlash};
 
 const A: usize = 0xF_0000;
 const B: usize = 0xF_4000;
 type Rec = [u8; BLOCK_LEN];
-
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    fn byte(&mut self) -> u8 {
-        self.next() as u8
-    }
-}
 
 fn medium(size: usize) -> NorFlash {
     NorFlash::new(A, B + size - A, size)
@@ -125,52 +113,6 @@ impl Store for OldStore {
         }
         Some(self.slot(self.next - BLOCK_LEN)).filter(|r| Config::decode(r).is_some())
     }
-}
-
-/// The flash after a cut during `op`, for every way of cutting it this test knows.
-fn cuts(at: &NorFlash, op: &FlashOp, rng: &mut Rng) -> Vec<(String, NorFlash)> {
-    let mut out = Vec::new();
-    let mut part = |label: String, undone: &mut dyn FnMut(usize, u8) -> u8| {
-        let f = at.snapshot();
-        f.apply_part(op, undone);
-        out.push((label, f));
-    };
-    part("before".into(), &mut |_, _| 0xFF);
-    part("after".into(), &mut |_, _| 0);
-    match op {
-        FlashOp::Program { data, .. } => {
-            let n = data.len();
-            for k in 1..n {
-                part(format!("{k} of {n} bytes programmed"), &mut |i, _| if i < k { 0 } else { 0xFF });
-            }
-            for bit in (1..n * 8).step_by(3) {
-                part(format!("{bit} of {} bits programmed", n * 8), &mut |i, _| {
-                    let done = bit.saturating_sub(i * 8).min(8);
-                    (0xFFu16 << done) as u8
-                });
-            }
-            for k in 0..8 {
-                let masks: Vec<u8> = (0..n).map(|_| rng.byte()).collect();
-                part(format!("random bits programmed #{k}"), &mut |i, _| masks[i]);
-            }
-        }
-        FlashOp::Erase { .. } => {
-            let size = at.sector_size();
-            part("first half erased".into(), &mut |i, _| if i < size / 2 { 0 } else { 0xFF });
-            part("second half erased".into(), &mut |i, _| if i < size / 2 { 0xFF } else { 0 });
-            for k in 0..6 {
-                let mut r = Rng(rng.next() | 1);
-                // sparse, even and dense leftovers
-                let density = k % 3;
-                part(format!("random bits erased #{k}"), &mut |_, _| match density {
-                    0 => r.byte() & r.byte(),
-                    1 => r.byte(),
-                    _ => r.byte() | r.byte(),
-                });
-            }
-        }
-    }
-    out
 }
 
 #[derive(Default, Debug)]

@@ -6,6 +6,9 @@
 //! the network.
 
 #![forbid(unsafe_code)]
+
+pub mod cut;
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
