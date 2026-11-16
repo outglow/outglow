@@ -53,9 +53,37 @@
     <li>Not there after a few minutes? <a href="#reset">Reset it</a> and permit joining again.</li>
     <li>The bulb shows up as <code>outglow-dimm</code>, <code>outglow-tw</code> or similar. If it was already
       in Zigbee2MQTT before, it is simply interviewed again.</li>
-    <li>To see the diagnostics and the Bluetooth settings, add the external converter
-      <a href="https://github.com/outglow/outglow/blob/main/z2m/outglow.mjs"><code>outglow.mjs</code></a>.</li>
+    <li>Optional: for all the diagnostics, the start-up brightness and the motion sensing entities, add
+      <a href="#converter">the Outglow converter</a>. Without it Zigbee2MQTT still shows the light, the router's
+      main values and the settings.</li>
   </ol>
+
+  <h3 id="converter">The Zigbee2MQTT converter (optional)</h3>
+  <p>An external converter, <a href="z2m/outglow.mjs"><code>outglow.mjs</code></a>, tells Zigbee2MQTT about everything
+    the bulb offers: the router diagnostics grouped by topic, the start-up brightness, and, on bulbs built with motion
+    sensing, its entities. It applies only to bulbs running Outglow. It needs Zigbee2MQTT 2.x; from version 2.11,
+    allow external converters first in <code>configuration.yaml</code>:</p>
+<pre><code>advanced:
+  enable_external_js: true</code></pre>
+  <p>Then install it one of these ways.</p>
+  <p><strong>One command, any installation</strong> (needs <code>curl</code>, <code>jq</code> and
+    <code>mosquitto_pub</code>; add <code>-u</code>/<code>-P</code> if your broker has a password, and change
+    <code>zigbee2mqtt</code> if you use another base topic):</p>
+<pre><code>curl -fsSL https://outglow.github.io/z2m/outglow.mjs \
+  | jq -Rs '{name: "outglow.mjs", code: .}' \
+  | mosquitto_pub -h YOUR_BROKER -t zigbee2mqtt/bridge/request/converter/save -s</code></pre>
+  <p>Zigbee2MQTT saves it in its <code>external_converters</code> folder and loads it. To check:
+    <code>mosquitto_sub -h YOUR_BROKER -t zigbee2mqtt/bridge/converters -C 1</code> lists
+    <code>outglow.mjs</code>. To remove it, send <code>{"name": "outglow.mjs"}</code> to
+    <code>zigbee2mqtt/bridge/request/converter/remove</code>.</p>
+  <p><strong>Home Assistant add-on:</strong> in the Zigbee2MQTT frontend, open <em>Settings → Dev console → External
+    converters</em>, add one named <code>outglow.mjs</code> and paste the file's contents.</p>
+  <p><strong>By hand:</strong> put the file in the <code>external_converters</code> folder next to Zigbee2MQTT's
+    <code>configuration.yaml</code> (Docker: <code>./data/external_converters/</code>, a Linux install:
+    <code>/opt/zigbee2mqtt/data/external_converters/</code>) and restart Zigbee2MQTT.</p>
+  <p>A bulb that was already in Zigbee2MQTT picks the converter up after Zigbee2MQTT restarts or after you interview it
+    again. More in <a href="https://www.zigbee2mqtt.io/advanced/more/external_converters.html">Zigbee2MQTT's guide to
+    external converters</a>.</p>
 
   <h2 id="reset">Factory reset</h2>
   <p>A bulb has no button, so the reset is a pattern of switching it on and off at the wall: three short power-ons,

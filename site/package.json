@@ -6,7 +6,7 @@
   "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && mkdir -p dist/ota && cp ../ota/index.json dist/ota/index.json",
+    "build": "tsc --noEmit && vite build && mkdir -p dist/ota && cp ../ota/index.json dist/ota/index.json && mkdir -p dist/z2m && cp ../z2m/outglow.mjs dist/z2m/outglow.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "boards": "cd .. && cargo xtask boards"
