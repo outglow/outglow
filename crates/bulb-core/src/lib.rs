@@ -17,6 +17,7 @@ pub mod config;
 pub mod curve;
 pub mod hal;
 pub mod light;
+pub mod nv;
 pub mod reset;
 pub mod store;
 

@@ -116,7 +116,7 @@ pub extern "C" fn bulb_idle(until: u32) {
 /// the BLE mesh network; the frame counters stay. (The power cycle sequence
 /// at the start, and the device page's command before its restart.)
 pub(crate) fn factory_reset() {
-    nv::Nv::factory_reset(zigbee::hal::NvItem::Counters as u8);
+    nv::open().forget_all_but(zigbee::hal::NvItem::Counters as u8);
     board::FlashStore::erase();
     #[cfg(feature = "ble")]
     ble::erase_settings();
