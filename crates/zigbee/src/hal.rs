@@ -274,7 +274,9 @@ pub trait Hal {
     /// Reads an item; `None` when it was never stored.
     fn nv_load(&mut self, item: NvItem, buf: &mut [u8]) -> Option<usize>;
     fn nv_store(&mut self, item: NvItem, data: &[u8]);
-    /// Forgets every item (leaving the network, factory reset).
+    /// Forgets every item (leaving the network, factory reset). The stack
+    /// stores the frame counters again right after; a store may keep them
+    /// through instead, so that a power cut in between cannot lose them.
     fn nv_erase(&mut self);
 
     /// Stores two items; where the store can, in one write (the flash

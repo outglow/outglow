@@ -20,3 +20,17 @@ members = ["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble",
 opt-level = "z"
 lto = true
 panic = "abort"
+
+# The host tests of these crates run long simulations (power cuts, OTA
+# transfers, a day of motion sensing): optimised, they take a tenth of the
+# time. Overflow checks and debug assertions stay on (they are the dev
+# profile's, not the opt level's). The firmware image is built by its own
+# package (crates/bulb-tc32) with its own profile and is not affected.
+[profile.dev.package.sense]
+opt-level = 3
+[profile.dev.package.zigbee]
+opt-level = 3
+[profile.dev.package.bulb-core]
+opt-level = 3
+[profile.dev.package.bulb-sim]
+opt-level = 3

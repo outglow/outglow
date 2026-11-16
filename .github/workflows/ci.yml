@@ -35,7 +35,7 @@ jobs:
       - name: Board tables up to date
         run: cargo xtask boards --check
       - name: Emulator unit tests
-        run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble
+        run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble && cargo test --manifest-path emulator/rs/Cargo.toml -p scenarios --lib
 
   site:
     name: Website and flasher

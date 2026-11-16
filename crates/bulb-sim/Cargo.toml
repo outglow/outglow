@@ -7,3 +7,10 @@ description = "Bulb hardware emulator: HAL mocks (PWM, clock, flash, radio) + te
 
 [dependencies]
 bulb-core = { path = "../bulb-core" }
+
+[dev-dependencies]
+# the item ids of the Zigbee stack's store (`NvItem::MAX_ID`), with every
+# feature as in the firmware image
+zigbee = { path = "../zigbee", features = ["sense"] }
+# images finalised as the build finalises them: the staging check's oracle
+outglow-image = { path = "../outglow-image" }

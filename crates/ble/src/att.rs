@@ -114,6 +114,14 @@ const READ: u8 = 0x02;
 const WRITE_NO_RSP: u8 = 0x04;
 const WRITE: u8 = 0x08;
 const NOTIFY: u8 = 0x10;
+const INDICATE: u8 = 0x20;
+
+/// The bits of a Client Characteristic Configuration a characteristic with
+/// `properties` takes (Core Vol 3 Part G 3.3.3.3, Table 3.11: Notification
+/// only with Notify, Indication only with Indicate); the others are not kept.
+const fn cccd_bits(properties: u8) -> u8 {
+    (if properties & NOTIFY != 0 { 0x01 } else { 0 }) | (if properties & INDICATE != 0 { 0x02 } else { 0 })
+}
 
 const DECL_STATUS: [u8; 19] = declaration(READ | WRITE | NOTIFY, HANDLE_STATUS as u8, 0x11);
 const DECL_COMMAND: [u8; 19] = declaration(READ | WRITE | WRITE_NO_RSP, HANDLE_COMMAND as u8, 0x12);
@@ -517,7 +525,9 @@ impl<H: Hal> Ble<H> {
                 }
                 // notifications enabled the standard way count like the app's own switch
                 let was = self.mesh_status_enabled();
-                self.host.configuration.copy_from_slice(value);
+                // the write is taken; what the status characteristic (Notify
+                // only) cannot do is not kept, so the Indication bit reads 0
+                self.host.configuration = [value[0] & cccd_bits(DECL_STATUS[0]), 0];
                 self.mesh_status_switched(was);
             }
             Value::Command => self.mesh_command_write(value),

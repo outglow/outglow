@@ -14,6 +14,15 @@
 //!
 //! That makes the sequence: power-ons of 1, 1, 1, 12 and 12 seconds, then one
 //! more. A watchdog or software reset is not a power-on and does not count.
+//!
+//! A power cut can interrupt any write; none may bring the reset nearer
+//! (crates/bulb-sim/tests/reset_power_cut.rs). A count goes one bit at a
+//! time, so it is either taken or not. A word is closed top bit first, so
+//! that what is left of the rest is never a count. Slot 0 is zeroed after
+//! every erase of the sector and never holds a count, and the words after
+//! the active one must be untouched: a sector that is not so (an erase cut
+//! short, or the stock firmware's counter in slot 0) is started over. The
+//! stock firmware reads this layout as its own (the first non-zero word).
 
 /// The words of the counter in non-volatile memory.
 pub trait WordStore {
@@ -52,22 +61,21 @@ impl<S: WordStore> PowerCycles<S> {
     /// reset sequence.
     pub fn power_on(store: S) -> (Self, bool) {
         let mut s = PowerCycles { store, slot: 0, open: false, step: 0, long_done: false };
-        let mut active = None;
-        for slot in 0..s.store.slots() {
-            let w = s.store.read(slot);
-            if w != 0 {
-                active = Some((slot, w));
-                break;
-            }
-        }
+        let slots = s.store.slots();
+        let active = (1..slots).find(|&k| s.store.read(k) != 0);
+        // Slot 0 is zeroed right after every erase and is never a count, and
+        // the words after the active one are untouched: an erase cut short
+        // leaves a mix of bits that fails either test (or, from another
+        // firmware, a counter in another place).
+        let sound = s.store.read(0) == 0 && active.map_or(true, |a| (a + 1..slots).all(|k| s.store.read(k) == 0xFFFF));
         let w = match active {
-            Some((slot, w)) => {
+            Some(slot) if sound => {
                 s.slot = slot;
-                w
+                s.store.read(slot)
             }
-            None => {
-                // every word used up
-                s.store.erase();
+            // every word used up, or not a counter as this one leaves it
+            _ => {
+                s.restart();
                 0xFFFF
             }
         };
@@ -98,13 +106,32 @@ impl<S: WordStore> PowerCycles<S> {
         PowerCycles { store, slot: 0, open: false, step: 0, long_done: true }
     }
 
+    /// Closes the active word (0x0000) and moves to the next one.
+    ///
+    /// The top bit goes first, alone: a program cut short by a power loss
+    /// leaves any mix of the bits it was clearing, and with the top bit
+    /// still set such a mix can read as a count further on than the word
+    /// was (0xFFF8 cut on its way to 0x0000 reads 0xFF80 when its low bits
+    /// went first), even as the complete sequence: a factory reset at the
+    /// next power-on. A single bit is either cleared or not; once it is, no
+    /// mix of the rest is a count.
     fn next(&mut self) {
+        self.store.write(self.slot, 0x7FFF);
         self.store.write(self.slot, 0x0000);
         self.slot += 1;
         if self.slot >= self.store.slots() {
-            self.store.erase();
-            self.slot = 0;
+            self.restart();
         }
+    }
+
+    /// Starts the sector over: erased (unless it is blank), slot 0 zeroed as
+    /// the sign that the erase completed, the count in slot 1.
+    fn restart(&mut self) {
+        if (0..self.store.slots()).any(|k| self.store.read(k) != 0xFFFF) {
+            self.store.erase();
+        }
+        self.store.write(0, 0x0000);
+        self.slot = 1;
     }
 
     fn commit(&mut self) {

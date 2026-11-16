@@ -492,6 +492,30 @@ fn notifications_can_be_enabled_the_standard_way_alone() {
 }
 
 #[test]
+fn the_client_configuration_keeps_only_the_bits_the_characteristic_has() {
+    let mut rig = connected(DIMMABLE);
+    assert!(rig.login(b"unpaired", b"1234"));
+    // the status characteristic notifies and does not indicate: the
+    // Indication bit (and every bit above) is taken, not kept
+    for (written, kept) in [([2u8, 0u8], [0u8, 0u8]), ([3, 0], [1, 0]), ([0xFF, 0xFF], [1, 0]), ([1, 0], [1, 0]), ([0, 0], [0, 0])] {
+        rig.write(0x13, &written);
+        assert_eq!(rig.read(0x13), kept, "{written:02x?}");
+    }
+    // what the loop turned on has gone out
+    rig.run(400);
+    rig.statuses();
+    // the Indication bit alone turns nothing on
+    rig.write(0x13, &[2, 0]);
+    rig.command(OP_POWER, &[0]);
+    rig.run(400);
+    assert!(rig.central().notifications.is_empty());
+    // with the Notification bit beside it, notifications as before
+    rig.write(0x13, &[3, 0]);
+    rig.run(400);
+    assert_eq!(rig.statuses().len(), 1);
+}
+
+#[test]
 fn an_l2cap_header_split_over_two_packets_is_put_together() {
     let mut rig = connected(DIMMABLE);
     // Read Request for handle 0x0b: 03 00 04 00 | 0a 0b 00, cut inside the header

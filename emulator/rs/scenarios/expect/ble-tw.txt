@@ -11,7 +11,6 @@ att_mtu_server_request_notifications  N/A           the server-side MTU exchange
 att_queued_write_execute              N/A           no queued writes (optional): Prepare Write is answered Request Not Supported
 att_prepare_write_errors              N/A           no queued writes (optional): Prepare Write is answered Request Not Supported
 gap_adv_no_gap_gatt_uuid              NOTE          advertises the GAP service UUID 0x1800 as the stock does; the vendor app looks for it
-gatt_cccd_bits_follow_properties      NOTE          the stock's GATT table: the CCCD of the notify-only characteristic 0x0012 keeps an Indication bit
 gatt_cccd_gates_notifications         FAIL          deliberate: notifies with the CCCD off, as the stock does, because the vendor app never writes it
 gatt_service_gatt                     N/A           no Service Changed characteristic and no pairing: no bonded client keeps an attribute cache
 gatt_props_write                      NOTE          the stock's GATT table: the OTA characteristic takes Write Request without the Write property

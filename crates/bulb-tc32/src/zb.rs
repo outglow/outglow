@@ -15,7 +15,7 @@ use crate::board::BOARD;
 use crate::cell::{Shared, SharedBuf, TakeOnce};
 use crate::flash;
 use crate::link::DebugLink;
-use crate::nv::Nv;
+use crate::nv::{self, Nv};
 use crate::radio;
 use crate::reg;
 use crate::staging::{self, Owner};
@@ -170,7 +170,7 @@ pub struct Tc32Hal {
 
 impl Tc32Hal {
     pub fn new() -> Self {
-        let mut hal = Tc32Hal { staging_erased: 0, nv: Nv::new(), ext: 0, last_tick: reg::tick(), rest: 0, ms: 0, rng: [0; 2], black_box: BLACK_BOX.take_with(|| zigbee::BlackBox::EMPTY) };
+        let mut hal = Tc32Hal { staging_erased: 0, nv: nv::open(), ext: 0, last_tick: reg::tick(), rest: 0, ms: 0, rng: [0; 2], black_box: BLACK_BOX.take_with(|| zigbee::BlackBox::EMPTY) };
         // Nothing here needs unpredictable numbers (keys come from the Trust
         // Center, nonces are counters): the generator only spreads backoffs
         // and jitter, so the timer and whatever the flash holds seed it.
@@ -277,7 +277,9 @@ impl Hal for Tc32Hal {
     }
 
     fn nv_erase(&mut self) {
-        self.nv.erase();
+        // The stack stores the frame counters again right after; kept
+        // through, they outlive a power cut in between too.
+        self.nv.forget_all_but(NvItem::Counters as u8);
     }
 
     fn ota_begin(&mut self, size: u32) -> bool {

@@ -457,9 +457,21 @@ fn nwk_leave_request_is_obeyed() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
+    net.coord.permit_join = false;
+    let before = net.coord.nwk_cmd_rx.len();
+    // a Leave request (options 0x40: request, no rejoin)
     net.coord.nwk_command(short, 1, &[zigbee::nwk::CMD_LEAVE, 0x40]);
     net.run(1_000);
     assert_ne!(net.nodes[n].stack.state(), State::Up);
+    // it said so: a Leave indication from its address, not a request (R22 3.4.4)
+    assert!(
+        net.coord.nwk_cmd_rx[before..].iter().any(|(s, c)| *s == short && c[0] == zigbee::nwk::CMD_LEAVE && c[1] & 0x40 == 0),
+        "{:?}",
+        &net.coord.nwk_cmd_rx[before..]
+    );
+    // and it forgot the network: a power cycle finds none
+    net.power_cycle(n);
+    assert_eq!(net.nodes[n].stack.state(), State::Down);
 }
 
 #[test]
@@ -2239,6 +2251,79 @@ fn broadcasts_are_repeated_remembered_and_dropped_as_the_text_says() {
     net.run(1_000);
     assert!(conflicts(&net).is_empty());
     assert_eq!(net.nodes[n].short(), me);
+}
+
+/// Two broadcasts from two different devices, both new to the bulb, a few
+/// milliseconds apart: each is passed on, within nwkcMaxBroadcastJitter
+/// (64 ms) of its arrival, and once more nwkPassiveAckTimeout later (no
+/// neighbour here is known to pass broadcasts on), and then never again
+/// (R22 3.6.5). Two records in the broadcast transaction table at once. The
+/// stock firmware lost one of two such broadcasts, or kept sending a copy of
+/// it, behind the address conflicts of docs/address-conflicts.md (§2).
+#[test]
+fn two_broadcasts_of_two_devices_close_together_are_both_passed_on_and_then_left() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let id = net.nodes[n].id;
+    net.run(181_000);
+    let mut x = neighbor(&mut net, n, 0x2B02);
+    let aps = net.coord.aps_frame(0x08, 1, 0x0003, 0x0104, 1, &[0x01, 1, 0x01]);
+    let copies = |net: &Net, src: u16, seq: u8, since: u32| {
+        net.timed_nwk_sent_by(id, since).into_iter().filter(|(_, _, h, _)| h.src == src && h.seq == seq).map(|e| e.0).collect::<Vec<u32>>()
+    };
+    for gap in [0u32, 2, 5, 10, 15, 20] {
+        // the coordinator's, and x's own (x is a router that has passed nothing
+        // on: the bulb waits for no neighbour's copy), each with its own sequence number
+        let t = net.now();
+        let a = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
+        net.coord.nwk_send(a, &aps, None);
+        net.run(gap);
+        let t2 = net.now();
+        let mut b = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
+        b.src = 0x2B02;
+        b.seq = a.seq.wrapping_add(100);
+        x.mac_send(0xFFFF, b, &aps);
+        net.run(1_500);
+        let end = net.now();
+        let first = copies(&net, 0x0000, a.seq, t);
+        let second = copies(&net, 0x2B02, b.seq, t);
+        for (what, sent, at) in [("the coordinator's", &first, t), ("x's", &second, t2)] {
+            assert_eq!(sent.len(), 2, "{gap} ms apart: {what} passed on at {sent:?} (arrived at {at})");
+            assert!(sent[0] - at <= 64, "{gap} ms apart: {what} first passed on {} ms after it arrived", sent[0] - at);
+            assert_eq!(sent[1] - sent[0], 150, "{gap} ms apart: {what} again after nwkPassiveAckTimeout");
+        }
+        // and nothing more of either, however long
+        net.run(10_000);
+        assert!(copies(&net, 0x0000, a.seq, end).is_empty() && copies(&net, 0x2B02, b.seq, end).is_empty(), "{gap} ms apart: sent again late");
+    }
+    // The same with x passing on a broadcast of a device behind it (0x5E07):
+    // x is then known to pass broadcasts on, and each record keeps its own
+    // passive acknowledgements. x's copy is the only one the bulb waits for
+    // on that broadcast: passed on once. x never passes the coordinator's
+    // on: that one goes again after nwkPassiveAckTimeout. (x keeps up its
+    // Link Status, as a router does: a neighbour gone quiet is not waited for.)
+    let me = net.nodes[n].short();
+    for gap in [0u32, 2, 5, 10, 15, 20] {
+        x.link_status(&[(me, 1)]);
+        net.run(50);
+        let t = net.now();
+        let a = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 5);
+        net.coord.nwk_send(a, &aps, None);
+        net.run(gap);
+        let t2 = net.now();
+        let mut b = net.coord.header(nwk::FRAME_DATA, 0xFFFD, 4);
+        b.src = 0x5E07;
+        b.seq = a.seq.wrapping_add(100);
+        x.mac_send(0xFFFF, b, &aps);
+        net.run(1_500);
+        let end = net.now();
+        let first = copies(&net, 0x0000, a.seq, t);
+        let second = copies(&net, 0x5E07, b.seq, t);
+        assert!(first.len() == 2 && first[0] - t <= 64 && first[1] - first[0] == 150, "{gap} ms apart: the coordinator's at {first:?} (arrived at {t})");
+        assert!(second.len() == 1 && second[0] - t2 <= 64, "{gap} ms apart: the relayed one at {second:?} (arrived at {t2})");
+        net.run(10_000);
+        assert!(copies(&net, 0x0000, a.seq, end).is_empty() && copies(&net, 0x5E07, b.seq, end).is_empty(), "{gap} ms apart: sent again late");
+    }
 }
 
 /// Passive acknowledgement (R22 3.6.5) waits for the neighbours known to

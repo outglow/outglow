@@ -582,12 +582,6 @@ impl Default for Light {
     }
 }
 
-/// Duty of the dimmable bulb for a brightness level: the stock bulb's curve
-/// (`curve::DIMM`), roughly duty = max * (level/254)^2.
-pub fn gamma_duty(level: u8, max_duty: u16) -> u16 {
-    crate::curve::duty(level, max_duty, false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,15 +757,6 @@ mod tests {
     fn a_new_light_is_3000_kelvin() {
         assert_eq!(Light::new().color_temp(), crate::CT_DEFAULT);
         assert_eq!(crate::CT_DEFAULT, 333);
-    }
-
-    #[test]
-    fn gamma_endpoints() {
-        assert_eq!(gamma_duty(0, 1000), 0);
-        assert_eq!(gamma_duty(254, 1000), 1000);
-        // half the level gives ~1/4 of the power (quadratic curve)
-        let half = gamma_duty(127, 1000);
-        assert!((240..=260).contains(&half), "half={half}");
     }
 
     #[test]

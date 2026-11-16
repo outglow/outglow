@@ -21,6 +21,9 @@ mod model;
 use harness::{Room, Sender};
 use model::*;
 
+/// The sensitivity a bulb starts with (crates/zigbee `DEFAULT_S`).
+const START_S: u8 = 40;
+
 /// The highest noise floor either bulb of a link saw, dBm: the level of the
 /// interference bursts of its model.
 fn burst_dbm(l: &Link) -> f64 {
@@ -194,23 +197,21 @@ fn a_link_below_the_floor_makes_no_line_and_one_near_it_no_false_on() {
     assert!(room.core.line[0].used() && room.core.line[0].s < 20, "s {}", room.core.line[0].s);
 }
 
-/// Red: out of the box, before any calibration, the default sensitivity 45
-/// (a 2 dB threshold, chosen on the C firmware's 0.3..0.6 dB model) is far
-/// too sensitive for the spread measured on these links: in an empty room,
-/// with the smaller spread of each link, the line is ON 0.9 % of the time
-/// on K1-K2, 47 % on K1-D, 67 % on K2-K3, 89 % on K3-D, all of it on K1-K3;
-/// only K2-D (0.4 dB) is quiet. s = 40 (a 3 dB threshold) would hold up to
-/// 1.4 dB, s = 35 to 2 dB (`tests/explore.rs`). Which default, or a calibration of its own at the
-/// first start, is the owner's decision.
+/// Red: out of the box, before any calibration, the shipped sensitivity 40
+/// (a 3 dB threshold) holds on five of the measured links with the smaller
+/// spread of each, but K1-K3 (2 dB) is ON 82 % of an hour in an empty room.
+/// (The earlier default 45, a 2 dB threshold, was ON on all but K2-D.) The
+/// automatic calibration from the quietest hour of the first day settles it
+/// (`tests/autocal.rs`); this is the first day, before it.
 #[test]
-#[ignore = "red: the default s = 45 is too sensitive for the measured links; calibration is needed (owner's decision)"]
+#[ignore = "red: before the first day's automatic calibration, s = 40 is too sensitive for K1-K3"]
 fn the_default_sensitivity_is_quiet_on_the_measured_links() {
     let mut bad = vec![];
     for l in links() {
-        let mut room = Room::new(1, 45, 30, vec![channel(&l, l.sigma_lo)]);
+        let mut room = Room::new(1, START_S, 30, vec![channel(&l, l.sigma_lo)]);
         room.run(3_600_000);
         let share = on_share(&room, 1000);
-        eprintln!("{}-{} sigma_lo {:.2}: uncalibrated s = 45 ON {:.1} % of an hour", l.a, l.b, l.sigma_lo, 100.0 * share);
+        eprintln!("{}-{} sigma_lo {:.2}: uncalibrated s = {} ON {:.1} % of an hour", l.a, l.b, l.sigma_lo, START_S, 100.0 * share);
         if share >= 0.001 {
             bad.push((l.a, l.b, (share * 1000.0).round() / 10.0));
         }

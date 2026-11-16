@@ -30,13 +30,18 @@ fn downloads_checks_and_activates_a_newer_image() {
     let short = net.nodes[n].short();
     let image = make_image(3000, 7);
     offer(&mut net, &image, NEW);
+    // the server holds its answer to the Upgrade End Request back
+    net.coord.ota_upgrade_time = None;
     net.coord.ota_notify(short);
     net.run_until(60_000, "upgrade end", |net| net.coord.ota_end.is_some());
     assert_eq!(net.coord.ota_end, Some(0x00));
     // until the server says "now", the image is in place but not bootable
     let mut held = image.clone();
     held[8] = 0xFF;
-    assert!(staged(&net, n, image.len()) == held || activated(&net, n));
+    net.run(1_000);
+    assert!(!activated(&net, n));
+    assert_eq!(staged(&net, n, image.len()), held);
+    net.coord.ota_upgrade_end_response(short, MFG, TYPE, NEW, 0);
     net.run(2_000);
     assert!(activated(&net, n));
     assert_eq!(staged(&net, n, image.len()), image, "byte for byte, boot marker included");
