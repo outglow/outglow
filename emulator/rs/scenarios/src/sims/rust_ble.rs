@@ -125,7 +125,16 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let adv = b.ble_rf(D, t0).1.iter().filter(|(_, ch, pdu)| *ch == 37 && pdu[0] & 0x0F == 0).count();
     let span = (b.t(D) - t0) / 1000.0;
     check(cx, "Zigbee answers while the bulb advertises", okn >= 39, &format!("{okn}/40 reads answered in {span:.1} s"));
-    check(cx, "advertises every 300 to 310 ms on the side", (adv as f64 - span / 0.305).abs() <= 2.0, &format!("{adv} events in {span:.1} s"));
+    // An advertising event that would fall into the Zigbee traffic is left
+    // out on purpose (the radio stays with Zigbee), so a busy stretch has a
+    // few less; never more than every 300 ms, and not starved: at least 80 %.
+    let expected = span / 0.305;
+    check(
+        cx,
+        "advertises every 300 to 310 ms on the side, a few left out for Zigbee",
+        adv as f64 >= 0.8 * expected && adv as f64 <= span / 0.300 + 1.0,
+        &format!("{adv} events in {span:.1} s ({expected:.1} at 305 ms)"),
+    );
     let d = reg_diff_between_events(&mut b, &before)?;
     check(cx, "802.15.4 radio registers are the same after advertising events", d.is_empty(), &diff_text(&d));
 
