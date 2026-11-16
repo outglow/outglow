@@ -327,6 +327,31 @@ impl Core {
         }
     }
 
+    /// The sensing was switched on (`Core::new` is the start for a core that
+    /// runs from the first moment): the hours, and with them the first day of
+    /// the self-tuning and of the automatic calibration, count from `now`, and
+    /// every line starts its detection again, nothing ON, no calibration
+    /// running. What the lines learnt (sender, s, anchor) stays. Time the
+    /// core did not see (no frames, no ticks while the sensing was off) is
+    /// no part of any hour.
+    pub fn start(&mut self, now: u32) {
+        self.cal = false;
+        self.t_cal_end = now;
+        self.hour = 0;
+        self.t_hour = now;
+        self.on_mask = 0;
+        for l in self.line.iter_mut() {
+            l.day_reset();
+            l.hour_cal_s = 100;
+            l.day_cal_s = 0;
+            l.flags &= !F_ON;
+            l.blank = false;
+            l.restart();
+            l.t_seen = now;
+            l.t_kept = now.wrapping_sub(MIN_GAP_MS);
+        }
+    }
+
     /// Changing the default s sets it (and the anchor) in all lines.
     pub fn cfg(&mut self, s: u8, off_s: u16) {
         let s = s.min(100);
