@@ -644,26 +644,37 @@ fn child_leave_rejoin(s: &mut Session) -> R<String> {
 }
 
 // ---------------------------------------------------------------- session B
-fn age_out(s: &mut Session) -> R<String> {
+/// The ageing experiment of PAR-AGE-01 and -02, once per session: a child with a 10 s timeout that then
+/// sends nothing for 16 s. (child, capture mark before the silence); None when the timeout was refused.
+fn age_experiment(s: &mut Session) -> R<Option<(NodeId, usize)>> {
+    if let Some(v) = s.note::<Option<(NodeId, usize)>>("age") {
+        return Ok(v);
+    }
+    s.set_note::<Option<(NodeId, usize)>>("age", None);
     let (ed, _) = new_ed(s, 3, None, 0x80)?;
     let t = s.ed_timeout_request(ed, 0, 0, 200.0)?;
-    let Some(t) = t.filter(|t| t.status == 0) else {
+    let Some(t) = t.filter(|t| t.status == 0) else { return Ok(None) };
+    s.set_note("parent_info", t.parent_info);
+    let i = s.mark();
+    s.run(16000.0)?;
+    s.set_note("age", Some((ed, i)));
+    Ok(Some((ed, i)))
+}
+
+fn age_out(s: &mut Session) -> R<String> {
+    let Some((ed, _)) = age_experiment(s)? else {
         return Err(Stop::Inconclusive(
             "the bulb did not accept the 10 s timeout request, so the default timeout applies".into(),
         ));
     };
-    s.set_note("parent_info", t.parent_info);
-    let i = s.mark();
-    s.run(16000.0)?;
-    s.set_note("age", (ed, i));
     let (known, seen) = child_known(s, ed)?;
     expect(!known, format!("16 s after its last frame the child with a 10 s timeout is still known ({seen})"))?;
     Ok(seen)
 }
 
 fn age_out_silent(s: &mut Session) -> R<String> {
-    let Some((ed, i)) = s.note::<(NodeId, usize)>("age") else {
-        return Err(Stop::Inconclusive("the ageing test before this one did not get as far as the timeout".into()));
+    let Some((ed, i)) = age_experiment(s)? else {
+        return Err(Stop::Inconclusive("the bulb did not accept the 10 s timeout request of the ageing test".into()));
     };
     s.run(2000.0)?;
     s.remove_peer(ed);

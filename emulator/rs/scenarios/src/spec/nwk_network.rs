@@ -209,6 +209,12 @@ fn leave_request_rejoin(s: &mut Session) -> R<String> {
 }
 
 fn rejoin_after_leave(s: &mut Session) -> R<String> {
+    if !s.has_note("leave_mark") {
+        // run alone (--exact): the leave with rejoin of NWK-LEAVE-02 first, judged there
+        if let Err(e @ (Stop::Error(_) | Stop::SessionLost(_))) = leave_request_rejoin(s) {
+            return Err(e);
+        }
+    }
     if !s.note::<bool>("left").unwrap_or(false) {
         return Err(Stop::Inconclusive("the bulb did not announce a leave with rejoin in the test before this one".into()));
     }
