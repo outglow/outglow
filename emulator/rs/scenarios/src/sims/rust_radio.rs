@@ -163,8 +163,15 @@ fn complaints(w: &World) -> (String, bool) {
         format!("{{{}}}", r.dropped.iter().map(|(k, v)| format!("'{k}': {v}")).collect::<Vec<_>>().join(", "))
     };
     let dropped: i64 = r.dropped.values().map(|v| *v as i64).sum();
-    let ble = r.rx_log.as_ref().map_or(0, |l| l.iter().filter(|e| e.fate == "off at start: BLE mode").count()) as i64;
-    let lent = if ble > 0 { format!(" ({ble} of them begun while the radio was lent to BLE)") } else { String::new() };
+    let count = |fate: &str| r.rx_log.as_ref().map_or(0, |l| l.iter().filter(|e| e.fate == fate).count()) as i64;
+    let (in_ble, switching) = (count("off at start: BLE mode"), count("off at start: switching to or from BLE"));
+    let ble = in_ble + switching;
+    let lent = match (in_ble, switching) {
+        (0, 0) => String::new(),
+        (n, 0) => format!(" ({n} of them begun while the radio was lent to BLE)"),
+        (0, k) => format!(" ({k} of them begun while the radio was being switched to or from BLE)"),
+        (n, k) => format!(" ({n} of them begun while the radio was lent to BLE, {k} while it was being switched to or from BLE)"),
+    };
     (format!("sent {}, received {}, dropped {why}{lent}, collisions {}", r.sent, r.received, r.collisions), dropped == ble)
 }
 
@@ -254,7 +261,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
             let retried = d.iter().filter(|x| x.0.is_none() && x.1 && x.2).count();
             let mut line = format!("{} of {} frames acknowledged", got.len(), d.len());
             if retried > 0 {
-                line += &format!(" ({retried} first copy/copies missed while the radio was lent to BLE, acknowledged on the coordinator's MAC retry)");
+                line += &format!(" ({retried} first copy/copies missed while the radio was lent to BLE or being switched to or from it, acknowledged on the coordinator's MAC retry)");
             }
             let (lo, hi) = (got.iter().copied().fold(f64::INFINITY, f64::min), got.iter().copied().fold(f64::NEG_INFINITY, f64::max));
             if !got.is_empty() {
@@ -293,9 +300,10 @@ fn run(cx: &mut SimCtx) -> R<()> {
         let (line, _) = complaints(&cw);
         cx.say(&format!("      vendor firmware: {line}"));
         let (line, clean) = complaints(&rw);
-        check(cx, "no transmission outside TX mode, no frame lost to a receiver left off (but for frames begun while BLE had the radio)",
+        check(cx, "no transmission outside TX mode, no frame lost to a receiver left off (but for frames begun while BLE had the radio \
+                   or within aTurnaroundTime of its switch to or from BLE)",
               clean, &line);
-        check(cx, "no MAC retries were needed by the coordinator",
+        check(cx, "the coordinator never ran out of MAC retries",
               !rw.coord.events.iter().any(|e| e.kind == "mac-retry-upper" || e.kind == "mac-no-ack"), "");
     }
     let n = results.len();

@@ -10,6 +10,8 @@ const TICKS_PER_US: f64 = 16.0;
 const STATUS_RX: u8 = 0x01;
 const STATUS_TX: u8 = 0x02;
 const IRQ_SOURCE_RF: u32 = 1 << 13;
+const TURNAROUND_MS: f64 = 0.192;
+const LEND_KEEP_MS: f64 = 10.0;
 
 pub fn crc16_kermit(b: &[u8]) -> u16 {
     let mut crc: u16 = 0;
@@ -84,6 +86,14 @@ struct RxAir {
     off: Option<&'static str>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Lend {
+    rx_off: f64,
+    ble_from: f64,
+    ble_to: f64,
+    rx_on: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct RxFate {
     pub t0: f64,
@@ -147,6 +157,41 @@ pub struct Radio154State {
     track_leads: bool,
     tx_mode_since: Option<f64>,
     pub tx_leads: Vec<Option<f32>>,
+    rx_off_at: Option<f64>,
+    ble_span: Option<(f64, f64)>,
+    lends: VecDeque<Lend>,
+}
+
+impl Radio154State {
+    fn track_lend(&mut self, m: &Machine) {
+        if self.rx_log.is_none() {
+            return;
+        }
+        let now = m.ms();
+        if rx_on(m) && !self.tx_busy {
+            if let (Some(rx_off), Some((ble_from, ble_to))) = (self.rx_off_at.take(), self.ble_span.take()) {
+                while self.lends.front().is_some_and(|l| l.rx_on < now - LEND_KEEP_MS) {
+                    self.lends.pop_front();
+                }
+                self.lends.push_back(Lend { rx_off, ble_from, ble_to, rx_on: now });
+            }
+        } else {
+            if self.rx_off_at.is_none() {
+                self.rx_off_at = Some(now);
+                self.ble_span = None;
+            }
+            if !zigbee_mode(m) {
+                let from = self.ble_span.map_or(now, |x| x.0);
+                self.ble_span = Some((from, now));
+            }
+        }
+    }
+
+    fn switching_ble(&self, t0: f64) -> bool {
+        let near = |from: f64, to: f64| from - TURNAROUND_MS <= t0 && t0 <= to + TURNAROUND_MS;
+        self.lends.iter().any(|l| l.rx_off <= t0 && t0 < l.rx_on && near(l.ble_from, l.ble_to))
+            || self.rx_off_at.is_some_and(|off| off <= t0) && self.ble_span.is_some_and(|(a, b)| near(a, b))
+    }
 }
 
 impl Drop for Radio154State {
@@ -232,6 +277,9 @@ impl Radio154 {
             track_leads: std::env::var_os("ZB_TX_LEADS").is_some_and(|v| !v.is_empty()),
             tx_mode_since: None,
             tx_leads: Vec::new(),
+            rx_off_at: None,
+            ble_span: None,
+            lends: VecDeque::new(),
         })));
         let prev_w = m.reg_write_hook.clone();
         let r1 = r.clone();
@@ -245,6 +293,7 @@ impl Radio154 {
             if let Some(p) = &prev_t {
                 p(m)?;
             }
+            r3.b().track_lend(m);
             r3.tick(m);
             let mut s = r3.b();
             if !s.tx_pending.is_empty() {
@@ -291,6 +340,9 @@ impl Radio154 {
             s.rx.clear();
             s.rssi_now = 0;
             s.sched.clear();
+            s.rx_off_at = None;
+            s.ble_span = None;
+            s.lends.clear();
         }));
         r
     }
@@ -512,12 +564,16 @@ impl Radio154 {
         if let Some(w) = drop_why {
             *self.b().dropped.entry(w.into()).or_insert(0) += 1;
             if logging {
-                let tx_busy = self.b().tx_busy;
+                let (tx_busy, switching) = {
+                    let s = self.b();
+                    (s.tx_busy, s.switching_ble(f.t0))
+                };
                 let fate = if st.collided {
                     "collision"
                 } else if let Some(why) = st.off {
                     match why {
                         "BLE mode" => "off at start: BLE mode",
+                        "RX state off" | "RX disabled" | "TX mode" if switching => "off at start: switching to or from BLE",
                         "transmitting" => "off at start: transmitting",
                         "TX mode" => "off at start: TX mode",
                         "RX state off" => "off at start: RX state off",
@@ -600,5 +656,63 @@ mod tests {
         m.reset(-1, false).unwrap();
         assert_eq!(m.reg_read(0x441, 1).unwrap(), 0, "the signal after the reset");
         assert!(r.b().sched.is_empty(), "the frame's end is still scheduled");
+    }
+
+    #[test]
+    fn frames_lost_around_a_ble_event_are_told_apart() {
+        let mut fl = Flash::new(Config::env().flash_size);
+        fl.mem[8] = 0x4B;
+        let mut m = Machine::new(fl, -1, 1).unwrap();
+        let r = Radio154::new(&mut m);
+        r.b().rx_log = Some(Vec::new());
+        m.regs[0x1245] = 37;
+        m.regs[0x1244] = 37 << 2;
+        let (c0, ms0, hz) = (m.cycles, m.ms(), m.cpu_hz as f64);
+        let steps = [
+            (0.0, true, false),
+            (1.0, false, false),
+            (1.03, false, true),
+            (3.08, false, false),
+            (3.2, true, false),
+            (10.0, false, false),
+            (10.03, false, true),
+            (12.08, false, false),
+            (13.5, true, false),
+            (15.0, false, false),
+            (15.5, false, true),
+            (16.0, false, false),
+            (16.05, true, false),
+            (20.0, false, false),
+        ];
+        let want = [
+            (0.7, "off at end: BLE mode"),
+            (2.0, "off at start: BLE mode"),
+            (3.1, "off at start: switching to or from BLE"),
+            (12.12, "off at start: switching to or from BLE"),
+            (12.5, "off at start: RX state off"),
+            (15.1, "off at start: RX state off"),
+            (15.46, "off at start: switching to or from BLE"),
+            (20.1, "off at start: RX state off"),
+        ];
+        for (t0, _) in want {
+            r.inject(Frame { t0: ms0 + t0, t1: ms0 + t0 + airtime_ms(5), channel: 11, psdu: vec![0x02, 0x00, 0x01, 0x00, 0x00] }, -40);
+        }
+        let mut next = steps.iter().peekable();
+        for i in 0..=4400 {
+            let t = i as f64 * 0.005;
+            while let Some((_, rx, ble)) = next.next_if(|s| s.0 <= t + 1e-9) {
+                m.regs[0xF02] = if *rx { 0x20 } else { 0x00 };
+                m.regs[0x428] = if *rx { 0x01 } else { 0x00 };
+                m.regs[0x404] = if *ble { 0x01 } else { 0x00 };
+            }
+            m.cycles = c0 + (t * hz / 1000.0) as i64;
+            m.update_time().unwrap();
+        }
+        let got: Vec<(f64, &str)> =
+            r.b().rx_log.as_ref().unwrap().iter().map(|e| (((e.t0 - ms0) * 100.0).round() / 100.0, e.fate)).collect();
+        assert_eq!(got.len(), want.len(), "{got:?}");
+        for w in want {
+            assert!(got.contains(&w), "frame at {} ms: want {}, got {got:?}", w.0, w.1);
+        }
     }
 }

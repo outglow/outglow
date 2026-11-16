@@ -424,7 +424,7 @@ impl World {
     pub fn lent_to_ble(&self, t0: f64, len: usize) -> bool {
         let off = self.air.t_off;
         self.air.dut.radio.b().rx_log.as_ref().is_some_and(|log| {
-            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode"))
+            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode" | "off at start: switching to or from BLE"))
         })
     }
 
