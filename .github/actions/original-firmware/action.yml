@@ -1,0 +1,27 @@
+name: Original firmware images
+description: >
+  Clones outglow/original-firmware (private; never uploaded) outside the
+  workspace and points OUTGLOW_STOCK_DIR at it. Without a key (a fork's pull
+  request) it does nothing, and the scenarios with the original firmware are
+  skipped.
+inputs:
+  key:
+    description: the deploy key of outglow/original-firmware
+    required: false
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KEY: ${{ inputs.key }}
+      run: |
+        if [ -z "$KEY" ]; then
+          echo "no deploy key (a fork's pull request): the scenarios with the original firmware are skipped"
+          exit 0
+        fi
+        install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
+        GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+          git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
+        rm -f "$RUNNER_TEMP/original-firmware-key"
+        # outside the workspace: no artifact path can reach it
+        echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"

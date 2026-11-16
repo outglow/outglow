@@ -1,7 +1,7 @@
 # Shortcuts for the in-process conformance tests (emulator/rs/scenarios), run from the repository root:
 #   cargo spec [-- filters] [--cpi N] [--jobs N] [-v] [--image label=path] [--json out.json] [--meta-json tests.json]
 #   cargo ble-spec [-- ...]
-#   cargo sims [-- scenario names] [--cpi N] [--image ROLE=path] [-v]
+#   cargo sims [-- scenario names] [--cpi N] [--image ROLE=path] [--shard K/N] [-v]
 #   cargo sims-quick [-- more names or options]  (a few scenarios for every change; the full set in CI)
 #   cargo sims-stock  (the quick scenarios of the Rust and the stock firmware together; OUTGLOW_STOCK_DIR)
 #   cargo stress [-- --full] [--sets stock,c,rust,rust+stock] [--out docs/stress-results.md] [filters]

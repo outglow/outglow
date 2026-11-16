@@ -6,7 +6,8 @@ on:
   pull_request:
   workflow_dispatch:
   # the long scenarios (Rust and stock firmware moved into each other, OTA
-  # through a stock router, the whole scenario set): job firmware-nightly
+  # through a stock router, the whole scenario set): jobs nightly-build,
+  # firmware-nightly (in parts) and firmware-nightly-tw
   schedule:
     - cron: "17 2 * * *"
 
@@ -56,86 +57,137 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  firmware:
-    name: Firmware in the emulator
+  firmware-build:
+    name: Firmware build
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/tc32-toolchain
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: emulator/rs
-      - name: tc32-devtools (instruction form check of rust_fw; the build does not need it)
-        run: |
-          git clone -q https://github.com/goyamamoto/tc32-devtools "$RUNNER_TEMP/tc32-devtools"
-          git -C "$RUNNER_TEMP/tc32-devtools" checkout -q 2e1bcaed762e3124b024047db981172d2b0395ba
-          echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
-      - name: Original firmware images (outglow/original-firmware, private; never uploaded)
-        env:
-          KEY: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then
-            echo "no deploy key (a fork's pull request): the scenarios with the original firmware are skipped"
-            exit 0
-          fi
-          install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
-          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-            git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
-          rm -f "$RUNNER_TEMP/original-firmware-key"
-          # outside the workspace: no artifact path can reach it
-          echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"
       - name: Build the firmware (dimmable filament bulb)
         run: cargo xtask build
-      - name: Scenarios
-        run: cargo sims-quick
-      - name: Scenarios with the original firmware (the Rust and the stock firmware in one network)
-        run: cargo sims-stock
-      - name: Zigbee conformance
-        run: cargo spec -- --cpi 24
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: firmware-dimm
           path: |
+            target/tc32/bulb-tc32.bin
             target/tc32/bulb-tc32-ota.bin
             target/tc32/bulb-tc32.ota
             target/tc32/bulb-tc32.elf
             target/tc32/bulb-tc32.map
 
-  firmware-nightly:
-    name: Firmware in the emulator (every scenario)
+  # the image built once, the emulator runs in parallel jobs
+  firmware:
+    name: Firmware in the emulator (${{ matrix.part.name }})
+    needs: firmware-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        part:
+          - { name: scenarios, run: cargo sims-quick, devtools: true }
+          - { name: with the original firmware, run: cargo sims-stock, stock: true }
+          - { name: Zigbee conformance, run: cargo spec -- --cpi 24 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: TC32 toolchain (rust_fw disassembles the image with its llvm-objdump)
+        uses: ./.github/actions/tc32-toolchain
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-dimm
+          path: target/tc32
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - name: tc32-devtools (instruction form check of rust_fw; the build does not need it)
+        if: matrix.part.devtools
+        run: |
+          git clone -q https://github.com/goyamamoto/tc32-devtools "$RUNNER_TEMP/tc32-devtools"
+          git -C "$RUNNER_TEMP/tc32-devtools" checkout -q 2e1bcaed762e3124b024047db981172d2b0395ba
+          echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
+      - if: matrix.part.stock
+        uses: ./.github/actions/original-firmware
+        with:
+          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+      - run: ${{ matrix.part.run }}
+
+  nightly-build:
+    name: Firmware build (every image)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/tc32-toolchain
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: emulator/rs
-      - name: Original firmware images (outglow/original-firmware, private; never uploaded)
-        env:
-          KEY: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then
-            echo "no deploy key (a fork's pull request): the scenarios with the original firmware are skipped"
-            exit 0
-          fi
-          install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
-          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-            git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
-          rm -f "$RUNNER_TEMP/original-firmware-key"
-          # outside the workspace: no artifact path can reach it
-          echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"
-      - name: Build the firmware (dimmable, tunable white, a second OTA version)
+      - name: Build the firmware (dimmable, tunable white, a colour bulb, a second OTA version)
         run: |
           cargo xtask build
           cargo xtask build --board ESMLFzm_w6_TW-4.63
+          cargo xtask build --board EGLO_ZM_RGB_TW-4.60
           cargo xtask build --file-version 01000001 --out-dir "$PWD/target/tc32-v2"
-      - name: Every scenario (the long ones with the original firmware among them)
-        run: cargo sims
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-every
+          path: |
+            target/tc32*/bulb-tc32.bin
+            target/tc32*/bulb-tc32-ota.bin
+            target/tc32*/bulb-tc32.ota
+            target/tc32*/bulb-tc32.elf
+
+  # every scenario, in parts: `--shard K/N` gives every part about the same
+  # time, the longest scenario a part of its own
+  firmware-nightly:
+    name: Every scenario (part ${{ matrix.shard }} of 6)
+    needs: nightly-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@v4
+      - name: TC32 toolchain (rust_fw disassembles the image with its llvm-objdump)
+        uses: ./.github/actions/tc32-toolchain
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-every
+          path: target
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - uses: ./.github/actions/original-firmware
+        with:
+          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+      - name: tshark (wireshark and ble_wireshark check the frames with it)
+        run: sudo apt-get update -q && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
+      - name: Scenarios (the long ones with the original firmware among them)
+        run: cargo sims -- --shard ${{ matrix.shard }}/6
+
+  firmware-nightly-tw:
+    name: Tunable white scenarios
+    needs: nightly-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: TC32 toolchain (rust_fw disassembles the image with its llvm-objdump)
+        uses: ./.github/actions/tc32-toolchain
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-every
+          path: target
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - uses: ./.github/actions/original-firmware
+        with:
+          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
       - name: The stock-and-Rust scenarios on the tunable white pair
         run: >
           cargo sims -- mixed_parent mixed_mesh mixed_group rust_radio rust_gp rust_touchlink
