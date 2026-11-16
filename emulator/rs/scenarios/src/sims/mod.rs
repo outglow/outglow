@@ -90,6 +90,26 @@ pub fn sims() -> Vec<SimDef> {
     v
 }
 
+/// Measurements of the original firmware: their checks hold whatever the
+/// numbers (they produce the tables of the address conflict study, the lab's
+/// docs/address-conflicts.md) and fail only when the bulbs do not join, so
+/// they run once a week in CI, not every night. `cargo sims` leaves them out;
+/// `cargo sims -- --weekly` (`cargo sims-weekly`) runs these alone, and one
+/// named exactly (`cargo sims -- addr_conflict_house`) runs as any other.
+pub const WEEKLY: &[&str] = &[
+    "addr_conflict",
+    "addr_conflict_btt",
+    "addr_conflict_echo",
+    "addr_conflict_multihop",
+    "addr_conflict_house",
+    "enddev_wallswitch",
+    "enddev_wallswitch_edinit",
+];
+
+pub fn is_weekly(name: &str) -> bool {
+    WEEKLY.contains(&name.trim_start_matches("sims::"))
+}
+
 /// A default image path (repository-relative): in the repository, else in
 /// the first of the directories of `SCENARIOS_IMAGE_DIRS` (separated as PATH)
 /// that has it, so that images kept elsewhere need no `--image` each time.

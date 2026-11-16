@@ -7,15 +7,19 @@ on:
   workflow_dispatch:
   # the long scenarios (Rust and stock firmware moved into each other, OTA
   # through a stock router, the whole scenario set): jobs nightly-build,
-  # firmware-nightly (in parts) and firmware-nightly-tw
+  # firmware-nightly (in parts) and firmware-nightly-tw; on Sundays (the
+  # second schedule) the measurements of the original firmware instead, job
+  # firmware-weekly (nightly-build, then only that)
   schedule:
     - cron: "17 2 * * *"
+    - cron: "41 3 * * 0"
 
 permissions:
   contents: read
 
+# the two schedules apart: the weekly run must not cancel a nightly one still going
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event.schedule || 'run' }}
   cancel-in-progress: true
 
 jobs:
@@ -144,6 +148,7 @@ jobs:
   firmware-nightly:
     name: Every scenario (part ${{ matrix.shard }} of 6)
     needs: nightly-build
+    if: github.event.schedule != '41 3 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -174,14 +179,36 @@ jobs:
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
           tshark --version | head -1
-      # part 1 is addr_conflict_house alone (`--shard` gives the longest a part
-      # of its own): nine original bulbs that never idle, about 500 s of air,
-      # 22 min one after another; its bulbs run in parallel threads instead
-      # (deterministic, the same verdicts; emulator/rs/scenarios/src/par.rs)
+      # but the weekly measurements of the original firmware (job firmware-weekly)
       - name: Scenarios (the long ones with the original firmware among them)
-        env:
-          ZB_PARALLEL: ${{ matrix.shard == 1 && '1' || '0' }}
         run: cargo sims -- --shard ${{ matrix.shard }}/6
+
+  # the measurements of the original firmware that feed the address conflict
+  # study (addr_conflict*, enddev_wallswitch*; emulator/rs/scenarios/src/sims/mod.rs,
+  # WEEKLY): their checks fail only when the bulbs do not join, so once a week.
+  # addr_conflict_house, nine original bulbs that never idle, takes about 22
+  # min; the others run beside it
+  firmware-weekly:
+    name: Measurements of the original firmware (weekly)
+    needs: nightly-build
+    if: github.event.schedule == '41 3 * * 0' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-every
+          path: target
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - uses: ./.github/actions/original-firmware
+        with:
+          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+      - name: The weekly scenarios
+        run: cargo sims-weekly
 
   # what pull requests do not run: the conformance tests on the tunable white
   # image (where the Color Control tests apply) and the Zigbee2MQTT converter
@@ -190,6 +217,7 @@ jobs:
   firmware-nightly-conformance:
     name: Conformance (dimmable and tunable white) and the Zigbee2MQTT converter
     needs: nightly-build
+    if: github.event.schedule != '41 3 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -228,6 +256,7 @@ jobs:
   firmware-nightly-tw:
     name: Tunable white scenarios
     needs: nightly-build
+    if: github.event.schedule != '41 3 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
