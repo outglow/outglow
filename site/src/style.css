@@ -44,6 +44,25 @@ header.site .logo img { border-radius: 6px; }
 header.site nav { display: flex; gap: 1rem; flex-wrap: wrap; }
 header.site nav a { text-decoration: none; color: var(--muted); }
 header.site nav a[aria-current="page"], header.site nav a:hover { color: var(--text); }
+/* the menu button: phones only; the links fold into it */
+header.site .menu { display: none; margin-left: auto; padding: .5rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--surface); width: 2.6rem; height: 2.4rem; }
+header.site .menu span, header.site .menu span::before, header.site .menu span::after { display: block; width: 1.2rem; height: 2px; background: var(--text); border-radius: 1px; position: relative; content: ""; transition: transform .2s; }
+header.site .menu span { margin: 0 auto; }
+header.site .menu span::before { position: absolute; top: -6px; }
+header.site .menu span::after { position: absolute; top: 6px; }
+header.site .menu[aria-expanded="true"] span { background: transparent; }
+header.site .menu[aria-expanded="true"] span::before { transform: translateY(6px) rotate(45deg); }
+header.site .menu[aria-expanded="true"] span::after { transform: translateY(-6px) rotate(-45deg); }
+header.site .menu:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 48rem) {
+  header.site { gap: .75rem; }
+  header.site .menu { display: block; }
+  header.site nav { display: none; flex-basis: 100%; flex-direction: column; gap: 0; border-top: 1px solid var(--line); }
+  header.site.open nav { display: flex; }
+  header.site nav a { padding: .7rem .25rem; border-bottom: 1px solid var(--line); font-size: 1.05rem; }
+  header.site nav a[aria-current="page"] { color: var(--accent); font-weight: 600; }
+}
+@media (prefers-reduced-motion: reduce) { header.site .menu span::before, header.site .menu span::after { transition: none; } }
 footer.site { color: var(--muted); font-size: .875rem; border-top: 1px solid var(--line); margin-top: 4rem; padding-top: 1.5rem; padding-bottom: 2rem; }
 h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); line-height: 1.15; margin: 2rem 0 1rem; }
 h2 { font-size: 1.4rem; margin: 2.5rem 0 .75rem; }

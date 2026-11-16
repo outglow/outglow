@@ -12,7 +12,8 @@
 <body>
 <header class="site">
   <a class="logo" href="../"><img src="/logo.svg" alt="" width="28" height="28">out<span>glow</span></a>
-  <nav>
+  <button type="button" class="menu" aria-expanded="false" aria-controls="site-nav" aria-label="Menu"><span></span></button>
+  <nav id="site-nav">
     <a href="../">Overview</a>
     <a href="../why.html">Compare</a>
     <a href="../bulbs.html">Supported bulbs</a>
@@ -136,5 +137,6 @@
   Outglow is free software under the GNU GPL version 3 or later. Not affiliated with or endorsed by EGLO, AwoX or Telink.
 </footer>
 <script type="module" src="/src/flasher/main.ts"></script>
+<script type="module" src="/src/nav.ts"></script>
 </body>
 </html>
