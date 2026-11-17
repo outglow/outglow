@@ -510,3 +510,6 @@ impl<H: Hal> Stack<H> {
         self.aps_command(p.as_slice(), false);
     }
 }
+
+#[cfg(test)]
+mod tests;
