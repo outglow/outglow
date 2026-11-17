@@ -209,6 +209,27 @@ mod tests {
     }
 
     #[test]
+    fn ccm_star_without_additional_data_and_with_too_little_room() {
+        let (aes, nonce, _, pl) = vector();
+        let mut buf = [0u8; 24];
+        buf[..20].copy_from_slice(&pl[..20]);
+        assert_eq!(ccm_encrypt(&aes, &nonce, &[], &mut buf, 20), Some(24));
+        assert_eq!(buf.to_vec(), hex("448299ceedafe06c20123b22fbc2ff8215ff029099e09f2d"));
+        assert_eq!(ccm_decrypt(&aes, &nonce, &[], &mut buf), Some(20));
+        assert_eq!(buf[..20].to_vec(), pl[..20].to_vec());
+        assert_eq!(ccm_encrypt(&aes, &nonce, &[], &mut buf[..23], 20), None, "no room for the MIC");
+    }
+
+    #[test]
+    fn mmo_hash_of_the_specification_vectors_with_their_padding() {
+        assert_eq!(mmo_hash(&[&[0xC0]]).to_vec(), hex("AE3A102A28D43EE0D4A09E22788B206C"));
+        let m: std::vec::Vec<u8> = (0xC0..=0xCF).collect();
+        assert_eq!(mmo_hash(&[&m]).to_vec(), hex("A7977E88BC0B61E8210827109A228F2D"));
+        let long: std::vec::Vec<u8> = (0..8191).map(|i| i as u8).collect();
+        assert_eq!(mmo_hash(&[&long]).to_vec(), hex("24EC2FE75BBFFCB34789BC0610E7F165"));
+    }
+
+    #[test]
     fn ccm_star_round_trip_and_tamper_detection() {
         let (aes, nonce, aad, pl) = vector();
         let mut buf = [0u8; 33];
