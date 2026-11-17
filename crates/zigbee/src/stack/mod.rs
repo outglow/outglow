@@ -6,6 +6,8 @@ mod gp;
 mod join;
 #[cfg(test)]
 mod link_eval;
+#[cfg(test)]
+mod neighbor_tests;
 mod net;
 mod nv;
 mod objects;
@@ -210,7 +212,7 @@ impl Neighbor {
                 let d = if got { 65535 } else { 0 } - p;
                 let half = 1 << (DELIVERY_SHIFT - 1);
                 let step = if d >= 0 { (d + half) >> DELIVERY_SHIFT } else { -((-d + half) >> DELIVERY_SHIFT) };
-                self.delivery = (p + step).clamp(0, 65535) as u16;
+                self.delivery = (p + step) as u16;
             }
             if self.measured() {
                 let p = self.delivery;

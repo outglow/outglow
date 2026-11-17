@@ -187,13 +187,9 @@ pub fn parse_aux(frame: &[u8], header_len: usize) -> Option<Aux> {
 }
 
 pub fn unsecure(key: &Aes128, aux: &Aux, frame: &mut [u8], header_len: usize) -> Option<usize> {
-    let body_at = header_len + AUX_LEN;
-    if frame.len() < body_at + crypto::MIC_LEN {
-        return None;
-    }
-    let sc = (frame[header_len] & !7) | 5;
-    frame[header_len] = sc;
-    let (aad, body) = frame.split_at_mut(body_at);
+    let (aad, body) = frame.split_at_mut_checked(header_len + AUX_LEN)?;
+    let sc = (aad[header_len] & !7) | 5;
+    aad[header_len] = sc;
     crypto::ccm_decrypt(key, &nonce(aux.ext, aux.counter, sc), aad, body)
 }
 
