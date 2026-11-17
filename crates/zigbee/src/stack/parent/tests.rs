@@ -402,3 +402,32 @@ fn a_frame_late_by_half_the_clock_or_more_is_not_late_but_early() {
     assert_eq!(s.too_late(Owner::Child(0), 1u32.wrapping_sub(0x8000_0000)), None);
     assert_eq!(s.too_late(Owner::Child(0), 1u32.wrapping_sub(0x7FFF_FFFF)), Some(0x7FFF_FFFF));
 }
+
+fn marked(s: &mut Stack<Scripted>, slot: usize, ext: bool, addr: u64, expires: u32, mark: u8) {
+    let e = &mut s.indirect[slot];
+    e.used = true;
+    e.ext = ext;
+    e.addr = addr;
+    e.expires = expires;
+    e.broadcast = false;
+    e.association = false;
+    let mut f = crate::util::Buf::new();
+    f.bytes(&[0x63, 0xCC, 0x01, 0x62, 0x1A, 0x00, 0x00, 0x00, 0x00, mark]);
+    e.frame = f;
+}
+
+#[test]
+fn a_poll_by_extended_address_takes_only_that_devices_frame_and_of_two_ending_together_the_first() {
+    let mut s = up_parent();
+    marked(&mut s, 0, true, 0xBB, 5_000, 0xB0);
+    marked(&mut s, 1, true, 0xAA, 9_000, 0xA0);
+    marked(&mut s, 2, false, 0xAA, 3_000, 0xC0);
+    s.on_data_request(crate::mac::Addr::Ext(0xAA));
+    assert_eq!(s.hal.sent.last().and_then(|f| f.last()), Some(&0xA0));
+    let mut s = up_parent();
+    child(&mut s, 0, 0x2000, 0, 0);
+    marked(&mut s, 3, false, 0x2000, 5_000, 0x31);
+    marked(&mut s, 4, false, 0x2000, 5_000, 0x32);
+    s.on_data_request(crate::mac::Addr::Short(0x2000));
+    assert_eq!(s.hal.sent.last().and_then(|f| f.last()), Some(&0x31));
+}
