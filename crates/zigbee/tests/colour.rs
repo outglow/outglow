@@ -280,3 +280,13 @@ fn hue_saturation_and_temperature_move_and_step_down_as_well_as_up() {
     assert_eq!(send(0x4C, &[3, 100, 0, 10, 0, 0, 0, 0, 0]), Command::MoveToColorTemperature { mireds: 233, transition_ms: 1_000 });
     assert_eq!(send(0x4C, &[3, 200, 0, 10, 0, 0, 0, 0, 0]), Command::MoveToColorTemperature { mireds: 153, transition_ms: 1_000 });
 }
+
+#[test]
+fn hue_and_saturation_of_254_are_taken_and_255_refused() {
+    let (mut net, n, short) = colour_bulb();
+    assert_eq!(colour_status(&mut net, short, 0x03, &[254, 0, 0]), 0x00);
+    assert_eq!(colour_status(&mut net, short, 0x06, &[254, 254, 0, 0]), 0x00);
+    assert_eq!(last_command(&net, n), Command::MoveToHueSaturation { hue: 254, sat: 254, direction: HueDirection::Shortest, transition_ms: 0 });
+    assert_eq!(colour_status(&mut net, short, 0x06, &[255, 1, 0, 0]), 0x85);
+    assert_eq!(colour_status(&mut net, short, 0x06, &[1, 255, 0, 0]), 0x85);
+}
