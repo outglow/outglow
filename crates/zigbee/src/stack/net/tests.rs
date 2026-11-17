@@ -2,7 +2,7 @@ use super::super::address_tests::{Scripted, IDENTITY};
 use super::super::diag::k;
 use super::NEIGHBOR_FORGET;
 use crate::nwk;
-use crate::stack::{Stack, State, AGE_LIMIT, NEIGHBORS};
+use crate::stack::{Stack, State, AGE_LIMIT, NEIGHBORS, ROUTES};
 extern crate std;
 use std::vec::Vec;
 
@@ -220,4 +220,112 @@ fn an_unknown_nwk_command_is_answered_only_when_addressed_to_the_bulb() {
         s.on_nwk_command(&h, 0x1000, &[id]);
         assert_eq!(!s.hal.sent.is_empty(), answered, "{dst:04X} {id:02X}");
     }
+}
+
+fn route(s: &mut Stack<Scripted>, i: usize, dst: u16, next: u16, many_to_one: bool, at: u32) {
+    s.routes[i] = super::Route { status: super::ROUTE_ACTIVE, dst, next, many_to_one, no_cache: false, record_due: false, at };
+}
+
+#[test]
+fn a_full_route_table_gives_up_the_last_of_the_oldest_routes_with_many_to_one_ones_aging_sixteen_times_slower() {
+    let mut s = stack();
+    for i in 0..ROUTES {
+        route(&mut s, i, 0x5000 + i as u16, 0x1000, false, 99_990);
+    }
+    assert_eq!(s.route_set(0x6000, 0x1000, super::ROUTE_ACTIVE, false, false, 100_000), ROUTES - 1);
+    for i in 0..ROUTES {
+        route(&mut s, i, 0x5000 + i as u16, 0x1000, false, 99_990);
+    }
+    route(&mut s, 5, 0x5005, 0x1000, true, 99_680);
+    route(&mut s, 6, 0x5006, 0x1000, true, 99_000);
+    assert_eq!(s.route_set(0x6000, 0x1001, super::ROUTE_ACTIVE, false, false, 100_000), 6);
+    assert_eq!((s.routes[6].dst, s.routes[6].next, s.routes[6].at, s.routes[6].many_to_one), (0x6000, 0x1001, 100_000, false));
+    route(&mut s, 6, 0x5006, 0x1000, true, 99_000);
+    route(&mut s, 7, 0x5007, 0x1000, false, 99_900);
+    assert_eq!(s.route_set(0x6001, 0x1001, super::ROUTE_ACTIVE, false, false, 100_000), 7);
+}
+
+#[test]
+fn a_many_to_one_route_learned_through_another_hop_wants_a_route_record() {
+    for (many_to_one, next, due) in [(true, 0x1001, true), (true, 0x1000, false), (false, 0x1001, false)] {
+        let mut s = stack();
+        route(&mut s, 0, 0x0000, 0x1000, many_to_one, 0);
+        s.route_learned(0x0000, next, 500);
+        assert_eq!((s.routes[0].record_due, s.routes[0].next, s.routes[0].at), (due, next, 500));
+    }
+    let mut s = stack();
+    route(&mut s, 0, 0x0000, 0x1000, true, 0);
+    s.routes[0].status = super::ROUTE_DISCOVERY;
+    s.route_learned(0x0000, 0x1001, 500);
+    assert_eq!((s.routes[0].status, s.routes[0].many_to_one, s.routes[0].record_due), (super::ROUTE_ACTIVE, false, false));
+}
+
+fn via_table(s: &mut Stack<Scripted>) {
+    route(s, 0, 0x5000, 0x1000, true, 0);
+    route(s, 1, 0x5001, 0x1000, false, 0);
+    route(s, 2, 0x5002, 0x1001, false, 0);
+    route(s, 3, 0x5003, 0x1000, false, 0);
+    s.routes[3].status = super::ROUTE_DISCOVERY;
+}
+
+fn statuses(s: &Stack<Scripted>) -> [u8; 4] {
+    [s.routes[0].status, s.routes[1].status, s.routes[2].status, s.routes[3].status]
+}
+
+#[test]
+fn routes_through_a_lost_hop_are_dropped_and_many_to_one_ones_only_when_the_hop_is_gone() {
+    let (a, f, d) = (super::ROUTE_ACTIVE, super::ROUTE_FREE, super::ROUTE_DISCOVERY);
+    let mut s = stack();
+    fill(&mut s);
+    via_table(&mut s);
+    s.drop_routes_via(0x1000);
+    assert_eq!(statuses(&s), [a, f, a, d]);
+    let mut s = stack();
+    via_table(&mut s);
+    s.drop_routes_via(0x1000);
+    assert_eq!(statuses(&s), [f, f, a, d]);
+}
+
+#[test]
+fn a_failed_frame_drops_its_own_route_only_while_the_hop_is_a_good_neighbour() {
+    let (a, f, d) = (super::ROUTE_ACTIVE, super::ROUTE_FREE, super::ROUTE_DISCOVERY);
+    let cases: [(u16, u16, [u8; 4]); 5] = [
+        (0x1000, 0x5001, [a, f, a, d]),
+        (0x1000, 0x5000, [a, a, a, d]),
+        (0x1000, 0x5002, [a, a, a, d]),
+        (0x1000, 0x5003, [a, a, a, d]),
+        (0x1001, 0x5002, [a, a, f, d]),
+    ];
+    for (next, dst, after) in cases {
+        let mut s = stack();
+        fill(&mut s);
+        via_table(&mut s);
+        s.link_lost(next, dst);
+        assert_eq!(statuses(&s), after, "{next:04X} {dst:04X}");
+    }
+    let mut s = stack();
+    fill(&mut s);
+    via_table(&mut s);
+    s.neighbors[0].failures = super::LINK_FAILURES;
+    s.link_lost(0x1000, 0x5002);
+    assert_eq!(statuses(&s), [a, f, a, d], "a failed hop loses all its routes but many-to-one ones");
+}
+
+#[test]
+fn another_router_is_one_that_is_live_and_neither_of_the_two_to_avoid() {
+    let mut s = stack();
+    fill(&mut s);
+    for n in s.neighbors.iter_mut() {
+        n.out_cost = 1;
+    }
+    for n in s.neighbors[4..].iter_mut() {
+        n.used = false;
+    }
+    s.neighbors[2].failures = super::LINK_FAILURES;
+    s.hal.random = [1, 0].to_vec();
+    assert_eq!(s.random_router(0x1000, 0x1001), Some(0x1003));
+    assert_eq!(s.random_router(0x1003, 0x1001), Some(0x1000));
+    s.neighbors[3].age = AGE_LIMIT + 1;
+    s.neighbors[0].out_cost = 0;
+    assert_eq!(s.random_router(0x1002, 0x1001), None);
 }
