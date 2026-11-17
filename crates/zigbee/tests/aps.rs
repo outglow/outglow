@@ -260,3 +260,46 @@ fn an_extended_header_without_fragmentation_is_delivered_as_it_is() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x01).unwrap()[..3], [0x18, 0x62, 0x01]);
 }
+
+#[test]
+fn an_aps_command_secured_without_the_extended_nonce_is_taken_as_from_the_trust_center() {
+    let (mut net, n, short) = bulb();
+    let ext = ext_of(&net, n);
+    let link = net.coord.device(short).unwrap().tclk;
+    let mut remove = vec![0x07];
+    remove.extend_from_slice(&ext.to_le_bytes());
+    let counter = 9_000u32;
+    let mut f = vec![0x21, 0x5A, 0x05];
+    f.extend_from_slice(&counter.to_le_bytes());
+    let body_at = f.len();
+    f.extend_from_slice(&remove);
+    f.extend_from_slice(&[0; 4]);
+    let (head, body) = f.split_at_mut(body_at);
+    crypto::ccm_encrypt(&Aes128::new(&link), &nonce(COORD_EXT, counter, 0x05), head, body, remove.len()).unwrap();
+    f[2] = 0x00;
+    net.coord.permit_join = false;
+    net.coord.nwk_data(short, &f);
+    net.run(2_000);
+    assert_ne!(net.nodes[n].stack.state(), State::Up, "removed");
+}
+
+#[test]
+fn an_answer_of_eighty_bytes_goes_in_one_frame_and_one_of_eighty_three_in_fragments() {
+    let (mut net, n, short) = bulb();
+    for (unsupported, fragmented) in [(24u16, false), (25, true)] {
+        let mut request = vec![0x00, 0x00];
+        request.extend((0..unsupported).flat_map(|i| (0x1000 + i).to_le_bytes()));
+        let t = net.now();
+        let seq = net.coord.zcl(short, 0x0000, 0x00, 0x00, &request);
+        net.run(1_000);
+        let rsp = net.coord.last_zcl(short, 0x0000, 0x01).unwrap();
+        assert_eq!((rsp[1], rsp.len()), (seq, 3 + 5 + 3 * unsupported as usize));
+        let frames: Vec<u8> = net
+            .nwk_sent_by(net.nodes[n].id, t)
+            .into_iter()
+            .filter(|(_, h, p)| h.dst == 0x0000 && h.frame_type == 0 && p[0] & 3 == 0)
+            .map(|(_, _, p)| p[0] & 0x80)
+            .collect();
+        assert_eq!(frames.iter().all(|f| *f != 0), fragmented, "{} bytes: {frames:?}", rsp.len());
+    }
+}
