@@ -1640,3 +1640,50 @@ fn of_two_frames_waiting_for_a_child_the_first_goes_with_frame_pending_and_the_s
         .collect();
     assert_eq!(frames, vec![0x10, 0x00]);
 }
+
+fn secured_rejoin(net: &mut Net, zed: &mut Zed, parent: u16, src: u16) -> Option<(u16, u8)> {
+    zed.parent = parent;
+    let mut h = zed.header(nwk::FRAME_CMD, parent);
+    h.radius = 1;
+    h.src = src;
+    let cap = zed.capability();
+    zed.nwk_send(h, &[nwk::CMD_REJOIN_REQUEST, cap]);
+    net.run(100);
+    zed.rx.clear();
+    zed.poll(net, 20);
+    zed.rx.iter().find(|(_, p)| p[0] == nwk::CMD_REJOIN_RESPONSE).map(|(_, p)| (u16::from_le_bytes([p[1], p[2]]), p[3]))
+}
+
+#[test]
+fn a_rejoining_child_keeps_its_address_unless_it_is_taken_or_reserved() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let other = more_sleepy_children(&mut net, a, 1).remove(0);
+    let sa = net.nodes[a].short();
+    let mine = zed.short;
+    assert_eq!(secured_rejoin(&mut net, &mut zed, sa, mine), Some((mine, 0x00)));
+    for taken in [sa, 0xFFF8, other.short, 0x0000] {
+        let (short, status) = secured_rejoin(&mut net, &mut zed, sa, taken).expect("a rejoin response");
+        assert_eq!(status, 0x00);
+        assert!(![sa, 0xFFF8, other.short, 0x0000].contains(&short), "{taken:#06x} -> {short:#06x}");
+        zed.short = short;
+    }
+}
+
+#[test]
+fn with_end_devices_not_allowed_a_new_one_cannot_rejoin_but_a_known_one_can() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let seq = net.coord.zcl_ep(sa, 7, 0x0010, 0x00, 0x02, &[0x55, 0x00, 0x10, 0]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl_ep(sa, 7, 0x0010, 0x04).unwrap(), vec![0x18, seq, 0x04, 0x00]);
+    let mine = zed.short;
+    assert_eq!(secured_rejoin(&mut net, &mut zed, sa, mine), Some((mine, 0x00)), "a child it has");
+    let mut stranger = Zed::new(&net.air, true);
+    net.link(0, stranger.id, 0);
+    stranger.key = zed.key;
+    stranger.short = 0x5A5A;
+    net.air.borrow_mut().ports[stranger.id].short = 0x5A5A;
+    net.air.borrow_mut().ports[stranger.id].pan = PAN;
+    stranger.pan = PAN;
+    assert_eq!(secured_rejoin(&mut net, &mut stranger, sa, 0x5A5A).map(|r| r.1), Some(0x01), "at capacity for end devices");
+}
