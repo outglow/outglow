@@ -79,3 +79,73 @@ fn aps_secured_answers_do_not_store_the_frame_counter_each_time() {
     }
     assert_eq!(stores(&net), before, "fifty APS frame counters fit in the step stored");
 }
+
+fn in_the_link_key_exchange() -> (Net, usize, u16, u64, [u8; 16]) {
+    let mut net = Net::new();
+    net.coord.mute_key_exchange = true;
+    let n = net.add_node();
+    net.run_until(20_000, "associated", |net| net.nodes[n].stack.state() == zigbee::stack::State::Up);
+    net.run(1_500);
+    let short = net.nodes[n].short();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let link = net.coord.device(short).unwrap().tclk;
+    let new_key = [0x4E; 16];
+    let mut body = vec![0x05, 0x04];
+    body.extend_from_slice(&new_key);
+    body.extend_from_slice(&ext.to_le_bytes());
+    body.extend_from_slice(&COORD_EXT.to_le_bytes());
+    let aps = net.coord.aps_command(&link, 3, &body);
+    net.coord.nwk_data(short, &aps);
+    net.run(200);
+    (net, n, short, ext, new_key)
+}
+
+fn confirm(net: &mut Net, short: u16, ext: u64, key: &[u8; 16], status: u8, key_type: u8, secured: bool) {
+    let mut body = vec![0x10, status, key_type];
+    body.extend_from_slice(&ext.to_le_bytes());
+    let aps = if secured {
+        net.coord.aps_command(key, 0, &body)
+    } else {
+        let mut f = vec![0x01, 0x6E];
+        f.extend_from_slice(&body);
+        f
+    };
+    net.coord.nwk_data(short, &aps);
+    net.run(200);
+}
+
+#[test]
+fn only_a_secured_successful_confirm_key_for_the_trust_center_link_key_ends_the_exchange() {
+    let (mut net, n, short, ext, key) = in_the_link_key_exchange();
+    confirm(&mut net, short, ext, &key, 0x00, 0x04, false);
+    confirm(&mut net, short, ext, &key, 0xAD, 0x04, true);
+    confirm(&mut net, short, ext, &key, 0x00, 0x01, true);
+    net.coord.permit_join = false;
+    net.run(30_000);
+    assert_ne!(net.nodes[n].stack.state(), zigbee::stack::State::Up, "the exchange failed and the bulb left");
+    let (mut net, n, short, ext, key) = in_the_link_key_exchange();
+    confirm(&mut net, short, ext, &key, 0x00, 0x04, true);
+    net.coord.permit_join = false;
+    net.run(30_000);
+    assert_eq!(net.nodes[n].stack.state(), zigbee::stack::State::Up);
+}
+
+#[test]
+fn a_trust_center_link_key_outside_the_exchange_starts_no_verification() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    net.run(30_000);
+    let link = net.coord.device(short).unwrap().tclk;
+    let mut body = vec![0x05, 0x04];
+    body.extend_from_slice(&[0x4F; 16]);
+    body.extend_from_slice(&ext.to_le_bytes());
+    body.extend_from_slice(&COORD_EXT.to_le_bytes());
+    let aps = net.coord.aps_command(&link, 3, &body);
+    let t = net.now();
+    net.coord.nwk_data(short, &aps);
+    net.run(10_000);
+    let commands = net.nwk_sent_by(net.nodes[n].id, t).into_iter().filter(|(_, h, p)| h.dst == 0 && h.frame_type == nwk::FRAME_DATA && p[0] & 3 == 1).count();
+    assert_eq!(commands, 0, "no Verify-Key");
+}
