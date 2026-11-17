@@ -71,3 +71,16 @@ fn a_row_keeps_the_cost_to_the_coordinator_in_its_low_three_bits() {
     assert_eq!(r[8], 2 | 1 << 3);
     assert_eq!((r[9], r[10], r[11]), (200, 1, -90i8 as u8));
 }
+
+#[test]
+fn reading_the_first_page_holds_the_box_until_the_last_page_is_read() {
+    let mut b = BlackBox::EMPTY;
+    let mut out = [0u8; 64];
+    b.page(0, 1_000, &[0; NEIGHBORS], &mut out);
+    assert_eq!(b.hold_until, Some(1_000 + super::HOLD_MS));
+    b.page(1, 1_000, &[0; NEIGHBORS], &mut out);
+    assert!(b.hold_until.is_some());
+    let n = b.page(BOX_PAGES as u16 - 1, 1_000, &[0; NEIGHBORS], &mut out);
+    assert_eq!(n, BOX_LEN - (BOX_PAGES - 1) * 64);
+    assert_eq!(b.hold_until, None);
+}
