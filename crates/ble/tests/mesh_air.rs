@@ -457,3 +457,13 @@ fn a_bulb_does_not_take_its_own_packet_back_from_a_neighbour() {
     let a = rigs[0].ble.borrow().air_stats();
     assert_eq!((a.received, a.relayed), (0, 0), "A heard it back and knew it");
 }
+
+#[test]
+fn every_octet_of_the_sequence_number_tells_packets_apart() {
+    let (ether, mut rig) = alone();
+    for sn in [0x00_0001, 0x00_0101, 0x01_0001] {
+        ether.borrow_mut().deliver(0, &air_pdu(sn, 0x0021, 0xffff, 0xc0 | 0x10, &[0], &LTK));
+        rig.run(400);
+    }
+    assert_eq!(rig.ble.borrow().air_stats().received, 3);
+}
