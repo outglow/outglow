@@ -294,6 +294,8 @@ pub struct World {
     pub erased_sectors: Vec<u32>,
     pub activated: bool,
     pub mesh_listens: u32,
+    pub listened: Vec<(u64, u64, u8)>,
+    pub event_starts: Vec<u64>,
     pub flash_fault: bool,
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
@@ -461,6 +463,7 @@ impl Hal for SimHal {
         let w = &mut *w;
         let start = w.now + ev.start.wrapping_sub(w.now as u32) as i32 as i64 as u64;
         assert!(start + ev.window as u64 >= w.now, "event that is already over");
+        w.event_starts.push(start);
         let room = ev.deadline.wrapping_sub(ev.start.wrapping_add(ev.window));
         assert!((16_000..=64_000).contains(&room), "1 to 4 ms for the event after its window: {room}");
         w.now = w.now.max(start);
@@ -641,6 +644,8 @@ impl Hal for SimHal {
     fn mesh_listen(&mut self, channel: u8, access_code: u32, ticks: u32, pdu: &mut [u8; ADV_PDU_MAX]) -> Option<usize> {
         let mut w = self.0.borrow_mut();
         w.mesh_listens += 1;
+        let at = w.now;
+        w.listened.push((at, at + ticks as u64, channel));
         let Some(ether) = w.ether.clone() else {
             w.now += ticks as u64;
             return None;
@@ -734,6 +739,8 @@ impl Rig {
             zigbee_busy: vec![],
             advertised_at: vec![],
             mesh_listens: 0,
+            listened: vec![],
+            event_starts: vec![],
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
         }))

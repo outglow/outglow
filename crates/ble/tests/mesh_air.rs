@@ -395,3 +395,38 @@ fn the_last_eight_packets_are_remembered_and_not_carried_out_twice() {
     rig.run(400);
     assert_eq!(received(&rig), 11, "the ninth newest was forgotten");
 }
+
+#[test]
+fn a_connected_bulb_waiting_for_answers_stops_listening_3_ms_before_its_next_event() {
+    let ether = Rc::new(RefCell::new(Ether::default()));
+    let mut rig = paired(&ether, A, NAME, PASSWORD, LTK);
+    rig.central().params.interval = 8;
+    rig.connect();
+    assert!(rig.login(b"EgloMesh", b"s3cret"));
+    let from = rig.world.borrow().now;
+    ask_b(&mut rig);
+    rig.run(1000);
+    let w = rig.world.borrow();
+    let gaps: Vec<i64> = w
+        .listened
+        .iter()
+        .filter(|l| l.0 >= from)
+        .filter_map(|&(_, end, _)| w.event_starts.iter().find(|&&s| s > end).map(|&s| s as i64 - end as i64))
+        .collect();
+    assert!(gaps.len() > 50, "{} windows", gaps.len());
+    let least = *gaps.iter().min().unwrap();
+    assert_eq!(least, 3 * MS as i64, "1.5 ms of margin before the 1.5 ms the event is prepared in");
+}
+
+#[test]
+fn a_bulb_alone_listens_12_ms_after_each_advertising_event_on_the_next_channel() {
+    let (_ether, mut rig) = alone();
+    rig.run(2000);
+    let w = rig.world.borrow();
+    assert!(w.listened.len() >= 6);
+    for (i, (&(from, to, channel), adv)) in w.listened.iter().zip(&w.advertised_at).enumerate() {
+        assert_eq!(to - from, 12 * MS);
+        assert_eq!(channel, [2, 12, 23, 34][i % 4]);
+        assert_eq!(from, adv + 3 * MS, "right after the advertising event, which takes 3 ms here");
+    }
+}
