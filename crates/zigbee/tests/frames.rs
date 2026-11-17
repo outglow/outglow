@@ -79,11 +79,13 @@ fn a_beacon_written_parses_back() {
         ext_pan: 0x0011223344556677,
         update_id: 9,
     };
-    let mut f = Buf::new();
-    b.write(4, &mut f);
-    let (h, len) = mac::Header::parse(f.as_slice()).unwrap();
-    assert_eq!((h.frame_type, h.seq), (mac::FRAME_BEACON, 4));
-    assert_eq!(Beacon::parse(&h, &f.as_slice()[len..]), Some(b));
+    for b in [b, Beacon { permit_join: false, pan_coordinator: true, router_capacity: false, end_device_capacity: true, depth: 15, ..b }] {
+        let mut f = Buf::new();
+        b.write(4, &mut f);
+        let (h, len) = mac::Header::parse(f.as_slice()).unwrap();
+        assert_eq!((h.frame_type, h.seq), (mac::FRAME_BEACON, 4));
+        assert_eq!(Beacon::parse(&h, &f.as_slice()[len..]), Some(b));
+    }
 }
 
 #[test]
