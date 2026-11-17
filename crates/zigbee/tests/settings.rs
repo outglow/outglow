@@ -165,3 +165,17 @@ fn a_damaged_settings_record_leaves_ble_on() {
         assert_eq!(net.nodes[n].stack.ble_mode(), BleMode::On, "record {bad:?}");
     }
 }
+
+#[test]
+fn the_mode_goes_back_to_on_by_writing_zero_and_stays_so_over_a_restart() {
+    let (mut net, n, short) = ble_bulb();
+    assert_eq!(write(&mut net, short, 0x0000, 0x30, &[2]), vec![0x00]);
+    assert_eq!(net.nodes[n].stack.ble_mode(), BleMode::Off);
+    assert_eq!(write(&mut net, short, 0x0000, 0x30, &[0]), vec![0x00]);
+    assert_eq!(net.nodes[n].stack.ble_mode(), BleMode::On);
+    assert_eq!(write(&mut net, short, 0x0000, 0x30, &[3]), vec![0x87, 0x00, 0x00]);
+    net.power_cycle(n);
+    net.run(1_000);
+    assert_eq!(net.nodes[n].stack.ble_mode(), BleMode::On);
+    assert_eq!(read(&mut net, short, 0x0000), vec![0x00, 0x30, 0]);
+}
