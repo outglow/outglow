@@ -369,3 +369,96 @@ fn read_reporting_configuration_of_what_is_not_reported() {
         "a reportable counter without a configuration"
     );
 }
+
+fn level_to(net: &mut Net, short: u16, level: u8) {
+    net.coord.zcl(short, LEVEL, 0x11, 0x04, &[level, 0, 0, 0, 0]);
+    net.run(50);
+}
+
+fn last_command(net: &mut Net, n: usize, short: u16, cluster: u16, cmd: u8, payload: &[u8]) -> Option<bulb_core::command::Command> {
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, cluster, 0x11, cmd, payload);
+    net.run(50);
+    net.nodes[n].commands[before..].last().copied()
+}
+
+#[test]
+fn move_runs_at_the_given_rate_or_the_default_one_and_a_rate_of_zero_is_invalid() {
+    use bulb_core::command::Command::MoveToLevel;
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    level_to(&mut net, short, 100);
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x01, &[0x00, 0xFF, 0, 0]), Some(MoveToLevel { level: 254, transition_ms: 154 * 1000 / 50 }));
+    level_to(&mut net, short, 100);
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x01, &[0x01, 10, 0, 0]), Some(MoveToLevel { level: 1, transition_ms: 99 * 100 }));
+    level_to(&mut net, short, 100);
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x05, &[0x01, 20]), Some(MoveToLevel { level: 0, transition_ms: 100 * 1000 / 20 }));
+    level_to(&mut net, short, 100);
+    let seq = net.coord.zcl(short, LEVEL, 0x01, 0x01, &[0x00, 0x00, 0, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, LEVEL, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x01, 0x87]);
+}
+
+#[test]
+fn on_with_recall_global_scene_when_there_was_no_room_for_it_just_turns_on() {
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    for id in 1..=8u8 {
+        net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, id, 0, 0, 0]);
+        net.run(50);
+    }
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0x00, 0x00]);
+    net.run(50);
+    assert_eq!(read(&mut net, short, ON_OFF, &[0x4000]), vec![ok(0x4000, &[0x10, 0])]);
+    assert_eq!(last_command(&mut net, n, short, ON_OFF, 0x41, &[]), Some(bulb_core::command::Command::On));
+    assert_eq!(read(&mut net, short, ON_OFF, &[0x4000]), vec![ok(0x4000, &[0x10, 1])]);
+}
+
+#[test]
+fn the_scene_table_holds_eight_scenes() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    for id in 1..=8u8 {
+        let seq = net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, id, 0, 0, 0]);
+        net.run(50);
+        assert_eq!(net.coord.last_zcl(short, SCENES, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x00, 0x34, 0x12, id]);
+    }
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, 9, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x89, 0x34, 0x12, 9]);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, 8, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x00, 0x34, 0x12, 8], "one that is there is replaced");
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x42, &[0x00, 0x34, 0x12, 1, 0x34, 0x12, 20]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x42).unwrap(), vec![0x19, seq, 0x42, 0x89, 0x34, 0x12, 1], "no room for the copy");
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x02, &[0x34, 0x12, 20]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x02).unwrap(), vec![0x19, seq, 0x02, 0x8B, 0x34, 0x12, 20]);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x02, &[0x34, 0x12, 8]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x02).unwrap(), vec![0x19, seq, 0x02, 0x00, 0x34, 0x12, 8]);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x42, &[0x00, 0x34, 0x12, 1, 0x34, 0x12, 20]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x42).unwrap(), vec![0x19, seq, 0x42, 0x00, 0x34, 0x12, 1]);
+}
+
+#[test]
+fn a_colour_scene_without_a_mode_takes_temperature_when_it_has_one_and_xy_otherwise() {
+    use bulb_core::command::Command;
+    let (mut net, n, short) = bulb_with(IDENTITY_COLOR);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    let scene = |id: u8, ct: u16| {
+        let mut p = vec![0x34, 0x12, id, 0, 0, 0, 0x00, 0x03, 13];
+        p.extend_from_slice(&[0x10, 0x20, 0x30, 0x40, 0x00, 0x80, 100, 0, 0, 0, 0]);
+        p.extend_from_slice(&ct.to_le_bytes());
+        p
+    };
+    net.coord.zcl(short, SCENES, 0x11, 0x00, &scene(1, 300));
+    net.coord.zcl(short, SCENES, 0x11, 0x00, &scene(2, 0));
+    net.run(50);
+    assert_eq!(last_command(&mut net, n, short, SCENES, 0x05, &[0x34, 0x12, 1]), Some(Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }));
+    assert_eq!(last_command(&mut net, n, short, SCENES, 0x05, &[0x34, 0x12, 2]), Some(Command::MoveToXy { x: 0x2010, y: 0x4030, transition_ms: 0 }));
+}
