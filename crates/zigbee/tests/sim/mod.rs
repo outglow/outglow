@@ -1420,6 +1420,7 @@ impl Coord {
         match cmd {
             0x01 => {
                 self.ota_queries += 1;
+                assert!(self.ota_queries < 1_000, "a flood of OTA queries");
                 let (manufacturer, image_type) = (u16::from_le_bytes([b[1], b[2]]), u16::from_le_bytes([b[3], b[4]]));
                 rsp.push(0x02);
                 match &self.ota_file {
