@@ -752,3 +752,25 @@ fn on_with_recall_global_scene_ends_a_waiting_off_guard_when_there_is_no_on_time
     net.run(50);
     assert_eq!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0, 0])]);
 }
+
+#[test]
+fn step_moves_by_its_size_in_a_time_scaled_to_how_far_it_gets() {
+    use bulb_core::command::Command::MoveToLevel;
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    level_to(&mut net, short, 100);
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x01, 30, 10, 0]), Some(MoveToLevel { level: 70, transition_ms: 1_000 }));
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x00, 200, 10, 0]), Some(MoveToLevel { level: 254, transition_ms: 1_000 * 184 / 200 }));
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x01, 0, 10, 0]), Some(MoveToLevel { level: 254, transition_ms: 0 }), "a step of nothing");
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x01, 54, 0xFF, 0xFF]), Some(MoveToLevel { level: 200, transition_ms: 0 }), "as fast as it can");
+}
+
+#[test]
+fn a_tunable_white_coupled_to_the_level_does_not_follow_it_to_off() {
+    use bulb_core::command::Command;
+    let (mut net, n, short) = bulb_with(IDENTITY_TW);
+    assert_eq!(global(&mut net, short, LEVEL, 0x02, &[0x0F, 0x00, 0x18, 0x02]), Some(vec![0x04, 0x00]));
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, LEVEL, 0x11, 0x04, &[0, 10, 0]);
+    net.run(50);
+    assert!(net.nodes[n].commands[before..].iter().all(|c| !matches!(c, Command::MoveToColorTemperature { .. })), "{:?}", &net.nodes[n].commands[before..]);
+}
