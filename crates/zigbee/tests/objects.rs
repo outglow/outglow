@@ -123,3 +123,48 @@ fn a_stored_configuration_for_what_is_not_reportable_reports_nothing() {
     net.run(5_000);
     assert!(net.coord.zcl_rx.iter().all(|(s, _, f)| *s != short || f[2] != 0x0A), "no reports");
 }
+
+fn out_of_service(net: &mut Net, short: u16, ep: u8, cluster: u16) -> Vec<u8> {
+    let seq = net.coord.zcl_ep(short, ep, cluster, 0x00, 0x00, &[0x51, 0x00]);
+    net.run(60);
+    let rsp = net.coord.last_zcl_ep(short, ep, cluster, 0x01).unwrap();
+    assert_eq!(rsp[1], seq);
+    rsp[3..].to_vec()
+}
+
+#[test]
+fn the_ble_window_object_is_out_of_service_while_ble_is_off() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_BLE;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    assert_eq!(out_of_service(&mut net, short, 8, 0x000D), vec![0x51, 0x00, 0x00, 0x10, 0]);
+    net.coord.zcl_mfr(short, 0xFC5F, 0x00, 0x1141, 0x02, &[0x00, 0x00, 0x30, 2]);
+    net.run(100);
+    assert_eq!(out_of_service(&mut net, short, 8, 0x000D), vec![0x51, 0x00, 0x00, 0x10, 1]);
+    assert_eq!(out_of_service(&mut net, short, 7, 0x0010), vec![0x51, 0x00, 0x00, 0x10, 0], "only the window");
+}
+
+#[test]
+fn reports_go_only_to_bindings_of_their_cluster_that_are_in_use() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 1, 0x0006);
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let mut unbind = ext.to_le_bytes().to_vec();
+    unbind.push(1);
+    unbind.extend_from_slice(&0x0008u16.to_le_bytes());
+    unbind.push(3);
+    unbind.extend_from_slice(&COORD_EXT.to_le_bytes());
+    unbind.push(1);
+    net.coord.zdo(short, 0x0021, &unbind);
+    net.run(100);
+    net.coord.zdo(short, 0x0022, &unbind);
+    net.run(100);
+    net.coord.zcl_rx.clear();
+    net.coord.zcl_rx_ep.clear();
+    net.coord.zcl(short, 0x0008, 0x11, 0x00, &[77, 0, 0]);
+    net.run(3_000);
+    assert!(net.coord.zcl_rx.iter().all(|(s, c, f)| *s != short || *c != 0x0008 || f[2] != 0x0A), "no level report");
+}
