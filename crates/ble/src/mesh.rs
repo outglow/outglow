@@ -305,8 +305,7 @@ impl<H: Hal> Ble<H> {
     }
 
     fn mesh_send_status(&mut self, op: u8) -> bool {
-        if self.mesh.app_format {
-            let Some(key) = self.mesh.session else { return true };
+        if let (true, Some(key)) = (self.mesh.app_format, self.mesh.session) {
             if !self.mesh_status_enabled() {
                 return true;
             }
