@@ -211,15 +211,12 @@ impl BlackBox {
             let at = (ring_head as usize + RING - ring_len as usize + i) % RING;
             return self.ring[at][o];
         }
-        if off < BOX_LEN {
-            let (i, o) = ((off - ROWS_AT) / ROW_ENTRY, (off - ROWS_AT) % ROW_ENTRY);
-            if i >= row_len as usize {
-                return 0;
-            }
-            let at = (row_head as usize + ROWS - row_len as usize + i) % ROWS;
-            return self.rows[at][o];
+        let (i, o) = ((off - ROWS_AT) / ROW_ENTRY, (off - ROWS_AT) % ROW_ENTRY);
+        if i >= row_len as usize {
+            return 0;
         }
-        0
+        let at = (row_head as usize + ROWS - row_len as usize + i) % ROWS;
+        self.rows[at][o]
     }
 
     pub(crate) fn page(&mut self, page: u16, now: u32, shorts: &[u16; NEIGHBORS], out: &mut [u8; 64]) -> usize {

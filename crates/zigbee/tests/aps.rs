@@ -239,3 +239,24 @@ fn an_aps_command_secured_with_the_data_key_of_a_reserved_key_identifier_is_drop
     net.run(2_000);
     assert_ne!(net.nodes[n].stack.state(), State::Up);
 }
+
+#[test]
+fn an_aps_frame_of_the_reserved_type_or_without_a_frame_control_is_dropped() {
+    let (mut net, n, short) = bulb();
+    for aps in [vec![0x03, 1, 0x06, 0x00, 0x04, 0x01, 1, 0x10, 0x00, 0x61, 0x00, 0x00, 0x00], vec![]] {
+        net.coord.zcl_rx.clear();
+        net.coord.nwk_data(short, &aps);
+        net.run(100);
+        assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
+    }
+    assert_eq!(net.nodes[n].stack.state(), State::Up);
+}
+
+#[test]
+fn an_extended_header_without_fragmentation_is_delivered_as_it_is() {
+    let (mut net, _, short) = bulb();
+    let aps = net.coord.aps_frame(0x80, 1, ON_OFF, 0x0104, 1, &[0x00, 0x00, 0x62, 0x00, 0x00, 0x00]);
+    net.coord.nwk_data(short, &aps);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x01).unwrap()[..3], [0x18, 0x62, 0x01]);
+}

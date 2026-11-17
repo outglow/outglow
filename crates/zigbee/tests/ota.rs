@@ -526,3 +526,20 @@ fn a_server_that_does_not_answer_the_query_is_forgotten_and_looked_for_again() {
     net.run(1_000);
     assert_eq!(net.coord.match_requests, asked + 1, "the server is looked for again");
 }
+
+#[test]
+fn an_image_notify_during_a_download_changes_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(12_000, 8);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_notify(short);
+    net.run_until(10_000, "download started", |net| net.coord.ota_blocks > 2);
+    let queries = net.coord.ota_queries;
+    net.coord.ota_notify(short);
+    net.run(600);
+    assert_eq!(net.coord.ota_queries, queries, "no query in the middle of a download");
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    assert_eq!(net.coord.ota_end, Some(0x00));
+}

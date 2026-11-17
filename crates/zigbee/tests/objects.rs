@@ -101,3 +101,25 @@ fn reporting_configurations_stored_in_another_version_are_not_restored() {
     net.run(5_000);
     assert!(net.coord.last_zcl_ep(short, 2, ANALOG_INPUT, 0x0A).is_none());
 }
+
+#[test]
+fn a_stored_configuration_for_what_is_not_reportable_reports_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 2, ANALOG_INPUT);
+    let mut record = vec![1];
+    for (ep, attr) in [(2u8, 0x0051u16), (9, 0x0055)] {
+        record.extend_from_slice(&[ep, 0]);
+        record.extend_from_slice(&ANALOG_INPUT.to_le_bytes());
+        record.extend_from_slice(&attr.to_le_bytes());
+        record.extend_from_slice(&[1, 0, 2, 0, 0, 0, 0, 0]);
+    }
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].nv.insert(NvItem::Reports as u8, record);
+    net.power_cycle(n);
+    net.run(500);
+    net.coord.zcl_rx.clear();
+    net.run(5_000);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, f)| *s != short || f[2] != 0x0A), "no reports");
+}

@@ -53,3 +53,20 @@ fn two_items_stored_together_are_stored_one_after_the_other_by_default() {
     h.nv_store_pair(NvItem::Network, &[1, 2], NvItem::Counters, &[3]);
     assert_eq!(h.stored, vec![(NvItem::Network, vec![1, 2]), (NvItem::Counters, vec![3])]);
 }
+
+#[test]
+fn the_optional_outputs_of_a_bare_hal_do_nothing() {
+    let mut h = Bare::default();
+    h.indirect_pending(&[1], &[2]);
+    h.poll_children(&[1]);
+    h.ota_write(0, &[1, 2]);
+    h.ota_activate();
+    h.transmit_at(&[1], 10);
+    h.trace(zigbee::hal::Trace::default());
+    h.retain(&[1]);
+    h.zcl_received(1, 6, 0, 0x11, 255, -40);
+    h.sense_listen(0x5E55);
+    assert!(h.stored.is_empty());
+    let mut buf = [0u8; 4];
+    assert_eq!(h.retained(&mut buf), None, "what was kept is not given back");
+}

@@ -95,10 +95,12 @@ impl Header {
             | mode(&self.src) << 14;
         b.u16(fcf);
         b.u8(self.seq);
-        let put = |b: &mut Buf, a: &Addr| match a {
-            Addr::None => {}
-            Addr::Short(s) => b.u16(*s),
-            Addr::Ext(e) => b.u64(*e),
+        let put = |b: &mut Buf, a: &Addr| {
+            if let Addr::Short(s) = a {
+                b.u16(*s);
+            } else if let Addr::Ext(e) = a {
+                b.u64(*e);
+            }
         };
         if self.dst != Addr::None {
             b.u16(self.dst_pan);
