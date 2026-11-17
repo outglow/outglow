@@ -827,7 +827,7 @@ fn the_receiver_opens_ten_ticks_ahead_at_the_least() {
     }
 }
 
-fn busy_fifo() {
+pub(crate) fn busy_fifo() {
     FIFO_STARTED.set(1);
     RESET_PENDING.set(0);
     FIFO_WORD.set(0x0100_0000);

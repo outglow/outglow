@@ -257,6 +257,8 @@ fn the_hal_hands_the_radio_calls_to_the_ble_driver() {
     assert_eq!(hal.advertise(&[0], &[0, 0], &mut c), None);
     assert!(hal.mesh_send(&[37], 1, &[0]));
     assert!(sim::with(|c| c.writes()).is_empty());
+    crate::ble_radio::tests::busy_fifo();
+    assert!(!hal.mesh_send(&[37], 1, &[0x02, 0x00]));
     let mut pdu = [0u8; ADV_PDU_MAX];
     assert_eq!(hal.mesh_listen(37, 0x1234_5678, 16, &mut pdu), None);
     assert!(sim::with(|c| c.writes()).contains(&Op::W32(0x408, 0x1234_5678)));
