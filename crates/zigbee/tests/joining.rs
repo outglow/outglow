@@ -136,3 +136,28 @@ fn a_rejoin_response_counts_only_from_the_parent_asked_for_this_bulb_and_whole()
     respond(&mut net, Some(COORD_EXT), Some(ext), &[0x78, 0x77, 0x00]);
     assert_eq!(net.nodes[n].stack.short_address(), 0x7778);
 }
+
+#[test]
+fn an_unsecured_rejoin_response_does_not_answer_a_secured_rejoin_and_unsecured_data_is_dropped() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let ext = ext_of(&net, n);
+    net.coord.zcl_rx.clear();
+    let aps = net.coord.aps_frame(0x00, 1, 0x0006, 0x0104, 1, &[0x00, 0x21, 0x00, 0x00, 0x00]);
+    let mut h = net.coord.header(zigbee::nwk::FRAME_DATA, short, 1);
+    h.security = false;
+    net.coord.nwk_send(h, &aps, Some(short));
+    net.run(200);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short), "unsecured data is not taken from a network that is up");
+    net.coord.ignore_rejoin = true;
+    net.coord.permit_join = false;
+    net.coord.nwk_command(short, 1, &[zigbee::nwk::CMD_LEAVE, 0x60]);
+    net.run_until(10_000, "rejoin", |net| !net.coord.rejoins.is_empty());
+    let mut rh = net.coord.header(zigbee::nwk::FRAME_CMD, short, 1);
+    rh.dst_ext = Some(ext);
+    rh.security = false;
+    net.coord.nwk_send(rh, &[zigbee::nwk::CMD_REJOIN_RESPONSE, 0x79, 0x77, 0x00], Some(short));
+    net.run(20);
+    assert_ne!(net.nodes[n].stack.short_address(), 0x7779, "a secured rejoin wants a secured answer");
+}
