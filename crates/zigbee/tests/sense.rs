@@ -102,7 +102,11 @@ fn read(net: &mut Net, short: u16, cluster: u16, id: u16) -> Option<Vec<u8>> {
     if rec.len() < 4 || rec[..2] != i || rec[2] != 0 {
         return None;
     }
-    Some(if rec[3] == 0x41 { rec[5..].to_vec() } else { rec[4..].to_vec() })
+    if rec[3] == 0x41 {
+        assert_eq!(rec[4] as usize, rec.len() - 5, "an octet string of its length");
+        return Some(rec[5..].to_vec());
+    }
+    Some(rec[4..].to_vec())
 }
 
 fn write(net: &mut Net, short: u16, cluster: u16, id: u16, ty: u8, value: &[u8]) -> u8 {
@@ -755,4 +759,19 @@ fn the_automatic_calibration_turned_off_stays_off_over_a_power_cycle_and_a_recor
     net.power_cycle(n[0]);
     net.run(1000);
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "the defaults");
+}
+
+#[test]
+fn the_lines_of_two_neighbours_are_listed_with_their_lengths() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_SENSE;
+    let nodes: Vec<usize> = (0..3).map(|_| net.join_node()).collect();
+    let shorts: Vec<u16> = nodes.iter().map(|&n| net.nodes[n].short()).collect();
+    for &s in &shorts {
+        switch(&mut net, s, true);
+    }
+    past_holdoff(&mut net);
+    net.run(8_000);
+    assert_eq!(read(&mut net, shorts[0], SENSE, 0x0002).map(|l| l.len()), Some(12));
+    assert_eq!(read(&mut net, shorts[0], SENSE, 0x0005).map(|l| l.len()), Some(8));
 }
