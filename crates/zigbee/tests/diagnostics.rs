@@ -1083,6 +1083,22 @@ fn counters_kept_over_a_restart_without_the_event_log_are_taken_and_the_log_star
 }
 
 #[test]
+fn a_restart_by_the_watchdog_with_nothing_kept_starts_from_the_stored_counters() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    let resets = diag1(&mut net, short, 0x0000);
+    let mut air = net.air.borrow_mut();
+    air.ports[id].retained = None;
+    air.ports[id].reset_cause = ResetCause::Watchdog;
+    drop(air);
+    net.power_cycle(n);
+    net.run(3_000);
+    assert_eq!(diag1(&mut net, short, 0x0000), resets + 1);
+}
+
+#[test]
 fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
     let mut net = Net::new();
     let n = net.join_node();

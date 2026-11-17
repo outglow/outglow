@@ -113,3 +113,25 @@ fn scenes_of_the_older_format_are_read_too_and_a_record_cut_short_ends_them() {
     reboot(&mut net, n);
     assert_eq!(scene_ids(&mut net, short), Vec::<u8>::new(), "an unknown version");
 }
+
+#[test]
+fn children_stored_in_another_version_are_not_restored() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    let sa = net.nodes[a].short();
+    assert!(zed.join(&mut net, sa));
+    net.run(2_000);
+    assert_eq!(net.nodes[a].stack.child_count(), 1);
+    let children = stored(&net, a, NvItem::children(0));
+    reboot(&mut net, a);
+    assert_eq!(net.nodes[a].stack.child_count(), 1, "restored");
+    let mut other = children.clone();
+    other[0] ^= 0xFF;
+    put(&mut net, a, NvItem::children(0), other);
+    reboot(&mut net, a);
+    assert_eq!(net.nodes[a].stack.child_count(), 0);
+}
