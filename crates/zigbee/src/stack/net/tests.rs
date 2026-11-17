@@ -1139,3 +1139,14 @@ fn relayed_data_with_no_route_and_no_discovery_is_reported_and_other_frames_are_
     let t = try_route(&mut s, nwk::FRAME_CMD, 0x3000, 0, &[0x7F], 2);
     assert_eq!((t.to, t.counts, t.held), (Vec::new(), [0, 0, 0, 1], false));
 }
+
+#[test]
+fn an_old_broadcast_of_the_bulbs_own_still_remembered_is_its_echo_not_a_conflict() {
+    let mut s = up();
+    fill(&mut s);
+    s.nwk_seq = 100;
+    s.hal.now = s.booted + 9_001;
+    s.seen[0] = super::Seen { used: true, src: 0x0042, seq: 36, expires: s.hal.now + 5_000 };
+    heard(&mut s, nwk::Header::new(nwk::FRAME_DATA, 0xFFFD, 0x0042, 5, 36), 1, &[0x08]);
+    assert_ne!(s.conflict.0, 0x0042);
+}
