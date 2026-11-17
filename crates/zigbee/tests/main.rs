@@ -22,6 +22,7 @@ mod objects;
 mod ota;
 mod parent;
 mod persistence;
+mod receive;
 mod relay;
 mod sense;
 mod settings;
