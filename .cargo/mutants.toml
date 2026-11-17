@@ -24,11 +24,10 @@ exclude_re = [
   "::expecting -> ",
   # zigbee: the default counters of a HAL without any are HalCounters::default()
   "replace Hal::counters -> HalCounters with Default::default\\(\\)",
-  # zigbee: frame control fields and flags packed into disjoint bits, where | and ^ are the same
-  "zigbee/src/mac\\.rs:.*replace \\| with \\^ in (Header|Beacon)::write",
-  "zigbee/src/nwk\\.rs:.*replace \\| with \\^ in (Header::write|unsecure)",
-  "zigbee/src/stack/zdo\\.rs:.*replace \\| with \\^ in Stack<H>::(on_zdo|on_parent_announce|zdo_request)",
-  "zigbee/src/stack/zcl\\.rs:.*replace \\| with \\^ in (execute_if_off|Stack<H>::write_status|Stack<H>::attribute_write)",
+  # zigbee: every a | b in the stack ors fields of bits that do not overlap (frame controls, flags,
+  # option bytes, little-endian folds, disjoint constants) or sets bit 0 of a random number, so
+  # a | b and a ^ b are the same value (or another random one): each was looked at (commit message)
+  "zigbee/src/.*: replace \\| with \\^ ",
   # zigbee: a child heard exactly 2^31 ms (24.8 days) after the start counts as heard before it either way
   "zigbee/src/stack/zdo\\.rs:.*replace < with <= in Stack<H>::child_alive",
 ]
