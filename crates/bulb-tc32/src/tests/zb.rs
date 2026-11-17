@@ -810,6 +810,30 @@ mod ble_switch {
         assert!(guarded > 0 && free > 0, "{guarded} {free}");
     }
 
+    fn zigbee_polled_with(link: &mut Link, left_us: u32) -> bool {
+        for _ in 0..20_000 {
+            let now = sim::with(|c| c.tick);
+            let next = BLE_NEXT.get().unwrap_or(now);
+            if next.wrapping_sub(now) as i32 > (left_us as i32 + 1_000) * 16 {
+                sim::with(|c| c.tick = next.wrapping_sub(left_us * 16));
+                crate::link::BULB_NET.write(0, 0xee);
+                let _ = link.poll();
+                return crate::link::BULB_NET.read(0) != 0xee;
+            }
+            let _ = link.poll();
+        }
+        panic!("no advertising event ahead");
+    }
+
+    #[test]
+    fn zigbee_is_held_back_from_4_ms_before_an_advertising_event() {
+        let _s = sim::session();
+        let mut link = Link::new();
+        assert!(zigbee_polled_with(&mut link, 4_200));
+        assert!(!zigbee_polled_with(&mut link, 3_800));
+        assert!(!zigbee_polled_with(&mut link, 500));
+    }
+
     #[test]
     fn a_debug_command_is_taken_before_anything_else() {
         let _s = sim::session();
