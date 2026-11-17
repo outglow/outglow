@@ -57,3 +57,16 @@ fn data_frames_for_another_pan_or_from_an_extended_address_are_not_taken() {
     assert_eq!(counter(&mut net, short, 0x0102), rx + 3, "counted as received (and the reads themselves), nothing more");
     assert_eq!(net.nodes[n].stack.state(), State::Up);
 }
+
+#[test]
+fn a_data_request_without_a_source_address_is_answered_by_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let s = short.to_le_bytes();
+    let t = net.now();
+    inject(&mut net, n, &[0x03, 0x08, 0x07, 0x62, 0x1A, s[0], s[1], 0x04]);
+    net.run(100);
+    let sent = net.sent_by(net.nodes[n].id, t);
+    assert!(sent.iter().all(|f| f[0] & 7 != 1 || f[5..7] == [0xFF, 0xFF]), "no frame for anyone in particular: {sent:02x?}");
+}
