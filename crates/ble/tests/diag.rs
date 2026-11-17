@@ -266,6 +266,9 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     assert_eq!(parse(&[0x31, b'R', b'S'], dimm), None);
     assert_eq!(parse(&[0x31, b'r', b'S', b'T'], dimm), None);
     assert_eq!(parse(&[0x99], dimm), None);
+    for short in [&[0x11u8][..], &[0x11, 60], &[0x12, 0x90], &[0x12, 0x90, 0x01, 10], &[0x21], &[0x22], &[0x23], &[0x24, 0xff], &[0x20]] {
+        assert_eq!(parse(short, tw), None, "{short:02x?}");
+    }
 }
 
 #[test]
@@ -295,4 +298,12 @@ fn long_names_are_cut_to_what_the_48_octets_hold() {
     let i = read_long(&mut rig, INFO);
     assert_eq!(i.len(), 48);
     assert_eq!((i[2], i[12], i[18]), (0x00, 5, 29));
+}
+
+#[test]
+fn a_bulb_outside_a_network_shows_no_address() {
+    let mut rig = connected(DIMMABLE);
+    rig.ble.borrow_mut().set_diag_state(&State { joined: false, short: 0x1234, pan: 0xabcd, ..State::default() });
+    let s = read_long(&mut rig, STATE);
+    assert_eq!(s[12..17], [0, 0xff, 0xff, 0xff, 0xff]);
 }
