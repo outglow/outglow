@@ -84,11 +84,7 @@ const READ: u8 = 0x02;
 const WRITE_NO_RSP: u8 = 0x04;
 const WRITE: u8 = 0x08;
 const NOTIFY: u8 = 0x10;
-const INDICATE: u8 = 0x20;
-
-const fn cccd_bits(properties: u8) -> u8 {
-    (if properties & NOTIFY != 0 { 0x01 } else { 0 }) | (if properties & INDICATE != 0 { 0x02 } else { 0 })
-}
+const CCCD_NOTIFY: u8 = 0x01;
 
 const DECL_STATUS: [u8; 19] = declaration(READ | WRITE | NOTIFY, HANDLE_STATUS as u8, UUID_STATUS);
 const DECL_COMMAND: [u8; 19] = declaration(READ | WRITE | WRITE_NO_RSP, HANDLE_COMMAND as u8, UUID_COMMAND);
@@ -250,7 +246,7 @@ pub(crate) struct Host {
 
 impl Host {
     pub fn notifications_enabled(&self) -> bool {
-        self.configuration[0] & 0x01 != 0
+        self.configuration[0] & CCCD_NOTIFY != 0
     }
 
     pub fn new() -> Host {
@@ -421,7 +417,7 @@ impl<H: Hal> Ble<H> {
                     return Err(ERR_INVALID_LENGTH);
                 }
                 let was = self.mesh_status_enabled();
-                self.host.configuration = [value[0] & cccd_bits(DECL_STATUS[0]), 0];
+                self.host.configuration = [value[0] & CCCD_NOTIFY, 0];
                 self.mesh_status_switched(was);
             }
             Command => self.mesh_command_write(value),
