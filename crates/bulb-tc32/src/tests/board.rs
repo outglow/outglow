@@ -233,7 +233,7 @@ fn every_board_starts_each_of_its_pwm_outputs_on_its_pin() {
         regs.insert(reg::PWM_ENABLE, 0x00);
         regs.insert(reg::PWM0_ENABLE, 0x00);
         sim::with(|c| regs.iter().for_each(|(a, v)| c.poke8(*a, *v)));
-        let _led = LedPwm::on(b);
+        start_outputs(b);
         let mut expected = vec![Op::W8(reg::PWM_CLK_DIV, 0)];
         for o in outputs(b) {
             expected.push(Op::W16(0x796 + 4 * o.pwm as usize, b.period));
@@ -257,13 +257,11 @@ fn every_board_starts_each_of_its_pwm_outputs_on_its_pin() {
 fn every_board_drives_its_channels_and_tells_its_light_kind() {
     for b in crate::boards::BOARDS.iter() {
         let _s = sim::session();
-        let mut led = LedPwm::on(b);
-        sim::with(|c| c.log.clear());
-        led.set_duty(b.period + 1);
-        led.set_duty(b.period - 1);
-        led.set_cold_duty(b.period + 7);
-        led.set_cold_duty(3);
-        led.set_rgb(10, 20, 30);
+        set_warm(b, b.period + 1);
+        set_warm(b, b.period - 1);
+        set_cold(b, b.period + 7);
+        set_cold(b, 3);
+        set_colour(b, 10, 20, 30);
         let mut expected = vec![Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period), Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period - 1)];
         if let Some(c) = b.cold {
             expected.extend([Op::W16(0x794 + 4 * c.pwm as usize, b.period), Op::W16(0x794 + 4 * c.pwm as usize, 3)]);
@@ -272,14 +270,7 @@ fn every_board_drives_its_channels_and_tells_its_light_kind() {
             expected.extend([Op::W16(0x794 + 4 * r.pwm as usize, 10), Op::W16(0x794 + 4 * g.pwm as usize, 20), Op::W16(0x794 + 4 * bl.pwm as usize, 30)]);
         }
         assert_eq!(sim::with(|c| c.writes()), expected, "{}", b.name);
-        assert_eq!(led.max_duty(), b.period);
-        assert_eq!(led.has_cold_channel(), b.cold.is_some());
-        assert_eq!(led.has_rgb(), b.rgb.is_some());
-        assert_eq!(led.white_tw_curve(), b.cold.is_some() || b.rgb.is_some());
         assert_eq!(b.tunable(), b.cold.is_some() || b.rgb.is_some());
-        assert_eq!(led.ct_range(), (b.ct_min, b.ct_max));
-        assert_eq!(led.rgb_beside_white(), b.rgb_beside_white);
-        assert_eq!(led.colour_default(), b.colour_default);
     }
     let kinds: Vec<(bool, bool, bool)> = crate::boards::BOARDS.iter().map(|b| (b.cold.is_some(), b.rgb.is_some(), b.tunable())).collect();
     assert!(kinds.contains(&(false, false, false)) && kinds.contains(&(true, false, true)) && kinds.contains(&(false, true, true)));

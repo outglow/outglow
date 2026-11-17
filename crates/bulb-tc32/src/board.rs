@@ -229,25 +229,25 @@ fn analog_read(addr: u8) -> u8 {
     reg::analog_read(addr)
 }
 
-pub struct LedPwm(&'static Board);
+pub struct LedPwm;
 
 impl LedPwm {
     pub fn new() -> Self {
-        Self::on(&BOARD)
+        start_outputs(&BOARD);
+        LedPwm
     }
+}
 
-    fn on(b: &'static Board) -> Self {
-        reg::write8(reg::PWM_CLK_DIV, 0);
-        start(b, b.warm);
-        if let Some(cold) = b.cold {
-            start(b, cold);
+fn start_outputs(b: &Board) {
+    reg::write8(reg::PWM_CLK_DIV, 0);
+    start(b, b.warm);
+    if let Some(cold) = b.cold {
+        start(b, cold);
+    }
+    if let Some(rgb) = b.rgb {
+        for o in rgb {
+            start(b, o);
         }
-        if let Some(rgb) = b.rgb {
-            for o in rgb {
-                start(b, o);
-            }
-        }
-        LedPwm(b)
     }
 }
 
@@ -262,51 +262,66 @@ fn start(b: &Board, o: Out) {
     }
 }
 
+#[inline(always)]
+fn set_warm(b: &Board, duty: u16) {
+    reg::write16(reg::pwm_cmp(b.warm.pwm), duty.min(b.period));
+}
+
+#[inline(always)]
+fn set_cold(b: &Board, duty: u16) {
+    if let Some(cold) = b.cold {
+        reg::write16(reg::pwm_cmp(cold.pwm), duty.min(b.period));
+    }
+}
+
+#[inline(always)]
+fn set_colour(b: &Board, r: u16, g: u16, bl: u16) {
+    if let Some([or, og, ob]) = b.rgb {
+        reg::write16(reg::pwm_cmp(or.pwm), r);
+        reg::write16(reg::pwm_cmp(og.pwm), g);
+        reg::write16(reg::pwm_cmp(ob.pwm), bl);
+    }
+}
+
 impl Pwm for LedPwm {
     fn max_duty(&self) -> u16 {
-        self.0.period
+        BOARD.period
     }
 
     fn set_duty(&mut self, duty: u16) {
-        reg::write16(reg::pwm_cmp(self.0.warm.pwm), duty.min(self.0.period));
+        set_warm(&BOARD, duty);
     }
 
     fn has_cold_channel(&self) -> bool {
-        self.0.cold.is_some()
+        BOARD.cold.is_some()
     }
 
     fn set_cold_duty(&mut self, duty: u16) {
-        if let Some(cold) = self.0.cold {
-            reg::write16(reg::pwm_cmp(cold.pwm), duty.min(self.0.period));
-        }
+        set_cold(&BOARD, duty);
     }
 
     fn ct_range(&self) -> (u16, u16) {
-        (self.0.ct_min, self.0.ct_max)
+        (BOARD.ct_min, BOARD.ct_max)
     }
 
     fn has_rgb(&self) -> bool {
-        self.0.rgb.is_some()
+        BOARD.rgb.is_some()
     }
 
     fn set_rgb(&mut self, r: u16, g: u16, b: u16) {
-        if let Some([or, og, ob]) = self.0.rgb {
-            reg::write16(reg::pwm_cmp(or.pwm), r);
-            reg::write16(reg::pwm_cmp(og.pwm), g);
-            reg::write16(reg::pwm_cmp(ob.pwm), b);
-        }
+        set_colour(&BOARD, r, g, b);
     }
 
     fn white_tw_curve(&self) -> bool {
-        self.0.tunable()
+        BOARD.tunable()
     }
 
     fn rgb_beside_white(&self) -> bool {
-        self.0.rgb_beside_white
+        BOARD.rgb_beside_white
     }
 
     fn colour_default(&self) -> (u8, u8) {
-        self.0.colour_default
+        BOARD.colour_default
     }
 }
 
