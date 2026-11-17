@@ -1165,6 +1165,7 @@ fn the_black_box_lays_its_parts_out_one_after_the_other_and_says_what_each_frame
     assert!(ring.iter().any(|e| kind_of(e) == (0x00 | 0x04 | 0x40, ON_OFF)), "a secured unicast of On/Off: {:02x?}", ring.iter().map(|e| kind_of(e)).collect::<Vec<_>>());
     assert!(ring.iter().any(|e| kind_of(e) == (0x01 | 0x04 | 0x08 | 0x20, 0x08)), "a secured broadcast Link Status");
     assert!(ring.iter().all(|e| e[10] & 0x10 == 0), "nothing relayed");
+    assert!(ring.iter().any(|e| kind_of(e) == (0x00 | 0x04 | 0x60, ON_OFF)), "the APS acknowledgement of the read");
 }
 
 #[test]
