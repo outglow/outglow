@@ -249,6 +249,8 @@ fn the_hal_hands_the_radio_calls_to_the_ble_driver() {
     let mut p = [0u8; LL_PAYLOAD_MAX];
     assert_eq!(hal.rx_pop(&mut p), None);
     hal.connection_reset();
+    assert_eq!(hal.tx_free(), 8);
+    assert!(hal.tx_idle());
     let mut c = [0u8; CONNECT_LEN];
     sim::with(|c| c.log.clear());
     assert_eq!(hal.advertise(&[0], &[0, 0], &mut c), None);
