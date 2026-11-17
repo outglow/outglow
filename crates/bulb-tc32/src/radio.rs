@@ -538,12 +538,10 @@ pub fn receive(buf: &mut [u8; 127]) -> Option<(usize, i32, u32)> {
     if tail == head {
         return None;
     }
-    let waiting = if head >= tail { head - tail } else { head + SLOTS - tail };
-    if waiting as u8 > RX_PEAK.get() {
-        RX_PEAK.set(waiting as u8);
-    }
+    let waiting = ((head + SLOTS - tail) % SLOTS) as u8;
+    RX_PEAK.update(|p| p.max(waiting));
     let slot = tail * SLOT_LEN;
-    let len = (QUEUE.read(slot) as usize).min(SLOT_LEN - 6);
+    let len = (QUEUE.read(slot) as usize).min(buf.len());
     QUEUE.copy_to(slot + 6, &mut buf[..len]);
     let rssi = QUEUE.read(slot + 1) as i32 - 110;
     let end = u32::from_le_bytes([QUEUE.read(slot + 2), QUEUE.read(slot + 3), QUEUE.read(slot + 4), QUEUE.read(slot + 5)]);
