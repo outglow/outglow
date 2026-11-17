@@ -281,7 +281,8 @@ impl<H: Hal> Stack<H> {
             MGMT_LQI_REQ => {
                 let start = r.u8()? as usize;
                 let neighbors = self.neighbors.iter().filter(|n| n.used).count();
-                let children = self.children.iter().filter(|c| c.used && c.joined && c.capability & CAP_FFD == 0).count();
+                let listed = |c: &&super::parent::Child| c.used && c.joined && c.capability & CAP_FFD == 0;
+                let children = self.children.iter().filter(listed).count();
                 rsp.u8(SUCCESS);
                 rsp.u8((neighbors + children) as u8);
                 rsp.u8(start as u8);
@@ -294,7 +295,7 @@ impl<H: Hal> Stack<H> {
                         let relation = if n.short == self.nib.parent { 0 } else { 2 };
                         (n.ext, n.short, if n.short == 0 { 0 } else { 1 }, 1, relation, if n.short == 0 { 0 } else { self.nib.depth }, n.lqi)
                     } else {
-                        let c = self.children.iter().filter(|c| c.used && c.joined && c.capability & CAP_FFD == 0).nth(index - neighbors)?;
+                        let c = self.children.iter().filter(listed).nth(index - neighbors)?;
                         (c.ext, c.short, 2, if c.sleepy() { 0 } else { 1 }, 1, self.nib.depth + 1, 255)
                     };
                     rsp.u64(self.nib.ext_pan);
