@@ -246,6 +246,7 @@ fn the_hal_hands_the_radio_calls_to_the_ble_driver() {
     assert_eq!(hal.tx_free(), 8);
     assert!(hal.tx_push(2, &[1, 2]));
     assert_eq!(hal.tx_free(), 7);
+    assert!(!hal.tx_idle());
     let mut p = [0u8; LL_PAYLOAD_MAX];
     assert_eq!(hal.rx_pop(&mut p), None);
     hal.connection_reset();
