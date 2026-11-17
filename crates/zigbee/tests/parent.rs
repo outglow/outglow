@@ -1450,3 +1450,36 @@ fn a_parent_annce_cut_short_claims_nothing_even_when_it_names_many_children() {
     net.run(1_000);
     assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != sa || *c != 0x801F), "not even the first nine");
 }
+
+#[test]
+fn a_tunnel_for_a_device_that_is_not_a_child_goes_nowhere() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let sa = net.nodes[a].short();
+    let mut tunnel = vec![0x01, 0x66, 0x0E];
+    tunnel.extend_from_slice(&0x00124B00000000C1u64.to_le_bytes());
+    tunnel.extend_from_slice(&[0x21, 0x67, 0x30, 1, 2, 3]);
+    let t = net.now();
+    net.coord.nwk_data(sa, &tunnel);
+    net.run(500);
+    assert!(net.nwk_sent_by(net.nodes[a].id, t).iter().all(|(_, h, _)| h.security), "nothing passed on in the clear");
+}
+
+#[test]
+fn a_rejoin_request_without_the_extended_source_or_capability_is_not_answered() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    zed.parent = sa;
+    let mut h = zed.header(nwk::FRAME_CMD, sa);
+    h.radius = 1;
+    h.src_ext = None;
+    let cap = zed.capability();
+    zed.nwk_send(h, &[nwk::CMD_REJOIN_REQUEST, cap]);
+    let mut h = zed.header(nwk::FRAME_CMD, sa);
+    h.radius = 1;
+    zed.nwk_send(h, &[nwk::CMD_REJOIN_REQUEST]);
+    net.run(100);
+    zed.rx.clear();
+    zed.poll(&mut net, 20);
+    assert!(!zed.rx.iter().any(|(_, p)| p[0] == nwk::CMD_REJOIN_RESPONSE));
+}
