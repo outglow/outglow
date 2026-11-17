@@ -36,6 +36,8 @@ exclude_re = [
   "crates/ble/src/sha256\\.rs:(24:32|27:33|27:49): replace \\^ with \\| in compress$",
   # equivalent: the bits are disjoint, so | and ^ give the same value
   "replace \\| with \\^ in Header::field_control",
+  # equivalent: sorting the five samples the other way, or ties the other way, keeps the middle one
+  "sense/src/lib\\.rs:[0-9]+:33: replace > with (<|>=) in median5",
 ]
 
 # the timeout of a test run is 5x that of the unmutated tree, at least this:
