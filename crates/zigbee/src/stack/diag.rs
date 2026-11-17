@@ -721,9 +721,7 @@ impl<H: Hal> Stack<H> {
         };
         self.diag.noise_at = now.wrapping_add(NOISE_MS);
         self.diag.noise_now = dbm;
-        if self.diag.noise_max == i8::MIN || dbm > self.diag.noise_max {
-            self.diag.noise_max = dbm;
-        }
+        self.diag.noise_max = self.diag.noise_max.max(dbm);
     }
 
     pub(crate) fn coordinator_route(&self) -> (u16, u8, bool) {

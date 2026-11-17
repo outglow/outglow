@@ -24,7 +24,7 @@ fn the_average_retries_of_nothing_sent_is_zero() {
 
 #[test]
 fn without_a_noise_measurement_the_next_try_is_a_second_later() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
     s.diag.noise_at = 1_000;
     s.diag_noise(1_000);
     assert_eq!(s.diag.noise_at, 2_000);
@@ -85,7 +85,7 @@ fn the_event_log_round_trips_and_one_with_an_impossible_head_or_length_or_cut_sh
 
 #[test]
 fn a_frame_sent_is_counted_as_unicast_or_broadcast_and_one_not_sent_on_a_busy_channel_is_not() {
-    let stack = || Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
+    let stack = || Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
     let mut s = stack();
     s.neighbors[0].used = true;
     s.neighbors[0].short = 0x1000;
@@ -116,4 +116,12 @@ fn a_frame_sent_is_counted_as_unicast_or_broadcast_and_one_not_sent_on_a_busy_ch
     };
     s.on_mac_command(&mh, &[crate::mac::CMD_ORPHAN]);
     assert_eq!((s.hal.sent.len(), s.diag.n[k::MAC_TX_UCAST], s.neighbors[0].tx), (1, 1, 0), "to an extended address: no neighbour's");
+}
+
+#[test]
+fn a_frame_sent_after_attempts_on_a_busy_channel_counts_as_sent() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: true, attempts: 3 }, IDENTITY);
+    let h = crate::nwk::Header::new(crate::nwk::FRAME_DATA, 0x1000, 0x0042, 5, 1);
+    s.transmit_nwk(0x1000, &h, &[0x00]);
+    assert_eq!((s.diag.n[k::MAC_TX_UCAST], s.diag.n[k::MAC_TX_UCAST_RETRY], s.diag.n[k::CHANNEL_ACCESS_FAILURES]), (1, 2, 1));
 }

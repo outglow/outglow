@@ -10,6 +10,7 @@ pub(crate) struct Scripted {
     pub sent: Vec<Vec<u8>>,
     pub deaf: Vec<u16>,
     pub busy: bool,
+    pub attempts: u8,
 }
 
 impl Hal for Scripted {
@@ -39,6 +40,9 @@ impl Hal for Scripted {
     fn receive(&mut self, _buf: &mut [u8; 127]) -> Option<RxMeta> {
         None
     }
+    fn tx_attempts(&mut self) -> u8 {
+        self.attempts
+    }
     fn nv_load(&mut self, _item: NvItem, _buf: &mut [u8]) -> Option<usize> {
         None
     }
@@ -67,7 +71,7 @@ pub(crate) const IDENTITY: Identity = Identity {
 
 #[test]
 fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
     s.nib.short = 0x0101;
     s.children[3].used = true;
     s.children[3].short = 0x0202;
@@ -88,7 +92,7 @@ fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
 
 #[test]
 fn after_eight_taken_draws_the_lowest_free_address_is_given() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
     s.nib.short = 0x0001;
     s.children[0].used = true;
     s.children[0].short = 0x0002;
@@ -99,13 +103,13 @@ fn after_eight_taken_draws_the_lowest_free_address_is_given() {
 
 #[test]
 fn the_sequence_numbers_start_from_the_bytes_of_one_random_number() {
-    let s = Stack::new(Scripted { random: [0x1234_5678].to_vec(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
+    let s = Stack::new(Scripted { random: [0x1234_5678].to_vec(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
     assert_eq!((s.mac_seq, s.nwk_seq, s.aps_counter, s.zdo_seq), (0x78, 0x56, 0x34, 0x12));
 }
 
 #[test]
 fn the_network_opens_after_a_join_only_once_the_device_announce_is_out() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
     s.state = super::State::Up;
     s.steering = super::join::STEERING_OPEN_DUE;
     s.announce_at = Some(50_000);

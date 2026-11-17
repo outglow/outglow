@@ -1045,6 +1045,7 @@ fn counters_kept_over_a_restart_of_another_version_or_cut_short_are_not_taken() 
         let rx = diag1(&mut net, short, MAC_RX_UCAST);
         crash_with(&mut net, n, |k| if damage == 0 { k[0] ^= 0x55 } else { k.truncate(10) });
         assert!(diag1(&mut net, short, MAC_RX_UCAST) < rx, "damage {damage}: the stored counters, not the kept ones");
+        assert!((0..8).filter_map(|i| net.nodes[n].stack.event(i)).all(|e| e.this_start), "damage {damage}: nor the kept events");
     }
 }
 
@@ -1186,6 +1187,17 @@ fn a_bulb_behind_another_names_it_as_its_way_to_the_coordinator_and_counts_its_c
     net.power_cycle(a);
     net.run(1_000);
     assert_eq!(net.nodes[a].stack.resets(), (2, 1));
+}
+
+#[test]
+fn every_write_to_persistent_memory_is_counted() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let before = diag1(&mut net, short, 0x0001);
+    net.coord.zcl(short, 0x0004, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(11_000);
+    assert!(diag1(&mut net, short, 0x0001) > before);
 }
 
 #[test]

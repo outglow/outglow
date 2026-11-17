@@ -8,7 +8,7 @@ extern crate std;
 use std::vec::Vec;
 
 fn stack() -> Stack<Scripted> {
-    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY)
+    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY)
 }
 
 fn fill(s: &mut Stack<Scripted>) {
