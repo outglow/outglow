@@ -1529,6 +1529,8 @@ fn mgmt_lqi_lists_the_router_neighbours_and_then_the_end_device_children() {
     assert_eq!(child[8..16], zed.ext.to_le_bytes());
     assert_eq!(child[16..18], zed.short.to_le_bytes());
     assert_eq!(child[18], 0x02 | 0 << 2 | 1 << 4, "an end device, receiver off when idle, a child");
+    assert_eq!(child[19..22], [0x02, 2, 255], "permit joining unknown, one below the bulb, its LQI not measured");
+    assert_eq!(rsp[5 + 18..5 + 22], [0x00 | 1 << 2 | 0 << 4, 0x02, 0, rsp[5 + 21]], "the coordinator: the parent, at depth 0");
     let seq = net.coord.zdo(sa, 0x0031, &[1]);
     net.run(300);
     let rsp = net.coord.last_zdo(sa, 0x8031).unwrap();

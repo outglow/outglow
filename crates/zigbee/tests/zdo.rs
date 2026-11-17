@@ -368,3 +368,14 @@ fn an_aps_unicast_in_a_nwk_broadcast_counts_as_a_broadcast() {
     net.run(300);
     assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != short || *c != 0x8002), "about another device: no answer to a broadcast");
 }
+
+#[test]
+fn mgmt_rtg_counts_and_lists_the_routes_in_use_with_their_flags() {
+    let (mut net, _, short) = bulb();
+    net.coord.many_to_one_route_request(false);
+    net.run(2_000);
+    let rsp = ask(&mut net, short, 0x0032, &[0]).unwrap();
+    assert_eq!(rsp[..4], [0x00, 1, 0, 1]);
+    assert_eq!(rsp[4..9], [0x00, 0x00, 0x00 | 1 << 4 | 1 << 5, 0x00, 0x00], "to the concentrator: active, many-to-one, a route record due, straight there");
+    assert_eq!(ask(&mut net, short, 0x0032, &[1]).unwrap(), vec![0x00, 1, 1, 0]);
+}
