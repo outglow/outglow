@@ -305,6 +305,7 @@ pub struct World {
     pub event_starts: Vec<u64>,
     pub event_ends: Vec<(u64, u64)>,
     pub anchors: Vec<u64>,
+    stuck: (u64, u32),
     pub flash_fault: bool,
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
@@ -386,7 +387,16 @@ pub struct SimHal(pub Rc<RefCell<World>>);
 
 impl Hal for SimHal {
     fn now(&mut self) -> u32 {
-        self.0.borrow().now as u32
+        let mut w = self.0.borrow_mut();
+        let now = w.now;
+        assert!(now < 600_000 * MS, "past 600 s of simulated time: a test waiting for what never comes");
+        if w.stuck.0 == now {
+            w.stuck.1 += 1;
+            assert!(w.stuck.1 < 1_000_000, "the bulb asked for the time a million times while none passed: an endless loop");
+        } else {
+            w.stuck = (now, 0);
+        }
+        now as u32
     }
 
     fn random(&mut self) -> u32 {
@@ -770,6 +780,7 @@ impl Rig {
             event_starts: vec![],
             event_ends: vec![],
             anchors: vec![],
+            stuck: (0, 0),
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
         }))
