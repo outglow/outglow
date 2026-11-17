@@ -306,6 +306,7 @@ pub struct World {
     pub event_ends: Vec<(u64, u64)>,
     pub anchors: Vec<u64>,
     stuck: (u64, u32),
+    pub commands: Vec<Command>,
     pub flash_fault: bool,
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
@@ -714,7 +715,12 @@ pub struct BleLink(pub Rc<RefCell<Ble<SimHal>>>);
 
 impl Radio for BleLink {
     fn poll(&mut self) -> Option<Command> {
-        self.0.borrow_mut().poll()
+        let mut ble = self.0.borrow_mut();
+        let c = ble.poll();
+        if let Some(c) = c {
+            ble.hal().0.borrow_mut().commands.push(c);
+        }
+        c
     }
 
     fn report(&mut self, state: &StateReport) {
@@ -781,6 +787,7 @@ impl Rig {
             event_ends: vec![],
             anchors: vec![],
             stuck: (0, 0),
+            commands: vec![],
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
         }))

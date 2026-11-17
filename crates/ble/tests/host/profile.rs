@@ -1264,3 +1264,16 @@ fn only_a_long_network_block_is_answered_as_installed() {
     rig.run(400);
     assert_eq!(rig.central().scan_responses.last().unwrap()[8 + 22], 0x3f, "not provisioned");
 }
+
+#[test]
+fn a_white_bulb_passes_on_no_colour_command_from_the_apps_tunnel() {
+    let mut rig = logged_in(TUNABLE);
+    let key = rig.key.unwrap();
+    rig.world.borrow_mut().commands.clear();
+    for zcl in [&[0x06u8, 84, 200, 0, 0][..], &[0x07, 1, 2, 3, 4, 0, 0], &[0x47, 0, 0, 0], &[0x0a, 0x2c, 0x01, 0, 0]] {
+        rig.write(COMMAND, &block_packet(&key, 0, &[&[0x00, 0x00, 0x01, 0x00, 0x03][..], zcl].concat()));
+        rig.run(300);
+    }
+    let commands = rig.world.borrow().commands.clone();
+    assert_eq!(commands.iter().filter(|c| !matches!(c, bulb_core::Command::ReadState)).collect::<Vec<_>>(), [&bulb_core::Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }], "only the colour temperature");
+}
