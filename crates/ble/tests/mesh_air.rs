@@ -688,3 +688,18 @@ fn a_connected_bulb_listens_only_while_it_waits_for_answers() {
     rigs[0].run(2000);
     assert!(rigs[0].world.borrow().listened.iter().all(|l| l.0 < rigs[0].world.borrow().event_starts[0]), "not while connected");
 }
+
+#[test]
+fn a_bulb_listens_on_after_a_packet_while_more_than_half_a_millisecond_is_left() {
+    let (ether, mut rig) = alone();
+    for sn in 0..40 {
+        ether.borrow_mut().deliver(0, &air_pdu(0x100 + sn, 0x0021, 0xffff, 0xc0 | 0x10, &[0], &LTK));
+    }
+    rig.run(30);
+    let w = rig.world.borrow();
+    let first = w.listened[0].0;
+    let calls: Vec<u64> = w.listened.iter().take_while(|l| l.1 == first + 12 * MS).map(|l| l.1 - l.0).collect();
+    assert_eq!(calls.len(), 29, "a packet takes 0.4 ms here: {calls:?}");
+    assert_eq!(*calls.last().unwrap(), 12 * MS - 28 * 4 * MS / 10);
+    assert_eq!(rig.ble.borrow().air_stats().received, 29);
+}
