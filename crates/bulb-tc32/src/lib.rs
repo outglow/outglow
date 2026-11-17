@@ -99,3 +99,7 @@ pub(crate) fn factory_reset() {
 fn panic(_: &core::panic::PanicInfo) -> ! {
     board::reboot()
 }
+
+#[cfg(test)]
+#[path = "tests/lib.rs"]
+mod tests;

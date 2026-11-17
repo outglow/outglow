@@ -116,3 +116,26 @@ fn the_nv_items_are_stored_in_flash() {
     assert_eq!((c.stack_free, c.irq_stack_free), (0, 0));
     assert_eq!(hal.reset_cause(), crate::board::reset_cause());
 }
+
+#[test]
+fn a_bulb_on_the_simulated_chip_starts_zigbee_and_bluetooth() {
+    let _s = sim::session();
+    crate::board::warm_reset();
+    let mut link = Link::new();
+    let started = std::time::Instant::now();
+    let mut polls = 0;
+    while polls < 3_000 && started.elapsed() < std::time::Duration::from_secs(20) {
+        let _ = link.poll();
+        sim::with(|c| c.tick = c.tick.wrapping_add(16_000));
+        polls += 1;
+    }
+    assert!(link.stack.is_some());
+    assert!(sim::with(|c| c.writes()).contains(&sim::Op::W8(0x12d2, 0x9b)));
+    assert!(sim::with(|c| c.tx_kicks) > 0, "the stack sent nothing in {polls} polls");
+    #[cfg(feature = "ble")]
+    {
+        assert!(link.ble.is_some());
+        assert!(crate::ble_radio::lent().0 > 0, "no BLE event in {polls} polls");
+    }
+    assert_eq!(crate::link::BULB_NET.read(1) >= 11, true);
+}
