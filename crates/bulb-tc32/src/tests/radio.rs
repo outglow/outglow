@@ -448,7 +448,7 @@ fn frame(mpdu: &[u8], stamp: u32, rssi: u8, status: u8) -> Vec<u8> {
     let phr = mpdu.len() + 2;
     let mut v = vec![(phr + 9) as u8, 0, 0, 0, phr as u8];
     v.extend_from_slice(mpdu);
-    v.extend_from_slice(&[0, 0]);
+    v.extend_from_slice(&[0x04, 0x04]);
     v.extend_from_slice(&stamp.to_le_bytes());
     v.extend_from_slice(&[0, 0, rssi, status]);
     v
@@ -1233,4 +1233,47 @@ pub fn sent_at(t: u32) {
 #[cfg(feature = "sense")]
 pub fn probe_pan() -> u16 {
     crate::radio::PROBE_PAN.get()
+}
+
+#[test]
+fn resuming_802_15_4_restores_its_tables_dma_and_interrupts_and_turns_the_receiver_on() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| {
+        c.poke32(reg::IRQ_MASK, 0x0010_0001);
+        c.poke8(reg::IRQ_ENABLE, 1);
+        c.poke8(RF_IRQ_MASK, 0xff);
+        c.poke8(RF_IRQ_MASK + 1, 0xff);
+        c.poke8(DMA_IRQ_ENABLE, 0xff);
+        c.poke8(DMA_CHANNEL_ENABLE, 0x00);
+        c.poke8(0x1225, 0xff);
+        c.poke8(0x1226, 0x00);
+        c.poke8(0x1227, 0xff);
+    });
+    let s = suspend();
+    sim::with(|c| c.log.clear());
+    resume(s);
+    let w = sim::with(|c| c.writes());
+    let table = w.iter().position(|o| *o == Op::W8(0x12d2, 0x9b)).unwrap_or(0);
+    assert_eq!(w[table - 1], Op::W16(RF_IRQ_STATUS as usize, 0xffff));
+    assert_eq!(w8(&w[table..table + 35]), VENDOR_INIT_TABLE.to_vec());
+    let at = w.iter().rposition(|o| matches!(o, Op::W8(0x1225, _))).unwrap_or(0);
+    let tail = &w[at..];
+    assert_eq!(
+        tail[..4].to_vec(),
+        vec![Op::W8(0x1225, 0xbf), Op::W8(0x1226, 0x80), Op::W8(0x1227, 0xff), Op::W16(DMA_RX_ADDR, RX_BUF.addr() as u16)]
+    );
+    assert_eq!(
+        tail[4..11].to_vec(),
+        vec![
+            Op::W8(DMA_RX_SIZE, 0x09),
+            Op::W8(DMA_RX_MODE, 0x01),
+            Op::W8(DMA_IRQ_ENABLE, 0xf3),
+            Op::W16(RF_IRQ_MASK, 0xe001),
+            Op::W32(reg::IRQ_MASK, 0x0010_2001),
+            Op::W8(DMA_CHANNEL_ENABLE, 0x0c),
+            Op::W8(0xf02, 0x45),
+        ]
+    );
+    assert_eq!(*w.last().unwrap_or(&Op::W8(0, 0)), Op::W8(reg::IRQ_ENABLE, 1));
 }

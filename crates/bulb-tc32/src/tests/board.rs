@@ -110,6 +110,10 @@ fn the_reset_cause_comes_from_the_retained_analog_bit_and_the_watchdog_flag() {
     assert_eq!(sim::with(|c| c.analog(RETAINED)), RETAINED_ALIVE);
     assert!(warm_reset());
     assert_eq!(reset_cause(), ResetCause::Software);
+    assert_eq!(sim::with(|c| c.analog(RETAINED)), RETAINED_ALIVE);
+    sim::with(|c| c.set_analog(RETAINED, 0xf0));
+    assert!(!warm_reset());
+    assert_eq!(sim::with(|c| c.analog(RETAINED)), 0xf1);
     sim::with(|c| c.poke8(WD_STATUS, 0x01));
     assert!(warm_reset());
     assert_eq!(reset_cause(), ResetCause::Watchdog);
