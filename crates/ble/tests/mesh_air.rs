@@ -522,3 +522,25 @@ fn an_advertising_event_left_out_for_the_neighbours_is_listened_for_once_they_ar
     assert_eq!(windows.len(), 1, "{windows:?}");
     assert!((quiet..quiet + MS / 5).contains(&windows[0]), "{} ticks after the traffic", windows[0] as i64 - quiet as i64);
 }
+
+fn jump_to_idle(rig: &mut Rig, left: u64) {
+    let idle = rig.ble.borrow_mut().idle_time() as u64;
+    assert!(idle > left);
+    rig.world.borrow_mut().now += idle - left;
+    rig.ble.borrow_mut().poll();
+}
+
+#[test]
+fn a_burst_goes_only_with_4_ms_to_spare_before_the_next_advertising_event() {
+    for (left, sent) in [(4 * MS, true), (4 * MS - 1, false)] {
+        let (ether, mut rig) = alone();
+        ether.borrow_mut().deliver(0, &air_pdu_hops(0x71, 0x0021, 0xffff, 0xc0 | 0x10, &[0], 2, &LTK));
+        while ether.borrow().sent(0).is_empty() {
+            rig.run(1);
+        }
+        let before = ether.borrow().sent(0).len();
+        assert_eq!(before, 4, "the first burst");
+        jump_to_idle(&mut rig, left);
+        assert_eq!(ether.borrow().sent(0).len() > before, sent, "{left} ticks left");
+    }
+}
