@@ -426,3 +426,56 @@ fn a_discovery_takes_the_first_free_slot_and_when_forced_the_live_one_that_ends_
     assert_eq!(s.discovery_slot(1_000, false), Some(2));
     assert_eq!(s.discovery_slot(1_000, true), Some(2));
 }
+
+#[test]
+fn a_late_copy_of_the_bulbs_own_frame_is_one_with_its_extended_address_or_one_of_its_last_64_numbers() {
+    let mut s = up();
+    s.nwk_seq = 100;
+    let h = |seq: u8, ext: Option<u64>| {
+        let mut h = nwk::Header::new(nwk::FRAME_DATA, 0xFFFD, 0x0042, 30, seq);
+        h.src_ext = ext;
+        h
+    };
+    assert!(s.own_late_copy(&h(100, None)));
+    assert!(s.own_late_copy(&h(37, None)));
+    assert!(!s.own_late_copy(&h(36, None)));
+    assert!(!s.own_late_copy(&h(101, None)));
+    assert!(s.own_late_copy(&h(101, Some(0x00124B00_0000_0042))));
+    assert!(!s.own_late_copy(&h(101, Some(0x99))));
+}
+
+#[test]
+fn a_broadcast_heard_again_from_a_neighbour_marks_only_its_own_copies() {
+    let mut s = up();
+    fill(&mut s);
+    for (i, (used, src, seq)) in [(true, 0x2000, 5), (true, 0x2000, 6), (true, 0x2001, 5), (false, 0x2000, 5)].into_iter().enumerate() {
+        s.bcast[i].used = used;
+        s.bcast[i].header = nwk::Header::new(nwk::FRAME_DATA, 0xFFFD, src, 30, seq);
+    }
+    s.broadcast_heard(0x2000, 5, 0x1003);
+    assert_eq!([s.bcast[0].heard, s.bcast[1].heard, s.bcast[2].heard, s.bcast[3].heard], [1 << 3, 0, 0, 0]);
+    s.broadcast_heard(0x2000, 5, 0x7777);
+    assert_eq!(s.bcast[0].heard, 1 << 3, "not from a neighbour");
+}
+
+#[test]
+fn a_full_broadcast_table_takes_a_new_broadcast_only_in_place_of_one_kept_at_most_seven_seconds_more() {
+    let mut s = stack();
+    let now = 10_000;
+    for (i, e) in s.seen.iter_mut().enumerate() {
+        *e = super::Seen { used: true, src: 0x3000 + i as u16, seq: 1, expires: now + super::BROADCAST_MEMORY_MS };
+    }
+    let keep = super::BROADCAST_MEMORY_MS - super::BTT_KEEP_MS;
+    s.seen[2].expires = now + keep + 1;
+    assert_eq!(s.seen_before(0x2000, 9, now, false), None);
+    assert_eq!(s.seen_before(0x3002, 1, now, false), Some(true));
+    s.seen[2].expires = now + keep;
+    s.seen[4].expires = now + keep;
+    assert_eq!(s.seen_before(0x2000, 9, now, false), Some(false));
+    assert_eq!((s.seen[2].src, s.seen[2].seq, s.seen[2].expires), (0x2000, 9, now + super::BROADCAST_MEMORY_MS), "the first of the two");
+    assert_eq!(s.seen[4].src, 0x3004);
+    s.seen[4].expires = now + keep + 1;
+    assert_eq!(s.seen_before(0x2001, 9, now, false), None);
+    assert_eq!(s.seen_before(0x2001, 9, now, true), Some(false), "forced");
+    assert_eq!(s.seen[4].src, 0x2001);
+}
