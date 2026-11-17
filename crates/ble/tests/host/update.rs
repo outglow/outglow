@@ -1,7 +1,5 @@
-use memcap as _;
-mod sim;
 
-use sim::{make_image, ota_packet, Rig, DIMMABLE, MS};
+use crate::sim::{make_image, ota_packet, Rig, DIMMABLE, MS};
 
 const OTA: u16 = 0x1b;
 const OTA_CLASSIC: u16 = 0x18;
@@ -245,7 +243,7 @@ fn an_image_larger_than_the_staging_area_is_refused() {
     let mut rig = Rig::new(DIMMABLE);
     rig.connect();
     let mut image = make_image(256, 5);
-    image[0x18..0x1c].copy_from_slice(&(sim::STAGING as u32 + 16).to_le_bytes());
+    image[0x18..0x1c].copy_from_slice(&(crate::sim::STAGING as u32 + 16).to_le_bytes());
     rig.write(OTA, &ota_packet(0, &image[..16]));
     rig.write(OTA, &ota_packet(1, &image[16..32]));
     assert_eq!(status(&mut rig).1, 2);
@@ -393,7 +391,7 @@ fn the_smallest_image_is_64_octets() {
 fn an_image_fills_the_staging_area_exactly_and_no_block_reaches_past_it() {
     let mut rig = Rig::new(DIMMABLE);
     rig.connect();
-    let image = make_image(sim::STAGING, 8);
+    let image = make_image(crate::sim::STAGING, 8);
     let blocks = send_blocks(&mut rig, OTA, &image);
     rig.write(OTA, &ota_packet(blocks, &[]));
     assert_eq!(status(&mut rig), (4, 0, blocks));

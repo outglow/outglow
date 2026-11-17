@@ -1,11 +1,9 @@
-use memcap as _;
-mod sim;
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use ble::crypto::{mesh_crypt, mesh_mic};
-use sim::{run_all, Ether, Rig, DIMMABLE, MS};
+use crate::sim::{run_all, Ether, Rig, DIMMABLE, MS};
 
 const COMMAND: u16 = 0x15;
 const OP_POWER: u8 = 0xd0;

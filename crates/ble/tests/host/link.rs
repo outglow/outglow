@@ -1,8 +1,6 @@
-use memcap as _;
-mod sim;
 
 use ble::{Hal, LinkState};
-use sim::{Params, Rig, DIMMABLE, MS, UNIT};
+use crate::sim::{Params, Rig, DIMMABLE, MS, UNIT};
 
 fn fields(adv: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let mut out = vec![];
@@ -25,7 +23,7 @@ fn advertises_like_the_stock_bulb() {
     let _ = &c;
     let adv = &c.advertisements[0];
     assert_eq!(adv[0], 0x00, "ADV_IND from a public address");
-    assert_eq!(adv[2..8], sim::ADDRESS);
+    assert_eq!(adv[2..8], crate::sim::ADDRESS);
     assert_eq!(
         fields(adv),
         [
@@ -258,7 +256,7 @@ fn refuses_pairing_and_unknown_signaling() {
     assert_eq!(c.signaling, [vec![0x01, 0x09, 0x02, 0x00, 0x00, 0x00]]);
 }
 
-fn deaf_until(rig: &mut Rig, lead: u16, change: impl FnOnce(&mut sim::Central)) {
+fn deaf_until(rig: &mut Rig, lead: u16, change: impl FnOnce(&mut crate::sim::Central)) {
     rig.run(300);
     let instant = {
         let mut c = rig.central();
@@ -481,7 +479,7 @@ fn a_channel_map_of_one_channel_ends_the_connection() {
     assert!(rig.central().channels.iter().rev().take(10).all(|ch| [9, 10].contains(ch)));
 }
 
-fn step_until_radio(rig: &mut Rig, busy: impl Fn(&sim::World) -> usize) -> (u64, u64) {
+fn step_until_radio(rig: &mut Rig, busy: impl Fn(&crate::sim::World) -> usize) -> (u64, u64) {
     let idle = rig.ble.borrow_mut().idle_time() as u64;
     let asked = rig.ble.borrow_mut().hal().now() as u64;
     assert_eq!(asked, rig.world.borrow().now);

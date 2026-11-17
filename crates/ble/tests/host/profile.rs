@@ -1,9 +1,7 @@
-use memcap as _;
-mod sim;
 
 use ble::crypto::{crc8_6c, tl_aes_encrypt};
 use ble::LinkState;
-use sim::{Rig, ADDRESS, COLOUR, DIMMABLE, TUNABLE};
+use crate::sim::{Rig, ADDRESS, COLOUR, DIMMABLE, TUNABLE};
 
 const STATUS: u16 = 0x12;
 const COMMAND: u16 = 0x15;
@@ -1119,4 +1117,18 @@ fn the_apps_tunnel_without_a_transition_time_is_instant_and_a_stock_block_0x01_r
     assert_eq!(rig.state(), LinkState::Advertising, "the bulb ended the connection");
     rig.connect();
     assert_eq!(rig.read(0x03), b"unpaired");
+}
+
+#[test]
+fn a_new_connection_starts_with_the_default_mtu_and_notifications_off() {
+    let mut rig = connected(DIMMABLE);
+    assert_eq!(rig.att(&[0x02, 64, 0]), [0x03, 64, 0]);
+    rig.write(0x13, &[1, 0]);
+    rig.central().send_fragments(&[&[0x03, 0x00, 0x04, 0x00, 0x0a][..]]);
+    rig.run(300);
+    rig.central().terminate();
+    rig.run(300);
+    rig.connect();
+    assert_eq!(rig.read(0x13), [0, 0]);
+    assert_eq!(rig.att(&[0x04, 0x01, 0x00, 0xff, 0xff]).len(), 2 + 5 * 4, "23 octets again");
 }

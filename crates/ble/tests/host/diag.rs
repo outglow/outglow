@@ -1,9 +1,7 @@
-use memcap as _;
-mod sim;
 
 use ble::diag::{self, parse, zigbee_event, DiagCommand, FrameLog, Info, LogEntry, State};
 use bulb_core::command::{Command, PowerOnBehavior};
-use sim::{Rig, DIMMABLE, TUNABLE};
+use crate::sim::{Rig, DIMMABLE, TUNABLE};
 use zigbee::stack::{ev, LightSettings};
 
 const INFO: u16 = 0x22;
