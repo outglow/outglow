@@ -800,3 +800,43 @@ fn on_and_toggle_end_a_waiting_off_guard_when_there_is_no_on_time() {
         assert_eq!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0, 0])], "command {cmd}");
     }
 }
+
+#[test]
+fn the_enhanced_forms_of_remove_store_recall_and_membership_are_not_supported() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    for cmd in [0x43u8, 0x44, 0x45, 0x46] {
+        let seq = net.coord.zcl(short, SCENES, 0x01, cmd, &[0x34, 0x12, 1]);
+        net.run(50);
+        assert_eq!(net.coord.last_zcl(short, SCENES, 0x0B).unwrap(), vec![0x18, seq, 0x0B, cmd, 0x81], "command {cmd:#04x}");
+    }
+}
+
+#[test]
+fn a_scene_with_a_name_a_short_colour_set_and_an_explicit_colour_mode() {
+    use bulb_core::command::{Command, HueDirection};
+    let (mut net, n, short) = bulb_with(IDENTITY_COLOR);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    let colour = |mode: u8| vec![0x00, 0x03, 14, 0x10, 0x20, 0x30, 0x40, 0x00, 0x80, 100, 0, 0, 0, 0, 0x2C, 0x01, mode];
+    let mut named = vec![0x34, 0x12, 1, 0, 0, 2, b'a', b'b', 0x08, 0x00, 1, 42];
+    named.extend_from_slice(&[0x00, 0x03, 4, 1, 2, 3, 4]);
+    net.coord.zcl(short, SCENES, 0x01, 0x00, &named);
+    let mut hue = vec![0x34, 0x12, 2, 0, 0, 0];
+    hue.extend_from_slice(&colour(0));
+    net.coord.zcl(short, SCENES, 0x01, 0x00, &hue);
+    let mut odd = vec![0x34, 0x12, 3, 0, 0, 0];
+    odd.extend_from_slice(&colour(3));
+    net.coord.zcl(short, SCENES, 0x01, 0x00, &odd);
+    net.run(100);
+    let recall = |net: &mut Net, id: u8| {
+        let before = net.nodes[n].commands.len();
+        net.coord.zcl(short, SCENES, 0x01, 0x05, &[0x34, 0x12, id]);
+        net.run(50);
+        net.nodes[n].commands[before..].to_vec()
+    };
+    assert_eq!(recall(&mut net, 1), vec![Command::MoveToLevel { level: 42, transition_ms: 0 }], "the name skipped, the short colour set ignored");
+    assert_eq!(recall(&mut net, 2), vec![Command::MoveToHueSaturation { hue: 128, sat: 100, direction: HueDirection::Shortest, transition_ms: 0 }]);
+    assert_eq!(recall(&mut net, 3), vec![Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }], "a reserved mode: by the temperature");
+}
