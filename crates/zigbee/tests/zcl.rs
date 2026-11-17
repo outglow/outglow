@@ -785,3 +785,18 @@ fn a_scene_group_of_0xfff7_is_a_group_and_0xfff8_is_none() {
         assert_eq!(net.coord.last_zcl(short, SCENES, 0x01).unwrap()[..4], [0x19, seq, 0x01, status], "group {group:#06x}");
     }
 }
+
+#[test]
+fn on_and_toggle_end_a_waiting_off_guard_when_there_is_no_on_time() {
+    for cmd in [0x01u8, 0x02] {
+        let (mut net, _, short) = bulb_with(IDENTITY);
+        net.coord.zcl(short, ON_OFF, 0x11, 0x42, &[0x00, 0x00, 0x00, 0x1E, 0x00]);
+        net.run(50);
+        net.coord.zcl(short, ON_OFF, 0x11, 0x00, &[]);
+        net.run(50);
+        assert_ne!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0, 0])]);
+        net.coord.zcl(short, ON_OFF, 0x11, cmd, &[]);
+        net.run(50);
+        assert_eq!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0, 0])], "command {cmd}");
+    }
+}
