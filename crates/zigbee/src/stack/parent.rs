@@ -165,7 +165,7 @@ impl<H: Hal> Stack<H> {
                     _ => self.new_address(),
                 };
                 self.children[i] =
-                    Child { used: true, ext, short, capability, joined: false, timeout: DEFAULT_TIMEOUT, fc_next: 0, fc_seq: 0, heard: now, ..Child::EMPTY };
+                    Child { used: true, ext, short, capability, heard: now, ..Child::EMPTY };
                 self.diag.add(super::diag::k::JOIN_INDICATION);
                 (short, 0x00)
             }

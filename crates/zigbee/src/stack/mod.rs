@@ -7,6 +7,8 @@ mod join;
 #[cfg(test)]
 mod link_eval;
 #[cfg(test)]
+mod address_tests;
+#[cfg(test)]
 mod neighbor_tests;
 mod net;
 mod nv;
