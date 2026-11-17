@@ -139,3 +139,7 @@ pub fn blank(sector: usize) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+#[path = "tests/flash.rs"]
+mod tests;

@@ -1,5 +1,7 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![deny(unsafe_code)]
+#[cfg(test)]
+use memcap as _;
 
 mod aes;
 mod board;

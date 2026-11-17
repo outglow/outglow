@@ -549,3 +549,7 @@ impl Radio for Link {
         self.debug.report(state);
     }
 }
+
+#[cfg(test)]
+#[path = "tests/zb.rs"]
+mod tests;

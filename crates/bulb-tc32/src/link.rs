@@ -83,3 +83,7 @@ impl Radio for DebugLink {
         BULB_STATE.write(STATE_REPORTS, BULB_STATE.read(STATE_REPORTS).wrapping_add(1));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/link.rs"]
+mod tests;
