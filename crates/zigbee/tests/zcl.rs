@@ -884,3 +884,33 @@ fn move_color_temperature_stops_at_the_bounds_it_is_given_or_the_lights_own() {
     assert_eq!(target(last_command(&mut net, n, short, COLOR, 0x4B, &[1, 10, 0, 0, 0, 0x2C, 0x01])), 300);
     assert_eq!(target(last_command(&mut net, n, short, COLOR, 0x4B, &[1, 10, 0, 0, 0, 0, 0])), bulb_core::CT_MAX);
 }
+
+#[test]
+fn a_change_is_reported_no_sooner_than_the_minimum_interval_after_the_last_report() {
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let mut bind = ext.to_le_bytes().to_vec();
+    bind.push(1);
+    bind.extend_from_slice(&LEVEL.to_le_bytes());
+    bind.push(3);
+    bind.extend_from_slice(&COORD_EXT.to_le_bytes());
+    bind.push(1);
+    net.coord.zdo(short, 0x0021, &bind);
+    net.run(100);
+    assert_eq!(global(&mut net, short, LEVEL, 0x06, &[0x00, 0x00, 0x00, 0x20, 5, 0, 0x10, 0x0E, 1]), Some(vec![0x07, 0x00]));
+    net.run(6_000);
+    let t = net.now();
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[60, 0, 0]);
+    net.run(200);
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[90, 0, 0]);
+    let times: Vec<u32> = {
+        net.run(7_000);
+        net.timed_nwk_sent_by(net.nodes[n].id, t)
+            .into_iter()
+            .filter(|(_, _, h, p)| h.dst == 0x0000 && p.len() > 11 && p[2..4] == LEVEL.to_le_bytes() && p[10] == 0x0A)
+            .map(|e| e.0)
+            .collect()
+    };
+    assert_eq!(times.len(), 2, "{times:?}");
+    assert!(times[1] - times[0] >= 5_000 && times[1] - times[0] < 6_000, "{times:?}");
+}
