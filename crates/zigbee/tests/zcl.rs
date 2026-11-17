@@ -687,3 +687,23 @@ fn the_colour_mode_is_reportable_on_a_colour_light_only() {
         assert_eq!(global(&mut net, short, COLOR, 0x06, &[0x00, 0x08, 0x00, 0x30, 1, 0, 0x10, 0x0E]), Some(status));
     }
 }
+
+#[test]
+fn a_read_answers_as_many_attributes_as_fit_in_the_longest_answer() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    for (asked, answered) in [(70u16, 70usize), (100, 70)] {
+        let request: Vec<u8> = (0..asked).flat_map(|i| (0x2000 + i).to_le_bytes()).collect();
+        let seq = net.coord.zcl_fragmented(short, BASIC, 0x00, 0x00, &request, 50);
+        net.run(2_000);
+        let rsp = net.coord.last_zcl(short, BASIC, 0x01).unwrap();
+        assert_eq!(rsp[1], seq);
+        assert_eq!(rsp.len(), 3 + 3 * answered, "{asked} asked");
+        assert!(rsp[3..].chunks(3).enumerate().all(|(i, r)| r == [(0x2000 + i as u16) as u8, 0x20, 0x86]));
+    }
+    let seq = net.coord.zcl_mfr(short, DIAG, 0x00, MFR, 0x00, &[0x50, 0x50, 0x51, 0x50, 0x52, 0x50, 0x53, 0x50]);
+    net.run(300);
+    let rsp = net.coord.last_zcl_mfr(short, DIAG, 0x01).unwrap();
+    assert_eq!(rsp[3], seq);
+    let records = read_records(&rsp[5..]);
+    assert_eq!(records.iter().map(|r| r.0).collect::<Vec<u16>>(), vec![0x5050, 0x5051, 0x5052], "room for three pages of 65 bytes; a fourth is left for the next read");
+}

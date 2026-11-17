@@ -898,7 +898,7 @@ impl<H: Hal> Stack<H> {
                             break;
                         };
                         let expected = self.type_of(c, cluster, id);
-                        let light = if c.ep == ENDPOINT && c.mfr.is_none() { report_index(cluster, id) } else { None };
+                        let light = report_index(cluster, id);
                         let other = light.is_none() && self.reportable_at(c, cluster, id);
                         match expected {
                             None => UNSUPPORTED_ATTRIBUTE,
@@ -939,7 +939,7 @@ impl<H: Hal> Stack<H> {
                 header(rsp, READ_REPORTING_CONFIG_RSP);
                 while let (Some(direction), Some(id)) = (r.u8(), r.u16()) {
                     let ty = self.type_of(c, cluster, id);
-                    let light = if c.ep == ENDPOINT && c.mfr.is_none() { report_index(cluster, id) } else { None };
+                    let light = report_index(cluster, id);
                     let config = match (direction, ty, light) {
                         (0, Some(_), Some(i)) => Some((self.reports[i].min_s, self.reports[i].max_s, self.reports[i].change as u32)),
                         (0, Some(_), None) if self.reportable_at(c, cluster, id) => Some(
