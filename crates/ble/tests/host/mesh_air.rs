@@ -557,9 +557,11 @@ fn a_connected_bulb_sends_a_burst_early_rather_than_have_its_connection_event_de
         let packet = rig.command_packet(0x000b, OP_POWER, &[0]);
         rig.central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
         let sent = |e: &Rc<RefCell<Ether>>| e.borrow().sent(0).len();
+        let from = rig.world.borrow().now;
         loop {
             let before = sent(&ether);
             let at = rig.world.borrow().now;
+            assert!(at < from + 1000 * MS, "no burst with 6.5 to 10 ms before the connection event");
             rig.run_until(at + 1);
             if sent(&ether) == before + 4 && before >= 8 {
                 let idle = rig.ble.borrow_mut().idle_time() as u64;
@@ -741,8 +743,10 @@ fn a_gap_of_exactly_11_ms_does_not_lengthen_the_train() {
         let packet = rig.command_packet(0x000b, OP_POWER, &[0]);
         rig.central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
         let mut seen = 0;
+        let from = rig.world.borrow().now;
         let last = loop {
             let at = rig.world.borrow().now;
+            assert!(at < from + 1000 * MS, "no burst late in the train with room after it");
             rig.run_until(at + 1);
             let bursts = ether.borrow().bursts_of(0);
             if bursts.len() == seen {

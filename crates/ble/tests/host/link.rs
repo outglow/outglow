@@ -486,6 +486,7 @@ fn step_until_radio(rig: &mut Rig, busy: impl Fn(&crate::sim::World) -> usize) -
     let before = busy(&rig.world.borrow());
     loop {
         let at = rig.world.borrow().now;
+        assert!(at < asked + idle + 400 * MS, "the radio was not used within 400 ms of the idle time's end");
         rig.run_until(at + 1);
         if busy(&rig.world.borrow()) != before {
             return (asked + idle, at);
