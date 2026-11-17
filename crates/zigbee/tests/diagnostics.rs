@@ -1236,7 +1236,7 @@ fn the_black_box_tells_the_cluster_of_a_groupcast_and_of_an_ack_with_its_fields_
     net.run(200);
     net.coord.zcl(sa, 0x0008, 0x11, 0x00, &[50, 0, 0]);
     net.run(2_000);
-    net.coord.nwk_data(sb, &[0x12, 0x44]);
+    net.coord.nwk_data(sb, &[0x12, 0x44, 0x06, 0x00]);
     net.coord.nwk_data(sb, &[0x02, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, 0x45]);
     net.run(500);
     let bx = black_box(&mut net, sa);

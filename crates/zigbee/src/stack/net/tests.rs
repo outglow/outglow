@@ -623,3 +623,98 @@ fn a_source_routed_frame_is_passed_on_only_by_the_relay_its_index_points_at() {
         assert_eq!(!s.hal.sent.is_empty(), relayed, "{count} {index}");
     }
 }
+
+const SENDER: u64 = 0x00124B00_0000_1000;
+
+fn secured(h: nwk::Header, ext: u64, counter: u32, key_seq: u8, key: &[u8; 16], payload: &[u8]) -> Vec<u8> {
+    let mut h = h;
+    h.security = true;
+    let mut f = crate::util::Buf::new();
+    h.write(&mut f);
+    nwk::secure(&crate::aes::Aes128::new(key), key_seq, ext, counter, &mut f, 0, payload);
+    f.as_slice().to_vec()
+}
+
+fn heard(s: &mut Stack<Scripted>, h: nwk::Header, counter: u32, payload: &[u8]) {
+    let f = secured(h, SENDER, counter, 0, &[0; 16], payload);
+    s.on_nwk(0x1000, &f, 200);
+}
+
+#[test]
+fn a_frame_from_another_pan_is_not_taken() {
+    for (pan, taken) in [(0x1234, true), (0x4321, false)] {
+        let mut s = up();
+        s.nib.pan = 0x1234;
+        let mut f = crate::util::Buf::new();
+        crate::mac::Header {
+            frame_type: crate::mac::FRAME_DATA,
+            security: false,
+            pending: false,
+            ack_request: true,
+            seq: 1,
+            dst_pan: pan,
+            dst: crate::mac::Addr::Short(0x0042),
+            src_pan: pan,
+            src: crate::mac::Addr::Short(0x7001),
+        }
+        .write(&mut f);
+        f.bytes(&secured(nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x7001, 5, 1), 0x77, 1, 0, &[0; 16], &[0x40]));
+        s.on_mpdu(f.as_slice(), 200, 0);
+        assert_eq!(s.neighbor_index(0x7001).is_some(), taken, "{pan:04X}");
+    }
+}
+
+#[test]
+fn a_frame_under_a_key_number_neither_current_nor_kept_is_one_with_an_unknown_key() {
+    for (alt_valid, alt_seq, key_seq, unknown) in [(true, 1, 2, true), (false, 2, 2, true), (true, 2, 2, false)] {
+        let mut s = up();
+        s.nib.alt_valid = alt_valid;
+        s.nib.alt_seq = alt_seq;
+        let f = secured(nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x1000, 5, 1), SENDER, 1, key_seq, &[0; 16], &[0x40]);
+        s.on_nwk(0x1000, &f, 200);
+        assert_eq!(s.unknown_key_frames == 1, unknown, "{alt_valid} {alt_seq} {key_seq}");
+    }
+}
+
+#[test]
+fn the_bulbs_own_address_from_another_device_is_a_conflict_nine_seconds_after_the_start_but_its_own_late_broadcast_is_not() {
+    for (seq, since_start, conflict) in [(36, 9_000, false), (36, 9_001, true), (37, 9_001, false), (100, 9_001, false)] {
+        let mut s = up();
+        fill(&mut s);
+        s.nwk_seq = 100;
+        s.hal.now = s.booted + since_start;
+        heard(&mut s, nwk::Header::new(nwk::FRAME_DATA, 0xFFFD, 0x0042, 5, seq), 1, &[0x08]);
+        assert_eq!(s.conflict.0 == 0x0042, conflict, "{seq} {since_start}");
+    }
+}
+
+#[test]
+fn a_broadcast_data_frame_from_an_address_in_conflict_is_not_passed_on_but_a_command_is() {
+    for (frame_type, src_ext, passed_on) in [
+        (nwk::FRAME_DATA, Some(SENDER + 1), true),
+        (nwk::FRAME_DATA, Some(0x99), false),
+        (nwk::FRAME_CMD, Some(0x99), true),
+    ] {
+        let mut s = up();
+        fill(&mut s);
+        let mut h = nwk::Header::new(frame_type, 0xFFFD, 0x1001, 5, 9);
+        h.src_ext = src_ext;
+        heard(&mut s, h, 1, &[0x7F]);
+        assert_eq!(s.bcast[0].used, passed_on, "{frame_type} {src_ext:?}");
+    }
+}
+
+#[test]
+fn a_frame_from_an_end_device_that_is_no_child_tells_it_to_rejoin_unless_it_is_a_rejoin_request() {
+    for (frame_type, payload, told) in
+        [(nwk::FRAME_DATA, &[nwk::CMD_REJOIN_REQUEST, 0x01, 0x06, 0x00][..], true), (nwk::FRAME_CMD, &[nwk::CMD_REJOIN_REQUEST, 0x80][..], false)]
+    {
+        let mut s = up();
+        fill(&mut s);
+        let mut h = nwk::Header::new(frame_type, 0x0042, 0x1000, 5, 9);
+        h.end_device_initiator = true;
+        heard(&mut s, h, 1, payload);
+        let leave = s.hal.sent.iter().any(|f| f.len() > 9 && f[5..7] == [0x00, 0x10]);
+        assert_eq!(leave, told, "{frame_type}");
+    }
+}
