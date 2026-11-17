@@ -23,7 +23,7 @@ exclude_re = [
   "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
   "::expecting -> ",
   # equivalent: the operands of these | have no bit in common, so ^ gives the same octet
-  "replace \\| with \\^ in Ble<H>::(set_diag_info|diag_state)$",
+  "replace \\| with \\^ in (Ble<H>::(set_diag_info|diag_state|app_status)|Mesh::encode)$",
   # equivalent: the GATT characteristic properties are one bit each, so READ | WRITE and READ ^ WRITE are the same
   "crates/ble/src/att\\.rs:[0-9]+:[0-9]+: replace \\| with \\^$",
   # equivalent: SHA-256's Ch has disjoint terms and Maj is the same with | in either place
