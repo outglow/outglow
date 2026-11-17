@@ -24,13 +24,15 @@ const KEYS: [&str; 6] = [
 ];
 const GP_KEYS: [&str; 3] = ["c0c1c2c3c4c5c6c7c8c9cacbcccdcecf", "505152535455565758595a5b5c5d5e5f", "01030507090b0d0f00020406080a0c0d"];
 
-const INTENDED: [(&str, &str, &str); 21] = [
+const OLDER_SENDERS: &str = "Move to Level without the option fields, as older senders have it";
+
+const INTENDED: &[(&str, &str, &str)] = &[
     ("a_network_key_change_missed_while_off", "Encrypted Payload", "the coordinator moved to a key the capture has not shown yet"),
     ("replayed_and_forged_frames_are_dropped", "Encrypted Payload", "a forged frame"),
     ("data_encrypted_with_the_link_key", "Encrypted Payload", "data under a key that is not the bulb's link key"),
     ("a_request_under_a_key_the_bulb_does_not_have", "Touchlink Master Key", "a request under key index 4 to a bulb without that key"),
     ("a_build_that_was_given_the_master_key", "Touchlink Master Key", "a stand-in for the master key, which Wireshark does not have"),
-    ("commands_for_a_light_that_is_off_follow_the_options", "Malformed", "Move to Level without the option fields, as older senders have it"),
+    ("commands_for_a_light_that_is_off_follow_the_options", "Malformed", OLDER_SENDERS),
     ("frames_that_are_only_authenticated_are_checked_too", "", "a frame tampered with on purpose"),
     ("shared_keys_come_from", "", "frames under keys the bulb must not accept"),
     ("a_paired_device_is_forwarded_decrypted_and_only_when_fresh", "", "frames under a wrong key"),
@@ -46,6 +48,74 @@ const INTENDED: [(&str, &str, &str); 21] = [
     ("a_network_without_a_trust_center_has_no_key_commands", "Malformed", "a Tunnel command with a made-up inner frame"),
     ("a_scan_request_that_is_not_from_a_link_initiator_is_ignored", "Malformed", "a Scan Request cut short before the touchlink information"),
     ("addresses_in_the_header_are_checked_and_unknown_commands_answered", "Unknown Command", "a NWK command that does not exist, sent to see it answered"),
+    ("a_change_is_reported_no_sooner_than_the_minimum_interval", "Move to Level", OLDER_SENDERS),
+    ("a_report_to_a_sleepy_child_counts_as_an_aps_unicast_sent", "Move to Level", OLDER_SENDERS),
+    ("reports_go_only_to_bindings_of_their_cluster_that_are_in_use", "Move to Level", OLDER_SENDERS),
+    ("switching_off_on_or_toggling_ends_the_remaining_time_of_a_transition", "Move to Level", OLDER_SENDERS),
+    ("a_tunable_white_coupled_to_the_level_does_not_follow_it_to_off", "Move to Level with OnOff", OLDER_SENDERS),
+    ("the_black_box_tells_the_cluster_of_a_groupcast_and_of_an_ack", "Move to Level", OLDER_SENDERS),
+    ("the_black_box_tells_the_cluster_of_a_groupcast_and_of_an_ack", "APS: Ack", "acknowledgements, one with no fields at all, made up for the black box to record"),
+    ("a_fragment_that_is_broadcast_or_aps_secured_is_dropped", "cut short when capturing", "an APS-secured fragment, which the bulb drops before it could be decrypted"),
+    ("a_trust_center_link_key_outside_the_key_exchange", "Transport Key[Malformed", "Transport Key commands of key types that do not exist"),
+    ("a_trust_center_link_key_outside_the_key_exchange", "Unknown Command: payload not dissected", "an APS command that does not exist"),
+    ("an_aps_ack_that_is_not_a_fragment_ack_changes_nothing", "APS: Ack", "acknowledgements with an extended header but no block fields, or cut short"),
+    ("an_aps_command_secured_with_the_data_key_of_a_reserved_key_identifier", "Encrypted Payload", "an APS command under a reserved key identifier"),
+    ("an_aps_frame_of_the_reserved_type_or_without_a_frame_control", "Unknown Command: 0x10", "an APS frame of the reserved frame type"),
+    ("aps_data_with_the_reserved_delivery_mode_is_dropped", "Invalid Delivery Mode", "APS data with the reserved delivery mode"),
+    ("aps_secured_data_needs_the_trust_center_its_address_and_the_data_key", "Encrypted Payload", "APS data under a key the bulb does not share with its sender"),
+    ("a_block_of_another_kind_or_out_of_place_or_of_the_wrong_length", "Read Attributes", "blocks of the wrong length, so the reassembled request is cut short"),
+    ("a_last_block_may_fill_the_largest_transfer_but_not_go_past_it", "Read Attributes", "a last block that is empty, so the reassembled request is cut short"),
+    ("a_frame_to_the_green_power_endpoint_for_another_cluster_is_ignored", "Unknown Command: 0x0b", "a command of another cluster sent to the Green Power endpoint"),
+    ("an_acknowledgement_of_another_transfer_or_block_or_without_the_block_bit", "APS: Ack", "fragment acknowledgements made up to belong to no transfer"),
+    ("an_acknowledgement_without_the_extended_header_does_not_move_a_transfer_on", "APS: Ack", "acknowledgements without the extended header that would name the block"),
+    ("a_command_too_long_to_tunnel_is_dropped", "Attribute reporting[Malformed", "a device's frame of 0x5A filler under the attribute reporting command, made long to not fit a notification"),
+    ("a_commissioning_frame_too_long_to_tunnel_is_dropped", "Commissioning: bytes left over", "commissioning frames padded past what fits a notification"),
+    ("a_frame_without_a_command_is_notified_in_commissioning_with_command_zero", "Payload is missing", "a Green Power frame without a command identifier"),
+    ("a_response_with_more_than_48_bytes_for_the_device_is_not_queued", "GP Response", "a sink's response with 0x11 filler for the device instead of a commissioning reply"),
+    ("only_data_frames_with_an_application_id_the_proxy_knows_are_forwarded", "Data, Dst: Broadcast: bytes left over", "Green Power frames of application identifiers and frame types that do not exist"),
+    ("only_data_frames_with_an_application_id_the_proxy_knows_are_forwarded", "Data, GPD Src ID: 0x01712345[Malformed", "Green Power frames of application identifiers and frame types that do not exist"),
+    ("only_data_frames_with_an_application_id_the_proxy_knows_are_forwarded", "Move Saturation Stop: bytes left over", "Green Power frames of application identifiers and frame types that do not exist"),
+    ("pairings_the_proxy_cannot_serve_and_gp_frames_it_does_not_take", "Unknown Command: 0x11", "a manufacturer-specific Green Power command"),
+    ("pairings_the_proxy_cannot_serve_and_gp_frames_it_does_not_take", "GP Proxy Table Response", "a Proxy Table Response sent to the proxy, cut short"),
+    ("proxy_attribute_writes_are_checked_and_undivided_ones", "Write Attributes", "a key and a key type cut short"),
+    ("a_search_for_the_network_passes_over_beacons_of_another_network", "Encrypted Payload", "the other network's frames, under a key Wireshark is not given"),
+    ("frames_under_an_unknown_key_make_the_bulb_rejoin", "Encrypted Payload", "frames under a network key the bulb does not have"),
+    ("a_node_descriptor_request_that_fails_does_not_finish_the_key_exchange", "Node Descriptor Response", "a failed response that still carries a descriptor, so that only its status stops the bulb; Wireshark reads the rest as TLVs"),
+    ("a_join_request_with_a_reserved_key_index_is_refused", "Unsupported key 7", "a Network Join Router Request under a reserved key index"),
+    ("identify_for_the_default_time_and_commands_the_target_does_not_know", "ZCL Touchlink: Unknown Command", "a touchlink command that does not exist"),
+    ("only_an_inter_pan_touchlink_command_from_an_extended_address_is_a_scan", "bytes left over", "Scan Requests from a short address, under other APS frame types, clusters, profiles and frame controls"),
+    ("a_poll_without_a_source_address_takes_no_frame", "Invalid Addressing for Data Request", "a Data Request without a source address"),
+    ("mac_commands_and_beacons_a_bulb_that_is_up_does_not_take", "Invalid Addressing for", "MAC commands addressed as no device would"),
+    ("mac_commands_and_beacons_a_bulb_that_is_up_does_not_take", "Beacon, Src: 0x0000[Malformed", "a beacon cut short"),
+    ("mac_commands_and_beacons_a_bulb_that_is_up_does_not_take", "Unknown Command Id", "a MAC command that does not exist"),
+    ("a_link_status_cut_short_still_refreshes_the_router", "Link Status[Malformed", "link statuses cut short"),
+    ("a_nwk_frame_without_a_whole_header_or_auxiliary_header", "[Malformed", "NWK frames cut short in the header or the auxiliary header"),
+    ("a_rejoin_request_without_the_extended_source_or_capability", "Rejoin Request[Malformed", "a Rejoin Request without its capability"),
+    ("a_rejoin_response_counts_only_from_the_parent_asked_for_this_bulb_and_whole", "Rejoin Response[Malformed", "a Rejoin Response cut short"),
+    ("a_route_record_passed_on_gets_the_relay_added_and_one_without_a_count", "Route Record[Malformed", "a Route Record without its relay count"),
+    ("a_route_record_passed_on_may_fill_the_largest_payload", "Route Record[Malformed", "a Route Record with no room for one more relay, cut short"),
+    ("a_route_reply_no_cheaper_than_one_taken_is_dropped", "Network Update[Malformed", "a Network Update cut short"),
+    ("nwk_commands_cut_short_out_of_place_or_for_another_network", "Network Update, Unknown Update Type", "a Network Update of an update type that does not exist"),
+    ("nwk_commands_cut_short_out_of_place_or_for_another_network", "Route Reply[Malformed", "a Route Reply cut short"),
+    ("nwk_commands_cut_short_out_of_place_or_for_another_network", "Route Request[Malformed", "a Route Request cut short"),
+    ("an_unknown_nwk_command_is_answered_with_its_identifier", "Unknown Command: bytes left over", "a NWK command that does not exist, sent to see it answered"),
+    ("a_timeout_request_cut_short_is_not_answered", "End Device Timeout Request[Malformed", "an End Device Timeout Request cut short"),
+    ("a_tunnel_for_a_device_that_is_not_a_child_goes_nowhere", "APS: Command[Malformed", "a Tunnel command with a made-up inner frame"),
+    ("a_parent_annce_cut_short_claims_nothing", "Parent Announce", "a Parent_annce that names more children than it carries"),
+    ("a_parent_announce_cut_short_or_naming_strangers", "Parent Announce", "a Parent_annce cut short"),
+    ("a_device_announce_cut_short_teaches_nothing", "Device Announcement[Malformed", "a Device_annce cut short"),
+    ("an_energy_scan_is_answered_only_when_unicast_and_other_durations", "Network Update Request[Malformed", "Mgmt_NWK_Update_req with a scan duration out of range and so without a scan count"),
+    ("an_unsupported_request_is_not_supported_when_unicast", "Request", "requests the bulb does not support, with two bytes that are not their fields"),
+    ("bind_requests_are_checked_against_the_spec_statuses", "Bind Request", "a Bind_req with the reserved destination address mode 2"),
+    ("match_descriptor_lists_the_light_and_the_objects_serving_the_clusters", "Match Descriptor Request[Malformed", "a Match_Desc_req that counts more clusters than it carries"),
+    ("a_discover_command_cut_short_is_malformed", "ZCL: Discover", "discover commands cut short"),
+    ("a_string_written_to_a_number_is_skipped_whole", "Write Attributes", "a string written to a number attribute, so the record's type is the string's"),
+    ("a_write_with_a_type_of_unknown_length_stops_at_that_record", "Write Attributes", "a record of a data type whose length is not known"),
+    ("a_zcl_frame_cut_short_is_dropped", "[Malformed", "ZCL headers cut short"),
+    ("an_undivided_write_with_a_record_cut_short_writes_nothing", "Write Attributes Undivided", "a record cut short"),
+    ("configure_reporting_answers_each_failed_record_and_stops_at_one_cut_short", "Configure Reporting", "a record cut short"),
+    ("read_reporting_configuration_of_what_is_not_reported", "Read Reporting Configuration", "a last record cut short"),
+    ("a_block_response_with_another_status_or_for_another_place_is_ignored", "Image Block Response", "Image Block Responses of another status, without the fields that status has"),
 ];
 
 const EXPECT: &[(&str, &str, usize)] = &[
@@ -103,7 +173,10 @@ const EXPECT: &[(&str, &str, usize)] = &[
     ("a_channel_configuration_is_delivered_on_the_channel", "zbee_nwk_gp.frame_type == 1 && zbee_nwk_gp.command_id == 0xf3", 1),
 ];
 
-const QUIRKS: [(&str, &str, &str); 5] = [
+const UNKNOWN_COMMAND_STATUS: &str = "Network Status 0x13 (Unknown Command, R22 3.6.13): status and the command identifier, no destination address \
+     (R22/R23 3.4.3.3.2: only for a routing failure or an address conflict); Wireshark does not know 0x13 and reads an address";
+
+const QUIRKS: &[(&str, &str, &str)] = &[
     (
         "",
         "wpan.dst_pan == 0x5e55",
@@ -125,13 +198,48 @@ const QUIRKS: [(&str, &str, &str); 5] = [
     (
         "addresses_in_the_header_are_checked_and_unknown_commands_answered",
         "zbee_nwk.cmd.id == 0x03 && zbee_nwk.cmd.status == 0x13",
-        "Network Status 0x13 (Unknown Command, R22 3.6.13): status and the command identifier, no destination address \
-         (R22/R23 3.4.3.3.2: only for a routing failure or an address conflict); Wireshark does not know 0x13 and reads an address",
+        UNKNOWN_COMMAND_STATUS,
     ),
+    ("an_unknown_nwk_command_is_answered_with_its_identifier", "zbee_nwk.cmd.id == 0x03 && zbee_nwk.cmd.status == 0x13", UNKNOWN_COMMAND_STATUS),
     (
         "addresses_in_the_header_are_checked_and_unknown_commands_answered",
         "zbee_nwk.cmd.id == 0x3f",
         "the test device's broadcast of a NWK command that does not exist, relayed as it came; Wireshark reads its payload as R23 TLVs",
+    ),
+    (
+        "a_read_answers_as_many_attributes_as_fit_in_the_longest_answer",
+        "zbee_zcl.cmd.id == 0x01",
+        "a Read Attributes Response of 70 records: Wireshark dissects at most 64 records (ZBEE_ZCL_NUM_ATTR_ETT) and leaves the rest as data",
+    ),
+    (
+        "pairings_the_proxy_cannot_serve_and_gp_frames_it_does_not_take",
+        "zbee_zcl_general.gp.cmd.srv_tx.id == 0x01 && zbee_zcl_general.gp.pairing.opt.comm_mode == 0",
+        "a GP Pairing for full unicast carries the sink's IEEE and NWK addresses (GP 1.1.2 Table 38); Wireshark reads them \
+         only for lightweight unicast and leaves them as data",
+    ),
+    (
+        "an_unsupported_request_is_not_supported_when_unicast",
+        "zbee_zdp.status == 0x84",
+        "the answer to a request the bulb does not support is the response cluster with the status alone (R22 2.4.4.1); \
+         Wireshark reads the fields of a response that succeeded, and calls the cluster of each a deprecated command",
+    ),
+];
+
+const CARRIED: &[(&str, &str, &str)] = &[
+    (
+        "a_command_too_long_to_tunnel_is_dropped",
+        "zbee_zcl_general.gp.cmd.srv_rx.id == 0x00",
+        "the GP Notification tunnels the test device's command as it came: 0x5A filler under the attribute reporting command",
+    ),
+    (
+        "a_response_with_more_than_48_bytes_for_the_device_is_not_queued",
+        "zbee_nwk_gp.command_id == 0xf0",
+        "the Commissioning Reply carries the 48 bytes of 0x11 filler the test sink gave for the device",
+    ),
+    (
+        "a_response_without_a_payload_is_delivered_as_the_bare_command",
+        "zbee_nwk_gp.command_id == 0xf1",
+        "the test sink's response names Write Attributes with no payload, and the device gets just that",
     ),
 ];
 
@@ -170,11 +278,13 @@ impl Zb {
     }
 
     fn check_capture(&self, pcap: &Path, senders: Option<&[String]>) -> Result<(usize, Vec<(usize, String, String)>), String> {
-        let name = pcap.file_name().unwrap().to_string_lossy().to_string();
+        let file = pcap.file_name().unwrap().to_string_lossy().to_string();
+        let name = bare(file.strip_suffix(".pcap").unwrap_or(&file));
         let out = self.tshark(pcap, &["-T", "fields", "-E", "separator=|", "-e", "frame.number", "-e", "frame.protocols", "-e",
-                                      "_ws.expert.message", "-e", "_ws.expert.severity", "-e", "wpan.fcs_ok", "-e", "_ws.col.info"])?;
+                                      "_ws.expert.message", "-e", "_ws.expert.severity", "-e", "wpan.fcs_ok", "-e", "zbee_nwk.src", "-e",
+                                      "zbee_nwk.seqno", "-e", "_ws.col.info"])?;
         let mut quirk = BTreeSet::new();
-        for (prefix, flt, _) in QUIRKS {
+        for (prefix, flt, _) in QUIRKS.iter().chain(CARRIED) {
             if name.starts_with(prefix) {
                 quirk.extend(self.matching(pcap, flt)?);
             }
@@ -185,11 +295,13 @@ impl Zb {
             self.matching(pcap, "zbee_nwk_gp && (zbee_nwk_gp.fc_extension == 0 || zbee_nwk_gp.fc_ext_direction == 0)")?
         };
         let mut objections = Vec::new();
+        let mut sent_on_purpose: BTreeSet<(String, String)> = BTreeSet::new();
         let mut frames = 0;
         for line in out.lines() {
-            let mut f: Vec<&str> = line.splitn(6, '|').collect();
-            f.resize(6, "");
-            let (number, protocols, messages, severities, fcs_ok, info) = (f[0], f[1], f[2], f[3], f[4], f[5]);
+            let mut f: Vec<&str> = line.splitn(8, '|').collect();
+            f.resize(8, "");
+            let (number, protocols, messages, severities, fcs_ok, info) = (f[0], f[1], f[2], f[3], f[4], f[7]);
+            let origin = (f[5].to_string(), f[6].to_string());
             frames += 1;
             let n: usize = number.parse().unwrap_or(0);
             let who = senders.map(|s| s[n - 1].clone()).unwrap_or_else(|| "B".into());
@@ -226,10 +338,17 @@ impl Zb {
             }
             let text = what.join("; ");
             if who == "T" || senders.is_none() {
-                let intended = INTENDED.iter().any(|(p, needle, _)| name.starts_with(p) && text.contains(needle));
+                let said = format!("{info}: {text}");
+                let intended = INTENDED.iter().any(|(p, needle, _)| name.starts_with(p) && said.contains(needle));
                 if intended && who == "T" {
+                    if !origin.1.is_empty() {
+                        sent_on_purpose.insert(origin);
+                    }
                     continue;
                 }
+            }
+            if who == "B" && !origin.1.is_empty() && sent_on_purpose.contains(&origin) {
+                continue;
             }
             let info70: String = info.chars().take(70).collect();
             objections.push((n, who, format!("{info70}: {text}")));
@@ -307,7 +426,7 @@ fn host(cx: &mut SimCtx, zb: &Zb) -> R<usize> {
     let state = if bad == 0 { "nothing malformed, undecrypted or left undissected".to_string() } else { format!("{bad} objections") };
     cx.say(&format!("   {} captures, {frames_total} frames, {bulb_total} of them sent by bulbs: {state}", pcaps.len()));
     for (prefix, flt, minimum) in EXPECT {
-        let files: Vec<&String> = pcaps.iter().filter(|f| f.starts_with(prefix)).collect();
+        let files: Vec<&String> = pcaps.iter().filter(|f| bare(&f[..f.len() - 5]).starts_with(prefix)).collect();
         if files.is_empty() {
             bad += 1;
             cx.say(&format!("FAIL no capture named {prefix}*"));
@@ -331,7 +450,7 @@ fn host(cx: &mut SimCtx, zb: &Zb) -> R<usize> {
         }
     }
     cx.say(&format!("   {} expectations on decoded fields: {}", EXPECT.len(), if bad == 0 { "all met" } else { "see above" }));
-    for (_, flt, why) in QUIRKS {
+    for (_, flt, why) in QUIRKS.iter().chain(CARRIED) {
         cx.say(&format!("   note ({flt}): {why}"));
     }
     let _ = std::fs::remove_dir_all(&work);
