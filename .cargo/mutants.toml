@@ -28,7 +28,7 @@ exclude_re = [
   "zigbee/src/mac\\.rs:.*replace \\| with \\^ in (Header|Beacon)::write",
   "zigbee/src/nwk\\.rs:.*replace \\| with \\^ in (Header::write|unsecure)",
   "zigbee/src/stack/zdo\\.rs:.*replace \\| with \\^ in Stack<H>::(on_zdo|on_parent_announce|zdo_request)",
-  "zigbee/src/stack/zcl\\.rs:.*replace \\| with \\^ in (execute_if_off|Stack<H>::write_status)",
+  "zigbee/src/stack/zcl\\.rs:.*replace \\| with \\^ in (execute_if_off|Stack<H>::write_status|Stack<H>::attribute_write)",
   # zigbee: a child heard exactly 2^31 ms (24.8 days) after the start counts as heard before it either way
   "zigbee/src/stack/zdo\\.rs:.*replace < with <= in Stack<H>::child_alive",
 ]

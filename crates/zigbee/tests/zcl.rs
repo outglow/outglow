@@ -666,3 +666,16 @@ fn a_broadcast_global_command_is_answered() {
     net.run(500);
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x01).unwrap()[..3], [0x18, seq, 0x01]);
 }
+
+#[test]
+fn on_level_zero_and_a_start_up_colour_temperature_out_of_range_are_invalid() {
+    let (mut net, _, short) = bulb_with(IDENTITY_TW);
+    assert_eq!(global(&mut net, short, LEVEL, 0x02, &[0x11, 0x00, 0x20, 0]), Some(vec![0x04, 0x87, 0x11, 0x00]));
+    assert_eq!(global(&mut net, short, LEVEL, 0x02, &[0x11, 0x00, 0x20, 1]), Some(vec![0x04, 0x00]));
+    let (lo, hi) = (bulb_core::CT_MIN, bulb_core::CT_MAX);
+    for (v, ok) in [(0xFFFFu16, true), (lo, true), (hi, true), (lo - 1, false), (hi + 1, false)] {
+        let b = v.to_le_bytes();
+        let want = if ok { vec![0x04, 0x00] } else { vec![0x04, 0x87, 0x10, 0x40] };
+        assert_eq!(global(&mut net, short, COLOR, 0x02, &[0x10, 0x40, 0x21, b[0], b[1]]), Some(want), "{v}");
+    }
+}
