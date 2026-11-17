@@ -4,13 +4,14 @@ use std::vec::Vec;
 use super::{Identity, Stack, ROUTE_ACTIVE};
 use crate::hal::{Hal, NvItem, RxMeta, TxStatus};
 
-struct Scripted {
-    random: Vec<u32>,
+pub(crate) struct Scripted {
+    pub random: Vec<u32>,
+    pub now: u32,
 }
 
 impl Hal for Scripted {
     fn now_ms(&mut self) -> u32 {
-        0
+        self.now
     }
     fn random(&mut self) -> u32 {
         if self.random.is_empty() {
@@ -37,7 +38,7 @@ impl Hal for Scripted {
     fn nv_erase(&mut self) {}
 }
 
-const IDENTITY: Identity = Identity {
+pub(crate) const IDENTITY: Identity = Identity {
     manufacturer: "t",
     model: "t",
     sw_build: "t",
@@ -58,7 +59,7 @@ const IDENTITY: Identity = Identity {
 
 #[test]
 fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
-    let mut s = Stack::new(Scripted { random: Vec::new() }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0 }, IDENTITY);
     s.nib.short = 0x0101;
     s.children[3].used = true;
     s.children[3].short = 0x0202;
