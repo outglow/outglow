@@ -1420,3 +1420,18 @@ fn a_key_change_missed_where_there_is_no_trust_center_is_not_asked_for_in_the_cl
     assert_eq!(in_the_clear, 0);
     assert_eq!(net.nodes[a].stack.state(), State::Up);
 }
+
+#[test]
+fn a_broadcast_held_for_many_sleeping_children_lists_each_of_them_as_waiting() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let mut kids = vec![zed];
+    kids.extend(more_sleepy_children(&mut net, a, 11));
+    let id = net.nodes[a].id;
+    net.coord.zcl(0xFFFF, ON_OFF, 0x11, 0x02, &[]);
+    net.run(300);
+    let mut shorts = net.air.borrow().ports[id].pending.0.clone();
+    shorts.sort();
+    let mut want: Vec<u16> = kids.iter().map(|k| k.short).collect();
+    want.sort();
+    assert_eq!(shorts, want);
+}
