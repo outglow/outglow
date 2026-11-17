@@ -525,6 +525,12 @@ fn the_frame_filter_takes_what_is_for_us_and_acknowledges_what_asks_for_it() {
 
 #[test]
 fn a_frame_shorter_than_its_addressing_is_dropped() {
+    let _s = sim::session();
+    reset_radio_state();
+    set_filter(OUR_PAN, 0x0404, OUR_EXT);
+    assert!(heard(&[0x41, 0x88, 0x42, 0x62, 0x1a, 0x04, 0x04]).0);
+    assert!(!heard(&[0x41, 0x88, 0x42, 0x62, 0x1a, 0x04]).0);
+    drop(_s);
     for (mpdu, taken) in [
         (vec![0x41, 0x88, 0x42, 0x62, 0x1a, 0x3c, 0x2b], true),
         (vec![0x41, 0x88, 0x42, 0x62, 0x1a, 0x3c], false),

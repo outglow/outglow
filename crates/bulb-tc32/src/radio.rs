@@ -400,7 +400,7 @@ fn on_frame() {
     let mut acknowledge = false;
     if frame_type != 0 {
         let dst_mode = fcf1 & 0x0c;
-        if dst_mode == 0 || len < 7 {
+        if len < 7 {
             return;
         }
         let pan = u16::from_le_bytes([at(mac + 3), at(mac + 4)]);
