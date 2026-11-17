@@ -606,3 +606,18 @@ fn the_group_table_holds_eight_groups() {
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, GROUPS, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x89, 9, 0]);
 }
+
+#[test]
+fn switching_off_on_or_toggling_ends_the_remaining_time_of_a_transition() {
+    for cmd in [0x00u8, 0x01, 0x02] {
+        let (mut net, _, short) = bulb_with(IDENTITY_TW);
+        net.coord.zcl(short, LEVEL, 0x11, 0x00, &[100, 100, 0]);
+        net.coord.zcl(short, COLOR, 0x11, 0x0A, &[0x2C, 0x01, 100, 0]);
+        net.run(1_000);
+        assert_ne!(read(&mut net, short, LEVEL, &[0x0001]), vec![ok(1, &[0x21, 0, 0])]);
+        net.coord.zcl(short, ON_OFF, 0x11, cmd, &[]);
+        net.run(100);
+        assert_eq!(read(&mut net, short, LEVEL, &[0x0001]), vec![ok(1, &[0x21, 0, 0])], "command {cmd}");
+        assert_eq!(read(&mut net, short, COLOR, &[0x0002]), vec![ok(2, &[0x21, 0, 0])], "command {cmd}");
+    }
+}
