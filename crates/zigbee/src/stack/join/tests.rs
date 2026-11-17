@@ -115,3 +115,45 @@ fn a_scan_takes_only_beacons_of_zigbee_pro_routers_that_let_it_in() {
         assert_eq!(s.scan_found[0].is_some(), taken, "{:?}", c.beacon);
     }
 }
+
+fn assoc_rsp(s: &mut Stack<Scripted>, src: crate::mac::Addr, short: u16) {
+    let h = crate::mac::Header {
+        frame_type: crate::mac::FRAME_CMD,
+        security: false,
+        pending: false,
+        ack_request: true,
+        seq: 1,
+        dst_pan: 0x1A62,
+        dst: crate::mac::Addr::Ext(s.ext),
+        src_pan: 0x1A62,
+        src,
+    };
+    let a = short.to_le_bytes();
+    s.on_mac_command(&h, &[crate::mac::CMD_ASSOC_RSP, a[0], a[1], 0x00]);
+}
+
+#[test]
+fn an_association_starts_the_tables_anew_with_the_parent_as_the_one_confirmed_neighbour() {
+    let mut s = stack();
+    s.state = crate::stack::State::AssocWait;
+    s.nib.parent = 0x0000;
+    s.join_lqi = 180;
+    s.neighbors[3].used = true;
+    s.routes[2].status = crate::stack::ROUTE_ACTIVE;
+    s.discoveries[1].used = true;
+    s.seen[4].used = true;
+    s.aps_dups[2].used = true;
+    s.held[1].used = true;
+    s.bcast[2].used = true;
+    assoc_rsp(&mut s, crate::mac::Addr::Ext(0x00124B00_0000_0001), 0x1234);
+    assert_eq!((s.state, s.nib.short), (crate::stack::State::WaitKey, 0x1234));
+    let n = s.neighbors[0];
+    assert_eq!((n.used, n.short, n.ext, n.lqi, n.age, n.confirmed), (true, 0x0000, 0x00124B00_0000_0001, 180, 0, true));
+    assert!(!s.neighbors[3].used && s.routes[2].status == crate::stack::ROUTE_FREE && !s.discoveries[1].used);
+    assert!(!s.seen[4].used && !s.aps_dups[2].used && !s.held[1].used && !s.bcast[2].used);
+    let mut s = stack();
+    s.state = crate::stack::State::AssocWait;
+    s.nib.parent = 0x0000;
+    assoc_rsp(&mut s, crate::mac::Addr::Short(0x0000), 0x1234);
+    assert_eq!(s.neighbors[0].ext, 0, "a parent known only by its short address");
+}

@@ -336,7 +336,7 @@ impl<H: Hal> Stack<H> {
                     _ => 0,
                 };
                 self.neighbors[0] =
-                    Neighbor { used: true, short: self.nib.parent, ext: parent_ext, lqi: self.join_lqi, age: 0, confirmed: true, ..Neighbor::EMPTY };
+                    Neighbor { used: true, short: self.nib.parent, ext: parent_ext, lqi: self.join_lqi, ..Neighbor::EMPTY };
                 self.link_proven(self.nib.parent);
                 self.tc_fc_next = 0;
                 self.state = State::WaitKey;
