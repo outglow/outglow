@@ -313,7 +313,7 @@ impl<H: Hal> Stack<H> {
         let mut exts = [0u64; INDIRECT];
         let (mut ns, mut ne) = (0, 0);
         let mut add_short = |s: u16| {
-            if ns < PENDING_SHORTS && !shorts[..ns].contains(&s) {
+            if !shorts[..ns].contains(&s) {
                 shorts[ns] = s;
                 ns += 1;
             }
@@ -335,7 +335,7 @@ impl<H: Hal> Stack<H> {
             if let Some(s) = short {
                 add_short(s);
             }
-            if let Some(x) = ext.filter(|x| ne < INDIRECT && !exts[..ne].contains(x)) {
+            if let Some(x) = ext.filter(|x| !exts[..ne].contains(x)) {
                 exts[ne] = x;
                 ne += 1;
             }

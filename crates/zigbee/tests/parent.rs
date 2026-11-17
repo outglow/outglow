@@ -1869,3 +1869,37 @@ fn a_poll_without_a_source_address_takes_no_frame() {
     zed.poll(&mut net, 20);
     assert!(!zed.rx.is_empty());
 }
+
+#[test]
+fn the_devices_with_frames_waiting_are_published_once_each_and_an_unknown_one_by_its_extended_address() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let id = net.nodes[a].id;
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x01, &[]);
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x00, &[]);
+    net.run(200);
+    assert_eq!(net.air.borrow().ports[id].pending.0, vec![zed.short], "once");
+    let stranger = Zed::new(&net.air, true);
+    net.link(0, stranger.id, 0);
+    let mut f = zigbee::util::Buf::new();
+    zigbee::mac::Header {
+        frame_type: zigbee::mac::FRAME_CMD,
+        security: false,
+        pending: false,
+        ack_request: true,
+        seq: 0x43,
+        dst_pan: PAN,
+        dst: zigbee::mac::Addr::Short(sa),
+        src_pan: 0xFFFF,
+        src: zigbee::mac::Addr::Ext(stranger.ext),
+    }
+    .write(&mut f);
+    f.bytes(&[zigbee::mac::CMD_ASSOC_REQ, stranger.capability()]);
+    net.coord.permit(120);
+    net.run(200);
+    net.air.borrow_mut().transmit(stranger.id, f.as_slice());
+    net.run(100);
+    let (shorts, exts) = net.air.borrow().ports[id].pending.clone();
+    assert!(exts.contains(&stranger.ext), "{exts:x?}");
+    assert!(!shorts.contains(&(stranger.ext as u16)), "{shorts:x?}");
+}
