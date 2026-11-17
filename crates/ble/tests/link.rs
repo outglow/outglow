@@ -539,3 +539,26 @@ fn an_event_may_run_4_ms_past_its_window_and_ends_2_ms_before_the_next_can_start
         }
     }
 }
+
+#[test]
+fn the_receive_window_widens_by_both_clocks_accuracy_and_32_us() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.central().params = Params { interval: 800, timeout: 1000, ..Params::default() };
+    rig.connect();
+    rig.run(3000);
+    let widening = |ms: u64| ms * (250 + 100) * 16 / 1000 + 32 * 16;
+    let window = |rig: &Rig| {
+        let w = rig.world.borrow();
+        let i = w.event_starts.len() - 1;
+        w.event_ends[i].0 - w.event_starts[i]
+    };
+    assert_eq!(window(&rig), 2 * widening(1000), "a second after the last anchor, 250 ppm for the central, 100 for the bulb");
+    rig.central().silent = true;
+    rig.run(1000);
+    rig.central().silent = false;
+    rig.run(1000);
+    let w = rig.world.borrow();
+    let i = w.event_starts.len() - 1;
+    let windows: Vec<u64> = (i - 1..=i).map(|k| w.event_ends[k].0 - w.event_starts[k]).collect();
+    assert!(windows.contains(&(2 * widening(2000))), "two seconds after it: {windows:?}");
+}
