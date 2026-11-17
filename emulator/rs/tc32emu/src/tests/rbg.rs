@@ -130,3 +130,13 @@ fn aes_block() {
         assert_eq!(hex(&got), hex(want), "AES block (decrypt {})", dec);
     }
 }
+
+#[test]
+fn default_rng_is_the_glibc_lcg_seeded_with_0x12345678() {
+    let mut m = rbg_machine();
+    let mut x: u32 = 0x1234_5678;
+    for i in 0..64 {
+        x = x.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        assert_eq!(rbg_read(&mut m, 0x440C, 4), x, "word {}", i);
+    }
+}

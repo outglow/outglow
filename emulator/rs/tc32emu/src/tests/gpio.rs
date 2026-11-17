@@ -58,3 +58,41 @@ fn gpio_inputs_and_alias() {
     m.write(0x1000660, 1, 0).unwrap();
     assert_eq!(m.read(0x1000664, 4).unwrap(), 14, "divider through the alias");
 }
+
+fn port_a_bit3() -> Machine {
+    let mut fl = Flash::new(crate::FLASH_MEM);
+    fl.mem[8] = 0x4B;
+    let mut m = Machine::new(fl, -1, 1).unwrap();
+    m.regs[0x586] |= 0x08;
+    m.regs[0x581] |= 0x08;
+    m
+}
+
+#[test]
+fn a_driven_output_reads_back_its_level_through_the_input_register() {
+    let mut m = port_a_bit3();
+    m.regs[0x582] &= !0x08;
+    m.regs[0x583] |= 0x08;
+    assert_ne!(m.reg_read(0x580, 1).unwrap() & 0x08, 0, "high");
+    m.regs[0x583] &= !0x08;
+    assert_eq!(m.reg_read(0x580, 1).unwrap() & 0x08, 0, "low");
+}
+
+#[test]
+fn input_enable_off_reads_zero_even_when_driven_high() {
+    let mut m = port_a_bit3();
+    m.regs[0x582] &= !0x08;
+    m.regs[0x583] |= 0x08;
+    m.regs[0x581] &= !0x08;
+    assert_eq!(m.reg_read(0x580, 1).unwrap() & 0x08, 0);
+}
+
+#[test]
+fn an_undriven_input_follows_its_pull_up_or_pull_down() {
+    let mut m = port_a_bit3();
+    m.regs[0x582] |= 0x08;
+    m.analog[0x0E] = (m.analog[0x0E] & !(3 << 6)) | (1 << 6);
+    assert_ne!(m.reg_read(0x580, 1).unwrap() & 0x08, 0, "pull-up");
+    m.analog[0x0E] = (m.analog[0x0E] & !(3 << 6)) | (2 << 6);
+    assert_eq!(m.reg_read(0x580, 1).unwrap() & 0x08, 0, "pull-down");
+}

@@ -47,6 +47,23 @@ checkout of the private repository outglow/original-firmware named by
 `SCENARIOS_IMAGE_DIRS` (separated as `PATH`) lists more directories where
 default images are looked for.
 
+### The emulator against independent ground truth (`cargo test -p tc32emu`)
+
+Unit tests in `tc32emu/src/tests/` drive the chip model directly (hand-encoded
+Thumb instructions converted to TC32, register writes, peripheral calls) and
+check it against values worked out another way:
+
+| Module | What | Ground truth |
+|---|---|---|
+| `alu`, `cpu_corner` | every data-processing instruction over corner operands and flags; shifts by 0, 32 and more, ADC/SBC carry, MUL, signed overflow, LDMIA with the base in the list, unaligned LDR/STR, all 14 branch conditions | ARMv4T semantics written out in the test |
+| `memory` | byte, halfword and word loads and stores, sign extension, PUSH/POP, SP- and PC-relative | ARMv4T semantics |
+| `programs` | small hand-assembled programs: shift-subtract division, 64-bit add, sub, multiply and shifts, bitwise CRC loops, memmove, block copy, call and return | Rust arithmetic; the CRC catalogue's check values for "123456789" |
+| `cycles` | flat per-instruction CPI, and the ARM7TDMI S/N/I cycle counts of the cycle-accurate mode | ARM7TDMI timing |
+| `aes_peripheral`, `rbg` | the AES block (FIPS-197 C.1, the zero vector, CBC-MAC chaining in CCM mode), the default random source | FIPS-197; the glibc LCG |
+| `pke` | P-256 point multiplication and verification | Bluetooth Core P-256 test keys |
+| `flash_spi`, `flash_lock`, `flash_busy` | the SPI NOR flash: JEDEC ID, WEL, program can only clear bits, page wrap, sector erase scope, deep power-down, protection, busy times | SPI NOR flash behaviour |
+| `irq`, `sleep`, `timers`, `stall`, `gpio`, `pwm`, `serial` | interrupt entry and return, suspend and deep-sleep wakes, timers, watchdog, system timer, pads, PWM duty and IR FIFO, UART, I2C, quadrature decoder, audio FIFO, PGA | the chip's documented behaviour, stated in our words |
+
 ### Conformance suites (`cargo spec`, `cargo ble-spec`)
 
 Tests with the clause and requirement of the specification they check (R22,
@@ -241,7 +258,8 @@ firmware on Telink's SDK, which is not public:
 | sys, sys_ble | supervision of the C firmware (crash counter, safe mode, watchdog, power-on sequence) | covered for Rust by `rust_fw` (watchdog, power cycles, factory reset sequence) and `rust_diag` (reset cause) |
 | ble_diag | GATT diagnostic service of the C firmware | `ble_diag`, on the Rust firmware (the same layout, plus the counters characteristic) |
 | sense, sense_core | RF motion sensing of the C firmware | not moved here: `rust_sense` runs the Rust firmware's |
-| conformance, conformance_clang, stallprobe | the emulator against C code of known behaviour and Telink's own CPU-stall code | not moved: they need Telink's C libraries |
+| conformance, conformance_clang | the emulator against C code of known behaviour, built with Telink's compiler | the checks are `tc32emu` unit tests on hand-assembled code (see above) |
+| stallprobe | the CPU stall against Telink's own stall code | not moved: it needs Telink's driver library; `tc32emu`'s `stall` tests check the model |
 
 ### Stress scenarios (`cargo stress`)
 
