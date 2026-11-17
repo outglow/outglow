@@ -780,3 +780,33 @@ fn a_network_status_of_a_missing_route_or_a_failed_link_drops_the_route_it_tells
         assert_eq!(s.diag.last_status_rx, status);
     }
 }
+
+#[test]
+fn a_leave_without_its_options_is_ignored_and_a_neighbours_own_leave_forgets_it() {
+    let mut s = relaying();
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1001, 5, 1);
+    s.on_nwk_command(&h, 0x1001, &[nwk::CMD_LEAVE]);
+    assert!(s.neighbors[1].used);
+    s.on_nwk_command(&h, 0x1001, &[nwk::CMD_LEAVE, 0x00]);
+    assert!(!s.neighbors[1].used);
+    assert_eq!(s.leave_at, None);
+    s.on_nwk_command(&h, 0x1001, &[nwk::CMD_LEAVE, 0x40]);
+    assert_eq!(s.leave_at, Some(1_100));
+}
+
+#[test]
+fn a_network_update_is_taken_only_for_the_bulbs_extended_pan_and_with_all_its_fields() {
+    let update = |ext_pan: u64| {
+        let mut p = std::vec![nwk::CMD_NETWORK_UPDATE, 0x01];
+        p.extend_from_slice(&ext_pan.to_le_bytes());
+        p.extend_from_slice(&[7, 0x34, 0x12]);
+        p
+    };
+    for (payload, taken) in [(update(0xDDDD), true), (update(0xEEEE), false), (update(0xDDDD)[..12].to_vec(), false)] {
+        let mut s = relaying();
+        s.nib.ext_pan = 0xDDDD;
+        let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFF, 0x0000, 5, 1);
+        s.on_nwk_command(&h, 0x1001, &payload);
+        assert_eq!(s.pan_at.is_some(), taken, "{payload:02X?}");
+    }
+}

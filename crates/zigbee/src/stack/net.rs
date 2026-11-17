@@ -1210,7 +1210,7 @@ impl<H: Hal> Stack<H> {
                     self.drop_routes_via(h.src);
                 }
             }
-            Some(&nwk::CMD_NETWORK_UPDATE) if p.len() >= 13 => {
+            Some(&nwk::CMD_NETWORK_UPDATE) => {
                 let mut r = Reader::new(&p[1..]);
                 if let (Some(options), Some(ext_pan), Some(update_id), Some(pan)) = (r.u8(), r.u64(), r.u8(), r.u16()) {
                     if options >> 5 == 0 && ext_pan == self.nib.ext_pan {
