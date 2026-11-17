@@ -239,3 +239,6 @@ impl BlackBox {
         n
     }
 }
+
+#[cfg(test)]
+mod tests;
