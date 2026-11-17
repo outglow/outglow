@@ -491,7 +491,7 @@ impl<H: Hal> Stack<H> {
             key_type = KEY_INDIVIDUAL;
             None
         };
-        if f.security == 3 && processed.is_some_and(|n| n > 0 && plain[0] >= GPD_TO_DEVICE) {
+        if f.security == 3 && processed.is_some() && plain[0] >= GPD_TO_DEVICE {
             return None;
         }
         if f.listens && processed.is_some() {
