@@ -7,6 +7,7 @@ use crate::hal::{Hal, NvItem, RxMeta, TxStatus};
 pub(crate) struct Scripted {
     pub random: Vec<u32>,
     pub now: u32,
+    pub sent: Vec<Vec<u8>>,
 }
 
 impl Hal for Scripted {
@@ -25,7 +26,8 @@ impl Hal for Scripted {
     }
     fn set_channel(&mut self, _channel: u8) {}
     fn set_filter(&mut self, _pan: u16, _short: u16) {}
-    fn transmit(&mut self, _mpdu: &[u8]) -> TxStatus {
+    fn transmit(&mut self, mpdu: &[u8]) -> TxStatus {
+        self.sent.push(mpdu.to_vec());
         TxStatus::Ok
     }
     fn receive(&mut self, _buf: &mut [u8; 127]) -> Option<RxMeta> {
@@ -59,7 +61,7 @@ pub(crate) const IDENTITY: Identity = Identity {
 
 #[test]
 fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0 }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new() }, IDENTITY);
     s.nib.short = 0x0101;
     s.children[3].used = true;
     s.children[3].short = 0x0202;
