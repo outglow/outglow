@@ -260,6 +260,7 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     assert_eq!(parse(&[0x24, 0xff, 0xff], tw), light(Command::SetStartupColorTemperature(0xffff)));
     assert_eq!(parse(&[0x24, 0x2c, 0x01], tw), light(Command::SetStartupColorTemperature(300)));
     assert_eq!(parse(&[0x24, 0x64, 0x00], tw), None);
+    assert_eq!(parse(&[0x24, 0xff, 0xff], dimm), None);
     assert_eq!(parse(&[0x30], dimm), Some(DiagCommand::Restart));
     assert_eq!(parse(&[0x31, b'R', b'S', b'T'], dimm), Some(DiagCommand::FactoryReset));
     assert_eq!(parse(&[0x31, b'R', b'S'], dimm), None);
@@ -279,4 +280,19 @@ fn the_stacks_events_take_the_c_firmwares_codes_where_they_mean_the_same() {
     assert_eq!(zigbee_event(ev::TX_FAIL, 0x1234, 0xe9, 15), (50, 0xe9), "the MAC status");
     assert_eq!(zigbee_event(ev::STATUS_RX, 0x0b, 0x1234, 15), (41, 0x0b), "the status code");
     assert_eq!(zigbee_event(ev::BLE_LOST, 2, 0, 15), (49, 2));
+}
+
+#[test]
+fn long_names_are_cut_to_what_the_48_octets_hold() {
+    let mut rig = connected(DIMMABLE);
+    let info = |model, firmware, sense| Info { tunable: false, watchdog: false, sense, release: 1, ieee: 1, model, firmware };
+    rig.ble.borrow_mut().set_diag_info(&info("M".repeat(40).leak(), "F".repeat(20).leak(), true));
+    let i = read_long(&mut rig, INFO);
+    assert_eq!(i.len(), 48);
+    assert_eq!(i[2], 0x02, "sense without the watchdog");
+    assert_eq!((i[12], i[46], i[47]), (33, 1, b'F'), "33 octets of model leave one for the firmware");
+    rig.ble.borrow_mut().set_diag_info(&info("Model", "F".repeat(40).leak(), false));
+    let i = read_long(&mut rig, INFO);
+    assert_eq!(i.len(), 48);
+    assert_eq!((i[2], i[12], i[18]), (0x00, 5, 29));
 }

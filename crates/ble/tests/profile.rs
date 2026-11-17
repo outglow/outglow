@@ -955,3 +955,12 @@ fn pair_writes_of_no_known_kind_change_nothing() {
     rig.write(PAIR, &[&[5u8][..], &password].concat());
     assert_eq!(rig.read(PAIR)[0], 0x07, "the name written before still counts");
 }
+
+#[test]
+fn a_transition_is_notified_once_with_where_it_goes() {
+    let mut rig = logged_in(DIMMABLE);
+    rig.bulb.handle(bulb_core::Command::MoveToLevel { level: 100, transition_ms: 3000 });
+    rig.run(4000);
+    let s = rig.statuses();
+    assert_eq!(s.iter().map(|s| s.1[3]).collect::<Vec<_>>(), [50], "{s:?}");
+}
