@@ -1768,3 +1768,25 @@ fn after_a_restart_link_status_goes_within_three_to_four_seconds_and_the_parent_
     let annce = sent.iter().find(|(_, _, h, p)| h.frame_type == nwk::FRAME_DATA && p.len() > 6 && p[2..4] == [0x1F, 0x00]).expect("a Parent_annce").0 - t;
     assert!((10_000..20_000).contains(&annce), "Parent_annce {annce} ms after the restart");
 }
+
+#[test]
+fn an_unknown_device_rejoining_without_a_key_is_admitted_and_a_timeout_request_out_of_range_is_refused() {
+    let (mut net, a) = open_network();
+    let sa = net.nodes[a].short();
+    let mut zed = Zed::new(&net.air, false);
+    net.link(0, zed.id, 0);
+    zed.short = 0x3456;
+    zed.pan = PAN;
+    net.air.borrow_mut().ports[zed.id].pan = PAN;
+    net.air.borrow_mut().ports[zed.id].short = 0x3456;
+    assert!(zed.rejoin_without_key(&mut net, sa), "an unknown router-capable device in the clear");
+    let mut h = net.coord.header(nwk::FRAME_CMD, sa, 5);
+    h.src = 0x7001;
+    h.src_ext = Some(0x00124B00_0000_7001);
+    let port = net.nodes[a].id;
+    net.air.borrow_mut().ports[port].traces.clear();
+    net.coord.nwk_send(h, &[nwk::CMD_TIMEOUT_REQUEST, 15, 0], Some(sa));
+    net.run(200);
+    let traces = net.air.borrow().ports[port].traces.clone();
+    assert!(traces.iter().any(|t| t.kind == zigbee::hal::trace::TX && t.peer == 0x7001), "the refusal is sent to the device: {traces:?}");
+}

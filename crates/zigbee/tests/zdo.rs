@@ -415,3 +415,22 @@ fn the_zdo_requests_of_the_bulb_number_themselves() {
         .collect();
     assert!(seqs.len() >= 2, "a sequence number of its own each: {seqs:?}");
 }
+
+#[test]
+fn a_parent_announce_response_naming_a_child_heard_lately_keeps_it() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    let sa = net.nodes[a].short();
+    assert!(zed.join(&mut net, sa));
+    net.run(200);
+    zed.poll(&mut net, 20);
+    let mut p = vec![0x00, 1];
+    p.extend_from_slice(&zed.ext.to_le_bytes());
+    net.coord.zdo(sa, 0x801F, &p);
+    net.run(200);
+    assert_eq!(net.nodes[a].stack.child_count(), 1);
+}
