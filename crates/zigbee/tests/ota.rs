@@ -647,3 +647,27 @@ fn answers_nobody_asked_for_change_nothing() {
     net.run(1_000);
     assert!(!activated(&net, n), "an upgrade end nobody asked for");
 }
+
+#[test]
+fn a_power_cut_resumes_with_the_file_header_already_read_and_skips_an_element_after_the_image() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(9500, 21);
+    let mut data = make_ota_file(&image, MFG, TYPE, NEW, 0, false);
+    data.extend_from_slice(&[0x01, 0x00, 5, 0, 0, 0, 1, 2, 3, 4, 5]);
+    let total = data.len() as u32;
+    data[52..56].copy_from_slice(&total.to_le_bytes());
+    net.coord.ota_file = Some(OtaFile { manufacturer: MFG, image_type: TYPE, version: NEW, data });
+    net.coord.ota_notify(short);
+    net.run_until(60_000, "past a checkpoint", |net| net.coord.ota_blocks >= 6000 / 48);
+    net.power_cycle(n);
+    net.run(2_000);
+    let before = net.coord.ota_blocks;
+    net.coord.ota_notify(short);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    net.run(2_000);
+    assert_eq!(net.coord.ota_end, Some(0x00));
+    assert_eq!(staged(&net, n, image.len()), image);
+    assert!(net.coord.ota_blocks - before < 150, "resumed, not started over: {} blocks", net.coord.ota_blocks - before);
+}
