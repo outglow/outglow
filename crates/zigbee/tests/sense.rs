@@ -775,3 +775,14 @@ fn the_lines_of_two_neighbours_are_listed_with_their_lengths() {
     assert_eq!(read(&mut net, shorts[0], SENSE, 0x0002).map(|l| l.len()), Some(12));
     assert_eq!(read(&mut net, shorts[0], SENSE, 0x0005).map(|l| l.len()), Some(8));
 }
+
+#[test]
+fn switching_the_sensing_off_in_an_empty_room_reports_nothing() {
+    let (mut net, _, _, [sa, _]) = two();
+    past_holdoff(&mut net);
+    net.run(5_000);
+    let n0 = net.coord.zcl_rx.len();
+    switch(&mut net, sa, false);
+    net.run(500);
+    assert!(reports(&net, sa, OCC, 0, n0).is_empty());
+}

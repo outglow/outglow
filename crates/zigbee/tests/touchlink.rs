@@ -737,3 +737,15 @@ fn a_bulb_up_on_a_network_leaves_it_before_it_takes_the_initiators() {
     let on_air: Vec<Vec<u8>> = net.sent_by(net.nodes[n].id, t).into_iter().filter(|f| f[0] & 7 == 1 && f[1] & 0x0C == 0x08 && f[3..5] != [0x21, 0x43]).collect();
     assert!(on_air.is_empty(), "a factory-new bulb has nothing to leave: {on_air:02x?}");
 }
+
+#[test]
+fn a_scan_at_the_lowest_link_quality_taken_is_answered_and_one_just_below_is_not() {
+    for (lqi, answered) in [(164u8, true), (163, false)] {
+        let mut net = Net::new();
+        let n = net.join_node();
+        let mut i = Initiator::new(&mut net);
+        let (pi, pn) = (i.port, net.nodes[n].id);
+        net.link(pi, pn, lqi);
+        assert_eq!(!scan(&mut net, &mut i).is_empty(), answered, "{lqi}");
+    }
+}
