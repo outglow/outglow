@@ -1185,3 +1185,12 @@ fn an_odd_level_rounds_up_to_the_mesh_brightness_and_a_white_colour_bulb_shows_n
     let rsp = rig.central().scan_responses.last().unwrap().clone();
     assert_eq!(rsp[8 + 18..8 + 20], [0xff, 0xff], "in colour temperature mode");
 }
+
+#[test]
+fn a_status_notification_carries_both_octets_of_the_mesh_address() {
+    let mut rig = logged_in(DIMMABLE);
+    rig.command(0xe0, &[0x21, 0x03]);
+    rig.command(OP_POWER, &[0]);
+    let (op, params, src) = rig.statuses_from().pop().unwrap();
+    assert_eq!((op, src, params[0], params[9]), (0xdc, 0x0321, 0x21, 0x03));
+}
