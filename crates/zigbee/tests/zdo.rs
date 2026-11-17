@@ -447,3 +447,17 @@ fn a_node_descriptor_request_that_fails_does_not_finish_the_key_exchange() {
     let id = net.nodes[n].id;
     assert_ne!(net.air.borrow().ports[id].nv[&item].last(), Some(&3), "not done while the descriptor fails");
 }
+
+#[test]
+fn bindings_come_back_after_a_power_cycle_as_they_were() {
+    let (mut net, n, short) = bulb();
+    let me = ext_of(&net, n);
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, ON_OFF, &[1, 0x34, 0x12])), Some(vec![0x00]));
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(0x00124B00_0000_0001, 1))), Some(vec![0x00]));
+    let before = ask(&mut net, short, MGMT_BIND_REQ, &[0]).unwrap();
+    assert_eq!(before[..4], [0x00, 2, 0, 2]);
+    net.run(11_000);
+    net.power_cycle(n);
+    net.run(500);
+    assert_eq!(ask(&mut net, short, MGMT_BIND_REQ, &[0]).unwrap(), before);
+}

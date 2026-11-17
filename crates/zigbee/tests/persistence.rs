@@ -64,3 +64,26 @@ fn a_stack_made_in_place_comes_back_up_like_one_made_by_value() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, BASIC, 0x01).unwrap()[..3], [0x18, seq, 0x01]);
 }
+
+#[test]
+fn a_stored_scene_with_the_light_off_comes_back_off_after_a_power_cycle() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, 0x0006, 0x01, 0x01, &[]);
+    net.run(100);
+    net.coord.zcl(short, 0x0005, 0x01, 0x04, &[0x00, 0x00, 1]);
+    net.run(100);
+    net.coord.zcl(short, 0x0006, 0x01, 0x00, &[]);
+    net.run(100);
+    net.coord.zcl(short, 0x0005, 0x01, 0x04, &[0x00, 0x00, 2]);
+    net.run(11_000);
+    net.power_cycle(n);
+    net.run(500);
+    net.coord.zcl(short, 0x0005, 0x01, 0x05, &[0x00, 0x00, 1]);
+    net.run(500);
+    assert!(net.nodes[n].on);
+    net.coord.zcl(short, 0x0005, 0x01, 0x05, &[0x00, 0x00, 2]);
+    net.run(500);
+    assert!(!net.nodes[n].on);
+}
