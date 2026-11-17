@@ -137,7 +137,7 @@ impl<H: Hal> Stack<H> {
             return None;
         }
         let sc_calc = pack(&[(sc & !7, 0), (5, 0)]);
-        let mut aad = [0u8; 12 + 13];
+        let mut aad = [0u8; 25];
         let n = header_len + aux_len;
         aad.get_mut(..n)?.copy_from_slice(&p[..n]);
         aad[header_len] = sc_calc;
@@ -290,7 +290,7 @@ impl<H: Hal> Stack<H> {
             let cipher = a.rest();
             let key_id = (sc >> 3) & 3;
             let sc_calc = pack(&[(sc & !7, 0), (5, 0)]);
-            let mut aad = [0u8; 2 + 13];
+            let mut aad = [0u8; 15];
             aad[..2].copy_from_slice(&p[..2]);
             aad[2..2 + aux_len].copy_from_slice(&rest[..aux_len]);
             aad[2] = sc_calc;

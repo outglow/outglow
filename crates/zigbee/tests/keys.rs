@@ -177,3 +177,20 @@ fn a_new_network_key_does_not_forget_the_frame_counters_heard_under_the_current_
     net.run(50);
     assert_eq!(nwk_fc_failures(&mut net, short), failures + 1, "the old frame is still a replay");
 }
+
+#[test]
+fn in_a_trust_center_rejoin_a_key_sent_in_the_name_of_another_device_is_refused() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    net.coord.permit_join = false;
+    net.set_power(n, false);
+    net.coord.key = [0x77; 16];
+    net.coord.key_seq = 1;
+    net.run(5_000);
+    net.coord.aps_ext = 0x00124B00_0000_9999;
+    net.power_cycle(n);
+    net.set_power(n, true);
+    net.run_until(200_000, "Trust Center rejoin", |net| !net.coord.rejoins.is_empty());
+    net.run(2_000);
+    assert_ne!(net.nodes[n].stack.state(), zigbee::stack::State::Up, "the key is not the Trust Center's");
+}
