@@ -401,12 +401,13 @@ impl<H: Hal> Stack<H> {
                         self.manager = r.u16()?;
                         return None;
                     }
-                    0..=5 => {
+                    _ => {
                         if !unicast {
                             return None;
                         }
-                        let channels = channels & 0x07FF_F800;
-                        rsp.u8(SUCCESS);
+                        let (status, mask) = if duration <= 5 { (SUCCESS, 0x07FF_F800) } else { (INVALID_REQUEST, 0) };
+                        let channels = channels & mask;
+                        rsp.u8(status);
                         rsp.u32(channels);
                         rsp.u16(self.stats.tx as u16);
                         rsp.u16(self.stats.tx_failed as u16);
@@ -418,12 +419,6 @@ impl<H: Hal> Stack<H> {
                             }
                         }
                         self.hal.set_channel(self.nib.channel);
-                    }
-                    _ => {
-                        if !unicast {
-                            return None;
-                        }
-                        rsp.u8(INVALID_REQUEST);
                     }
                 }
             }

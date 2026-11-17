@@ -272,7 +272,10 @@ fn an_energy_scan_is_answered_only_when_unicast_and_other_durations_are_invalid(
     assert_eq!(rsp.len(), 12);
     assert_eq!(ask(&mut net, 0xFFFD, MGMT_NWK_UPDATE_REQ, &scan(0)), None);
     for duration in [6, 0x80, 0xFD] {
-        assert_eq!(ask(&mut net, short, MGMT_NWK_UPDATE_REQ, &scan(duration)), Some(vec![0x80]));
+        let rsp = ask(&mut net, short, MGMT_NWK_UPDATE_REQ, &scan(duration)).unwrap();
+        assert_eq!(rsp[..5], [0x80, 0, 0, 0, 0], "invalid, nothing scanned");
+        assert!(u16::from_le_bytes([rsp[5], rsp[6]]) > 0, "frames sent");
+        assert_eq!(rsp[7..], [0, 0, 0], "none failed and no energy values, but every field of the notify (R22 Figure 2-105)");
         assert_eq!(ask(&mut net, 0xFFFD, MGMT_NWK_UPDATE_REQ, &scan(duration)), None);
     }
 }
