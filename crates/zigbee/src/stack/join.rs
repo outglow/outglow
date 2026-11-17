@@ -601,3 +601,6 @@ impl<H: Hal> Stack<H> {
         self.tclk_failed(now);
     }
 }
+
+#[cfg(test)]
+mod tests;
