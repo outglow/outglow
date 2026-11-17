@@ -704,3 +704,37 @@ fn a_probe_waits_while_frames_are_still_coming_in() {
     net.run(2_000);
     assert!(probes(&net, pa, t).len() >= 5);
 }
+
+#[test]
+fn a_reset_to_factory_defaults_while_occupied_reports_the_room_empty() {
+    let (mut net, f, n, [sa, sb]) = two();
+    let p = ports(&net, n);
+    past_holdoff(&mut net);
+    net.run(10_000);
+    let t = net.now() + 500;
+    both(&f, [sa, sb], p, |ch| ch.crossings.push(Crossing { t0: t, t1: t + 1500, depth: 8.0 }));
+    let n0 = net.coord.zcl_rx.len();
+    net.run_until(4000, "occupancy", |net| reports(net, sa, OCC, 0, n0).contains(&1));
+    let n1 = net.coord.zcl_rx.len();
+    net.coord.zcl(sa, 0x0000, 0x01, 0x00, &[]);
+    net.run(50);
+    assert_eq!(reports(&net, sa, OCC, 0, n1), vec![0]);
+}
+
+#[test]
+fn a_probe_of_another_network_is_taken_by_the_sensing_and_other_frames_are_left_to_the_stack() {
+    let (mut net, _, n, [sa, _]) = two();
+    let port = net.nodes[n[0]].id;
+    past_holdoff(&mut net);
+    net.run(1_000);
+    let mut probe = probes(&net, net.nodes[n[1]].id, 0).last().cloned().expect("a probe of the other bulb");
+    probe[9 + 3] ^= 0xFF;
+    let before = read(&mut net, sa, 0x0B05, 0x0100);
+    net.air.borrow_mut().transmit(port, &probe);
+    net.run(20);
+    assert_eq!(read(&mut net, sa, 0x0B05, 0x0100), before, "a foreign probe is not counted as received");
+    let other = [0x03, 0x08, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07];
+    net.air.borrow_mut().transmit(port, &other);
+    net.run(20);
+    assert_ne!(read(&mut net, sa, 0x0B05, 0x0100), before, "a beacon request goes to the stack");
+}
