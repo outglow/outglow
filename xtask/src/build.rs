@@ -94,16 +94,22 @@ fn check_rustc(c: &mut Ctx) -> Result<()> {
     let vv = c.output(Command::new(c.rustc()).arg("-vV"))?;
     let path = c.output(Command::new("sh").arg("-c").arg("command -v \"$0\"").arg(c.rustc())).unwrap_or_default();
     println!("== rustc: {} (LLVM {}) {}", vv.lines().next().unwrap_or("?"), rustc_field(&vv, "LLVM version"), path.trim());
-    let off = unpinned(&vv);
-    if !off.is_empty() {
-        eprintln!(
+    if let Some(w) = rustc_warning(&vv) {
+        eprintln!("{w}");
+    }
+    Ok(())
+}
+
+pub fn rustc_warning(vv: &str) -> Option<String> {
+    let off = unpinned(vv);
+    (!off.is_empty()).then(|| {
+        format!(
             "\nWARNING: this rustc is not the pinned one: {}.\n\
              WARNING: the image will NOT be byte-identical to CI's (other inlining, other layout, other timing in the emulator).\n\
              WARNING: build in the Nix shell: `nix develop`, then `cargo xtask build` (or `nix develop --command cargo xtask build`).\n",
             off.join(", ")
-        );
-    }
-    Ok(())
+        )
+    })
 }
 
 fn locked_nixpkgs(root: &Path) -> Result<String> {

@@ -365,6 +365,10 @@ fn an_unpinned_rustc_still_builds() {
     r.build(&[]).0.unwrap();
     assert_eq!(unpinned(&r.tools.vv), ["release 1.90.0 (pinned 1.99.0)", "commit-hash ? (pinned b940084d7eb6a299eb4bfeb8e34901bc051e7ac4)", "LLVM version ? (pinned 21.1.8)"]);
     assert!(unpinned(PINNED_VV).is_empty());
+    assert_eq!(rustc_warning(PINNED_VV), None);
+    let w = rustc_warning("release: 1.99.0\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\nLLVM version: 23.1.2\n").unwrap();
+    assert!(w.starts_with("\nWARNING: this rustc is not the pinned one: LLVM version 23.1.2 (pinned 21.1.8).\nWARNING: the image will NOT"), "{w}");
+    assert!(w.ends_with("(or `nix develop --command cargo xtask build`).\n"));
     assert_eq!(rustc_field(PINNED_VV, "LLVM version"), "21.1.8");
     assert_eq!(rustc_field("release:1.0", "release"), "?");
     assert_eq!(rustc_field("release:  2.0 \n", "release"), "2.0");
