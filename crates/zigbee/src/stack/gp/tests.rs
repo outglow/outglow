@@ -51,10 +51,10 @@ fn a_device_announced_at_an_alias_in_use_is_answered_once_after_a_jitter() {
         s
     };
     let mut s = fresh();
-    s.hal.random = std::vec![DMAX - DMIN_U];
+    s.hal.random = std::vec![DMAX - DMIN_U + 1];
     s.gp_device_announced(0x2345, 0x99);
     let p = s.gp_pending[0].unwrap();
-    assert!(p.to == Forward::Announce && p.alias == 0x2345 && p.at == 1_000 + DMAX);
+    assert!(p.to == Forward::Announce && p.alias == 0x2345 && p.at == 1_000 + DMIN_U);
     s.gp_device_announced(0x2345, 0x99);
     assert!(s.gp_pending[1].is_none(), "one answer waits already");
     let other = Pending { at: 9_000, to: Forward::Announce, alias: 0x1111, seq: 0, then: 0, len: 0, zcl: [0; 96] };

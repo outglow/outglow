@@ -1849,3 +1849,19 @@ fn a_response_another_proxy_sends_for_another_device_leaves_the_bulbs_answer_wai
     net2.run(100);
     assert!(net2.air.borrow().timed.is_empty(), "another proxy answers that device now");
 }
+
+#[test]
+fn a_secured_frame_repeating_the_last_counter_after_the_duplicate_window_is_a_replay() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_pairing(SWITCH, true, 3, 0, 3, Some(KEY), 100);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
+    gpd.send(0x22, &[]);
+    net.run(3_000);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1);
+    gpd.counter -= 1;
+    gpd.send(0x22, &[]);
+    net.run(100);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1, "the same counter again");
+}

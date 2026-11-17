@@ -356,3 +356,32 @@ fn a_resumed_bulb_announces_its_children_only_when_it_has_end_devices() {
     s.resume(1_000);
     assert!(s.parent_annce_at.is_some());
 }
+
+#[test]
+fn with_every_channel_scanned_and_no_candidate_the_bulb_goes_down() {
+    let mut s = stack();
+    s.state = State::Scan;
+    s.scan_index = super::CHANNELS.len() as u8 - 1;
+    s.join_next(1_000);
+    assert_eq!(s.state, State::Scan, "one channel left");
+    s.scan_index = super::CHANNELS.len() as u8;
+    s.join_next(1_000);
+    assert_eq!(s.state, State::Down);
+}
+
+#[test]
+fn a_poll_for_another_address_or_an_orphan_notice_before_the_bulb_is_up_is_not_answered() {
+    let mut s = stack();
+    s.state = State::Up;
+    s.nib.short = 0x0042;
+    s.nib.pan = 0x1A62;
+    let c = &mut s.children[0];
+    (c.used, c.joined, c.short, c.ext) = (true, true, 0x2000, 0x77);
+    let e = &mut s.indirect[0];
+    (e.used, e.ext, e.addr, e.expires) = (true, false, 0x2000, 50_000);
+    mac_cmd(&mut s, Addr::Short(0x0043), 0x1A62, Addr::Short(0x2000), &[mac::CMD_DATA_REQ]);
+    assert!(s.hal.sent.is_empty() && s.indirect[0].used, "a poll for another address");
+    s.state = State::Scan;
+    mac_cmd(&mut s, Addr::Short(0xFFFF), 0xFFFF, Addr::Ext(0x77), &[mac::CMD_ORPHAN]);
+    assert!(s.hal.sent.is_empty(), "an orphan notice while scanning");
+}
