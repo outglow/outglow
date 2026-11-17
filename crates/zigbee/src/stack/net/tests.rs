@@ -1,8 +1,9 @@
 use super::super::address_tests::{Scripted, IDENTITY};
 use super::super::diag::k;
 use super::NEIGHBOR_FORGET;
+use crate::hal::trace;
 use crate::nwk;
-use crate::stack::{Stack, State, AGE_LIMIT, NEIGHBORS, ROUTES};
+use crate::stack::{Stack, State, AGE_LIMIT, MAX_NWK_PAYLOAD, NEIGHBORS, ROUTES};
 extern crate std;
 use std::vec::Vec;
 
@@ -328,4 +329,100 @@ fn another_router_is_one_that_is_live_and_neither_of_the_two_to_avoid() {
     s.neighbors[3].age = AGE_LIMIT + 1;
     s.neighbors[0].out_cost = 0;
     assert_eq!(s.random_router(0x1002, 0x1001), None);
+}
+
+fn data_from(src: u16) -> nwk::Header {
+    nwk::Header::new(nwk::FRAME_DATA, 0x5000, src, 30, 1)
+}
+
+#[test]
+fn a_frame_for_a_retry_or_a_route_is_held_only_up_to_the_largest_nwk_payload() {
+    let mut s = up();
+    s.hal.random = [super::NWK_RETRY_SPREAD_MS].to_vec();
+    assert!(s.hold_retry(&data_from(0x1000), &[0x55; MAX_NWK_PAYLOAD], 0x1000, 2));
+    let e = s.held[0];
+    assert_eq!((e.used, e.len, e.left, e.next, e.at), (true, MAX_NWK_PAYLOAD as u8, 2, 0x1000, 1_000 + super::NWK_RETRY_MIN_MS + super::NWK_RETRY_SPREAD_MS));
+    assert!(!s.hold_retry(&data_from(0x1000), &[0x55; MAX_NWK_PAYLOAD + 1], 0x1000, 2));
+    assert!(!s.held[1].used);
+    s.hold(&data_from(0x0042), &[0x66; MAX_NWK_PAYLOAD]);
+    assert_eq!((s.held[1].used, s.held[1].len, s.held[1].at), (true, MAX_NWK_PAYLOAD as u8, 1_000 + super::HOLD_MS));
+    s.hold(&data_from(0x0042), &[0x66; MAX_NWK_PAYLOAD + 1]);
+    assert!(!s.held[2].used);
+}
+
+#[test]
+fn a_full_hold_gives_up_the_frame_waiting_for_a_route_that_expires_first_never_one_waiting_for_a_retry() {
+    let mut s = up();
+    for (i, e) in s.held.iter_mut().enumerate() {
+        e.used = true;
+        e.header = data_from(0x0042);
+        e.header.dst = 0x5000 + i as u16;
+        e.at = 3_000 + i as u32;
+        e.left = 0;
+    }
+    s.held[0].left = 1;
+    s.held[0].at = 1_500;
+    s.hold(&data_from(0x0042), &[1]);
+    assert_eq!(s.held[1].header.dst, 0x5000, "the second, the first waiting for a route");
+    assert_eq!(s.held[0].header.dst, 0x5000);
+    assert_eq!(s.diag.n[k::BUFFER_ALLOCATE_FAILURES], 1);
+    for e in s.held.iter_mut() {
+        e.left = 1;
+    }
+    s.hold(&data_from(0x0042), &[2]);
+    assert_eq!(s.diag.n[k::BUFFER_ALLOCATE_FAILURES], 2, "no room");
+    assert!(s.held.iter().all(|e| e.len != 1 || e.payload[0] != 2));
+}
+
+#[test]
+fn a_held_frame_that_failed_is_counted_by_whose_it_was_and_why() {
+    let b = k::BUFFER_ALLOCATE_FAILURES;
+    let (no_route, full, aps) = (k::RELAY_DROP_NO_ROUTE, k::RELAY_DROP_QUEUE_FULL, k::APS_TX_UCAST_FAIL);
+    let cases: [(u16, u8, u8, [u32; 4], bool); 6] = [
+        (0x1000, nwk::FRAME_DATA, trace::FAIL_EXPIRED, [0, 1, 0, 0], true),
+        (0x1000, nwk::FRAME_DATA, trace::FAIL_EVICTED, [1, 0, 1, 0], true),
+        (0x1000, nwk::FRAME_CMD, trace::FAIL_NO_ROOM, [1, 0, 1, 0], false),
+        (0x0042, nwk::FRAME_DATA, trace::FAIL_EXPIRED, [0, 0, 0, 1], false),
+        (0x0042, nwk::FRAME_DATA, trace::FAIL_NO_ROOM, [1, 0, 0, 1], false),
+        (0x0042, nwk::FRAME_CMD, trace::FAIL_EXPIRED, [0, 0, 0, 0], false),
+    ];
+    for (src, frame_type, why, counts, status) in cases {
+        let mut s = up();
+        fill(&mut s);
+        let mut h = data_from(src);
+        h.frame_type = frame_type;
+        s.held_failed(&h, why);
+        assert_eq!([s.diag.n[b], s.diag.n[no_route], s.diag.n[full], s.diag.n[aps]], counts, "{src:04X} {frame_type} {why}");
+        assert_eq!(!s.hal.sent.is_empty(), status, "{src:04X} {frame_type} {why}");
+    }
+}
+
+#[test]
+fn a_network_status_is_never_sent_to_the_bulb_itself_or_to_a_broadcast_address() {
+    for (to, sent) in [(0x1000, true), (0x0042, false), (0xFFFD, false)] {
+        let mut s = up();
+        fill(&mut s);
+        s.neighbors[0].short = 0x0042;
+        s.neighbors[1].short = 0xFFFD;
+        s.neighbors[2].short = 0x1000;
+        s.send_network_status(to, nwk::STATUS_NO_ROUTE, 0x5000);
+        assert_eq!(!s.hal.sent.is_empty(), sent, "{to:04X}");
+    }
+}
+
+#[test]
+fn a_discovery_takes_the_first_free_slot_and_when_forced_the_live_one_that_ends_soonest() {
+    let mut s = stack();
+    for (i, d) in s.discoveries.iter_mut().enumerate() {
+        d.used = true;
+        d.expires = 5_000 + 100 * (i as u32 % 3);
+    }
+    assert_eq!(s.discovery_slot(1_000, false), None);
+    assert_eq!(s.discovery_slot(1_000, true), Some(0));
+    s.discoveries[0].expires = 5_100;
+    assert_eq!(s.discovery_slot(1_000, true), Some(3));
+    s.discoveries[2].expires = 900;
+    s.discoveries[4].used = false;
+    assert_eq!(s.discovery_slot(1_000, false), Some(2));
+    assert_eq!(s.discovery_slot(1_000, true), Some(2));
 }
