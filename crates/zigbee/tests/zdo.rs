@@ -358,3 +358,13 @@ fn a_router_whose_children_were_all_heard_since_the_restart_announces_none() {
     assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != sa || *c != 0x001F));
     assert_eq!(net.nodes[a].stack.child_count(), 1);
 }
+
+#[test]
+fn an_aps_unicast_in_a_nwk_broadcast_counts_as_a_broadcast() {
+    let (mut net, _, short) = bulb();
+    let aps = net.coord.aps_frame(0x00, 0, NODE_DESC_REQ, 0x0000, 0, &[0x61, 0x34, 0x12]);
+    net.coord.zdo_rx.clear();
+    net.coord.nwk_data(0xFFFD, &aps);
+    net.run(300);
+    assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != short || *c != 0x8002), "about another device: no answer to a broadcast");
+}
