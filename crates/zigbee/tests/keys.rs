@@ -192,5 +192,23 @@ fn in_a_trust_center_rejoin_a_key_sent_in_the_name_of_another_device_is_refused(
     net.set_power(n, true);
     net.run_until(200_000, "Trust Center rejoin", |net| !net.coord.rejoins.is_empty());
     net.run(2_000);
-    assert_ne!(net.nodes[n].stack.state(), zigbee::stack::State::Up, "the key is not the Trust Center's");
+    assert_eq!(net.nodes[n].stack.state(), zigbee::stack::State::WaitKey, "the key is not the Trust Center's");
+    let mut beacon = zigbee::util::Buf::new();
+    zigbee::mac::Beacon {
+        pan: PAN,
+        short: 0x0000,
+        permit_join: true,
+        pan_coordinator: true,
+        stack_profile: 2,
+        protocol_version: 2,
+        router_capacity: true,
+        end_device_capacity: true,
+        depth: 0,
+        ext_pan: EXT_PAN,
+        update_id: 0,
+    }
+    .write(1, &mut beacon);
+    net.air.borrow_mut().transmit(0, beacon.as_slice());
+    net.run_until(30_000, "down again", |net| net.nodes[n].stack.state() != zigbee::stack::State::WaitKey);
+    assert_ne!(net.nodes[n].stack.state(), zigbee::stack::State::Up);
 }

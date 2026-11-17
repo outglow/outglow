@@ -135,3 +135,19 @@ fn children_stored_in_another_version_are_not_restored() {
     reboot(&mut net, a);
     assert_eq!(net.nodes[a].stack.child_count(), 0);
 }
+
+#[test]
+fn a_bulb_restarted_with_its_new_trust_center_key_not_yet_verified_goes_on_with_it() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.run(5_000);
+    let mut network = stored(&net, n, NvItem::Network);
+    *network.last_mut().unwrap() = 1;
+    put(&mut net, n, NvItem::Network, network);
+    reboot(&mut net, n);
+    net.run(30_000);
+    assert_eq!(net.nodes[n].stack.state(), State::Up);
+    assert_ne!(stored(&net, n, NvItem::Network).last(), Some(&1), "the key verified: the exchange went on");
+    let _ = short;
+}

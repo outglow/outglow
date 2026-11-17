@@ -325,10 +325,7 @@ impl<H: Hal> Stack<H> {
                 self.nib.short = short;
                 self.hal.set_filter(self.nib.pan, short);
                 self.clear_tables();
-                let parent_ext = match h.src {
-                    Addr::Ext(e) => e,
-                    _ => 0,
-                };
+                let parent_ext = if let Addr::Ext(e) = h.src { e } else { 0 };
                 self.neighbors[0] =
                     Neighbor { used: true, short: self.nib.parent, ext: parent_ext, lqi: self.join_lqi, ..Neighbor::EMPTY };
                 self.link_proven(self.nib.parent);

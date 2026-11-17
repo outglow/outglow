@@ -98,6 +98,7 @@ fn mac_commands_and_beacons_a_bulb_that_is_up_does_not_take_change_nothing() {
     mac_frame(&mut net, mac::FRAME_CMD, Addr::Short(short), Addr::Short(0x0000), &[0x7F]);
     mac_frame(&mut net, mac::FRAME_CMD, Addr::Short(short), Addr::Short(0x0005), &[mac::CMD_ASSOC_REQ, 0x8E]);
     mac_frame(&mut net, mac::FRAME_CMD, Addr::Short(0xFFFF), Addr::Ext(0x77), &[mac::CMD_ORPHAN]);
+    mac_frame(&mut net, mac::FRAME_CMD, Addr::Short(0xFFFF), Addr::Short(0x0005), &[mac::CMD_ORPHAN]);
     mac_frame(&mut net, mac::FRAME_CMD, Addr::Short(short), Addr::None, &[mac::CMD_DATA_REQ]);
     net.run(500);
     assert_eq!(net.nodes[n].stack.child_count(), 0);
