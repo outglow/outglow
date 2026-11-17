@@ -228,3 +228,15 @@ fn end_devices_are_allowed_until_written_otherwise() {
     net.run(100);
     assert!(!net.nodes[n].stack.allows_children());
 }
+
+#[test]
+fn the_share_of_radio_time_lent_to_ble_is_in_tenths_of_a_percent_of_the_uptime() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    net.run(10_500);
+    let up = net.nodes[n].stack.uptime_s();
+    net.air.borrow_mut().ports[id].hal_counters.ble_ms = 300 * up;
+    assert_eq!(present_value(&mut net, short, 4), 30.0);
+}

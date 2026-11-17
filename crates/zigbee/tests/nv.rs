@@ -193,3 +193,26 @@ fn a_child_that_listens_comes_back_as_one_and_gets_its_frames_at_once() {
     assert!(net.air.borrow().ports[id].pending.0.is_empty(), "not kept for a poll");
     assert!(zed.rx.iter().any(|(h, _)| h.dst == zed.short && h.src == 0x0000));
 }
+
+#[test]
+fn a_child_comes_back_with_its_timeout_counted_from_the_restart() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    let sa = net.nodes[a].short();
+    assert!(zed.join(&mut net, sa));
+    let mut h = zed.header(zigbee::nwk::FRAME_CMD, sa);
+    h.radius = 1;
+    zed.nwk_send(h, &[zigbee::nwk::CMD_TIMEOUT_REQUEST, 0, 0]);
+    net.run(100);
+    zed.poll(&mut net, 20);
+    net.run(2_000);
+    reboot(&mut net, a);
+    net.run(2_000);
+    assert_eq!(net.nodes[a].stack.child_count(), 1, "heard at the restart");
+    net.run(15_000);
+    assert_eq!(net.nodes[a].stack.child_count(), 0, "ten seconds later it is gone");
+}
