@@ -193,6 +193,8 @@ fn a_new_address_is_stored_in_ble_order_and_read_back_in_zigbee_order() {
     let stored = sim::with(|c| c.flash[MAC_SECTOR..MAC_SECTOR + 8].to_vec());
     assert_eq!(stored, [&ieee[2..8], &ieee[..2]].concat());
     assert_ne!(ieee[..5], [0xff; 5]);
+    assert_ne!(stored[6..8], [0xff, 0xff]);
+    assert!(sim::with(|c| c.flash[MAC_SECTOR - 8..MAC_SECTOR].iter().chain(&c.flash[MAC_SECTOR + 8..MAC_SECTOR + 48]).all(|b| *b == 0xff)));
 }
 
 #[test]
