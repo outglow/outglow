@@ -381,3 +381,24 @@ fn a_router_already_a_neighbour_associating_keeps_its_address_and_an_end_device_
         assert_eq!(s.children[0].short == 0x3000, kept, "{capability:02X}");
     }
 }
+
+#[test]
+fn of_frames_equally_late_the_first_is_given_up_and_a_new_one_as_late_is_not_worth_its_place() {
+    let mut s = stack();
+    child(&mut s, 0, 0x0A00, 1_000, 10_000);
+    child(&mut s, 1, 0x0B00, 1_000, 10_000);
+    for slot in 0..INDIRECT {
+        put(&mut s, slot, [0x0A00u16, 0x0B00][slot % 2], 6_000);
+    }
+    assert_eq!(s.indirect_slot(Owner::Other(false, 0x0D00)), Some(0), "the first of the latest");
+    child(&mut s, 2, 0x0C00, 1_000, 10_000 + INDIRECT_MS - 5_000);
+    assert_eq!(s.indirect_slot(Owner::Child(2)), None, "as late as the latest");
+}
+
+#[test]
+fn a_frame_late_by_half_the_clock_or_more_is_not_late_but_early() {
+    let mut s = stack();
+    child(&mut s, 0, 0x0A00, 0, 1);
+    assert_eq!(s.too_late(Owner::Child(0), 1u32.wrapping_sub(0x8000_0000)), None);
+    assert_eq!(s.too_late(Owner::Child(0), 1u32.wrapping_sub(0x7FFF_FFFF)), Some(0x7FFF_FFFF));
+}
