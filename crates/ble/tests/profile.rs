@@ -1040,3 +1040,52 @@ fn a_mesh_reset_ends_the_connection_300_ms_later() {
     rig.run(200);
     assert_eq!(rig.state(), LinkState::Advertising);
 }
+
+#[test]
+fn the_zcl_tunnel_takes_the_bulbs_address_with_or_without_the_group_bit() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    for (address, taken) in [(0x8033u16, true), (0x0033, true), (0x8034, false), (0x0133, false)] {
+        rig.bulb.handle(bulb_core::Command::On);
+        rig.run(300);
+        let [hi, lo] = address.to_be_bytes();
+        rig.write(COMMAND, &block_packet(&key, 0, &[hi, lo, 0x01, 0x06, 0x00, 0]));
+        rig.run(300);
+        assert_eq!(!rig.is_on(), taken, "{address:#06x}");
+    }
+}
+
+fn long_block(key: &[u8; 16], payload: &[u8], extra: usize) -> Vec<u8> {
+    let mut whole = vec![payload.len() as u8];
+    whole.extend_from_slice(payload);
+    let mut plain = [0u8; 16];
+    plain[0] = crc8_6c(&whole);
+    let head = whole.len().min(15);
+    plain[1..1 + head].copy_from_slice(&whole[..head]);
+    let mut v = vec![2u8];
+    v.extend_from_slice(&tl_aes_encrypt(key, &plain));
+    v.extend_from_slice(&whole[head..]);
+    v.resize(v.len() + extra, 0);
+    v
+}
+
+#[test]
+fn a_stock_block_carries_at_most_18_octets_and_needs_all_of_them() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    assert_eq!(rig.att(&[0x02, 64, 0]), [0x03, 64, 0]);
+    let mut power = vec![OP_POWER, 0x60, 0x01, 0];
+    power.resize(18, 0);
+    let mut too_long = power.clone();
+    too_long.push(0);
+    rig.write(COMMAND, &long_block(&key, &too_long, 0));
+    rig.run(300);
+    assert!(rig.is_on(), "19 octets");
+    let cut = long_block(&key, &power, 0);
+    rig.write(COMMAND, &cut[..cut.len() - 1]);
+    rig.run(300);
+    assert!(rig.is_on(), "the last octet missing");
+    rig.write(COMMAND, &long_block(&key, &power, 0));
+    rig.run(300);
+    assert!(!rig.is_on(), "18 octets");
+}
