@@ -810,3 +810,50 @@ fn a_network_update_is_taken_only_for_the_bulbs_extended_pan_and_with_all_its_fi
         assert_eq!(s.pan_at.is_some(), taken, "{payload:02X?}");
     }
 }
+
+#[test]
+fn a_conflict_is_reported_after_a_jitter_of_up_to_64_ms_and_the_same_one_is_quiet_for_five_seconds() {
+    let mut s = up();
+    s.hal.random = [super::CONFLICT_JITTER_MS].to_vec();
+    s.address_conflict(0x1000);
+    assert_eq!((s.conflict, s.conflict_due), ((0x1000, 1_000 + super::CONFLICT_QUIET_MS), Some(1_000 + super::CONFLICT_JITTER_MS)));
+    s.conflict_due = None;
+    s.hal.now = 1_000 + super::CONFLICT_QUIET_MS - 1;
+    s.address_conflict(0x1000);
+    assert_eq!(s.conflict_due, None);
+    s.address_conflict(0x1001);
+    assert!(s.conflict_due.is_some());
+}
+
+#[test]
+fn a_conflict_over_the_bulbs_own_address_or_an_end_device_childs_gives_a_new_one() {
+    let mut s = up();
+    s.hal.random = [0x0777, 199].to_vec();
+    s.address_conflict_resolve(0x0042);
+    assert_eq!((s.nib.short, s.announce_at), (0x0777, Some(1_000 + 50 + 199)));
+    let mut s = up();
+    s.hal.random = [0x0888].to_vec();
+    s.children[0].capability = super::super::parent::CAP_RX_ON;
+    s.address_conflict_resolve(0x2000);
+    assert_eq!(s.children[0].short, 0x0888);
+    assert_eq!(s.hal.sent.len(), 1, "a rejoin response with it");
+    let mut s = up();
+    s.children[0].capability = super::CAP_FFD;
+    s.address_conflict_resolve(0x2000);
+    assert_eq!((s.children[0].short, s.hal.sent.len(), s.nib.short), (0x2000, 0, 0x0042), "a router child picks its own");
+}
+
+#[test]
+fn a_route_reply_is_taken_only_when_addressed_to_the_bulb_and_a_link_status_also_when_unicast() {
+    for (dst, taken) in [(0x0042, true), (0x7777, false)] {
+        let mut s = relaying();
+        s.discoveries[0] = super::Discovery { used: true, id: 7, src: 0x3000, sender: 0x1002, forward_cost: 3, residual_cost: 0xFF, expires: 9_000 };
+        let h = nwk::Header::new(nwk::FRAME_CMD, dst, 0x1001, 5, 2);
+        s.on_nwk_command(&h, 0x1001, &[nwk::CMD_ROUTE_REPLY, 0, 7, 0x00, 0x30, 0x55, 0x55, 2]);
+        assert_eq!(s.discoveries[0].residual_cost == 2, taken, "{dst:04X}");
+    }
+    let mut s = relaying();
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1001, 1, 2);
+    s.on_nwk_command(&h, 0x1001, &[nwk::CMD_LINK_STATUS, 0x60]);
+    assert_eq!(s.neighbors[1].age, 0);
+}
