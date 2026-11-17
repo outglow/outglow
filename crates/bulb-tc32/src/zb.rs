@@ -456,9 +456,10 @@ fn ble_wanted(stack: &mut Stack<Tc32Hal>, window_over: &mut bool) -> bool {
 fn ble_switch(link: &mut Link) -> Option<()> {
     let stack = link.stack.as_mut()?;
     let wanted = ble_wanted(stack, &mut link.window_over);
+    let window = stack.ble_mode() == BleMode::Window;
     match link.ble.as_mut() {
         None if wanted => start_ble(stack, &mut link.ble, &mut link.diag, &link.last_light),
-        Some(ble) if !wanted && !ble.ota_busy() && ble.link_state() != ble::LinkState::Connected => {
+        Some(ble) if !wanted && !ble.ota_busy() && !(window && ble.link_state() == ble::LinkState::Connected) => {
             use ble::Hal as _;
             ble.hal().connection_reset();
             link.ble = None;
