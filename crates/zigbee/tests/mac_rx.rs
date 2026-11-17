@@ -108,3 +108,47 @@ fn an_orphan_notification_from_a_stranger_and_an_association_request_for_another
     let sent = net.sent_by(net.nodes[n].id, t);
     assert!(sent.iter().all(|f| f[0] & 7 != 3), "no MAC command in answer: {sent:02x?}");
 }
+
+#[test]
+fn a_read_sent_on_another_pan_is_not_answered() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.set_pan(0x1A63);
+    net.coord.zcl_rx.clear();
+    net.coord.zcl(short, 0x0006, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(200);
+    net.coord.set_pan(PAN);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
+    let seq = net.coord.zcl(short, 0x0006, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(200);
+    assert_eq!(net.coord.last_zcl(short, 0x0006, 0x01).unwrap()[1], seq);
+}
+
+#[test]
+fn a_report_to_a_sleepy_child_counts_as_an_aps_unicast_sent() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let sa = net.nodes[a].short();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    assert!(zed.join(&mut net, sa));
+    net.run(200);
+    let ext = net.air.borrow().ports[net.nodes[a].id].ext;
+    let mut bind = ext.to_le_bytes().to_vec();
+    bind.push(1);
+    bind.extend_from_slice(&0x0008u16.to_le_bytes());
+    bind.push(3);
+    bind.extend_from_slice(&zed.ext.to_le_bytes());
+    bind.push(1);
+    net.coord.zdo(sa, 0x0021, &bind);
+    net.run(200);
+    let first = counter(&mut net, sa, 0x0109);
+    let idle = counter(&mut net, sa, 0x0109) - first;
+    let sent = counter(&mut net, sa, 0x0109);
+    net.coord.zcl(sa, 0x0008, 0x11, 0x00, &[50, 0, 0]);
+    net.run(3_000);
+    assert!(counter(&mut net, sa, 0x0109) - sent > idle, "the report held for the child counts");
+}
