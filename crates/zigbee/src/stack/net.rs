@@ -527,6 +527,7 @@ impl<H: Hal> Stack<H> {
             self.send_to(next, &h, payload, NWK_RETRIES);
             return;
         }
+        self.not_back_to(h.dst, mac_src);
         match command {
             Some(nwk::CMD_ROUTE_RECORD) => {
                 let n = payload.len();
@@ -585,6 +586,19 @@ impl<H: Hal> Stack<H> {
             self.route_record_for_child(&h);
         }
         self.route_out(&h, payload);
+    }
+
+    fn not_back_to(&mut self, dst: u16, mac_src: u16) {
+        let Some(i) = self.route_index(dst) else { return };
+        if self.routes[i].status != ROUTE_ACTIVE || self.routes[i].next != mac_src {
+            return;
+        }
+        let direct = self.neighbor_index(dst).is_some_and(|n| self.neighbors[n].age <= AGE_LIMIT) && !self.link_failed(dst);
+        if direct {
+            let r = &mut self.routes[i];
+            r.record_due |= r.many_to_one;
+            r.next = dst;
+        }
     }
 
     fn source_routed_by(&mut self, src: u16) {

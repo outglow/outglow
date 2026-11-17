@@ -2811,3 +2811,26 @@ fn early_link_status_frames_do_not_age_the_neighbors() {
     let missing: Vec<u32> = frames.iter().filter(|f| !f.1.contains(&0x0000)).map(|f| f.0 - t).collect();
     assert!(missing.is_empty(), "the coordinator left out of the Link Status at {missing:?} ms of {} frames", frames.len());
 }
+
+#[test]
+fn a_frame_for_a_neighbor_is_not_handed_back_to_the_router_it_came_from() {
+    let (mut net, a, b) = line();
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    let (pa, pb) = (net.nodes[a].id, net.nodes[b].id);
+    net.coord.many_to_one_route_request(false);
+    net.run(2_000);
+    net.coord.via.insert(sb, sa);
+    assert!(routes(&mut net, b).contains(&(0x0000, 0x30, sa)));
+    net.link(0, pb, 255);
+    net.link(0, pa, 0);
+    net.run(50_000);
+    net.coord.via.clear();
+    net.coord.via.insert(sa, sb);
+    let t = net.now();
+    let seq = net.coord.zcl(sa, ON_OFF, 0x01, 0x00, &[]);
+    net.run(3_000);
+    assert!(!net.nodes[a].on, "the command reached a through b");
+    let bounced = net.nwk_sent_by(pb, t).into_iter().filter(|(m, h, _)| h.src == sa && h.dst == 0x0000 && m.dst == zigbee::mac::Addr::Short(sa)).count();
+    assert_eq!(bounced, 0, "b passes a's frames for the coordinator on to it, not back to a");
+    assert_eq!(net.coord.last_zcl(sa, ON_OFF, 0x0B), Some(vec![0x18, seq, 0x0B, 0x00, 0x00]), "the answer came up through b");
+}
