@@ -4,7 +4,7 @@ crate	lines	regions
 ble	100.00	99.81
 bulb-core	94.55	93.83
 bulb-sim	96.80	97.99
-bulb-tc32	77.11	75.01
+bulb-tc32	100.00	99.79
 emulator/ble	71.31	71.49
 emulator/scenarios	2.64	2.24
 emulator/tc32emu	72.23	71.86
