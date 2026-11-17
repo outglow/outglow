@@ -17,6 +17,7 @@ struct Fake {
     clock: Duration,
     waits: Vec<Duration>,
     sets: Vec<Value>,
+    set_at: Vec<Duration>,
     slept: Vec<Duration>,
 }
 
@@ -32,6 +33,7 @@ impl Bus for Fake {
     }
 
     fn next(&mut self, wait: Duration) -> Result<Option<Msg>> {
+        assert!(self.waits.len() < 100_000, "the bus was read without end");
         self.waits.push(wait);
         match self.script.pop_front() {
             Some(Step::Msg(m)) => {
@@ -48,6 +50,7 @@ impl Bus for Fake {
 
     fn set(&mut self, v: Value) -> Result<()> {
         self.sets.push(v);
+        self.set_at.push(self.clock);
         Ok(())
     }
 
@@ -282,7 +285,9 @@ fn missing_pages_are_asked_for_again_five_at_a_time() {
     let again: Vec<&Value> = b.sets[1..].iter().collect();
     assert_eq!(again[..5], [&json!({"black_box_read": 3}), &json!({"black_box_read": 4}), &json!({"black_box_read": 5}), &json!({"black_box_read": 6}), &json!({"black_box_read": 7})]);
     assert_eq!(again.len(), 10);
-    assert!(b.clock >= Duration::from_secs(45) && b.clock < Duration::from_millis(45_200));
+    let ms: Vec<u128> = b.set_at.iter().map(Duration::as_millis).collect();
+    assert_eq!(ms, [0, 21_070, 21_070, 21_070, 21_070, 21_070, 41_570, 41_570, 41_570, 41_570, 41_570]);
+    assert_eq!(b.clock, Duration::from_millis(45_070));
 }
 
 #[test]
@@ -311,6 +316,17 @@ fn page_0_that_comes_late_still_sets_the_length() {
     assert_eq!(b.clock, Duration::from_millis(930));
     assert!(missing.is_empty());
     assert_eq!(got, blob);
+}
+
+#[test]
+fn a_box_of_whole_pages_stops_with_its_last_page() {
+    let mut page0 = vec![0u8; 64];
+    page0[20..22].copy_from_slice(&128u16.to_le_bytes());
+    let page = |n: usize, d: &[u8]| Step::Msg(state(json!({"black_box_page": {"page": n, "hex": blackbox::hex(d)}})));
+    let mut b = Fake::new(vec![Step::Quiet, page(0, &page0), page(1, &[7; 64])]);
+    let (got, missing) = fetch_box(&mut b, 240.0).unwrap();
+    assert_eq!((got.len(), got[64], missing.len()), (128, 7, 0));
+    assert_eq!(b.clock, Duration::from_millis(520));
 }
 
 #[test]

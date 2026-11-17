@@ -571,6 +571,54 @@ mod tests {
     }
 
     #[test]
+    fn the_worst_files_as_many_as_asked_ties_by_name() {
+        let crates = BTreeMap::from([("a".to_string(), summary((30, 20), (30, 20)))]);
+        let files = vec![
+            ("crates/a/src/z.rs".to_string(), summary((10, 5), (10, 5))),
+            ("crates/a/src/y.rs".to_string(), summary((10, 5), (10, 5))),
+            ("crates/a/src/x.rs".to_string(), summary((10, 10), (10, 10))),
+            ("crates/a/src/w.rs".to_string(), summary((10, 9), (10, 9))),
+        ];
+        let r = render(&crates, &files, &BTreeMap::new(), 2);
+        assert!(r.contains("### The 2 files with the most uncovered lines\n\n| file | uncovered lines | line % | region % |\n|---|--:|--:|--:|\n| `crates/a/src/y.rs` | 5 | 50.00 | 50.00 |\n| `crates/a/src/z.rs` | 5 | 50.00 | 50.00 |\n\n"), "{r}");
+        assert!(!r.contains("w.rs") && !r.contains("x.rs"));
+        let r = render(&crates, &files, &BTreeMap::new(), 9);
+        assert!(r.contains("### The 3 files with the most uncovered lines"), "{r}");
+        assert!(r.contains("| `crates/a/src/w.rs` | 1 | 90.00 | 90.00 |\n\n"));
+        assert!(!render(&crates, &files, &BTreeMap::new(), 0).contains("###"));
+        assert!(!render(&crates, &[], &BTreeMap::new(), 5).contains("###"));
+        let base = BTreeMap::from([("a".to_string(), Floor { lines: 60.0, regions: 66.65 })]);
+        let r = render(&crates, &[], &base, 5);
+        assert!(r.contains("| a | 20/30 | 66.67 | +6.67 | 20/30 | 66.67 | = | 100.00 |"), "{r}");
+        assert!(r.ends_with("Δ: percentage points against the baseline in `xtask/coverage.tsv`.\n\n"));
+        assert_eq!(render(&BTreeMap::new(), &[], &BTreeMap::new(), 5), "Δ: percentage points against the baseline in `xtask/coverage.tsv`.\n\n");
+    }
+
+    #[test]
+    fn a_baseline_with_comments_and_blank_lines() {
+        let b = parse_baseline("# note\n\ncrate\tlines\tregions\n  ble\t1.5\t2.5  \n").unwrap();
+        assert_eq!(b, BTreeMap::from([("ble".to_string(), Floor { lines: 1.5, regions: 2.5 })]));
+        assert_eq!(parse_baseline("a\tb\tc\td\n").unwrap_err().to_string(), "xtask/coverage.tsv line 1: expected crate, lines, regions");
+        assert!(parse_baseline("a\t1\tx\n").is_err());
+        let mut tot = summary((1, 1), (2, 1));
+        tot.add(summary((3, 0), (2, 2)));
+        assert_eq!((tot.lines.count, tot.lines.covered, tot.regions.count, tot.regions.covered), (4, 1, 4, 3));
+    }
+
+    #[test]
+    fn a_drop_of_regions_alone_fails_too() {
+        let base = BTreeMap::from([("ble".to_string(), Floor { lines: 50.0, regions: 50.0 })]);
+        let now = BTreeMap::from([("ble".to_string(), summary((100, 60), (100, 40)))]);
+        assert_eq!(drops(&now, &base), ["ble: regions 40.00 % < baseline 50.00 %"]);
+        let now = BTreeMap::from([("ble".to_string(), summary((100, 40), (100, 60)))]);
+        assert_eq!(drops(&now, &base), ["ble: lines 40.00 % < baseline 50.00 %"]);
+        let now = BTreeMap::from([("ble".to_string(), summary((10_000, 4_995), (10_000, 4_995)))]);
+        assert!(drops(&now, &base).is_empty());
+        let now = BTreeMap::from([("ble".to_string(), summary((10_000, 4_994), (10_000, 4_994)))]);
+        assert_eq!(drops(&now, &base).len(), 2);
+    }
+
+    #[test]
     fn the_report_lists_the_worst_files_first() {
         let mut crates = BTreeMap::new();
         crates.insert("a".to_string(), summary((20, 10), (20, 10)));

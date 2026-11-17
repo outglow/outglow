@@ -268,12 +268,12 @@ fn cargo_test(cargo: &OsStr, krate: &str, ws: &Path, dir: &Path, timeout: Option
         .stderr(fs::File::create(&err_path)?)
         .spawn()
         .context("starting cargo test")?;
-    let started = Instant::now();
+    let deadline = timeout.map(|t| Instant::now() + t);
     let (status, timed_out) = loop {
         if let Some(status) = child.try_wait()? {
             break (Some(status), false);
         }
-        if timeout.is_some_and(|t| started.elapsed() > t) {
+        if deadline.is_some_and(|d| Instant::now().checked_duration_since(d).is_some()) {
             kill_tree(child.id());
             let _ = child.kill();
             let _ = child.wait();

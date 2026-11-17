@@ -14,7 +14,7 @@ pub const CODES: [u8; 5] = [p::STATUS, p::COMMAND, p::OTA_OLD, p::PAIR, p::OTA];
 pub const IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn sig_uuid(short: u16) -> Uuid {
-    Uuid::from_u128(0x0000_0000_0000_1000_8000_0080_5f9b_34fb | (short as u128) << 96)
+    Uuid::from_u128(0x0000_0000_0000_1000_8000_0080_5f9b_34fb + ((short as u128) << 96))
 }
 
 pub fn telink_code(u: Uuid) -> Option<u8> {

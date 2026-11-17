@@ -15,6 +15,7 @@ struct Bulb {
     info: Vec<(u16, Vec<u8>)>,
     idle: Vec<u8>,
     hang: bool,
+    stuck: bool,
     trace: RefCell<Vec<String>>,
     phase: Cell<u8>,
 }
@@ -52,11 +53,13 @@ impl Device for Bulb {
         if self.hang {
             std::future::pending::<()>().await;
         }
+        assert!(self.trace.borrow().len() < 100_000, "the bulb was read without end");
         self.trace.borrow_mut().push(format!("r {code:02x}"));
         Ok(match (code, self.phase.get()) {
             (p::PAIR, _) => vec![0x0d, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
             (_, 0) => self.idle.clone(),
             (_, 1) => vec![2, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 0],
+            (_, 2) if self.stuck => vec![3, 1, 0xff, 0xff, 0, 0, 1, 0, 0],
             (_, 2) => vec![3, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 0],
             _ => vec![4, 0, 0, 0, 0, 0, 0, 100, 0],
         })
@@ -396,6 +399,16 @@ async fn a_push_with_a_login_and_a_pause_after_each_write() {
     r.unwrap();
     let pw: Vec<u8> = (0..16).collect();
     assert_eq!(b.trace()[0], format!("w 14 {}", hex(&p::login_packet(b"n", &pw, &[1, 2, 3, 4, 5, 6, 7, 8]))));
+}
+
+#[tokio::test]
+async fn a_push_gives_up_after_the_resends_asked_for() {
+    for (extra, n) in [(&["--confirm-write"][..], 10), (&["--confirm-write", "--max-resends", "2"][..], 2)] {
+        let b = Bulb { stuck: true, ..Bulb::dimm() };
+        let (r, _) = pushed(&b, extra).await;
+        let e = r.unwrap_err().to_string();
+        assert!(e.contains(&format!(": {n} resends from block 0 without progress")), "{e}");
+    }
 }
 
 #[tokio::test]

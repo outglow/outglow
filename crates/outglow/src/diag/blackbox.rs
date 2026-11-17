@@ -519,10 +519,92 @@ mod tests {
 
     #[test]
     fn short_blob_is_an_error() {
-        assert!(decode(&[0; 10]).is_err());
+        assert_eq!(decode(&[0; HEADER - 1]).unwrap_err().to_string(), "black box of 23 bytes: shorter than its header");
+        assert!(decode(&[0; HEADER]).is_ok());
         let mut b = vec![0u8; HEADER];
         b[1] = 16;
         b[2] = 36;
-        assert!(decode(&b).is_err());
+        assert_eq!(decode(&b).unwrap_err().to_string(), "black box of 24 bytes does not hold what its header describes (600 bytes)");
+    }
+
+    fn header(neighbors: u8, le: u8, ring: (u8, u8, u8), rows: (u16, u8)) -> Vec<u8> {
+        let mut b = vec![0u8; HEADER];
+        b[1] = neighbors;
+        b[2] = le;
+        (b[3], b[4], b[5]) = ring;
+        b[8..10].copy_from_slice(&rows.0.to_le_bytes());
+        b[10] = rows.1;
+        b
+    }
+
+    fn fits(mut b: Vec<u8>, len: usize) -> Result<BlackBox> {
+        b.resize(len, 0);
+        decode(&b)
+    }
+
+    #[test]
+    fn the_header_says_how_long_the_box_is() {
+        let need = HEADER + 2 * 5 + 3 * 16 + 4 * 13;
+        let h = header(2, 5, (3, 2, 16), (4, 13));
+        assert!(fits(h.clone(), need).is_ok());
+        assert_eq!(
+            fits(h, need - 1).unwrap_err().to_string(),
+            format!("black box of {} bytes does not hold what its header describes ({need} bytes)", need - 1)
+        );
+        for (h, n) in [(header(2, 5, (0, 0, 0), (0, 0)), 10), (header(0, 0, (3, 0, 16), (0, 0)), 48), (header(0, 0, (0, 0, 0), (4, 13)), 52)] {
+            assert!(fits(h.clone(), HEADER + n).is_ok());
+            assert!(fits(h, HEADER + n - 1).is_err());
+        }
+    }
+
+    #[test]
+    fn entries_too_small_for_what_they_hold() {
+        let ok = |h: Vec<u8>| fits(h, 4096).is_ok();
+        assert!(ok(header(1, 4, (0, 0, 0), (0, 0))));
+        assert!(!ok(header(1, 3, (0, 0, 0), (0, 0))));
+        assert!(ok(header(0, 3, (0, 0, 0), (0, 0))));
+        assert!(ok(header(0, 0, (1, 1, 15), (0, 0))));
+        assert!(!ok(header(0, 0, (1, 1, 14), (0, 0))));
+        assert!(ok(header(0, 0, (1, 0, 14), (0, 0))));
+        assert!(ok(header(0, 0, (0, 0, 0), (1, 12))));
+        assert!(!ok(header(0, 0, (0, 0, 0), (1, 11))));
+        assert!(ok(header(0, 0, (0, 0, 0), (0, 11))));
+    }
+
+    #[test]
+    fn a_row_and_its_cells() {
+        let mut b = header(0, 0, (0, 0, 0), (1, 12));
+        b.extend_from_slice(&[7, 0, 0x34, 0x12, 9, 0, 3, 4, 3 | 8 | 16 | 5 << 5, 128, 6, 0xA5]);
+        let r = decode(&b).unwrap().rows.remove(0);
+        assert_eq!(
+            r.cells(),
+            ["7", "4660", "9", "3", "4", "3", "True", "True", "5", "50", "6", "-91"]
+        );
+        let mut b = header(0, 0, (0, 0, 0), (1, 12));
+        b.extend_from_slice(&[0; 12]);
+        assert_eq!(decode(&b).unwrap().rows[0].cells()[6..8], ["False", "False"]);
+    }
+
+    #[test]
+    fn a_ring_shorter_than_its_count_and_a_link_without_attempts() {
+        let mut b = header(1, 5, (1, 3, 15), (0, 0));
+        b.extend_from_slice(&[0x02, 0x10, 1, 0, 0]);
+        b.extend_from_slice(&[0; 15]);
+        let bx = decode(&b).unwrap();
+        assert_eq!(bx.ring.len(), 1);
+        assert_eq!(bx.links[0].frames, [(0, false)]);
+        assert!(report(&bx, &[]).contains("   0x1002:  1 frames,   0 attempts, delivered 0%, runs of losses -\n      x\n"));
+        assert_eq!(unhex("éé").unwrap_err().to_string(), "not hex: odd length or not ASCII");
+        assert_eq!(unhex("0g").unwrap_err().to_string(), "not hex: invalid digit found in string");
+        assert_eq!(unhex(" 0a1B ").unwrap(), [0x0a, 0x1b]);
+        assert_eq!(hex(&[0xab, 1]), "ab01");
+    }
+
+    #[test]
+    fn the_length_from_page_0() {
+        let mut p = vec![0u8; TOTAL_AT + 2];
+        p[TOTAL_AT..].copy_from_slice(&1234u16.to_le_bytes());
+        assert_eq!(total_len(&p), Some(1234));
+        assert_eq!(total_len(&p[..TOTAL_AT + 1]), None);
     }
 }

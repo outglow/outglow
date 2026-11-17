@@ -24,8 +24,9 @@ const SOURCE: &str = "pub fn one() -> u8 { 1 }\npub fn two() -> u8 { 2 }\n";
 
 const CARGO: &str = "#!/bin/sh\n\
     f=crates/$3/src/lib.rs\n\
+    echo \"$3\" >> ../../../../ran.log\n\
     if grep -q LOCK $f; then chmod 555 crates/$3/src; echo 'test t ... FAILED'; exit 101; fi\n\
-    if grep -q SLEEP $f; then exec sleep 30; fi\n\
+    if grep -q SLEEP $f; then exec sleep 5; fi\n\
     if grep -q BROKEN $f; then echo 'error[E0425]: cannot find value'; exit 101; fi\n\
     if grep -q PANIC $f; then echo 'thread main panicked' >&2; exit 101; fi\n\
     if grep -q '{ 2 }' $f && grep -q 'one() -> u8 { 2 }' $f; then echo 'test one_is_one ... FAILED'; echo 'test two ... FAILED'; exit 101; fi\n\
@@ -154,8 +155,15 @@ fn a_run_of_the_lists() {
     assert_eq!(e, "mutations missed or stale");
     let e = run_in(&r.sp, &args(&["--filter", "stale"]), None).err().unwrap().to_string();
     assert_eq!(e, "mutations missed or stale");
+    let ran = |r: &Rig| std::fs::read_to_string(r.t.path("ran.log")).unwrap_or_default();
+    let before = ran(&r).len();
     let e = run_in(&r.sp, &args(&["--fail-fast"]), Some(String::new().into())).err().unwrap().to_string();
     assert_eq!(e, "mutations missed or stale");
+    assert_eq!(&ran(&r)[before..], "demo\ndemo\n");
+    let before = ran(&r).len();
+    let e = run_in(&r.sp, &args(&[]), Some("harmless|one is two".into())).err().unwrap().to_string();
+    assert_eq!(e, "mutations missed or stale");
+    assert_eq!(&ran(&r)[before..], "demo\ndemo\nzigbee\n");
     let mut sp = Space { cargo: "/nonexistent".into(), ..r.sp };
     assert_eq!(run_in(&sp, &args(&["zigbee"]), None).err().unwrap().to_string(), "starting cargo test");
     sp.lists = &[];

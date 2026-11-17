@@ -13,7 +13,7 @@ pub const DEFAULT_MTU: usize = 23;
 pub const CHUNK_MIN: usize = 16;
 
 pub fn telink_uuid(short: u8) -> uuid::Uuid {
-    uuid::Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_1900 | short as u128)
+    uuid::Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_1900 + short as u128)
 }
 
 pub fn stock_error(e: u8) -> String {
@@ -177,8 +177,8 @@ impl Status {
         let r = raw;
         let layout = match r.len() {
             9 => Target::Stock,
-            n if n >= 9 => Target::Outglow,
-            _ => Target::Unknown,
+            10.. => Target::Outglow,
+            0..9 => Target::Unknown,
         };
         let stock = layout == Target::Stock;
         Status {
@@ -585,6 +585,7 @@ mod tests {
                 self.trace.push("pair r".into());
                 return Ok(self.pair.clone());
             }
+            assert!(self.trace.len() < 100_000, "the bulb was read without end");
             self.trace.push("r".into());
             self.reads += 1;
             if self.reads > self.refuse_after {
@@ -695,6 +696,34 @@ mod tests {
         assert_eq!(f.trace.iter().filter(|t| *t == "s 3000").count(), 29);
     }
 
+    #[test]
+    fn why_a_block_size() {
+        assert_eq!(pick_chunk(247, Target::Unknown, None).unwrap(), (16, "unknown handler limit 16 B".to_string()));
+        assert_eq!(pick_chunk(10, Target::Stock, None).unwrap(), (16, "original firmware handler limit 240 B".to_string()));
+        assert_eq!(pick_chunk(64, Target::Stock, None).unwrap(), (57, "ATT_MTU 64 - 7".to_string()));
+        assert_eq!(pick_chunk(64, Target::Outglow, None).unwrap(), (57, "ATT_MTU 64 - 7".to_string()));
+        assert_eq!(pick_chunk(247, Target::Outglow, Some(16)).unwrap(), (16, "requested".to_string()));
+        assert_eq!(pick_chunk(247, Target::Stock, Some(240)).unwrap().0, 240);
+        assert_eq!(pick_chunk(247, Target::Stock, Some(241)).unwrap_err().to_string(), "chunk 241 B outside 16..240 (ATT_MTU 247 - 7)");
+        assert_eq!(pick_chunk(5, Target::Stock, Some(16)).unwrap_err().to_string(), "chunk 16 B outside 16..0 (ATT_MTU 5 - 7)");
+        assert_eq!(
+            pick_chunk(247, Target::Outglow, Some(58)).unwrap_err().to_string(),
+            "chunk 58 B is more than the Outglow OTA handler takes (57 B)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_erase_is_waited_for_as_long_as_asked() {
+        let img = img();
+        for (limit, reads) in [(7, 2), (8, 3), (11, 4)] {
+            let mut f = FakeStock::new(&img, 16, &[], &[]);
+            f.erasing = u8::MAX;
+            let o = OtaOptions { erase_timeout_s: limit, ..Default::default() };
+            let e = run_ota(&mut f, &img, &o, &mut quiet).await.unwrap_err();
+            assert_eq!((e.to_string().as_str(), f.reads), ("erase did not finish: 0100ffffffff000000", reads), "{limit}");
+        }
+    }
+
     #[tokio::test]
     async fn login_over_a_transport() {
         let pw = secure_password(&MAC6);
@@ -739,6 +768,8 @@ mod tests {
         assert_eq!(Status::parse(&[]).describe(), "state None, result None, blocks received None");
         assert_eq!(Status::parse(&[3, 0, 7, 0, 0, 0, 0, 0, 0, 0]).describe(), "state 3, result 0, blocks received 7");
         assert_eq!(Status::parse(&[1, 2, 3]).layout, Target::Unknown);
+        assert_eq!(Status::parse(&[3, 0, 7, 0]).describe(), "state 3, result 0, blocks received 7");
+        assert_eq!(Status::parse(&[3, 0, 7]).describe(), "state 3, result 0, blocks received None");
         assert_eq!(Status::parse(&[0; 10]).layout, Target::Outglow);
         assert_eq!(Status::parse(&[0; 8]).layout, Target::Unknown);
         let s = Status::parse(&[3, 2, 4, 0, 5, 0, 1, 0, 0]);
