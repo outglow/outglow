@@ -1011,8 +1011,9 @@ fn read_by_type_stops_at_the_first_value_of_another_length() {
 #[test]
 fn power_0xee_is_not_a_command_and_brightness_and_temperature_are_clamped() {
     let mut rig = logged_in(TUNABLE);
+    rig.command(OP_POWER, &[0]);
     rig.command(OP_POWER, &[0xee]);
-    assert!(rig.is_on(), "0xee is no power state");
+    assert!(!rig.is_on(), "0xee is no power state");
     rig.command(OP_POWER, &[0x02]);
     assert!(rig.is_on(), "anything but 0 is on");
     rig.command(OP_BRIGHTNESS, &[0]);
@@ -1193,4 +1194,25 @@ fn a_status_notification_carries_both_octets_of_the_mesh_address() {
     rig.command(OP_POWER, &[0]);
     let (op, params, src) = rig.statuses_from().pop().unwrap();
     assert_eq!((op, src, params[0], params[9]), (0xdc, 0x0321, 0x21, 0x03));
+}
+
+#[test]
+fn a_report_while_the_hue_turns_is_news_only_if_more_than_the_hue_changed() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    let tunnel = |zcl: &[u8]| block_packet(&key, 0, &[&[0x00, 0x00, 0x01, 0x00, 0x03][..], zcl].concat());
+    rig.write(COMMAND, &tunnel(&[0x06, 84, 254, 0, 0]));
+    rig.run(400);
+    rig.write(COMMAND, &tunnel(&[0x41, 1, 0x00, 0x0C]));
+    rig.run(2000);
+    rig.app_statuses();
+    rig.bulb.handle(bulb_core::Command::MoveHue { up: true, rate: 0x0C00 });
+    rig.run(400);
+    assert_eq!(rig.app_statuses().0.len(), 0, "the same turn again: only the hue moved on");
+    rig.bulb.handle(bulb_core::Command::MoveToLevel { level: 90, transition_ms: 0 });
+    rig.run(400);
+    assert_eq!(rig.app_statuses().0.len(), 1, "a new level while it turns");
+    rig.bulb.handle(bulb_core::Command::StopColorTransition);
+    rig.run(400);
+    assert_eq!(rig.app_statuses().0.len(), 1, "it stopped");
 }

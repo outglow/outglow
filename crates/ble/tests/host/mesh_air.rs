@@ -762,3 +762,16 @@ fn a_gap_of_exactly_11_ms_does_not_lengthen_the_train() {
         assert_eq!(end - last > 300 * MS, longer, "a gap of {gap} ticks: the train ran {} ms on", (end - last) / MS);
     }
 }
+
+#[test]
+fn a_status_request_from_the_air_is_answered_on_air_not_to_the_app() {
+    let (ether, mut rigs) = bulbs(&[A]);
+    let rig = &mut rigs[0];
+    ask_b(rig);
+    rig.statuses();
+    let sent = ether.borrow().sent(0).len();
+    ether.borrow_mut().deliver(0, &air_pdu(0x0a_0b0c, 0x0021, 0xffff, 0xc0 | 0x1a, &[0x10], &LTK));
+    rig.run(400);
+    assert!(rig.statuses_from().iter().all(|s| s.0 != 0xdb), "no status answer to its own app");
+    assert!(ether.borrow().sent(0)[sent..].iter().any(|p| p[12..14] == 0x000au16.to_le_bytes()), "an answer on air");
+}
