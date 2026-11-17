@@ -1133,13 +1133,59 @@ fn without_a_noise_measurement_the_noise_stays_unknown() {
     let n = net.join_node();
     let short = net.nodes[n].short();
     let id = net.nodes[n].id;
-    net.air.borrow_mut().ports[id].no_noise = true;
+    net.air.borrow_mut().ports[id].noise = None;
     net.power_cycle(n);
     net.run(70_000);
     assert_eq!(mfr1(&mut net, short, 0x501A), 0x80, "i8::MIN: not measured");
-    net.air.borrow_mut().ports[id].no_noise = false;
+    net.air.borrow_mut().ports[id].noise = Some(-97);
     net.run(2_000);
     assert_eq!(mfr1(&mut net, short, 0x501A), -97i8 as u8 as u32, "measured a second after the last try");
+}
+
+#[test]
+fn the_noise_peak_is_the_loudest_measured() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    for dbm in [-80i8, -90] {
+        net.air.borrow_mut().ports[id].noise = Some(dbm);
+        net.run(61_000);
+    }
+    let noise = mfr(&mut net, short, &[0x501A, 0x501B]);
+    assert_eq!((noise[&0x501A].1[0] as i8, noise[&0x501B].1[0] as i8), (-90, -80));
+}
+
+#[test]
+fn a_bulb_behind_another_names_it_as_its_way_to_the_coordinator_and_counts_its_children_and_restarts() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let b = net.add_node();
+    let (ida, idb) = (net.nodes[a].id, net.nodes[b].id);
+    net.link(0, idb, 0);
+    net.run_until(30_000, "b joined through a", |net| net.nodes[b].stack.state() == zigbee::stack::State::Up);
+    net.run(20_000);
+    net.coord.many_to_one_route_request(false);
+    net.run(2_000);
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    let r = mfr(&mut net, sb, &[0x5020, 0x5021, 0x5022]);
+    assert_eq!((number(&r[&0x5020].1), number(&r[&0x5022].1)), (sa as u32, 1), "through a, many-to-one");
+    assert!((1..=7).contains(&number(&r[&0x5021].1)));
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    net.link(idb, zed.id, 0);
+    assert!(zed.join(&mut net, sa));
+    net.run(200);
+    let counts = net.nodes[a].stack.neighbor_counts();
+    assert_eq!(counts.end_devices, 1);
+    let _ = ida;
+    net.nodes[a].stack.keep_for_restart();
+    net.air.borrow_mut().ports[ida].reset_cause = ResetCause::Watchdog;
+    net.power_cycle(a);
+    net.run(1_000);
+    assert_eq!(net.nodes[a].stack.resets(), (2, 1));
 }
 
 #[test]
