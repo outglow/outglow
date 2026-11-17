@@ -1586,3 +1586,20 @@ fn a_child_that_was_sent_away_is_no_longer_listed_as_associated() {
     let rsp = net.coord.last_zdo(sa, 0x8001).unwrap();
     assert_eq!((rsp[0], rsp[1], rsp[12]), (seq, 0x00, 0), "no associated devices");
 }
+
+#[test]
+fn a_full_child_table_takes_the_capacity_out_of_the_beacon() {
+    let (mut net, a, _zed) = with_sleepy_child();
+    let _kids = more_sleepy_children(&mut net, a, CHILDREN - 1);
+    let id = net.nodes[a].id;
+    let beacon = |net: &mut Net| {
+        let t = net.now();
+        net.air.borrow_mut().ports[id].queue.push_back((vec![0x03, 0x08, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07], 255));
+        net.run(100);
+        let f = net.sent_by(id, t).into_iter().find(|f| f[0] & 7 == 0).expect("a beacon");
+        let (h, off) = zigbee::mac::Header::parse(&f).unwrap();
+        zigbee::mac::Beacon::parse(&h, &f[off..]).unwrap()
+    };
+    let b = beacon(&mut net);
+    assert!(!b.router_capacity && !b.end_device_capacity);
+}
