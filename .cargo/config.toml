@@ -1,10 +1,12 @@
 # Shortcuts for the in-process conformance tests (emulator/rs/scenarios), run from the repository root:
 #   cargo spec [-- filters] [--cpi N] [--jobs N] [-v] [--image label=path] [--json out.json] [--meta-json tests.json]
 #   cargo ble-spec [-- ...]
-#   cargo sims [-- scenario names] [--cpi N] [--image ROLE=path] [--shard K/N] [-v]  (but the weekly ones)
+#   cargo sims [-- scenario names] [--cpi N] [--image ROLE=path] [--shard K/N] [-v]  (but the weekly ones and
+#     those with the original firmware; every bulb runs the Rust firmware, also where the scenario would put
+#     the original one: --firmware stock|c, or SIMS_FIRMWARE, puts that there and adds the stock scenarios)
 #   cargo sims-quick [-- more names or options]  (a few scenarios for every change; the full set in CI)
-#   cargo sims-weekly  (the measurements of the original firmware, weekly in CI; OUTGLOW_STOCK_DIR)
-#   cargo sims-stock  (the quick scenarios of the Rust and the stock firmware together; OUTGLOW_STOCK_DIR)
+#   cargo sims-weekly [--firmware stock]  (the address conflict measurements, weekly in CI; OUTGLOW_STOCK_DIR)
+#   cargo sims-stock  (the comparisons with and actions on the original firmware, --with-stock; OUTGLOW_STOCK_DIR)
 #   cargo sims-sweep [-- more names or options]  (the BLE and mesh scenarios over 8 starts of the bulbs'
 #     system timer, TC32EMU_TICK_OFFSET: other random delays, as another code layout gives; also
 #     `--sweep N` on cargo sims, spec and ble-spec)
@@ -18,5 +20,5 @@ sims = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims"
 sims-quick = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims -- --exact rust_fw rust_ble rust_diag ble_diag power_cut parent_load ble_mesh rust_ble_switch rust_staging addr_conflict_btt"
 sims-weekly = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims -- --weekly"
 sims-sweep = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims -- --sweep 8 --exact mesh rust_ble rust_ble_switch ble_mesh interop rust_touchlink rust_radio"
-sims-stock = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims -- rust_radio rust_gp rust_touchlink mixed_parent mixed_mesh mixed_group mixed_chain mixed_conflict back_to_stock_ota"
+sims-stock = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test sims -- --with-stock"
 stress = "test --manifest-path emulator/rs/Cargo.toml -p scenarios --test stress"

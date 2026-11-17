@@ -86,12 +86,13 @@ Output in `target/tc32*/`: `bulb-tc32-ota.bin` (BLE update image) and
 
 ```sh
 cargo test --workspace     # the stack and the light on the host
-cargo sims                 # whole bulbs in the emulator
+cargo sims                 # whole bulbs in the emulator, all on Outglow
 cargo spec                 # conformance tests with expectations from the specifications
 ```
 
-Several scenarios compare Outglow with the original firmware. That firmware
-is not in this repository: `tools/extract-stock-images.sh` takes it from the
+Several scenarios compare Outglow with the original firmware (`cargo
+sims-stock`, or `cargo sims -- --firmware stock` for the mixed networks too;
+by default every bulb runs Outglow). That firmware is not in this repository: `tools/extract-stock-images.sh` takes it from the
 vendor's Android app on your machine (into `stock/`, which git ignores).
 Scenarios whose image is missing are skipped and say where to get it.
 
