@@ -84,3 +84,24 @@ fn a_network_start_makes_up_an_odd_extended_pan_from_the_bulbs_and_needs_a_short
     let f = s.hal.sent.last().unwrap().clone();
     assert_eq!(f[f.len() - 13], 1, "a reserved address");
 }
+
+#[test]
+fn a_network_start_without_a_pan_makes_one_up_below_0xfff1_and_takes_none_of_0xffff() {
+    let start = |pan: u16| {
+        let mut f = 0xEEu64.to_le_bytes().to_vec();
+        f.push(0);
+        f.extend_from_slice(&[0x11; 16]);
+        f.push(15);
+        f.extend_from_slice(&pan.to_le_bytes());
+        f.extend_from_slice(&0x0001u16.to_le_bytes());
+        f
+    };
+    for (pan, random, status, chosen) in [(0u16, 0xFFF0 + 9, 0u8, 10u16), (0xFFFE, 0, 0, 0xFFFE), (0xFFFF, 0, 1, 0xFFFF)] {
+        let mut s = stack(std::vec![0, random]);
+        in_transaction(&mut s);
+        interpan(&mut s, NETWORK_START_REQUEST, &start(pan));
+        let f = s.hal.sent.last().unwrap().clone();
+        let tail = &f[f.len() - 13..];
+        assert_eq!((tail[0], u16::from_le_bytes([tail[11], tail[12]])), (status, chosen), "{pan:04X}");
+    }
+}
