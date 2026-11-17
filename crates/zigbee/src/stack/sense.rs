@@ -266,7 +266,8 @@ impl<H: Hal> Stack<H> {
     fn sense_report(&mut self, mask: u16) {
         let occupied = (mask != 0) as u8;
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
-        let occ = [0x18, self.zcl_seq, 0x0A, A_OCCUPANCY as u8, (A_OCCUPANCY >> 8) as u8, T_BITMAP8, occupied];
+        let o = A_OCCUPANCY.to_le_bytes();
+        let occ = [0x18, self.zcl_seq, 0x0A, o[0], o[1], T_BITMAP8, occupied];
         self.aps_data(0x0000, ENDPOINT, OCCUPANCY, PROFILE_HA, ENDPOINT, &occ);
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         let code = self.identity.manufacturer_code.to_le_bytes();
@@ -422,3 +423,6 @@ impl<H: Hal> Stack<H> {
         self.sense_listen();
     }
 }
+
+#[cfg(test)]
+mod tests;
