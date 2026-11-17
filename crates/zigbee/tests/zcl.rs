@@ -593,3 +593,16 @@ fn a_scene_extension_for_a_cluster_without_scenes_is_skipped() {
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, SCENES, 0x01).unwrap()[10..], [0x08, 0x00, 1, 33], "only the level");
 }
+
+#[test]
+fn the_group_table_holds_eight_groups() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    for g in 1..=8u16 {
+        let seq = net.coord.zcl(short, GROUPS, 0x01, 0x00, &[g as u8, 0, 0]);
+        net.run(50);
+        assert_eq!(net.coord.last_zcl(short, GROUPS, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x00, g as u8, 0]);
+    }
+    let seq = net.coord.zcl(short, GROUPS, 0x01, 0x00, &[9, 0, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, GROUPS, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x89, 9, 0]);
+}

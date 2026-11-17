@@ -4,7 +4,7 @@ use super::aps::{ENDPOINT, PROFILE_HA};
 use super::{diag, objects};
 #[cfg(feature = "sense")]
 use super::sense::{self, OCCUPANCY, SENSE};
-use super::{BleMode, Scene, Stack, State, BLE_WINDOW_DEFAULT_MIN, BLE_WINDOW_MAX_MIN, GROUPS, REPORT_COLOR_TEMP, REPORT_LEVEL, REPORT_ON_OFF};
+use super::{BleMode, Scene, Stack, BLE_WINDOW_DEFAULT_MIN, BLE_WINDOW_MAX_MIN, GROUPS, REPORT_COLOR_TEMP, REPORT_LEVEL, REPORT_ON_OFF};
 use crate::hal::Hal;
 use crate::util::{due, Buf, Long, Reader};
 
@@ -1825,9 +1825,6 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn report_timers(&mut self, now: u32) {
-        if self.state != State::Up {
-            return;
-        }
         for i in 0..self.reports.len() {
             let (cluster, attr, value, ty) = match i {
                 REPORT_ON_OFF => (ON_OFF, 0x0000u16, self.light.on as u16, T_BOOL),
