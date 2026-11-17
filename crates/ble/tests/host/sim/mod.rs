@@ -803,6 +803,7 @@ impl Rig {
     }
 
     pub fn run_until(&mut self, end: u64) {
+        assert!(end < 600_000 * MS, "past 600 s of simulated time: a test waiting for what never comes");
         while self.world.borrow().now < end {
             self.bulb.tick();
             self.world.borrow_mut().now += 100 * TICKS_PER_US as u64;
