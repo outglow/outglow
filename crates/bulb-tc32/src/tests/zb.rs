@@ -522,6 +522,181 @@ mod over_ble {
 }
 
 #[cfg(feature = "ble")]
+mod ble_switch {
+    use super::*;
+    use crate::ble_radio::tests::{adv_events, central_link as central, scan_response};
+    use bulb_core::command::{ColorMode, PowerOnBehavior, Shown};
+
+    fn settings(mode: u8, minutes: u16) {
+        let m = minutes.to_le_bytes();
+        nv::open().store(NvItem::Settings as u8, &[1, mode, m[0], m[1]]);
+    }
+
+    fn polls(link: &mut Link, n: usize, step_ms: u32) {
+        for _ in 0..n {
+            let _ = link.poll();
+            sim::with(|c| c.tick = c.tick.wrapping_add(step_ms * 16_000));
+        }
+    }
+
+    fn report(on: bool, level: u8) -> StateReport {
+        StateReport {
+            on,
+            level,
+            power_on_behavior: PowerOnBehavior::Previous,
+            startup_level: 0,
+            color_temp: 0,
+            startup_color_temp: 0,
+            color_mode: ColorMode::Temperature,
+            hue: 0,
+            sat: 0,
+            x: 0,
+            y: 0,
+            hue_moving: false,
+            candle: false,
+            shown: Shown::default(),
+        }
+    }
+
+    #[test]
+    fn with_ble_switched_off_the_bulb_never_advertises() {
+        let _s = sim::session();
+        settings(2, 20);
+        let mut link = Link::new();
+        let n = adv_events();
+        polls(&mut link, 200, 50);
+        assert!(link.ble.is_none());
+        assert_eq!(adv_events(), n);
+        assert_eq!(BLE_NEXT.get(), None);
+    }
+
+    #[test]
+    fn a_ble_window_ends_after_its_minutes_and_stays_ended() {
+        let _s = sim::session();
+        settings(1, 1);
+        let mut link = Link::new();
+        polls(&mut link, 10, 1);
+        assert!(link.ble.is_some());
+        assert!(!link.window_over);
+        let ms = link.stack.as_mut().map(|s| s.hal.now_ms()).unwrap_or(0);
+        sim::with(|c| c.tick = c.tick.wrapping_add((59_990 - ms).wrapping_mul(16_000)));
+        let _ = link.poll();
+        assert!(link.ble.is_some());
+        sim::with(|c| c.tick = c.tick.wrapping_add(20 * 16_000));
+        let _ = link.poll();
+        assert!(link.ble.is_none());
+        assert!(link.window_over);
+        assert_eq!(BLE_NEXT.get(), None);
+        assert!(staging::claim(Owner::Ble));
+        staging::release(Owner::Ble);
+        polls(&mut link, 5, 10);
+        assert!(link.ble.is_none());
+    }
+
+    #[test]
+    fn a_connected_phone_keeps_ble_past_its_window_until_the_link_is_lost() {
+        let _s = sim::session();
+        settings(1, 1);
+        crate::board::warm_reset();
+        let mut link = Link::new();
+        polls(&mut link, 3, 1);
+        let ms = link.stack.as_mut().map(|s| s.hal.now_ms()).unwrap_or(0);
+        sim::with(|c| c.tick = c.tick.wrapping_add((59_000 - ms).wrapping_mul(16_000)));
+        let air = central();
+        air.borrow_mut().connect = true;
+        for _ in 0..20_000 {
+            let _ = link.poll();
+            if link.ble.as_ref().is_some_and(|b| b.link_state() == ble::LinkState::Connected) {
+                break;
+            }
+        }
+        assert_eq!(link.ble.as_ref().map(|b| b.link_state()), Some(ble::LinkState::Connected));
+        for _ in 0..200 {
+            let _ = link.poll();
+            sim::with(|c| c.tick = c.tick.wrapping_add(10 * 16_000));
+        }
+        assert!(link.window_over);
+        assert!(link.ble.is_some());
+        air.borrow_mut().silent = true;
+        for _ in 0..2_000 {
+            let _ = link.poll();
+            sim::with(|c| c.tick = c.tick.wrapping_add(10 * 16_000));
+            if link.ble.is_none() {
+                break;
+            }
+        }
+        assert!(link.ble.is_none());
+    }
+
+    #[test]
+    fn the_light_reported_before_ble_starts_is_in_its_first_scan_response() {
+        let _s = sim::session();
+        let mut link = Link::new();
+        link.report(&report(false, 77));
+        assert_eq!(crate::link::BULB_STATE.read(2), 77);
+        let n = adv_events();
+        for _ in 0..20_000 {
+            let _ = link.poll();
+            if adv_events() != n {
+                break;
+            }
+        }
+        let rsp = scan_response();
+        assert_eq!((rsp[4 + 2 + 6 + 15], rsp[4 + 2 + 6 + 16]), (0, 77));
+        link.report(&report(true, 200));
+        let n = adv_events();
+        for _ in 0..2_000 {
+            let _ = link.poll();
+            sim::with(|c| c.tick = c.tick.wrapping_add(5 * 16_000));
+            if adv_events() != n {
+                break;
+            }
+        }
+        let rsp = scan_response();
+        assert_eq!((rsp[4 + 2 + 6 + 15], rsp[4 + 2 + 6 + 16]), (1, 200));
+        assert_eq!(link.last_light.map(|l| l.level), Some(200));
+    }
+
+    #[test]
+    fn zigbee_waits_while_an_advertising_event_is_less_than_4_ms_away() {
+        let _s = sim::session();
+        let mut link = Link::new();
+        let (mut guarded, mut free) = (0, 0);
+        for _ in 0..3_000 {
+            crate::link::BULB_NET.write(0, 0xee);
+            let r = link.poll();
+            let now = sim::with(|c| c.tick);
+            let left = BLE_NEXT.get().map(|n| n.wrapping_sub(now) as i32);
+            if crate::link::BULB_NET.read(0) == 0xee {
+                guarded += 1;
+                assert_eq!(r, None);
+                assert!(left.is_some_and(|l| l < ADV_GUARD as i32), "{left:?}");
+            } else {
+                free += 1;
+                assert!(left.is_some_and(|l| l > ADV_GUARD as i32 - 2_000 * 16), "{left:?}");
+            }
+        }
+        assert!(guarded > 0 && free > 0, "{guarded} {free}");
+    }
+
+    #[test]
+    fn a_debug_command_is_taken_before_anything_else() {
+        let _s = sim::session();
+        let mut link = Link::new();
+        crate::link::BULB_STATE.write(0, 0);
+        crate::link::BULB_CMD.write(0, 1);
+        crate::link::BULB_CMD.copy_from(1, &[1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(link.poll(), Some(Command::On));
+        assert!(link.stack.is_none());
+        let mut r: &mut Link = &mut link;
+        assert_eq!(Radio::poll(&mut r), None);
+        assert!(r.stack.is_some());
+        Radio::report(&mut r, &report(true, 9));
+        assert_eq!(link.light.map(|l| l.level), Some(9));
+    }
+}
+
+#[cfg(feature = "ble")]
 #[test]
 fn a_zcl_frame_received_is_logged_for_the_device_page_with_its_second() {
     let _s = sim::session();

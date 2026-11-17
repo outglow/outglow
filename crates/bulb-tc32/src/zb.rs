@@ -424,56 +424,50 @@ impl Link {
         radio::init();
         Stack::new_in(&mut self.stack, Tc32Hal::new(), IDENTITY);
     }
+}
 
-    #[cfg(feature = "ble")]
-    #[inline(never)]
-    #[cold]
-    fn start_ble(&mut self) {
-        let ble = self.ble.insert(ble::Ble::new(crate::ble::BleHal::new(), crate::ble::IDENTITY));
-        if let Some(light) = &self.last_light {
-            ble.set_light(light);
-        }
-        if let Some(stack) = self.stack.as_mut() {
-            self.diag.start(ble, stack);
-        }
+#[cfg(feature = "ble")]
+#[inline(never)]
+#[cold]
+fn start_ble(stack: &mut Stack<Tc32Hal>, slot: &mut Option<ble::Ble<crate::ble::BleHal>>, diag: &mut crate::diag::Glue, light: &Option<StateReport>) {
+    let ble = slot.insert(ble::Ble::new(crate::ble::BleHal::new(), crate::ble::IDENTITY));
+    if let Some(light) = light {
+        ble.set_light(light);
     }
+    diag.start(ble, stack);
+}
 
-    #[cfg(feature = "ble")]
-    fn ble_wanted(&mut self) -> bool {
-        let Some(stack) = self.stack.as_mut() else {
-            return false;
-        };
-        match stack.ble_mode() {
-            BleMode::On => true,
-            BleMode::Off => false,
-            BleMode::Window => {
-                if !self.window_over {
-                    let window_ms = stack.ble_window_minutes() as u32 * 60_000;
-                    self.window_over = stack.hal.now_ms() >= window_ms;
-                }
-                !self.window_over
+#[cfg(feature = "ble")]
+fn ble_wanted(stack: &mut Stack<Tc32Hal>, window_over: &mut bool) -> bool {
+    match stack.ble_mode() {
+        BleMode::On => true,
+        BleMode::Off => false,
+        BleMode::Window => {
+            if !*window_over {
+                let window_ms = stack.ble_window_minutes() as u32 * 60_000;
+                *window_over = stack.hal.now_ms() >= window_ms;
             }
+            !*window_over
         }
     }
+}
 
-    #[cfg(feature = "ble")]
-    fn ble_switch(&mut self) {
-        let wanted = self.ble_wanted();
-        let window = self.stack.as_ref().is_some_and(|s| s.ble_mode() == BleMode::Window);
-        match self.ble.as_mut() {
-            None if wanted => self.start_ble(),
-            Some(ble) if !wanted && !ble.ota_busy() && !(window && ble.link_state() == ble::LinkState::Connected) => {
-                use ble::Hal as _;
-                ble.hal().connection_reset();
-                self.ble = None;
-                staging::release(Owner::Ble);
-            }
-            _ => {}
+#[cfg(feature = "ble")]
+fn ble_switch(link: &mut Link) -> Option<()> {
+    let stack = link.stack.as_mut()?;
+    let wanted = ble_wanted(stack, &mut link.window_over);
+    match link.ble.as_mut() {
+        None if wanted => start_ble(stack, &mut link.ble, &mut link.diag, &link.last_light),
+        Some(ble) if !wanted && !ble.ota_busy() && ble.link_state() != ble::LinkState::Connected => {
+            use ble::Hal as _;
+            ble.hal().connection_reset();
+            link.ble = None;
+            staging::release(Owner::Ble);
         }
-        if let Some(stack) = self.stack.as_mut() {
-            stack.set_ble_active(self.ble.is_some());
-        }
+        _ => {}
     }
+    stack.set_ble_active(link.ble.is_some());
+    Some(())
 }
 
 impl Radio for &mut Link {
@@ -494,10 +488,8 @@ impl Radio for Link {
         if self.stack.is_none() {
             self.start();
         }
-        #[cfg(feature = "ble")]
-        self.ble_switch();
-        let stack = self.stack.as_mut()?;
         if let Some(light) = self.light.take() {
+            let stack = self.stack.as_mut()?;
             stack.set_light(&light);
             #[cfg(feature = "ble")]
             {
@@ -507,6 +499,9 @@ impl Radio for Link {
                 self.last_light = Some(light);
             }
         }
+        #[cfg(feature = "ble")]
+        ble_switch(self);
+        let stack = self.stack.as_mut()?;
         #[cfg(feature = "ble")]
         if self.ble.is_none() {
             BLE_NEXT.set(None);

@@ -1653,3 +1653,13 @@ fn a_full_length_packet_does_not_spill_into_the_next_slot() {
     }
     assert_eq!(got[RX_SLOTS - 1], (2, vec![0x5a; LL_PAYLOAD_MAX]));
 }
+
+pub(crate) fn scan_response() -> Vec<u8> {
+    let mut v = vec![0u8; 4 + ADV_PDU_MAX];
+    SCAN_RSP.copy_to(0, &mut v);
+    v
+}
+
+pub(crate) fn adv_events() -> u32 {
+    counter(ADV_EVENTS)
+}
