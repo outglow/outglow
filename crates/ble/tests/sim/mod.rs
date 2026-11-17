@@ -297,6 +297,8 @@ pub struct World {
     pub staging: Vec<u8>,
     pub erased_sectors: Vec<u32>,
     pub erased_at: Vec<u64>,
+    pub refuse_sends: bool,
+    pub send_attempts: Vec<u64>,
     pub activated: bool,
     pub mesh_listens: u32,
     pub listened: Vec<(u64, u64, u8)>,
@@ -628,6 +630,11 @@ impl Hal for SimHal {
 
     fn mesh_send(&mut self, channels: &[u8], access_code: u32, pdu: &[u8]) -> bool {
         let mut w = self.0.borrow_mut();
+        let at = w.now;
+        w.send_attempts.push(at);
+        if w.refuse_sends {
+            return false;
+        }
         if w.central.connected && !w.txq.is_empty() {
             w.now += 100 * TICKS_PER_US as u64;
             return false;
@@ -748,6 +755,8 @@ impl Rig {
             staging: vec![0xa5; STAGING],
             erased_sectors: vec![],
             erased_at: vec![],
+            refuse_sends: false,
+            send_attempts: vec![],
             activated: false,
             flash_fault: false,
             zigbee_busy: vec![],

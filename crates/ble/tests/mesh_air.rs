@@ -572,3 +572,21 @@ fn a_connected_bulb_sends_a_burst_early_rather_than_have_its_connection_event_de
         assert_eq!(sent(&ether) > before, early, "{left} ticks before the connection event");
     }
 }
+
+#[test]
+fn a_burst_the_radio_refuses_is_tried_every_millisecond_a_hundred_more_times() {
+    let (ether, mut rig) = alone();
+    rig.world.borrow_mut().refuse_sends = true;
+    ether.borrow_mut().deliver(0, &air_pdu_hops(0x81, 0x0021, 0xffff, 0xc0 | 0x10, &[0], 2, &LTK));
+    rig.run(250);
+    let w = rig.world.borrow();
+    let tries = &w.send_attempts;
+    let pause = tries.windows(2).position(|p| p[1] - p[0] > 2 * MS).expect("a pause");
+    assert_eq!(pause + 1, 101, "the first try and 100 more");
+    for p in tries[..=pause].windows(2) {
+        assert!((MS..MS + MS / 5).contains(&(p[1] - p[0])), "{} ticks apart", p[1] - p[0]);
+    }
+    let gap = tries[pause + 1] - tries[pause];
+    assert!((4500 * MS / 1000..5250 * MS / 1000 + MS / 5).contains(&gap), "then the next repeat: {gap} ticks");
+    assert!(ether.borrow().sent(0).is_empty());
+}
