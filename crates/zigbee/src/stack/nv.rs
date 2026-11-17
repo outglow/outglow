@@ -334,3 +334,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

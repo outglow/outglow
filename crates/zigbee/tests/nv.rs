@@ -151,3 +151,23 @@ fn a_bulb_restarted_with_its_new_trust_center_key_not_yet_verified_goes_on_with_
     assert_ne!(stored(&net, n, NvItem::Network).last(), Some(&1), "the key verified: the exchange went on");
     let _ = short;
 }
+
+#[test]
+fn the_previous_key_flags_come_back_from_the_stored_network_as_they_were() {
+    for alt in [0x01u8, 0x02] {
+        let mut net = Net::new();
+        let n = net.join_node();
+        let short = net.nodes[n].short();
+        let mut network = stored(&net, n, NvItem::Network);
+        network[35] = alt;
+        put(&mut net, n, NvItem::Network, network);
+        reboot(&mut net, n);
+        let mut p = vec![zigbee::nwk::CMD_NETWORK_UPDATE, 0x01];
+        p.extend_from_slice(&EXT_PAN.to_le_bytes());
+        p.extend_from_slice(&[5, PAN as u8, (PAN >> 8) as u8]);
+        net.coord.nwk_command(short, 1, &p);
+        net.run(12_000);
+        let network = stored(&net, n, NvItem::Network);
+        assert_eq!((network[14], network[35]), (5, alt), "stored again with the update, {alt}");
+    }
+}
