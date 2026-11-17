@@ -718,3 +718,16 @@ fn a_frame_from_an_end_device_that_is_no_child_tells_it_to_rejoin_unless_it_is_a
         assert_eq!(leave, told, "{frame_type}");
     }
 }
+
+#[test]
+fn a_frame_kept_for_a_sleepy_child_counts_as_sent_only_when_it_is_the_bulbs_own_data() {
+    for (frame_type, src, counted) in [(nwk::FRAME_DATA, 0x0042, true), (nwk::FRAME_DATA, 0x3000, false), (nwk::FRAME_CMD, 0x0042, false)] {
+        let mut s = up();
+        s.children[0].joined = true;
+        s.children[0].capability = 0;
+        let status = s.transmit_nwk(0x2000, &nwk::Header::new(frame_type, 0x2000, src, 5, 1), &[0x40]);
+        assert_eq!(status, crate::hal::TxStatus::Ok);
+        assert!(s.hal.sent.is_empty(), "kept for the child's poll");
+        assert_eq!(s.diag.n[k::APS_TX_UCAST_SUCCESS] == 1, counted, "{frame_type} {src:04X}");
+    }
+}
