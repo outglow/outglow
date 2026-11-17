@@ -1248,3 +1248,19 @@ fn the_apps_tunnel_takes_a_transition_time_right_after_its_arguments() {
     rig.run(300);
     assert_ne!(rig.bulb.state().shown, first, "xy on its way over 2 s");
 }
+
+#[test]
+fn only_a_long_network_block_is_answered_as_installed() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    for payload in [&[0x55u8, 0, 0][..], &[0x03, 0, 0], &[0x04, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]] {
+        rig.write(COMMAND, &block_packet(&key, 2, payload));
+        rig.run(300);
+    }
+    assert!(rig.central().notifications.iter().all(|n| n[3] != 0x83), "no 0x83 answer");
+    rig.central().terminate();
+    rig.run(300);
+    rig.central().scan = true;
+    rig.run(400);
+    assert_eq!(rig.central().scan_responses.last().unwrap()[8 + 22], 0x3f, "not provisioned");
+}

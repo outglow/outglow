@@ -86,7 +86,9 @@ fn a_command_for_one_bulb_is_carried_out_by_that_bulb_only() {
     let bursts = rigs[0].ble.borrow().air_stats().bursts;
     send(&mut rigs, 0x0000, OP_POWER, &[0], 800);
     assert!(!rigs[0].is_on());
-    assert_eq!(rigs[0].ble.borrow().air_stats().bursts, bursts);
+    send(&mut rigs, 0x000a, OP_POWER, &[1], 800);
+    assert!(rigs[0].is_on(), "its own address");
+    assert_eq!(rigs[0].ble.borrow().air_stats().bursts, bursts, "neither goes on air");
 }
 
 #[test]
