@@ -1132,3 +1132,17 @@ fn a_new_connection_starts_with_the_default_mtu_and_notifications_off() {
     assert_eq!(rig.read(0x13), [0, 0]);
     assert_eq!(rig.att(&[0x04, 0x01, 0x00, 0xff, 0xff]).len(), 2 + 5 * 4, "23 octets again");
 }
+
+#[test]
+fn responses_fill_the_mtu_exactly_and_cut_a_long_value_to_it() {
+    let mut rig = connected(DIMMABLE);
+    let rsp = rig.att(&[0x08, 0x01, 0x00, 0xff, 0xff, 0x03, 0x28]);
+    assert_eq!((rsp[1], rsp.len()), (7, 23), "three declarations of 7 octets in 23");
+    assert_eq!(rig.att(&[0x02, 26, 0]), [0x03, 64, 0]);
+    assert_eq!(rig.att(&[0x04, 0x01, 0x00, 0xff, 0xff]).len(), 26, "six 16-bit entries in 26 octets");
+    let info = [0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, 0x01, 0x00, 0x10, 0xe6];
+    rig.ble.borrow_mut().set_diag_info(&ble::diag::Info { tunable: false, watchdog: false, sense: false, release: 1, ieee: 0, model: "M".repeat(30).leak(), firmware: "F" });
+    let rsp = rig.att(&[&[0x08, 0x01, 0x00, 0xff, 0xff][..], &info].concat());
+    assert_eq!((rsp[0], rsp[1], rsp.len()), (0x09, 2 + 22, 26), "the value cut to what the MTU leaves");
+    assert_eq!(rsp[2..5], [0x22, 0x00, 0x01]);
+}
