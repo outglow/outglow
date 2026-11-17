@@ -117,8 +117,24 @@ The HTML report is in `target/coverage/host/html/index.html`. CI runs
 job summary, the HTML report is the artifact `coverage-html`, and a crate
 whose line or region coverage falls below its baseline in
 `xtask/coverage.tsv` fails the job (a ratchet: the baseline only moves up,
-with `--update`). `crates/bulb-tc32` is not in the host workspace and has no
-host coverage: its code runs only in the emulator.
+with `--update`).
+
+`crates/bulb-tc32` (its own workspace) is measured too: on the host its
+register accesses go to a simulated chip (`src/sim.rs`: a logged register
+file with the timer, analog bus, MSPI flash, AES engine and RF status the
+drivers wait for), and its tests (`src/tests/`) check the drivers' register
+writes, their order and values against the vendor's traced write lists. On
+the chip the same `reg.rs` primitives are volatile MMIO; the image is byte
+for byte the same. What only the emulator reaches: `boot/start.S` (the
+assembly start-up before `main`), `main`'s endless loop, the linker's
+memory layout (`.ram_code` placement, `.noinit`, the stack measured by
+`stack.rs`) and timing in microseconds (interrupt latency, the ACK
+turnaround on real time, the BLE event windows).
+
+```sh
+cargo test --manifest-path crates/bulb-tc32/Cargo.toml      # the drivers on the simulated chip
+cargo mutants --manifest-path crates/bulb-tc32/Cargo.toml -j 2
+```
 
 Mutation testing: [cargo-mutants](https://mutants.rs) (in `nix develop`;
 config in `.cargo/mutants.toml`) changes the code one small step at a time
@@ -147,7 +163,9 @@ cargo mutants -p bulb-core --test-package bulb-core,bulb-sim --timeout 120 -j 2
 
 Every host test binary runs on memcap's capped allocator (4 GiB,
 `OUTGLOW_TEST_MEM_LIMIT_MB`): a mutant that makes a test allocate without
-end stops there. Locally, keep `-j` at 2 on a laptop.
+end stops there; bulb-tc32's tests (another workspace, which cargo-mutants
+copies without memcap) stop at 10 million register accesses in one test.
+Locally, keep `-j` at 2 on a laptop.
 
 ## Flashing
 
