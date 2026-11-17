@@ -1216,3 +1216,35 @@ fn a_report_while_the_hue_turns_is_news_only_if_more_than_the_hue_changed() {
     rig.run(400);
     assert_eq!(rig.app_statuses().0.len(), 1, "it stopped");
 }
+
+#[test]
+fn the_apps_tunnel_of_kind_1_is_for_every_bulb_only() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    for (address, taken) in [(0x0033u16, false), (0x0000, false), (0xffff, true)] {
+        rig.bulb.handle(bulb_core::Command::On);
+        rig.run(300);
+        let [hi, lo] = address.to_be_bytes();
+        rig.write(COMMAND, &block_packet(&key, 1, &[hi, lo, 0x01, 0x06, 0x00, 0]));
+        rig.run(300);
+        assert_eq!(!rig.is_on(), taken, "{address:#06x}");
+    }
+}
+
+#[test]
+fn the_apps_tunnel_takes_a_transition_time_right_after_its_arguments() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    let tunnel = |cluster: u16, zcl: &[u8]| block_packet(&key, 0, &[&[0x00, 0x00, 0x01, cluster as u8, (cluster >> 8) as u8][..], zcl].concat());
+    rig.write(COMMAND, &tunnel(0x0300, &[0x0a, 153, 0, 0, 0]));
+    rig.run(300);
+    rig.write(COMMAND, &tunnel(0x0300, &[0x0a, 0x72, 0x01, 20, 0]));
+    rig.run(300);
+    let m = rig.bulb.state().shown.mireds;
+    assert!(m > 160 && m < 360, "a colour temperature on its way over 2 s: {m}");
+    rig.write(COMMAND, &tunnel(0x0300, &[0x07, 0xd7, 0xa3, 0x7b, 0x54, 20, 0]));
+    rig.run(300);
+    let first = rig.bulb.state().shown;
+    rig.run(300);
+    assert_ne!(rig.bulb.state().shown, first, "xy on its way over 2 s");
+}
