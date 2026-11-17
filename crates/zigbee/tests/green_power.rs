@@ -1559,3 +1559,25 @@ fn a_gp_command_gets_a_default_response_unless_it_asks_for_none() {
     net.run(100);
     assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
 }
+
+#[test]
+fn a_proxy_table_answer_takes_entries_up_to_exactly_one_unfragmented_frame() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    for id in 1..=3u32 {
+        let mut sink = Pairing::new(0x0000_1000 + id, 3);
+        sink.sink = (COORD_EXT, 0x0000);
+        net.coord.gp_pair(&sink);
+    }
+    let mut group = Pairing::new(0x0000_2000, 2);
+    group.group = 0x0B84;
+    net.coord.gp_pair(&group);
+    net.coord.gp_pair(&Pairing::new(0x0000_3000, 1));
+    net.run(300);
+    let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 0]);
+    net.run(100);
+    let rsp = net.coord.last_zcl(short, GP, 0x0B).unwrap();
+    assert_eq!(rsp[1], seq);
+    assert_eq!((rsp.len(), rsp[3], rsp[4], rsp[6]), (80, 0x00, 5, 5), "all five entries in exactly 80 bytes");
+}
