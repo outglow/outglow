@@ -99,3 +99,15 @@ fn an_unauthenticated_child_goes_after_thirty_seconds_and_a_joined_end_device_af
     s.parent_timers(500 + limit + 1);
     assert!(!s.children[1].used);
 }
+
+#[test]
+fn an_associating_device_is_heard_now_and_unauthenticated() {
+    let mut s = stack();
+    s.hal.now = 100_000;
+    s.permit_until = Some(160_000);
+    s.on_association_request(0x00124B00000000C3, 0x80);
+    let c = s.children.iter().find(|c| c.used).copied().expect("a child");
+    assert_eq!((c.ext, c.heard, c.joined, c.capability), (0x00124B00000000C3, 100_000, false, 0x80));
+    s.parent_timers(100_000 + 5_000);
+    assert!(s.children.iter().any(|c| c.used), "kept while it gets its key");
+}
