@@ -1,0 +1,24 @@
+# cargo mutants for crates/bulb-tc32, its own workspace (README, "Coverage and
+# mutation testing"): cargo mutants --manifest-path crates/bulb-tc32/Cargo.toml
+# Its mutants run its host tests, on the simulated chip of src/sim.rs.
+
+exclude_globs = [
+  # the simulated chip: test infrastructure
+  "src/sim.rs",
+  # the free stack below the linker's symbols: only on the chip; the host's free() is a stub
+  "src/stack.rs",
+]
+
+exclude_re = [
+  # the register primitives themselves: on the chip volatile MMIO, which host tests
+  # cannot reach; on the host one-line calls into the simulated chip
+  "^src/reg\\.rs:.*(replace (read|write)(8|16|32) |in (read|write)(8|16|32)$)",
+  # flash::read: on the chip the volatile read of the mapped flash
+  "^src/flash\\.rs:.*(replace read with |in read$)",
+  # main: the endless main loop and its constants, run by the emulator's scenarios
+  "^src/lib\\.rs:.* in main$",
+  "^src/lib\\.rs:\\d+:\\d+: replace \\* with [+/]$",
+  "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
+]
+
+minimum_test_timeout = 60

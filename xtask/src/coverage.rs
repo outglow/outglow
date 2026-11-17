@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(clap::Args)]
-#[command(about = "Line and region coverage of the host tests (cargo llvm-cov, in `nix develop .#coverage`)")]
+#[command(about = "Line and region coverage of the host tests, bulb-tc32's on the simulated chip among them (cargo llvm-cov, in `nix develop .#coverage`)")]
 pub struct Args {
     #[arg(long, help = "Also the unit tests of the emulator's workspace (emulator/rs: tc32emu, ble, zbnode, the scenarios' library)")]
     emulator: bool,
@@ -22,21 +22,28 @@ pub struct Args {
 
 const TOLERANCE: f64 = 0.05;
 
-const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval\\.rs$|crates/memcap/";
+const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval\\.rs$|crates/memcap/|crates/bulb-tc32/src/(sim\\.rs$|tests/)";
 
 struct Workspace {
     name: &'static str,
     manifest: &'static str,
-    prefix: &'static str,
+    keeps: fn(&str) -> bool,
     runs: &'static [&'static [&'static str]],
 }
 
-const HOST: Workspace = Workspace { name: "host", manifest: "Cargo.toml", prefix: "", runs: &[&["--workspace"]] };
+const HOST: Workspace = Workspace {
+    name: "host",
+    manifest: "Cargo.toml",
+    keeps: |n| !n.starts_with("emulator/") && n != "bulb-tc32",
+    runs: &[&["--workspace"]],
+};
+
+const TC32: Workspace = Workspace { name: "bulb-tc32", manifest: "crates/bulb-tc32/Cargo.toml", keeps: |n| n == "bulb-tc32", runs: &[&[]] };
 
 const EMULATOR: Workspace = Workspace {
     name: "emulator",
     manifest: "emulator/rs/Cargo.toml",
-    prefix: "emulator/",
+    keeps: |n| n.starts_with("emulator/"),
     runs: &[&["-p", "tc32emu", "-p", "ble", "-p", "zbnode"], &["-p", "scenarios", "--lib"]],
 };
 
@@ -105,7 +112,7 @@ pub struct Floor {
 pub fn run(a: Args) -> Result<()> {
     let root = crate::root();
     let out = target_dir(&root).join("coverage");
-    let mut spaces = vec![&HOST];
+    let mut spaces = vec![&HOST, &TC32];
     if a.emulator {
         spaces.push(&EMULATOR);
     }
@@ -132,7 +139,7 @@ pub fn run(a: Args) -> Result<()> {
         let export: Export = serde_json::from_slice(&std::fs::read(&json)?).with_context(|| format!("reading {}", json.display()))?;
         for f in export.data.into_iter().flat_map(|d| d.files) {
             let rel = Path::new(&f.filename).strip_prefix(&root).unwrap_or(Path::new(&f.filename)).to_string_lossy().replace('\\', "/");
-            let Some(name) = crate_of(&rel).filter(|n| n.starts_with(ws.prefix) && (!ws.prefix.is_empty() || !n.starts_with("emulator/"))) else {
+            let Some(name) = crate_of(&rel).filter(|n| (ws.keeps)(n)) else {
                 continue;
             };
             crates.entry(name).or_default().add(f.summary);
@@ -344,6 +351,9 @@ mod tests {
         assert_eq!(crate_of("xtask/src/main.rs").as_deref(), Some("xtask"));
         assert_eq!(crate_of("emulator/rs/tc32emu/src/cpu.rs").as_deref(), Some("emulator/tc32emu"));
         assert_eq!(crate_of("crates/zigbee/tests/sim/mod.rs"), None);
+        assert!((TC32.keeps)("bulb-tc32") && !(TC32.keeps)("zigbee"));
+        assert!(!(HOST.keeps)("bulb-tc32") && (HOST.keeps)("zigbee") && !(HOST.keeps)("emulator/ble"));
+        assert!((EMULATOR.keeps)("emulator/ble") && !(EMULATOR.keeps)("ble"));
         assert_eq!(crate_of("/home/u/.cargo/registry/x/src/lib.rs"), None);
     }
 
