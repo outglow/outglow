@@ -1214,3 +1214,38 @@ fn the_black_box_keeps_each_unicasts_attempts_and_outcome_oldest_first() {
     assert!(ring.iter().any(|e| e[14] == 4 | 1 << 4), "four attempts, no acknowledgement");
     assert!(ring.iter().any(|e| e[14] == 1), "one attempt, delivered");
 }
+
+#[test]
+fn the_black_box_tells_the_cluster_of_a_groupcast_and_of_an_ack_with_its_fields_only() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let b = net.add_node();
+    let pb = net.nodes[b].id;
+    net.link(0, pb, 0);
+    net.run_until(30_000, "b joined through a", |net| net.nodes[b].stack.state() == zigbee::stack::State::Up);
+    net.run(20_000);
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    let ext = net.air.borrow().ports[net.nodes[a].id].ext;
+    let mut bind = ext.to_le_bytes().to_vec();
+    bind.push(1);
+    bind.extend_from_slice(&0x0008u16.to_le_bytes());
+    bind.extend_from_slice(&[1, 0x34, 0x12]);
+    net.coord.zdo(sa, 0x0021, &bind);
+    net.run(200);
+    net.coord.zcl(sa, 0x0008, 0x11, 0x00, &[50, 0, 0]);
+    net.run(2_000);
+    net.coord.nwk_data(sb, &[0x12, 0x44]);
+    net.coord.nwk_data(sb, &[0x02, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, 0x45]);
+    net.run(500);
+    let bx = black_box(&mut net, sa);
+    let (neighbors, link_entry, ring_len, ring_entry) = (bx[1] as usize, bx[2] as usize, bx[4] as usize, bx[5] as usize);
+    let ring_at = 24 + neighbors * link_entry;
+    let ring: Vec<&[u8]> = bx[ring_at..ring_at + ring_len * ring_entry].chunks(ring_entry).collect();
+    let kind_id = |e: &[u8]| (e[10], u16::from_le_bytes([e[11], e[12]]));
+    assert!(ring.iter().any(|e| kind_id(e) == (0x00 | 0x04 | 0x08 | 0x40, 0x0008)), "the level report to the group: {:02x?}", ring.iter().map(|e| kind_id(e)).collect::<Vec<_>>());
+    let relayed: Vec<(u8, u16)> = ring.iter().filter(|e| e[10] & 0x10 != 0 && u16::from_le_bytes([e[6], e[7]]) == sb).map(|e| kind_id(e)).collect();
+    assert!(relayed.contains(&(0x00 | 0x04 | 0x10 | 0x60, 0x0006)), "an acknowledgement with its cluster: {relayed:02x?}");
+    assert!(relayed.contains(&(0x00 | 0x04 | 0x10, 0)), "and one without fields: {relayed:02x?}");
+}

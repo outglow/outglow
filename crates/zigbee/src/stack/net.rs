@@ -181,7 +181,6 @@ impl<H: Hal> Stack<H> {
                 let at = match (fc & 3, (fc >> 2) & 3) {
                     (0, 0) | (0, 2) => Some((2, kind::ID_CLUSTER)),
                     (0, 3) => Some((3, kind::ID_CLUSTER)),
-                    (0, _) => Some((1, kind::ID_CLUSTER)),
                     (2, _) if fc & 0x10 == 0 => Some((2, kind::ID_APS_ACK)),
                     _ => None,
                 };
