@@ -24,7 +24,7 @@ fn the_average_retries_of_nothing_sent_is_zero() {
 
 #[test]
 fn without_a_noise_measurement_the_next_try_is_a_second_later() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new() }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY);
     s.diag.noise_at = 1_000;
     s.diag_noise(1_000);
     assert_eq!(s.diag.noise_at, 2_000);

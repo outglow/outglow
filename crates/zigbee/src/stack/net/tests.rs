@@ -8,7 +8,7 @@ extern crate std;
 use std::vec::Vec;
 
 fn stack() -> Stack<Scripted> {
-    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new() }, IDENTITY)
+    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false }, IDENTITY)
 }
 
 fn fill(s: &mut Stack<Scripted>) {
@@ -1082,15 +1082,60 @@ fn frames_of_other_types_or_without_a_payload_are_sent_as_they_are() {
 }
 
 #[test]
-fn the_bulbs_own_route_request_heard_back_is_ignored_and_a_cheaper_copy_of_one_heard_is_passed_on() {
+fn a_cheaper_copy_of_a_route_request_heard_is_passed_on() {
     let mut s = relaying();
-    let mine = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x0042, 5, 2);
-    s.on_route_request(&mine, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3], 1_000);
-    assert!(s.discoveries.iter().all(|d| !d.used));
     let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x2000, 5, 2);
     s.on_route_request(&h, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 9], 1_000);
     s.on_route_request(&h, 0x1001, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 1], 1_000);
     assert_eq!((s.discoveries[0].sender, s.discoveries[0].forward_cost), (0x1001, 1 + s.neighbors[1].link_cost()));
     assert!(!s.discoveries[1].used, "the same discovery");
     assert_eq!(s.bcast.iter().filter(|e| e.used).count(), 1);
+}
+
+#[test]
+fn a_busy_channel_is_a_failed_transmission() {
+    let mut s = relaying();
+    s.hal.busy = true;
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0x1001, 0x0042, 5, 1);
+    assert_eq!(s.transmit_nwk(0x1001, &h, &[0x00]), crate::hal::TxStatus::ChannelBusy);
+    assert_eq!(s.neighbors[1].failures, 1);
+}
+
+#[test]
+fn a_frame_for_a_child_not_yet_joined_is_not_passed_on() {
+    let mut s = relaying();
+    s.children[1].used = true;
+    s.children[1].short = 0x5000;
+    s.children[1].joined = false;
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!((t.to, t.counts), (Vec::new(), [0, 0, 0, 0]));
+}
+
+#[test]
+fn a_frame_that_fails_with_retries_left_is_held_for_a_retry() {
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!((t.to, t.counts, t.held), (std::vec![0x1002], [0, 0, 0, 0], true));
+    assert_eq!((s.held[0].left, s.held[0].next), (2, super::super::ROUTED));
+}
+
+#[test]
+fn relayed_data_on_a_many_to_one_route_with_no_other_router_is_dropped() {
+    let mut s = routed(true, &[0x1002]);
+    for n in s.neighbors.iter_mut() {
+        n.out_cost = 0;
+    }
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 0);
+    assert_eq!((t.to, t.counts), (std::vec![0x1002], [0, 1, 0, 0]));
+}
+
+#[test]
+fn relayed_data_with_no_route_and_no_discovery_is_reported_and_other_frames_are_dropped() {
+    let mut s = relaying();
+    route(&mut s, 1, 0x3000, 0x1001, false, 0);
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!((t.to, t.counts), (std::vec![0x1001], [0, 0, 0, 1]));
+    let mut s = relaying();
+    let t = try_route(&mut s, nwk::FRAME_CMD, 0x3000, 0, &[0x7F], 2);
+    assert_eq!((t.to, t.counts, t.held), (Vec::new(), [0, 0, 0, 1], false));
 }

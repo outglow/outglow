@@ -935,9 +935,6 @@ impl<H: Hal> Stack<H> {
         let (Some(_), Some(options), Some(id), Some(dst), Some(cost)) = (r.u8(), r.u8(), r.u8(), r.u16(), r.u8()) else {
             return;
         };
-        if h.src == self.nib.short {
-            return;
-        }
         if !self.neighbor_index(mac_src).is_some_and(|i| self.neighbors[i].out_cost != 0) {
             return;
         }
