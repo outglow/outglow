@@ -921,3 +921,74 @@ fn identify_on_request_is_logged_and_frames_to_the_light_are_handed_out() {
     diag(&mut net, short, &[RESETS]);
     assert_eq!(net.air.borrow().ports[id].zcl_received.iter().map(|f| (f.1, f.2)).collect::<Vec<_>>(), [(DIAG, 0x00)]);
 }
+
+#[test]
+fn the_network_and_platform_attributes_have_the_values_they_stand_for() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].hal_counters = zigbee::hal::HalCounters {
+        loop_max_us: 0x0102_0304,
+        ble_lend_max_us: 0x0506_0708,
+        flash_busy_max_us: 0x090A_0B0C,
+        stack_free: 0x0D0E_0F10,
+        irq_stack_free: 0x1112,
+        ble_connections: 21,
+        ble_disconnects: 22,
+        ble_links_lost: 23,
+        ble_events: 24,
+        ble_events_skipped: 25,
+        ..Default::default()
+    };
+    let ids: Vec<u16> = [0x5023, 0x5031, 0x5033, 0x5034, 0x5035, 0x5036, 0x5037].into_iter().chain(0x5040..=0x5044).chain(0x5048..=0x504C).collect();
+    let p = mfr(&mut net, short, &ids);
+    let v = |id: u16| number(&p[&id].1);
+    assert_eq!(v(0x5031), PAN as u32);
+    assert_eq!(v(0x5033), 0, "the update identifier");
+    assert_eq!(v(0x5034), 0, "the key sequence number");
+    assert!(v(0x5035) > 0, "the NWK frame counter");
+    assert_eq!(v(0x5036), 1, "one hop below the coordinator");
+    assert_eq!(v(0x5037), 0x0000, "the coordinator is the parent");
+    assert_eq!(v(0x5023) as usize, 0, "no routes in use");
+    assert_eq!(
+        [0x5040, 0x5041, 0x5042, 0x5043, 0x5044].map(v),
+        [0x0102_0304, 0x0506_0708, 0x090A_0B0C, 0x0D0E_0F10, 0x1112]
+    );
+    assert_eq!([0x5048, 0x5049, 0x504A, 0x504B, 0x504C].map(v), [21, 22, 23, 24, 25]);
+    let fc = v(0x5035);
+    net.coord.zcl(short, ON_OFF, 0x01, 0x02, &[]);
+    net.run(100);
+    assert!(mfr1(&mut net, short, 0x5035) > fc, "every frame sent counts");
+}
+
+#[test]
+fn the_platform_figures_for_the_firmware() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let id = net.nodes[n].id;
+    net.run(5_000);
+    let s = &mut net.nodes[n].stack;
+    let up = s.uptime_s();
+    assert!((5..=30).contains(&up), "uptime {up}");
+    assert_eq!(s.reset_cause(), ResetCause::PowerOn);
+    assert_eq!(s.resets(), (1, 0));
+    let counts = s.neighbor_counts();
+    assert_eq!((counts.routers, counts.end_devices), (1, 0));
+    let mac = s.mac_counters();
+    assert!(mac.rx_ucast > 0 && mac.tx_ucast > 0);
+    assert_eq!(mac.tx_ucast_failures, 0);
+    let short = s.short_address();
+    let signal = diag(&mut net, short, &[0x011C, 0x011D]);
+    let heard = (signal[&0x011C].1[0], signal[&0x011D].1[0] as i8);
+    assert_eq!(net.nodes[n].stack.last_signal(), heard);
+    net.air.borrow_mut().ports[id].hal_counters.ble_connections = 1;
+    let s = &mut net.nodes[n].stack;
+    let seq = s.event_seq();
+    s.sync_hardware_counters();
+    assert_eq!(s.event_seq(), seq.wrapping_add(1), "a BLE connection is logged when the counters are taken");
+    assert_eq!(s.event(0).unwrap().a, 1);
+    net.air.borrow_mut().ports[id].retained = None;
+    net.nodes[n].stack.keep_for_restart();
+    assert!(net.air.borrow().ports[id].retained.is_some(), "the counters are handed to the HAL to keep over a restart");
+}
