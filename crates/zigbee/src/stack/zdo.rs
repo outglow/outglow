@@ -520,9 +520,6 @@ impl<H: Hal> Stack<H> {
     }
 
     fn on_parent_announce(&mut self, src: u16, seq: u8, mut r: Reader) -> Option<()> {
-        if src == self.nib.short {
-            return Some(());
-        }
         let mut rsp = Buf::new();
         let mut count = 0;
         let n = r.u8()?;

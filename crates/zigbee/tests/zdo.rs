@@ -313,10 +313,9 @@ fn a_router_without_children_announces_none_after_a_restart() {
 }
 
 #[test]
-fn a_parent_announce_of_its_own_cut_short_or_naming_strangers_is_not_answered() {
+fn a_parent_announce_cut_short_or_naming_strangers_is_not_answered() {
     let (mut net, _, short) = bulb();
     let stranger = 0x00124B00000000E1u64.to_le_bytes();
-    zdo_from(&mut net, short, short, 0x001F, &[[0x51, 1].as_slice(), &stranger].concat());
     zdo_from(&mut net, short, 0x0000, 0x001F, &[0x52, 2, 1, 2, 3, 4, 5, 6, 7, 8]);
     zdo_from(&mut net, short, 0x0000, 0x001F, &[[0x53, 1].as_slice(), &stranger].concat());
     net.run(500);
@@ -339,4 +338,23 @@ fn reports_to_a_neighbouring_router_go_straight_to_its_address() {
     let sent = net.nwk_sent_by(net.nodes[a].id, t);
     assert!(sent.iter().any(|(_, h, p)| h.dst == sb && p.get(2..4) == Some(&LEVEL.to_le_bytes()[..])));
     assert!(!sent.iter().any(|(_, h, p)| h.dst == 0xFFFD && p.get(2..4) == Some(&[0, 0][..])), "no address asked for");
+}
+
+#[test]
+fn a_router_whose_children_were_all_heard_since_the_restart_announces_none() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let sa = net.nodes[a].short();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    assert!(zed.join(&mut net, sa));
+    net.run(200);
+    net.power_cycle(a);
+    net.run(500);
+    zed.poll(&mut net, 20);
+    net.run(25_000);
+    assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != sa || *c != 0x001F));
+    assert_eq!(net.nodes[a].stack.child_count(), 1);
 }
