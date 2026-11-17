@@ -1569,6 +1569,7 @@ impl Coord {
         match cluster {
             0x0006 => {
                 self.match_requests += 1;
+                assert!(self.match_requests < 1_000, "a flood of match descriptor requests");
                 if self.ota_hidden {
                     return;
                 }
