@@ -988,3 +988,23 @@ fn a_copy_scene_is_no_remove_scene() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, 0x0005, 0x01).unwrap()[3], 0x00, "scene 1 is still there");
 }
+
+#[test]
+fn a_scene_added_with_an_unknown_colour_mode_takes_the_mode_its_fields_give() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_COLOR;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    for (mode, ct, want) in [(3u8, 300u16, 2u8), (3, 0, 1), (0, 300, 0)] {
+        let mut p = vec![0x00, 0x00, 5, 0x00, 0x00, 0x00, 0x00, 0x03, 14];
+        p.extend_from_slice(&[0x00, 0x40, 0x00, 0x50, 0x00, 0x60, 0x80, 0, 0, 0, 0]);
+        p.extend_from_slice(&ct.to_le_bytes());
+        p.push(mode);
+        net.coord.zcl(short, 0x0005, 0x01, 0x00, &p);
+        net.run(100);
+        net.coord.zcl(short, 0x0005, 0x01, 0x01, &[0x00, 0x00, 5]);
+        net.run(100);
+        let rsp = net.coord.last_zcl(short, 0x0005, 0x01).unwrap();
+        assert_eq!((rsp[3], *rsp.last().unwrap()), (0x00, want), "mode {mode}, colour temperature {ct}");
+    }
+}
