@@ -893,11 +893,8 @@ impl<H: Hal> Stack<H> {
                 let data = r.take(len)?;
                 self.gp_first = temp_master == self.nib.short;
                 if !self.gp_first {
-                    if let Some(q) = self.gp_tx.filter(|q| q.gpd == gpd) {
+                    if self.gp_tx.is_some_and(|q| q.gpd == gpd) {
                         self.gp_tx = None;
-                        if q.channel != self.nib.channel {
-                            self.hal.set_channel(self.nib.channel);
-                        }
                     }
                     return Some(Some(SUCCESS));
                 }

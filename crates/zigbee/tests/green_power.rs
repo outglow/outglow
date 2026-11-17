@@ -1231,3 +1231,47 @@ fn pairings_the_proxy_cannot_serve_and_gp_frames_it_does_not_take_are_ignored() 
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x10, seq, 0x0B, 0x7E, 0x81]);
 }
+
+#[test]
+fn a_response_another_proxy_is_to_deliver_takes_back_the_one_queued_here() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    net.coord.gp_response(short, 11, SWITCH, 0xF0, &[0x00]);
+    net.run(100);
+    net.coord.gp_response(0x4444, 11, 0x0000_0999, 0xF0, &[0x00]);
+    net.run(100);
+    net.coord.gp_response(0x4444, 11, SWITCH, 0xF0, &[0x00]);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    assert!(net.air.borrow().timed.is_empty(), "another proxy answers the device");
+}
+
+#[test]
+fn a_response_without_a_payload_is_delivered_as_the_bare_command() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    let mut p = vec![0x00];
+    p.extend_from_slice(&short.to_le_bytes());
+    p.push(0);
+    p.extend_from_slice(&SWITCH.to_le_bytes());
+    p.extend_from_slice(&[0xF1, 0xFF]);
+    net.coord.gp_command(0x06, &p);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    let timed = net.air.borrow().timed.clone();
+    assert_eq!(timed.len(), 1);
+    let mut want = vec![0x8C, 0x80];
+    want.extend_from_slice(&SWITCH.to_le_bytes());
+    want.push(0xF1);
+    assert_eq!(&timed[0].3[7..], &want[..]);
+}
