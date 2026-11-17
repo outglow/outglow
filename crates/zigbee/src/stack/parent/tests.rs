@@ -365,3 +365,19 @@ fn a_broadcast_too_long_to_keep_for_sleeping_children_is_not_kept() {
     s.broadcast_to_sleepy(&h, &[0; 10]);
     assert!(s.indirect.iter().any(|e| e.used && e.broadcast));
 }
+
+#[test]
+fn a_router_already_a_neighbour_associating_keeps_its_address_and_an_end_device_in_its_place_gets_a_new_one() {
+    for (capability, kept) in [(0x8Eu8, true), (0x80, false)] {
+        let mut s = up_parent();
+        s.permit_until = Some(100_000);
+        s.allow_children = true;
+        let n = &mut s.neighbors[0];
+        n.used = true;
+        n.short = 0x3000;
+        n.ext = EXT;
+        s.hal.random = std::vec![0x0777];
+        s.on_association_request(EXT, capability);
+        assert_eq!(s.children[0].short == 0x3000, kept, "{capability:02X}");
+    }
+}

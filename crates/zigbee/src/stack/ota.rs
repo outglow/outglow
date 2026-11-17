@@ -413,7 +413,10 @@ impl<H: Hal> Stack<H> {
     }
 
     fn ota_feed(&mut self, mut data: &[u8]) -> bool {
-        while !data.is_empty() {
+        for _ in 0..data.len() {
+            if data.is_empty() {
+                break;
+            }
             let o = &mut self.ota;
             if o.skip > 0 {
                 let n = (o.skip as usize).min(data.len());
@@ -456,10 +459,9 @@ impl<H: Hal> Stack<H> {
 
     fn ota_image_bytes(&mut self, data: &[u8]) {
         let mut chunk = [0u8; 64];
-        let mut done = 0;
-        while done < data.len() {
-            let n = (data.len() - done).min(chunk.len());
-            chunk[..n].copy_from_slice(&data[done..done + n]);
+        for part in data.chunks(chunk.len()) {
+            let n = part.len();
+            chunk[..n].copy_from_slice(part);
             let base = self.ota.image_len;
             for (i, b) in chunk[..n].iter_mut().enumerate() {
                 let at = base + i as u32;
@@ -484,7 +486,6 @@ impl<H: Hal> Stack<H> {
             }
             self.hal.ota_write(base, &chunk[..n]);
             self.ota.image_len += n as u32;
-            done += n;
         }
     }
 
