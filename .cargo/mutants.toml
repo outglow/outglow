@@ -35,9 +35,12 @@ exclude_re = [
   # equivalent: SHA-256's Ch has disjoint terms and Maj is the same with | in either place
   "crates/ble/src/sha256\\.rs:(24:32|27:33|27:49): replace \\^ with \\| in compress$",
   # equivalent: the bits are disjoint, so | and ^ give the same value
-  "replace \\| with \\^ in Header::field_control",
+  "replace \\| with \\^ in (Header::field_control|Config::encode|ColourRecord::encode)",
   # equivalent: sorting the five samples the other way, or ties the other way, keeps the middle one
   "sense/src/lib\\.rs:[0-9]+:33: replace > with (<|>=) in median5",
+  # equivalent: a larger scratch buffer for a record (MAX_ITEM * 3 instead of MAX_ITEM + 3)
+  "nv\\.rs:[0-9]+:38: replace \\+ with \\* in NvLog<F, N>::append",
+  "nv\\.rs:[0-9]+:43: replace \\+ with \\* in NvLog<F, N>::store_pair",
 ]
 
 # the timeout of a test run is 5x that of the unmutated tree, at least this:

@@ -98,4 +98,42 @@ mod tests {
         assert!(gaps.iter().any(|&g| g == 64) && gaps.iter().any(|&g| g == 128));
         assert!(gaps.iter().all(|&g| g >= 64), "never faster than a step at speed 2: {gaps:?}");
     }
+
+    #[test]
+    fn the_random_numbers_are_xorshift32() {
+        let mut c = Candle::new(128, 0, 0);
+        assert_eq!([c.random(), c.random(), c.random()], [1056, 2054, 52392]);
+        assert_eq!(c.rng, 0x9DCC_A8C5);
+    }
+
+    #[test]
+    fn a_seed_gives_the_same_flicker_as_the_stock_firmware() {
+        let mut c = Candle::new(128, 0, 0x1234_5678);
+        let mut changes = Vec::new();
+        for t in 0..4500u64 {
+            if c.tick(t, 128) {
+                changes.push((t, c.level()));
+            }
+        }
+        assert_eq!(
+            changes,
+            [
+                (120, 126), (248, 128), (376, 141), (504, 128), (632, 136), (760, 124), (888, 141), (1016, 144),
+                (1144, 128), (1272, 136), (1400, 139), (1528, 141), (1656, 144), (1784, 128), (1912, 141), (2040, 128),
+                (2168, 139), (2296, 128), (2424, 139), (2552, 128), (2680, 136), (2808, 139), (2936, 128), (3064, 141),
+                (3192, 128), (3320, 144), (3448, 128), (3576, 139), (3704, 128), (3832, 141), (3960, 128), (4088, 139),
+                (4216, 128), (4354, 126), (4482, 128)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tick_says_whether_the_level_changed() {
+        let mut c = Candle::new(128, 0, 0x1234_5678);
+        assert!(!c.tick(99, 128));
+        assert!(!c.tick(119, 128));
+        assert!(c.tick(120, 128));
+        assert!(!c.tick(121, 128));
+    }
 }
+

@@ -63,10 +63,6 @@ impl<F: Flash> LightLog<F> {
         log
     }
 
-    pub fn into_flash(self) -> F {
-        self.flash
-    }
-
     pub fn current(&self) -> Option<[u8; BLOCK_LEN]> {
         self.current.map(|at| self.read8(at))
     }

@@ -112,7 +112,7 @@ fn the_watchdog_is_fed_as_a_large_image_is_checked() {
     FEEDS.with(|n| n.set(0));
     assert!(image_good(&f, BASE, AREA, feed));
     let feeds = FEEDS.with(|n| n.get());
-    assert!(feeds as usize >= img.len() / 0x4000 - 1, "{feeds} feeds");
+    assert_eq!(feeds as usize, (img.len() - 4) / 0x4000, "one feed every 16 KiB checked");
 }
 
 #[test]

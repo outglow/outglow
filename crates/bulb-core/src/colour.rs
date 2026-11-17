@@ -56,7 +56,7 @@ impl HueDirection {
             HueDirection::Longest => {
                 if up == 0 {
                     0
-                } else if up > -down {
+                } else if up >= 128 {
                     up
                 } else {
                     down
@@ -72,7 +72,7 @@ pub fn hsv(hue: u8, sat: u8, v: u8) -> [u8; 3] {
         return [v as u8; 3];
     }
     let mut deg = 360 * hue as u32 / 254;
-    if deg > 359 {
+    if deg >= 360 {
         deg = 0;
     }
     let region = deg / 60;
@@ -93,62 +93,34 @@ pub fn hsv(hue: u8, sat: u8, v: u8) -> [u8; 3] {
 }
 
 pub fn xy_rgb(x: u16, y: u16, level: u8) -> [u16; 3] {
-    let mut dx = x as f64 * (1.0 / 65536.0);
-    let mut dy = y as f64 * (1.0 / 65536.0);
-    let t;
-    if dx > 1.0 {
-        dx = 1.0;
-        t = 0.0;
-    } else {
-        t = 1.0 - dx;
-    }
-    if dy > 1.0 {
-        dy = 1.0;
-    }
+    let dx = x as f64 * (1.0 / 65536.0);
+    let dy = y as f64 * (1.0 / 65536.0);
+    let t = 1.0 - dx;
     let big_y = level as f64 / 254.0;
     let big_x = dx * big_y / dy;
     let big_z = (t - dy) * big_y / dy;
-    let one = |a: f64, b: f64, c: f64| {
-        let v = big_x * a + big_y * b + big_z * c;
-        if v < 0.0 {
-            0
-        } else if v > 1.0 {
-            255
-        } else {
-            (v * 255.0) as u16
-        }
-    };
+    let one = |a: f64, b: f64, c: f64| (((big_x * a + big_y * b + big_z * c) * 255.0) as u16).min(255);
     [one(3.2406, -1.5372, -0.4986), one(-0.9692, 1.8758, 0.0416), one(0.0556, -0.204, 1.057)]
 }
 
 pub fn rgb_hsv(rgb: [u16; 3]) -> [u16; 3] {
-    const EPS: f64 = 1e-5;
     let [r, g, b] = rgb.map(|c| c as f64 / 255.0);
-    let (max, min) = if r > g {
-        (if r > b { r } else { b }, if g < b { g } else { b })
-    } else {
-        (if g > b { g } else { b }, if r < b { r } else { b })
-    };
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
     let delta = max - min;
     let v = (max * 65535.0 + 0.5) as u32 as u16;
-    if delta < EPS && delta > -EPS {
+    if delta == 0.0 {
         return [0, 0, v];
     }
     let s = (delta / max * 65535.0 + 0.5) as u32 as u16;
-    let near = |c: f64| max + EPS > c && max - EPS < c;
-    let sector = if near(r) {
+    let sector = if r == max {
         (g - b) / delta + if g < b { 6.0 } else { 0.0 }
-    } else if near(g) {
+    } else if g == max {
         (b - r) / delta + 2.0
-    } else if near(b) {
-        (r - g) / delta + 4.0
     } else {
-        return [0, s, v];
+        (r - g) / delta + 4.0
     };
-    let mut h = sector * 60.0;
-    while h < 0.0 {
-        h += 360.0;
-    }
+    let h = sector * 60.0;
     [(h * 65535.0 / 360.0 + 0.5) as u32 as u16, s, v]
 }
 
@@ -271,5 +243,65 @@ mod tests {
         b[3] ^= 1;
         assert_eq!(ColourRecord::decode(&b), None);
         assert_eq!(ColourRecord::decode(&[0xFF; 8]), None);
+    }
+
+    #[test]
+    fn colour_modes_and_hue_directions_by_their_zcl_values() {
+        assert_eq!([0, 1, 2, 3].map(ColorMode::from_u8), [ColorMode::HueSaturation, ColorMode::Xy, ColorMode::Temperature, ColorMode::Temperature]);
+        assert_eq!(
+            [0, 1, 2, 3, 4].map(HueDirection::from_u8),
+            [Some(HueDirection::Shortest), Some(HueDirection::Longest), Some(HueDirection::Up), Some(HueDirection::Down), None]
+        );
+    }
+
+    #[test]
+    fn the_longest_way_round_is_up_from_128_steps() {
+        assert_eq!(HueDirection::Longest.delta(0, 127), -128);
+        assert_eq!(HueDirection::Longest.delta(0, 128), 128);
+        assert_eq!(HueDirection::Longest.delta(10, 210), 200);
+        assert_eq!(HueDirection::Longest.delta(7, 7), 0);
+        assert_eq!(HueDirection::Shortest.delta(0, 127), 127);
+        assert_eq!(HueDirection::Shortest.delta(0, 128), -127);
+    }
+
+    #[test]
+    fn hue_and_saturation_in_the_blue_to_magenta_regions() {
+        assert_eq!(hs_duties(190, 254, 254, 48000), [10015, 0, 48000]);
+        assert_eq!(hs_duties(200, 254, 254, 48000), [21732, 0, 48000]);
+        assert_eq!(hs_duties(230, 254, 254, 48000), [48000, 0, 17574]);
+    }
+
+    #[test]
+    fn rgb_to_hsv_in_every_sector() {
+        assert_eq!(rgb_hsv([255, 0, 0]), [0, 65535, 65535]);
+        assert_eq!(rgb_hsv([255, 0, 1]), [65492, 65535, 65535]);
+        assert_eq!(rgb_hsv([255, 128, 0]), [5483, 65535, 65535]);
+        assert_eq!(rgb_hsv([10, 200, 40]), [23570, 62258, 51400]);
+        assert_eq!(rgb_hsv([200, 200, 40]), [10923, 52428, 51400]);
+        assert_eq!(rgb_hsv([40, 10, 200]), [45415, 62258, 51400]);
+        assert_eq!(rgb_hsv([40, 200, 200]), [32768, 52428, 51400]);
+        assert_eq!(rgb_hsv([3, 3, 3]), [0, 0, 771]);
+    }
+
+    #[test]
+    fn xy_components_saturate_at_255() {
+        assert_eq!(xy_rgb(19661, 39321, 254), [0, 255, 0]);
+        assert_eq!(xy_rgb(65535, 65535, 254), [255, 220, 0]);
+        assert_eq!(xy_rgb(3277, 0, 254), [0, 0, 255]);
+        assert_eq!(xy_rgb(20454, 17992, 128), [179, 107, 186]);
+    }
+
+    #[test]
+    fn the_record_keeps_its_mode_and_whether_it_came_from_xy() {
+        for r in [
+            ColourRecord { mode: ColorMode::HueSaturation, xy: false, hue: 254, sat: 0, x: 1, y: 2 },
+            ColourRecord { mode: ColorMode::Temperature, xy: true, hue: 0, sat: 254, x: 0xFFFF, y: 0 },
+        ] {
+            assert_eq!(ColourRecord::decode(&r.encode()), Some(r));
+        }
+        let r = ColourRecord { mode: ColorMode::HueSaturation, xy: false, hue: 40, sat: 200, x: 3, y: 4 };
+        assert_eq!(r.encode()[0], 0xC0);
+        assert_eq!(ColourRecord { xy: true, mode: ColorMode::Xy, ..r }.encode()[0], 0xC3);
+        assert_eq!(ColourRecord::decode(&r.encode()[..7]), None);
     }
 }

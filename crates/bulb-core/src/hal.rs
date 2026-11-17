@@ -40,3 +40,48 @@ pub trait Radio {
     fn poll(&mut self) -> Option<crate::command::Command>;
     fn report(&mut self, state: &crate::command::StateReport);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct White;
+
+    impl Pwm for White {
+        fn max_duty(&self) -> u16 {
+            1000
+        }
+        fn set_duty(&mut self, _duty: u16) {}
+    }
+
+    struct Store;
+
+    impl ConfigStore for Store {
+        fn load(&self, _buf: &mut [u8]) -> Option<usize> {
+            Some(8)
+        }
+        fn store(&mut self, _data: &[u8]) {}
+    }
+
+    #[test]
+    fn a_pwm_by_default_is_one_white_channel() {
+        let mut p = White;
+        assert!(!p.has_cold_channel());
+        assert!(!p.has_rgb());
+        assert!(!p.white_tw_curve());
+        assert!(!p.rgb_beside_white());
+        assert_eq!(p.ct_range(), (crate::CT_MIN, crate::CT_MAX));
+        assert_eq!(p.colour_default(), (170, 254));
+        p.set_duty(p.max_duty());
+        p.set_cold_duty(5);
+        p.set_rgb(1, 2, 3);
+    }
+
+    #[test]
+    fn a_store_by_default_keeps_no_colour() {
+        let mut s = Store;
+        assert_eq!((s.load(&mut [0; 8]), s.load_colour(&mut [0; 8])), (Some(8), None));
+        s.store(&[1]);
+        s.store_colour(&[1]);
+    }
+}

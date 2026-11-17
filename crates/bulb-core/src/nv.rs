@@ -108,17 +108,12 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
 
     fn erased_from(&self, off: usize) -> bool {
         let base = self.sectors[self.active];
-        let mut chunk = [0u8; 32];
-        let mut at = off;
-        while at < self.size {
-            let n = (self.size - at).min(chunk.len());
+        (off..self.size).step_by(CHUNK).all(|at| {
+            let mut chunk = [0u8; CHUNK];
+            let n = (at + CHUNK).min(self.size) - at;
             self.flash.read(base + at, &mut chunk[..n]);
-            if chunk[..n].iter().any(|&b| b != 0xff) {
-                return false;
-            }
-            at += n;
-        }
-        true
+            chunk[..n].iter().all(|&b| b == 0xff)
+        })
     }
 
     pub fn load(&self, id: u8, buf: &mut [u8]) -> Option<usize> {
@@ -248,9 +243,5 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
         if !self.blank(self.sectors[old]) {
             self.flash.erase(self.sectors[old]);
         }
-    }
-
-    pub fn flash(&self) -> &F {
-        &self.flash
     }
 }
