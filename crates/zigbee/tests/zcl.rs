@@ -679,3 +679,11 @@ fn on_level_zero_and_a_start_up_colour_temperature_out_of_range_are_invalid() {
         assert_eq!(global(&mut net, short, COLOR, 0x02, &[0x10, 0x40, 0x21, b[0], b[1]]), Some(want), "{v}");
     }
 }
+
+#[test]
+fn the_colour_mode_is_reportable_on_a_colour_light_only() {
+    for (identity, status) in [(IDENTITY_TW, vec![0x07, 0x8C, 0x00, 0x08, 0x00]), (IDENTITY_COLOR, vec![0x07, 0x00])] {
+        let (mut net, _, short) = bulb_with(identity);
+        assert_eq!(global(&mut net, short, COLOR, 0x06, &[0x00, 0x08, 0x00, 0x30, 1, 0, 0x10, 0x0E]), Some(status));
+    }
+}
