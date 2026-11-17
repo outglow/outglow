@@ -70,3 +70,41 @@ fn a_data_request_without_a_source_address_is_answered_by_nothing() {
     let sent = net.sent_by(net.nodes[n].id, t);
     assert!(sent.iter().all(|f| f[0] & 7 != 1 || f[5..7] == [0xFF, 0xFF]), "no frame for anyone in particular: {sent:02x?}");
 }
+
+fn beacons_from(net: &Net, n: usize, since: u32) -> usize {
+    net.sent_by(net.nodes[n].id, since).iter().filter(|f| f[0] & 7 == 0).count()
+}
+
+#[test]
+fn two_beacon_requests_close_together_get_one_beacon() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    net.run(1_000);
+    let t = net.now();
+    inject(&mut net, n, &[0x03, 0x08, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x07]);
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].queue.push_back((vec![0x03, 0x08, 0x02, 0xFF, 0xFF, 0xFF, 0xFF, 0x07], 255));
+    net.run(100);
+    assert_eq!(beacons_from(&net, n, t), 1);
+}
+
+#[test]
+fn an_orphan_notification_from_a_stranger_and_an_association_request_for_another_pan_get_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let s = short.to_le_bytes();
+    net.run(1_000);
+    let t = net.now();
+    let mut orphan = vec![0x03, 0xC8, 0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+    orphan.extend_from_slice(&0x00124B00000000D1u64.to_le_bytes());
+    orphan.push(0x06);
+    inject(&mut net, n, &orphan);
+    let mut assoc = vec![0x23, 0xC8, 0x04, 0x63, 0x1A, s[0], s[1], 0xFF, 0xFF];
+    assoc.extend_from_slice(&0x00124B00000000D2u64.to_le_bytes());
+    assoc.extend_from_slice(&[0x01, 0x8E]);
+    inject(&mut net, n, &assoc);
+    net.run(1_000);
+    let sent = net.sent_by(net.nodes[n].id, t);
+    assert!(sent.iter().all(|f| f[0] & 7 != 3), "no MAC command in answer: {sent:02x?}");
+}
