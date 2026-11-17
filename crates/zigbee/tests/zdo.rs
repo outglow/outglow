@@ -213,6 +213,19 @@ fn reports_to_a_binding_with_an_unknown_address_ask_for_it_and_follow_the_answer
     let sent = net.nwk_sent_by(net.nodes[n].id, t);
     assert!(sent.iter().any(|(_, h, p)| h.frame_type == nwk::FRAME_CMD && p[0] == nwk::CMD_ROUTE_REQUEST && p.get(3..5) == Some(&[0x21, 0x43][..])));
     assert!(!sent.iter().any(|(_, h, p)| h.dst == 0xFFFD && p.get(2..4) == Some(&[0x00, 0x00])), "no second NWK_addr_req");
+    let other = 0x00124B00000000F3u64;
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(other, 3))), Some(vec![0x00]));
+    net.run(10_000);
+    let t = net.now();
+    net.coord.zcl(short, LEVEL, 0x11, 0x04, &[50, 0, 0, 0, 0]);
+    net.run(2_000);
+    let asked: Vec<Vec<u8>> = net
+        .nwk_sent_by(net.nodes[n].id, t)
+        .into_iter()
+        .filter(|(_, h, p)| h.dst == 0xFFFD && p.len() > 8 && p[2..6] == [0, 0, 0, 0])
+        .map(|(_, _, p)| p[9..17].to_vec())
+        .collect();
+    assert!(asked.contains(&other.to_le_bytes().to_vec()), "the other binding's address is asked for, not taken from the one learned");
 }
 
 #[test]
@@ -378,4 +391,25 @@ fn mgmt_rtg_counts_and_lists_the_routes_in_use_with_their_flags() {
     assert_eq!(rsp[..4], [0x00, 1, 0, 1]);
     assert_eq!(rsp[4..9], [0x00, 0x00, 0x00 | 1 << 4 | 1 << 5, 0x00, 0x00], "to the concentrator: active, many-to-one, a route record due, straight there");
     assert_eq!(ask(&mut net, short, 0x0032, &[1]).unwrap(), vec![0x00, 1, 1, 0]);
+}
+
+#[test]
+fn the_zdo_requests_of_the_bulb_number_themselves() {
+    let (mut net, n, short) = bulb();
+    let me = ext_of(&net, n);
+    for k in 0..2u64 {
+        assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(0x00124B0000000100 + k, 3))), Some(vec![0x00]));
+    }
+    let t = net.now();
+    net.coord.zcl(short, LEVEL, 0x11, 0x04, &[50, 0, 0, 0, 0]);
+    net.run(12_000);
+    net.coord.zcl(short, LEVEL, 0x11, 0x04, &[60, 0, 0, 0, 0]);
+    net.run(2_000);
+    let seqs: std::collections::BTreeSet<u8> = net
+        .nwk_sent_by(net.nodes[n].id, t)
+        .into_iter()
+        .filter(|(_, h, p)| h.dst == 0xFFFD && p.len() > 8 && p[2..6] == [0, 0, 0, 0])
+        .map(|(_, _, p)| p[8])
+        .collect();
+    assert!(seqs.len() >= 2, "a sequence number of its own each: {seqs:?}");
 }

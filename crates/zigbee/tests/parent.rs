@@ -1572,3 +1572,17 @@ fn a_failed_parent_annce_rsp_takes_no_child_away() {
     net.run(300);
     assert_eq!(net.nodes[a].stack.child_count(), 0, "a successful one does");
 }
+
+#[test]
+fn a_child_that_was_sent_away_is_no_longer_listed_as_associated() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let mut p = zed.ext.to_le_bytes().to_vec();
+    p.push(0);
+    net.coord.zdo(sa, 0x0034, &p);
+    net.run(300);
+    let seq = net.coord.zdo(sa, 0x0001, &[&sa.to_le_bytes()[..], &[1, 0]].concat());
+    net.run(300);
+    let rsp = net.coord.last_zdo(sa, 0x8001).unwrap();
+    assert_eq!((rsp[0], rsp[1], rsp[12]), (seq, 0x00, 0), "no associated devices");
+}
