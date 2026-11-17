@@ -8,8 +8,8 @@ name: Mutants
 # - pull requests: only the mutants in the lines the pull request changes
 #   (`--in-diff`); a missed one fails the job: the changed code needs a test
 #   that notices it.
-# - weekly (and by hand): every mutant of the host workspace, in parts
-#   (`--shard K/N`), then one table per crate in the summary of the job
+# - weekly (and by hand): every mutant of the host workspace and of
+#   crates/bulb-tc32, in parts (`--shard K/N`), then one table per crate in the summary of the job
 #   `report` and every outcome as artifacts. Missed mutants do not fail it:
 #   it measures the gaps still to close.
 
@@ -74,27 +74,46 @@ jobs:
             ${{ runner.temp }}/mutants/*/mutants.out/diff
           if-no-files-found: ignore
 
+  # the host workspace in 14 parts (round-robin: every part gets mutants of
+  # every crate, so the parts take about the same time), bulb-core with
+  # bulb-sim's tests in 2, bulb-tc32 (its own workspace) in 1
   shard:
-    name: Mutants (part ${{ matrix.shard }} of 16)
+    name: Mutants (${{ matrix.part.name }})
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        part:
+          - { name: "part 1 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 0/14 --sharding round-robin" }
+          - { name: "part 2 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 1/14 --sharding round-robin" }
+          - { name: "part 3 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 2/14 --sharding round-robin" }
+          - { name: "part 4 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 3/14 --sharding round-robin" }
+          - { name: "part 5 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 4/14 --sharding round-robin" }
+          - { name: "part 6 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 5/14 --sharding round-robin" }
+          - { name: "part 7 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 6/14 --sharding round-robin" }
+          - { name: "part 8 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 7/14 --sharding round-robin" }
+          - { name: "part 9 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 8/14 --sharding round-robin" }
+          - { name: "part 10 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 9/14 --sharding round-robin" }
+          - { name: "part 11 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 10/14 --sharding round-robin" }
+          - { name: "part 12 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 11/14 --sharding round-robin" }
+          - { name: "part 13 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 12/14 --sharding round-robin" }
+          - { name: "part 14 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 13/14 --sharding round-robin" }
+          - { name: "bulb-core 1 of 2", args: "-p bulb-core --test-package bulb-core,bulb-sim --timeout 120 --shard 0/2 --sharding round-robin" }
+          - { name: "bulb-core 2 of 2", args: "-p bulb-core --test-package bulb-core,bulb-sim --timeout 120 --shard 1/2 --sharding round-robin" }
+          - { name: "bulb-tc32", args: "--manifest-path crates/bulb-tc32/Cargo.toml" }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-shell
-      # round-robin: every part gets mutants of every crate, so the parts
-      # take about the same time (the crates' tests take very different times)
-      - run: >
-          cargo mutants --workspace --shard ${{ matrix.shard }}/16 --sharding round-robin
-          --jobs 2 --output "$RUNNER_TEMP" || true
+      # (exit 2 = some missed: the job report counts them)
+      - run: |
+          read -r -a args <<< "${{ matrix.part.args }}"
+          cargo mutants "${args[@]}" --jobs 2 --output "$RUNNER_TEMP" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mutants-${{ matrix.shard }}
+          name: mutants-${{ strategy.job-index }}
           # (not the logs of every cargo test: hundreds of MB)
           path: |
             ${{ runner.temp }}/mutants.out/*.json
