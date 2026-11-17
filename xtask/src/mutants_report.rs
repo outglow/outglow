@@ -216,6 +216,55 @@ mod tests {
         assert!(tally(&json, &mut t).unwrap());
     }
 
+    use crate::sh::fake::Tmp;
+
+    fn args(extra: &[&str]) -> Args {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            a: Args,
+        }
+        let mut v = vec!["mutants-report"];
+        v.extend_from_slice(extra);
+        Cli::try_parse_from(v).unwrap().a
+    }
+
+    #[test]
+    fn a_report_from_directories_and_files() {
+        let t = Tmp::new("report");
+        t.put("one/outcomes.json", OUTCOMES);
+        let two = t.put("two.json", OUTCOMES.replace("lib.rs:2:1", "lib.rs:9:9"));
+        let missed = t.path("missed.txt");
+        let one = t.path("one");
+        run(args(&[one.to_str().unwrap(), two.to_str().unwrap(), "--missed", missed.to_str().unwrap()])).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&missed).unwrap(),
+            "crates/a/src/lib.rs:2:1: replace + with -\ncrates/a/src/lib.rs:9:9: replace + with -\n"
+        );
+        let e = run(args(&[one.to_str().unwrap(), "--strict"])).unwrap_err().to_string();
+        assert_eq!(e, "mutants missed or timed out");
+        let clean = t.put("clean.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "CaughtMutant"}]}"#);
+        run(args(&[clean.to_str().unwrap(), "--strict"])).unwrap();
+        let timed = t.put("timed.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "Timeout"}]}"#);
+        assert!(run(args(&[timed.to_str().unwrap(), "--strict"])).is_err());
+        let failed = t.put("failed.json", OUTCOMES.replacen("\"Success\"", "\"Failure\"", 1));
+        assert_eq!(run(args(&[failed.to_str().unwrap()])).unwrap_err().to_string(), "the tests failed on the unmutated tree");
+        let bad = t.put("bad.json", "nope");
+        assert_eq!(run(args(&[bad.to_str().unwrap()])).unwrap_err().to_string(), format!("parsing {}", bad.display()));
+        let gone = t.path("gone");
+        assert_eq!(run(args(&[gone.to_str().unwrap()])).unwrap_err().to_string(), format!("reading {}", gone.display()));
+        let e = run(args(&[clean.to_str().unwrap(), "--missed", t.0.to_str().unwrap()])).unwrap_err().to_string();
+        assert_eq!(e, format!("writing {}", t.0.display()));
+    }
+
+    #[test]
+    fn an_unknown_outcome_counts_only_in_the_total() {
+        let mut t = Tally::default();
+        t.add("Success", "x", 1.5);
+        assert_eq!(t, Tally { total: 1, seconds: 1.5, ..Tally::default() });
+    }
+
     #[test]
     fn the_table_has_a_row_per_crate_and_the_missed_ones() {
         let mut t = BTreeMap::new();

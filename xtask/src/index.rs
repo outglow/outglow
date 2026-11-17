@@ -49,6 +49,10 @@ fn load(path: &PathBuf, default: Value) -> Result<Value> {
 
 pub(crate) fn today() -> String {
     let days = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() / 86_400).unwrap_or(0) as i64;
+    date_of(days)
+}
+
+pub(crate) fn date_of(days: i64) -> String {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -62,17 +66,20 @@ pub(crate) fn today() -> String {
 }
 
 pub fn run(a: Args) -> Result<()> {
-    let at = |p: &PathBuf| p.clone();
+    run_in(&crate::root(), &a, &today())
+}
+
+pub fn run_in(root: &std::path::Path, a: &Args, today: &str) -> Result<()> {
     let tag = a.tag.clone().unwrap_or_else(|| format!("v{}", a.version));
-    let index_path = a.index.clone().unwrap_or_else(|| crate::root().join("ota/index.json"));
+    let index_path = a.index.clone().unwrap_or_else(|| root.join("ota/index.json"));
     let mut index: Vec<Value> = load(&index_path, json!([]))?.as_array().cloned().ok_or_else(|| anyhow!("{}: not a list", index_path.display()))?;
-    let site_path = a.site.as_ref().map(at);
+    let site_path = a.site.clone();
     let mut site = match &site_path {
         Some(p) => Some(load(p, json!({"schema": 1, "images": []}))?),
         None => None,
     };
     if let Some(d) = &a.assets {
-        std::fs::create_dir_all(at(d))?;
+        std::fs::create_dir_all(d)?;
     }
 
     for path in &a.ota {
@@ -105,9 +112,9 @@ pub fn run(a: Args) -> Result<()> {
 
         let ble = path.with_file_name("bulb-tc32-ota.bin");
         if let Some(d) = &a.assets {
-            std::fs::copy(path, at(d).join(format!("{name}.ota")))?;
+            std::fs::copy(path, d.join(format!("{name}.ota")))?;
             if ble.exists() {
-                std::fs::copy(&ble, at(d).join(format!("{name}-ota.bin")))?;
+                std::fs::copy(&ble, d.join(format!("{name}-ota.bin")))?;
             }
         }
         if let Some(site) = site.as_mut() {
@@ -124,7 +131,7 @@ pub fn run(a: Args) -> Result<()> {
                 "url": format!("firmware/{tag}/{name}-ota.bin"),
                 "size": b.len(),
                 "sha256": hex::<Sha256>(&b),
-                "date": today(),
+                "date": today,
             });
             if !a.notes.is_empty() {
                 r["notes"] = json!(a.notes);
@@ -148,3 +155,6 @@ pub fn run(a: Args) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

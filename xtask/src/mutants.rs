@@ -1,8 +1,9 @@
 mod ble;
 mod zigbee;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::BTreeSet;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -51,7 +52,7 @@ pub struct Args {
 
 const CRATES: &[&str] = &["crates/bulb-core", "crates/bulb-sim", "crates/zigbee", "crates/ble"];
 
-struct List {
+pub struct List {
     krate: &'static str,
     mutations: &'static [Mutation],
 }
@@ -62,17 +63,35 @@ const LISTS: &[List] = &[
 ];
 
 pub fn run(a: Args) -> Result<()> {
-    let filter = a.filter.clone().or_else(|| std::env::var("ONLY").ok()).filter(|f| !f.is_empty());
+    let env = |k: &str| std::env::var_os(k);
+    let cargo = env("CARGO").unwrap_or_else(|| "cargo".into());
+    run_in(&Space { root: crate::root(), crates: CRATES, lists: LISTS, cargo }, &a, env("ONLY"))
+}
+
+pub struct Space {
+    pub root: PathBuf,
+    pub crates: &'static [&'static str],
+    pub lists: &'static [List],
+    pub cargo: OsString,
+}
+
+fn chosen(suite: Suite, krate: &str) -> bool {
+    match suite {
+        Suite::All => true,
+        Suite::Zigbee => krate == "zigbee",
+        Suite::Ble => krate == "ble",
+    }
+}
+
+pub fn run_in(sp: &Space, a: &Args, only: Option<OsString>) -> Result<()> {
+    let filter = a.filter.clone().or_else(|| only.map(|o| o.to_string_lossy().into_owned())).filter(|f| !f.is_empty());
     let words: Vec<&str> = filter.as_deref().map(|f| f.split('|').collect()).unwrap_or_default();
-    let chosen = |m: &Mutation| words.is_empty() || words.iter().any(|w| m.name.contains(w));
-    let lists: Vec<(&List, Vec<&Mutation>)> = LISTS
+    let picked = |m: &Mutation| words.is_empty() || words.iter().any(|w| m.name.contains(w));
+    let lists: Vec<(&List, Vec<&Mutation>)> = sp
+        .lists
         .iter()
-        .filter(|l| match a.suite {
-            Suite::All => true,
-            Suite::Zigbee => l.krate == "zigbee",
-            Suite::Ble => l.krate == "ble",
-        })
-        .map(|l| (l, l.mutations.iter().filter(|m| chosen(m)).collect()))
+        .filter(|l| chosen(a.suite, l.krate))
+        .map(|l| (l, l.mutations.iter().filter(|m| picked(m)).collect()))
         .collect();
 
     if a.list {
@@ -86,15 +105,12 @@ pub fn run(a: Args) -> Result<()> {
     }
 
     let jobs = a.jobs.max(1);
-    let scratch = crate::root().join("target").join("mutants");
+    let scratch = sp.root.join("target").join("mutants");
     let timeout = (a.timeout > 0).then(|| Duration::from_secs(a.timeout));
     let mut ok = true;
-    for (l, ms) in &lists {
-        if ms.is_empty() {
-            continue;
-        }
+    for (l, ms) in lists.iter().filter(|(_, ms)| !ms.is_empty()) {
         let started = Instant::now();
-        let r = run_list(l.krate, ms, &scratch, jobs, a.fail_fast, timeout)?;
+        let r = run_list(sp, l.krate, ms, &scratch, jobs, a.fail_fast, timeout)?;
         println!(
             "{}: {} mutations run: {} caught, {} missed, {} stale ({:.0} s)",
             l.krate,
@@ -116,7 +132,7 @@ pub fn run(a: Args) -> Result<()> {
         }
     }
     if !ok {
-        std::process::exit(1);
+        bail!("mutations missed or stale");
     }
     Ok(())
 }
@@ -135,6 +151,7 @@ enum Verdict {
 }
 
 fn run_list(
+    sp: &Space,
     krate: &str,
     ms: &[&'static Mutation],
     scratch: &Path,
@@ -153,14 +170,14 @@ fn run_list(
                 s.spawn(move || -> Result<()> {
                     let dir = scratch.join(format!("w{w}"));
                     let ws = dir.join("ws");
-                    mirror_workspace(&ws).with_context(|| format!("mirroring the workspace to {}", ws.display()))?;
+                    mirror_workspace(sp, &ws).with_context(|| format!("mirroring the workspace to {}", ws.display()))?;
                     loop {
                         if stop.load(Ordering::SeqCst) {
                             return Ok(());
                         }
                         let i = next.fetch_add(1, Ordering::SeqCst);
                         let Some(m) = ms.get(i) else { return Ok(()) };
-                        let v = run_one(krate, m, &ws, &dir, timeout)?;
+                        let v = run_one(&sp.cargo, krate, m, &ws, &dir, timeout)?;
                         let line = match &v {
                             Verdict::Caught(why) => format!("caught  {}: {why}", m.name),
                             Verdict::Missed => format!("MISSED  {}", m.name),
@@ -205,7 +222,7 @@ fn run_list(
     Ok(r)
 }
 
-fn run_one(krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Duration>) -> Result<Verdict> {
+fn run_one(cargo: &OsStr, krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Duration>) -> Result<Verdict> {
     let file = ws.join("crates").join(krate).join("src").join(m.file);
     let Ok(source) = fs::read_to_string(&file) else {
         return Ok(Verdict::Stale(format!("STALE   {}: no file {}", m.name, m.file)));
@@ -215,17 +232,20 @@ fn run_one(krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Dur
         return Ok(Verdict::Stale(format!("STALE   {}: the text occurs {n} times in {}", m.name, m.file)));
     }
     write_whole(&file, source.replacen(m.old, m.new, 1).as_bytes())?;
-    let result = cargo_test(krate, ws, dir, timeout);
+    let result = cargo_test(cargo, krate, ws, dir, timeout);
     write_whole(&file, source.as_bytes()).with_context(|| format!("restoring {}", file.display()))?;
     let (out, success, timed_out) = result?;
+    Ok(verdict(m.name, &out, success, timed_out))
+}
 
+fn verdict(name: &str, out: &str, success: bool, timed_out: bool) -> Verdict {
     let failed: Vec<&str> = out
         .lines()
         .filter(|l| l.starts_with("test ") && l.trim_end().ends_with("FAILED"))
         .filter_map(|l| l.split_whitespace().nth(1))
         .collect();
-    Ok(if out.contains("error[") || out.contains("could not compile") {
-        Verdict::Stale(format!("BROKEN  {}: does not compile", m.name))
+    if out.contains("error[") || out.contains("could not compile") {
+        Verdict::Stale(format!("BROKEN  {name}: does not compile"))
     } else if let Some(first) = failed.first() {
         Verdict::Caught(format!("{} test(s), e.g. {first}", failed.len()))
     } else if timed_out {
@@ -234,12 +254,12 @@ fn run_one(krate: &str, m: &Mutation, ws: &Path, dir: &Path, timeout: Option<Dur
         Verdict::Caught("a test process failed without a test result".into())
     } else {
         Verdict::Missed
-    })
+    }
 }
 
-fn cargo_test(krate: &str, ws: &Path, dir: &Path, timeout: Option<Duration>) -> Result<(String, bool, bool)> {
+fn cargo_test(cargo: &OsStr, krate: &str, ws: &Path, dir: &Path, timeout: Option<Duration>) -> Result<(String, bool, bool)> {
     let (out_path, err_path) = (dir.join("stdout.txt"), dir.join("stderr.txt"));
-    let mut child = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+    let mut child = Command::new(cargo)
         .args(["test", "-p", krate])
         .current_dir(ws)
         .env("CARGO_TARGET_DIR", dir.join("target"))
@@ -267,20 +287,15 @@ fn cargo_test(krate: &str, ws: &Path, dir: &Path, timeout: Option<Duration>) -> 
 }
 
 fn kill_tree(pid: u32) {
-    if let Ok(o) = Command::new("pgrep").args(["-P", &pid.to_string()]).output() {
-        for child in String::from_utf8_lossy(&o.stdout).split_whitespace() {
-            if let Ok(c) = child.parse() {
-                kill_tree(c);
-            }
-        }
-    }
+    let children = Command::new("pgrep").args(["-P", &pid.to_string()]).output().map(|o| o.stdout).unwrap_or_default();
+    String::from_utf8_lossy(&children).split_whitespace().filter_map(|c| c.parse().ok()).for_each(kill_tree);
     let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
 }
 
-fn mirror_workspace(ws: &Path) -> Result<()> {
-    let root = crate::root();
+fn mirror_workspace(sp: &Space, ws: &Path) -> Result<()> {
+    let root = &sp.root;
     fs::create_dir_all(ws)?;
-    let members: Vec<String> = CRATES.iter().map(|c| format!("\"{c}\"")).collect();
+    let members: Vec<String> = sp.crates.iter().map(|c| format!("\"{c}\"")).collect();
     let manifest = format!(
         "# Scratch copy for `cargo xtask mutants`; rewritten on every run.\n\
          [workspace]\nresolver = \"2\"\nmembers = [{}]\n",
@@ -293,7 +308,7 @@ fn mirror_workspace(ws: &Path) -> Result<()> {
             put(&ws.join(f), &fs::read(&src)?)?;
         }
     }
-    for c in CRATES {
+    for c in sp.crates {
         mirror_dir(&root.join(c), &ws.join(c))?;
     }
     Ok(())
@@ -340,9 +355,7 @@ fn put(path: &Path, data: &[u8]) -> Result<()> {
     if fs::read(path).ok().as_deref() == Some(data) {
         return Ok(());
     }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
+    path.parent().map(fs::create_dir_all).transpose()?;
     write_whole(path, data)
 }
 
@@ -356,3 +369,6 @@ fn write_whole(path: &Path, data: &[u8]) -> Result<()> {
     }
     r.with_context(|| format!("writing {}", path.display()))
 }
+
+#[cfg(test)]
+mod tests;
