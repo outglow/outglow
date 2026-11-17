@@ -164,7 +164,8 @@ pub(crate) struct Queued {
 const DEFAULT_WINDOW_S: u32 = 180;
 const DUPLICATE_MS: u32 = 2_000;
 const ENTRY_VERSION: u8 = 2;
-const ENTRY_MAX: usize = 38 + 10 * SINKS + 4 * SINK_GROUPS;
+const ENTRY_MAX: usize = 66;
+const _: () = assert!(ENTRY_MAX == 38 + 10 * SINKS + 4 * SINK_GROUPS, "the largest proxy entry stored");
 const KEYS_VERSION: u8 = 1;
 
 const MODE_FULL_UNICAST: u8 = 0;
