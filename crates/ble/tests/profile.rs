@@ -996,3 +996,16 @@ fn the_scan_response_shows_the_mesh_address_the_light_and_a_colour_in_hue_and_sa
     assert_eq!(rsp[8 + 13..8 + 24], [0x21, 0x03, 1, 90, 0xff, 84, 200, 0xff, 0x04, 0x3f, 0x20]);
     assert_eq!(rsp[8 + 4..8 + 6], 0x2096u16.to_le_bytes());
 }
+
+#[test]
+fn read_by_type_stops_at_the_first_value_of_another_length() {
+    let mut rig = connected(DIMMABLE);
+    assert_eq!(rig.att(&[0x08, 0x0e, 0x00, 0x20, 0x00, 0x03, 0x28]), [0x09, 7, 0x0e, 0x00, 0x02, 0x0f, 0x00, 0x27, 0x2a]);
+    let rsp = rig.att(&[0x08, 0x11, 0x00, 0x20, 0x00, 0x03, 0x28]);
+    assert_eq!(rsp[..4], [0x09, 21, 0x11, 0x00], "one 128-bit declaration fills the default MTU");
+    assert_eq!(rsp.len(), 2 + 21);
+    assert_eq!(rig.att(&[0x02, 64, 0]), [0x03, 64, 0]);
+    let rsp = rig.att(&[0x08, 0x11, 0x00, 0x20, 0x00, 0x03, 0x28]);
+    assert_eq!((rsp[1], rsp.len()), (21, 2 + 2 * 21), "two in 64 octets, all of one length");
+    assert_eq!(rsp[2 + 21..2 + 23], [0x14, 0x00]);
+}
