@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use model::{Channel, Crossing, Rng};
 use crate::sim::*;
+use zigbee::hal::NvItem;
 use zigbee::mac;
 use zigbee::stack::Identity;
 use zigbee::stack::{SENSE_DEFAULT_OFF_S, SENSE_DEFAULT_S, SENSE_ON_RATE};
@@ -629,4 +630,37 @@ fn occupancy_reports_can_be_configured() {
     let n1 = net.coord.zcl_rx.len();
     net.run(4000);
     assert!(reports(&net, sa, OCC, 0, n1).iter().filter(|v| **v == 1).count() >= 2, "both reports of the change");
+}
+
+#[test]
+fn a_configuration_stored_by_the_previous_version_is_read_with_the_automatic_calibration_on() {
+    let (mut net, _, n, [sa, _]) = two();
+    past_holdoff(&mut net);
+    net.run(30_000);
+    assert_eq!(write(&mut net, sa, OCC, 0x0010, T_U16, &[9, 0]), 0);
+    assert_eq!(write(&mut net, sa, SENSE, 0x0000, T_U8, &[55]), 0);
+    assert_eq!(write(&mut net, sa, SENSE, 0x0006, T_U8, &[0]), 0);
+    let lines = read(&mut net, sa, SENSE, 0x0005).unwrap();
+    assert!(!lines.is_empty(), "a line to the other bulb");
+    let id = net.nodes[n[0]].id;
+    let v3 = net.air.borrow().ports[id].nv[&(NvItem::Sense as u8)].clone();
+    assert_eq!((v3[0], v3[6]), (3, 0));
+    let mut v2 = v3.clone();
+    v2.remove(6);
+    v2[0] = 2;
+    net.air.borrow_mut().ports[id].nv.insert(NvItem::Sense as u8, v2);
+    net.power_cycle(n[0]);
+    net.run(1000);
+    assert_eq!(read(&mut net, sa, OCC, 0x0010), Some(vec![9, 0]));
+    assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![55]));
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![SENSE_ON_RATE]));
+    assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![1]));
+    assert_eq!(read(&mut net, sa, SENSE, 0x0005), Some(lines.clone()), "the lines come back");
+    let mut short = v3.clone();
+    short.pop();
+    net.air.borrow_mut().ports[id].nv.insert(NvItem::Sense as u8, short);
+    net.power_cycle(n[0]);
+    net.run(1000);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "a record of the wrong length is not read");
+    assert_eq!(write(&mut net, sa, SENSE, 0x0077, T_U8, &[1]), 0x86);
 }

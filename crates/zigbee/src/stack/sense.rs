@@ -4,7 +4,7 @@ use sense::{Core, LINES, NO_SRC};
 use super::aps::{ENDPOINT, PROFILE_HA};
 use super::{Stack, State};
 use crate::hal::{Hal, NvItem, TxStatus};
-use crate::util::{due, Long, Reader};
+use crate::util::{due, Long};
 
 pub(crate) const OCCUPANCY: u16 = 0x0406;
 pub(crate) const SENSE: u16 = 0xFC5E;
@@ -42,6 +42,8 @@ pub const HEARTBEAT_MS: u32 = 30 * 60 * 1000;
 const NV_VERSION: u8 = 3;
 const NV_HEAD: usize = 7;
 const NV_LEN: usize = NV_HEAD + 6 * LINES;
+const NV_HEAD_2: usize = 6;
+const NV_LEN_2: usize = NV_HEAD_2 + 6 * LINES;
 
 const OCC_ATTRS: [(u16, u8, bool); 5] = [
     (A_OCCUPANCY, T_BITMAP8, false),
@@ -64,10 +66,10 @@ const SENSE_ATTRS: [(u16, u8, bool); 10] = [
 ];
 
 pub(crate) fn attributes(cluster: u16) -> &'static [(u16, u8, bool)] {
-    match cluster {
-        OCCUPANCY => &OCC_ATTRS,
-        SENSE => &SENSE_ATTRS,
-        _ => &[],
+    if cluster == OCCUPANCY {
+        &OCC_ATTRS
+    } else {
+        &SENSE_ATTRS
     }
 }
 
@@ -147,26 +149,19 @@ impl<H: Hal> Stack<H> {
 
     fn sense_load_record(&mut self, now: u32) {
         let mut raw = [0u8; NV_LEN];
-        let (len, head) = match self.hal.nv_load(NvItem::Sense, &mut raw) {
-            Some(n) if n == NV_LEN && raw[0] == NV_VERSION => (n, NV_HEAD),
-            Some(n) if n == NV_LEN - 1 && raw[0] == 2 => (n, NV_HEAD - 1),
+        let head = match self.hal.nv_load(NvItem::Sense, &mut raw) {
+            Some(NV_LEN) if raw[0] == NV_VERSION => NV_HEAD,
+            Some(NV_LEN_2) if raw[0] == 2 => NV_HEAD_2,
             _ => return,
         };
-        let mut r = Reader::new(&raw[1..len]);
-        let (Some(s), Some(rate), Some(off), Some(tune)) = (r.u8(), r.u8(), r.u16(), r.u8()) else {
-            return;
-        };
-        let auto = if head == NV_HEAD { r.u8() } else { Some(1) };
-        self.sense.core.cfg(s.min(100), off.max(1));
-        self.sense.core.selftune = tune != 0;
-        self.sense.core.auto_cal = auto != Some(0);
-        self.sense.rate = rate.min(MAX_RATE);
-        for _ in 0..LINES {
-            let (Some(src), Some(s), Some(anchor_s), Some(anchor_noise)) = (r.u16(), r.u8(), r.u8(), r.u16()) else {
-                break;
-            };
+        self.sense.core.cfg(raw[1].min(100), u16::from_le_bytes([raw[3], raw[4]]).max(1));
+        self.sense.core.selftune = raw[5] != 0;
+        self.sense.core.auto_cal = head == NV_HEAD_2 || raw[6] != 0;
+        self.sense.rate = raw[2].min(MAX_RATE);
+        for l in raw[head..].chunks_exact(6) {
+            let src = u16::from_le_bytes([l[0], l[1]]);
             if src != NO_SRC {
-                self.sense.core.line_restore(now, src, s, anchor_s, anchor_noise);
+                self.sense.core.line_restore(now, src, l[2], l[3], u16::from_le_bytes([l[4], l[5]]));
             }
         }
         self.sense.core.dirty = false;
@@ -355,8 +350,7 @@ impl<H: Hal> Stack<H> {
             }
             (SENSE, A_ZONE) => out.u8((reported != 0) as u8),
             (SENSE, A_LINE_STATE) => out.u16(reported),
-            (SENSE, REVISION) => out.u16(1),
-            _ => {}
+            _ => out.u16(1),
         }
     }
 
@@ -377,8 +371,7 @@ impl<H: Hal> Stack<H> {
             (SENSE, A_RATE) => v <= MAX_RATE as u32,
             (SENSE, A_SELF_TUNE) => v <= 1,
             (SENSE, A_AUTO_CAL) => v <= 1,
-            (SENSE, A_CALIBRATE) => v == 0 || self.sense.rate != 0,
-            _ => true,
+            _ => v == 0 || self.sense.rate != 0,
         };
         if valid {
             0x00
@@ -411,11 +404,10 @@ impl<H: Hal> Stack<H> {
                 }
             }
             (SENSE, A_SELF_TUNE) => c.selftune = v != 0,
-            (SENSE, A_CALIBRATE) => {
+            _ => {
                 c.cal_start(now, v as u16);
                 return;
             }
-            _ => return,
         }
         self.sense_store();
     }
