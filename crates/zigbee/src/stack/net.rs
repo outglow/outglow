@@ -176,19 +176,17 @@ impl<H: Hal> Stack<H> {
                 k |= kind::ID_COMMAND;
                 id = c as u16;
             }
-        } else if h.frame_type == nwk::FRAME_DATA {
-            if let Some(&fc) = payload.first() {
-                let at = match (fc & 3, (fc >> 2) & 3) {
-                    (0, 0) | (0, 2) => Some((2, kind::ID_CLUSTER)),
-                    (0, 3) => Some((3, kind::ID_CLUSTER)),
-                    (2, _) if fc & 0x10 == 0 => Some((2, kind::ID_APS_ACK)),
-                    _ => None,
-                };
-                if let Some((at, what)) = at {
-                    if let (Some(&lo), Some(&hi)) = (payload.get(at), payload.get(at + 1)) {
-                        k |= what;
-                        id = u16::from_le_bytes([lo, hi]);
-                    }
+        } else if let Some(&fc) = payload.first() {
+            let at = match (fc & 3, (fc >> 2) & 3) {
+                (0, 0) | (0, 2) => Some((2, kind::ID_CLUSTER)),
+                (0, 3) => Some((3, kind::ID_CLUSTER)),
+                (2, _) if fc & 0x10 == 0 => Some((2, kind::ID_APS_ACK)),
+                _ => None,
+            };
+            if let Some((at, what)) = at {
+                if let (Some(&lo), Some(&hi)) = (payload.get(at), payload.get(at + 1)) {
+                    k |= what;
+                    id = u16::from_le_bytes([lo, hi]);
                 }
             }
         }

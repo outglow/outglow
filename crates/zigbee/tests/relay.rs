@@ -153,3 +153,38 @@ fn a_source_routed_frame_whose_index_points_at_another_relay_is_dropped() {
     net.run(200);
     assert!(net.sent_by(net.nodes[n].id, t).iter().all(|f| f[5..7] != [0x44, 0x44]));
 }
+
+#[test]
+fn a_many_to_one_failure_status_another_router_does_not_take_or_with_no_other_router_is_dropped() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let port = net.nodes[n].id;
+    let far = far_router(&mut net, n, 0x4444);
+    net.lossy(port, far.id, 100);
+    let t = net.now();
+    status_via(&mut net, me, 0x7777, nwk::STATUS_MANY_TO_ONE_FAILURE);
+    assert!(net.sent_by(port, t).iter().any(|f| f[5..7] == [0x44, 0x44]), "tried the other router");
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let port = net.nodes[n].id;
+    let t = net.now();
+    status_via(&mut net, me, 0x7777, nwk::STATUS_MANY_TO_ONE_FAILURE);
+    assert!(net.sent_by(port, t).iter().all(|f| f[5..7] == [0xFF, 0xFF] || f[5..7] == [0x00, 0x00] && f[0] & 7 != 1), "no other router: dropped");
+}
+
+#[test]
+fn a_frame_without_a_payload_is_passed_on_as_it_is() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let port = net.nodes[n].id;
+    let _far = far_router(&mut net, n, 0x4444);
+    let t = net.now();
+    let mut h = net.coord.header(nwk::FRAME_DATA, 0x4444, 5);
+    h.discover = 0;
+    net.coord.nwk_send(h, &[], Some(me));
+    net.run(200);
+    assert_eq!(net.sent_by(port, t).iter().filter(|f| f[5..7] == [0x44, 0x44]).count(), 1, "no payload");
+}
