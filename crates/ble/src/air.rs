@@ -292,15 +292,13 @@ impl<H: Hal> Ble<H> {
         if budget < MIN_BUDGET {
             return;
         }
-        let mut end = now.wrapping_add(LISTEN.min(budget - MARGIN));
+        let mut length = LISTEN.min(budget - MARGIN);
         if self.link_connected() && self.hal.tx_idle() {
             for slot in self.air.tx.iter().flatten() {
-                let wait = (slot.due.wrapping_sub(now) as i32).max(0) as u32;
-                if wait < end.wrapping_sub(now) {
-                    end = now.wrapping_add(wait);
-                }
+                length = length.min((slot.due.wrapping_sub(now) as i32).max(0) as u32);
             }
         }
+        let end = now.wrapping_add(length);
         let channel = CHANNELS[self.air.channel % CHANNELS.len()];
         self.air.channel = self.air.channel.wrapping_add(1);
         loop {
