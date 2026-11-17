@@ -1204,3 +1204,30 @@ fn only_data_frames_with_an_application_id_the_proxy_knows_are_forwarded() {
     net.run(100);
     assert_eq!(gp_frames(&net, 0x00).len(), 1);
 }
+
+#[test]
+fn pairings_the_proxy_cannot_serve_and_gp_frames_it_does_not_take_are_ignored() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut full_unicast = Pairing::new(SWITCH, 0);
+    full_unicast.sink = (COORD_EXT, 0x0000);
+    net.coord.gp_pair(&full_unicast);
+    let mut secured_level_one = Pairing::new(0x0000_0202, 3);
+    secured_level_one.security = 1;
+    net.coord.gp_pair(&secured_level_one);
+    net.run(200);
+    let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 0]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap()[..4], [0x11, seq, 0x0B, 0x8B], "no entries");
+    net.coord.zcl_rx.clear();
+    net.coord.gp_unicast(short, 0x1D, 0x0B, &[0x41, 0x11, 0x08, 0]);
+    net.run(100);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short), "manufacturer-specific: dropped");
+    let seq = net.coord.gp_unicast(short, 0x11, 0x0B, &[0x08, 0]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x0B, 0x81], "a client command from a client");
+    let seq = net.coord.gp_unicast(short, 0x19, 0x7E, &[]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x10, seq, 0x0B, 0x7E, 0x81]);
+}
