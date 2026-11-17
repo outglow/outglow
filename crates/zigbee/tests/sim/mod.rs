@@ -615,6 +615,7 @@ pub struct Coord {
     pub ota_file: Option<OtaFile>,
     pub ota_offer_anyway: bool,
     pub ota_drop_blocks: u32,
+    pub ota_block_requests: u32,
     pub ota_queries: u32,
     pub ota_blocks: u32,
     pub ota_end: Option<u8>,
@@ -693,6 +694,7 @@ impl Coord {
             ota_file: None,
             ota_offer_anyway: false,
             ota_drop_blocks: 0,
+            ota_block_requests: 0,
             ota_queries: 0,
             ota_blocks: 0,
             ota_end: None,
@@ -1430,6 +1432,7 @@ impl Coord {
                 }
             }
             0x03 => {
+                self.ota_block_requests += 1;
                 if self.ota_drop_blocks > 0 {
                     self.ota_drop_blocks -= 1;
                     return;

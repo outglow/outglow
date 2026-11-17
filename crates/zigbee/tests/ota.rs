@@ -566,3 +566,43 @@ fn an_image_block_on_another_cluster_is_not_taken() {
     net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
     assert_eq!(net.coord.ota_end, Some(0x00));
 }
+
+#[test]
+fn nothing_is_asked_before_the_first_half_minute_and_then_not_again_for_a_day() {
+    let mut net = Net::new();
+    net.join_node();
+    let image = make_image(500, 1);
+    offer(&mut net, &image, IDENTITY.file_version);
+    net.run(25_000);
+    assert_eq!((net.coord.ota_queries, net.coord.match_requests), (0, 0));
+    net.run(15_000);
+    assert_eq!(net.coord.ota_queries, 1);
+    net.run(120_000);
+    assert_eq!(net.coord.ota_queries, 1, "the next one a day later");
+}
+
+#[test]
+fn a_silent_server_is_asked_for_a_block_nine_times_before_it_is_given_up_on() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(3000, 9);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_notify(short);
+    net.run_until(10_000, "download started", |net| net.coord.ota_blocks > 2);
+    net.coord.ota_drop_blocks = 1000;
+    let before = net.coord.ota_block_requests;
+    net.run_until(120_000, "given up", |net| net.nodes[n].stack.ota_state() == OtaState::Idle);
+    assert_eq!(net.coord.ota_block_requests - before, 9);
+}
+
+#[test]
+fn a_block_response_nobody_asked_for_is_ignored() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = [&MFG.to_le_bytes()[..], &TYPE.to_le_bytes()[..]].concat();
+    block_response(&mut net, short, &[&[0x00][..], &id, &NEW.to_le_bytes(), &0u32.to_le_bytes(), &[2, 0xAA, 0xBB]].concat());
+    net.run(500);
+    assert_eq!((net.nodes[n].stack.ota_state(), net.coord.ota_blocks), (OtaState::Idle, 0));
+}
