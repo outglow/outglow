@@ -278,3 +278,19 @@ fn an_acknowledgement_of_another_transfer_or_block_or_without_the_block_bit_does
     net.run(100);
     assert_eq!(blocks(&net), vec![0x02, 0x01], "and the second once the first is acknowledged");
 }
+
+#[test]
+fn an_encrypted_answer_is_fragmented_from_sixty_four_bytes_on() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    for (attrs, kinds) in [(20u16, vec![0x22u8, 0x20]), (21, vec![0x22, 0xE0, 0xE0])] {
+        let request: Vec<u8> = (0..attrs).flat_map(|i| (0x1000 + i).to_le_bytes()).collect();
+        let t = net.now();
+        let seq = net.coord.zcl_encrypted(short, BASIC, 0x00, 0x00, &request);
+        net.run(1_000);
+        let rsp = net.coord.last_zcl(short, BASIC, 0x01).unwrap();
+        assert_eq!((rsp[1], rsp.len()), (seq, 3 + 3 * attrs as usize));
+        assert_eq!(aps_sent(&net, n, t).iter().map(|a| a[0]).collect::<Vec<u8>>(), kinds, "{} bytes", rsp.len());
+    }
+}
