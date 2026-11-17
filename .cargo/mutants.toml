@@ -1,0 +1,27 @@
+# cargo mutants (https://mutants.rs): what to mutate and how to test it.
+# README, "Coverage and mutation testing".
+#
+# Each mutant is tested with the tests of the package it is in (cargo-mutants'
+# default), like the hand-written lists of `cargo xtask mutants`. bulb-core is
+# the exception, given on the command line (CI: .github/mutants-diff.sh and
+# workflow mutants.yml): its behaviour is tested in bulb-sim, the simulated
+# bulb, so its mutants run with `-p bulb-core --test-package bulb-core,bulb-sim
+# --timeout 120` (`test_package` here would apply to every package; the timeout,
+# because cargo-mutants sets it from the unmutated run of bulb-core's own tests).
+
+exclude_globs = [
+  # the simulated bulb the tests of bulb-core run on: a test double
+  "crates/bulb-sim/**",
+  # the hand-written mutation lists of `cargo xtask mutants`: data
+  "xtask/src/mutants/**",
+]
+
+exclude_re = [
+  # text for people: error messages, serde's "expecting ..."
+  "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
+  "::expecting -> ",
+]
+
+# the timeout of a test run is 5x that of the unmutated tree, at least this:
+# under a full machine (--jobs, CI's runners) the slower suites vary a lot
+minimum_test_timeout = 60
