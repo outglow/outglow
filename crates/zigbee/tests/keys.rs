@@ -149,3 +149,31 @@ fn a_trust_center_link_key_outside_the_exchange_starts_no_verification() {
     let commands = net.nwk_sent_by(net.nodes[n].id, t).into_iter().filter(|(_, h, p)| h.dst == 0 && h.frame_type == nwk::FRAME_DATA && p[0] & 3 == 1).count();
     assert_eq!(commands, 0, "no Verify-Key");
 }
+
+fn nwk_fc_failures(net: &mut Net, short: u16) -> u16 {
+    let seq = net.coord.zcl(short, 0x0B05, 0x00, 0x00, &0x0112u16.to_le_bytes());
+    net.run(60);
+    let rsp = net.coord.last_zcl(short, 0x0B05, 0x01).unwrap();
+    assert_eq!(rsp[1], seq);
+    u16::from_le_bytes([rsp[7], rsp[8]])
+}
+
+#[test]
+fn a_new_network_key_does_not_forget_the_frame_counters_heard_under_the_current_one() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut z = Zed::router(&net.air, 0x2B02, short);
+    net.link(0, z.id, 0);
+    z.link_status(&[(short, 1)]);
+    net.run(50);
+    let first = net.sent_by(z.id, 0).last().unwrap().clone();
+    z.link_status(&[(short, 1)]);
+    net.run(50);
+    net.coord.network_key_update(short, &[0x5A; 16], 1, COORD_EXT);
+    net.run(500);
+    let failures = nwk_fc_failures(&mut net, short);
+    net.air.borrow_mut().transmit(z.id, &first);
+    net.run(50);
+    assert_eq!(nwk_fc_failures(&mut net, short), failures + 1, "the old frame is still a replay");
+}
