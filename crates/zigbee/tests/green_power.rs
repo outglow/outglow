@@ -1275,3 +1275,48 @@ fn a_response_without_a_payload_is_delivered_as_the_bare_command() {
     want.push(0xF1);
     assert_eq!(&timed[0].3[7..], &want[..]);
 }
+
+fn proxy_entries(net: &mut Net, short: u16) -> (u8, Vec<u8>) {
+    let seq = net.coord.gp_unicast(short, 0x19, 0x0B, &[0x08, 0]);
+    net.run(100);
+    let r = net.coord.last_zcl(short, GP, 0x0B).unwrap();
+    assert_eq!(r[1], seq);
+    (r[3], r[4..].to_vec())
+}
+
+#[test]
+fn a_derived_group_pairing_is_removed_and_a_group_paired_twice_keeps_one_entry_with_the_new_alias() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 1));
+    net.run(100);
+    assert_eq!(proxy_entries(&mut net, short).0, 0x00);
+    let mut remove = Pairing::new(SWITCH, 1);
+    remove.add_sink = false;
+    net.coord.gp_pair(&remove);
+    net.run(100);
+    assert_eq!(proxy_entries(&mut net, short).0, 0x8B, "gone with its only destination");
+    for alias in [0x1111u16, 0x2222] {
+        let mut p = Pairing::new(SWITCH, 2);
+        p.group = 0x4321;
+        p.alias = Some(alias);
+        net.coord.gp_pair(&p);
+        net.run(100);
+    }
+    let (status, entries) = proxy_entries(&mut net, short);
+    assert_eq!((status, entries[0], entries[2]), (0x00, 1, 1));
+    assert!(entries.windows(4).any(|w| w == [0x21, 0x43, 0x22, 0x22]), "{entries:02x?}");
+    assert!(!entries.windows(2).any(|w| w == [0x11, 0x11]));
+}
+
+#[test]
+fn a_pairing_that_gives_the_device_the_bulbs_own_address_as_alias_makes_the_bulb_move() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut p = Pairing::new(SWITCH, 1);
+    p.alias = Some(short);
+    net.coord.gp_pair(&p);
+    net.run_until(20_000, "a new address", |net| net.nodes[n].stack.short_address() != short);
+}
