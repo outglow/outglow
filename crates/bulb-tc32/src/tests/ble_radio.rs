@@ -1663,3 +1663,9 @@ pub(crate) fn scan_response() -> Vec<u8> {
 pub(crate) fn adv_events() -> u32 {
     counter(ADV_EVENTS)
 }
+
+pub(crate) fn set_lent(lends: u32, ms: u32, max_us: u32) {
+    LENDS.set(lends);
+    LENT_MS.set(ms);
+    LENT_MAX_US.set(max_us);
+}

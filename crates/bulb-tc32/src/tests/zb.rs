@@ -121,7 +121,8 @@ fn the_nv_items_are_stored_in_flash() {
     hal.nv_erase();
     assert_eq!(Tc32Hal::new().nv_load(NvItem::Network, &mut buf), None);
     let c = hal.counters();
-    assert_eq!((c.stack_free, c.irq_stack_free), (0, 0));
+    assert_eq!((c.stack_free, c.irq_stack_free), crate::stack::free());
+    assert_ne!(crate::stack::free(), (0, 0));
     assert_eq!(hal.reset_cause(), crate::board::reset_cause());
 }
 
@@ -351,14 +352,21 @@ fn the_counters_gather_the_radio_flash_and_ble_figures() {
     let _s = sim::session();
     let mut hal = Tc32Hal::new();
     LOOP_MAX_US.set(77);
+    crate::radio::tests::set_counters(11, 12, 13, 4);
+    flash::ERASES.set(21);
+    flash::STORES.set(22);
+    flash::ERASE_MAX_US.set(23);
+    #[cfg(feature = "ble")]
+    crate::ble_radio::tests::set_lent(31, 32, 33);
     let c = hal.counters();
-    let (busy, full, peak, _) = radio::counters();
-    assert_eq!((c.cca_busy, c.rx_queue_full, c.rx_queue_peak), (busy, full, peak as u32));
-    assert_eq!((c.flash_erases, c.flash_stores, c.flash_busy_max_us, c.loop_max_us), (flash::ERASES.get(), flash::STORES.get(), flash::ERASE_MAX_US.get(), 77));
+    assert_eq!((c.cca_busy, c.rx_queue_full, c.rx_queue_peak), (11, 12, 13));
+    assert_eq!(hal.tx_attempts(), 4);
+    assert_eq!((c.flash_erases, c.flash_stores, c.flash_busy_max_us, c.loop_max_us), (21, 22, 23, 77));
     #[cfg(feature = "ble")]
     {
         let (l, m) = crate::ble_radio::lent();
         assert_eq!((c.ble_lends, c.ble_ms, c.ble_lend_max_us), (l, m, crate::ble_radio::lent_max_us()));
+        assert_eq!((l, m, crate::ble_radio::lent_max_us()), (31, 32, 33));
         BLE_STATS.set(ble::Stats { adv_events: 1, connections: 2, events: 3, events_heard: 4, events_skipped: 5, disconnects: 6, links_lost: 7 });
         let c = hal.counters();
         assert_eq!((c.ble_connections, c.ble_disconnects, c.ble_links_lost, c.ble_events, c.ble_events_skipped), (2, 6, 7, 3, 5));

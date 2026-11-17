@@ -1353,3 +1353,10 @@ fn the_trace_of_a_transmission_counts_its_attempts_and_the_busy_clear_channel_ch
 pub fn filter() -> (u16, u16, u64) {
     (crate::radio::PAN.get(), crate::radio::SHORT.get(), u64::from_le_bytes(crate::radio::EXT.get()))
 }
+
+pub fn set_counters(busy: u32, dropped: u32, peak: u8, sent: u8) {
+    crate::radio::CCA_BUSY.set(busy);
+    crate::radio::RADIO_DROPPED.set(dropped);
+    crate::radio::RX_PEAK.set(peak);
+    crate::radio::TX_SENT.set(sent);
+}
