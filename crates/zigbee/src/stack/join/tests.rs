@@ -309,3 +309,35 @@ fn association_answers_requests_and_polls_count_only_in_the_state_they_belong_to
         assert!(s.hal.sent.is_empty(), "{state:?}");
     }
 }
+
+#[test]
+fn a_network_up_without_a_trust_center_opens_after_a_join_only() {
+    for (steering, after) in [(super::STEERING_JOINING, super::STEERING_OPEN_DUE), (0, 0)] {
+        let mut s = stack();
+        s.nib.tc_ext = crate::stack::NO_TRUST_CENTER;
+        s.steering = steering;
+        s.network_up(1_000);
+        assert_eq!(s.steering, after, "{steering}");
+    }
+}
+
+#[test]
+fn an_association_through_a_router_makes_it_the_neighbour_and_a_request_for_another_address_is_not_taken() {
+    let mut s = stack();
+    s.state = State::AssocWait;
+    s.nib.parent = 0x1234;
+    let me = s.ext;
+    mac_cmd(&mut s, Addr::Ext(me), 0x1A62, Addr::Ext(0x00124B00_0000_1234), &[mac::CMD_ASSOC_RSP, 0x78, 0x56, 0x00]);
+    assert_eq!((s.neighbors[0].short, s.neighbors[0].used), (0x1234, true));
+    let mut s = stack();
+    s.state = State::Up;
+    s.nib.short = 0x0042;
+    s.nib.pan = 0x1A62;
+    s.allow_children = true;
+    s.permit_until = Some(100_000);
+    mac_cmd(&mut s, Addr::Short(0x0043), 0x1A62, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ, 0x8E]);
+    mac_cmd(&mut s, Addr::Short(0x0042), 0x1B00, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ, 0x8E]);
+    assert!(s.children.iter().all(|c| !c.used));
+    mac_cmd(&mut s, Addr::Short(0x0042), 0x1A62, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ, 0x8E]);
+    assert!(s.children[0].used, "its own address and PAN");
+}
