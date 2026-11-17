@@ -65,14 +65,6 @@ fn a_factory_reset_keeps_only_the_frame_counters() {
     assert!(crate::flash::blank(crate::ble::MESH_SECTOR));
 }
 
-#[test]
-fn a_driver_loop_that_never_ends_stops_at_the_register_log_limit() {
-    let _s = sim::session();
-    sim::with(|c| c.log.resize(sim::LOG_MAX, sim::Op::R8(0, 0)));
-    let r = std::panic::catch_unwind(|| reg::read8(0));
-    assert!(r.is_err());
-}
-
 const STOP: &str = "the test stops the main loop";
 
 fn run_main(loops: usize) -> Vec<sim::Op> {

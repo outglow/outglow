@@ -418,7 +418,8 @@ pub const LOG_MAX: usize = 1_000_000;
 
 fn bounded() {
     if with(|c| c.log.len() >= LOG_MAX) {
-        panic!("more than {LOG_MAX} register accesses in one test: a driver loop that never ends");
+        eprintln!("more than {LOG_MAX} register accesses in one test: a driver loop that never ends");
+        std::process::abort();
     }
 }
 
