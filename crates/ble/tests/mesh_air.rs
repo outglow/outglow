@@ -495,6 +495,7 @@ fn a_bulb_without_a_connection_sends_a_packet_64_times_every_5_ms_or_so() {
     rig.run(1500);
     let e = ether.borrow();
     assert_eq!(e.sent(0).len(), 64 * 4, "64 bursts on the four channels");
+    assert_eq!(rig.ble.borrow().air_stats().bursts, 64);
     let bursts = e.bursts_of(0);
     let gaps: Vec<u64> = bursts.windows(2).map(|w| w[1] - w[0]).collect();
     let usual: Vec<u64> = gaps.iter().copied().filter(|g| *g < 8 * MS).collect();
@@ -589,4 +590,5 @@ fn a_burst_the_radio_refuses_is_tried_every_millisecond_a_hundred_more_times() {
     let gap = tries[pause + 1] - tries[pause];
     assert!((4500 * MS / 1000..5250 * MS / 1000 + MS / 5).contains(&gap), "then the next repeat: {gap} ticks");
     assert!(ether.borrow().sent(0).is_empty());
+    assert_eq!(rig.ble.borrow().air_stats().bursts, 0, "a refused burst is not counted");
 }
