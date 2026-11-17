@@ -48,9 +48,8 @@ fn zigbee_payload() -> Vec<u8> {
 
 #[test]
 fn a_beacon_skips_gts_and_pending_addresses_and_needs_a_short_source_and_the_zigbee_protocol() {
-    let mut payload = vec![0xFF, 0xCF, 0x02, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x7, 0x12];
-    payload.extend_from_slice(&[0x21]);
-    payload.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+    let mut payload = vec![0xFF, 0xCF, 0x02, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x13];
+    payload.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
     payload.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
     payload.extend_from_slice(&zigbee_payload());
     let b = Beacon::parse(&beacon_header(Addr::Short(0x0000)), &payload).unwrap();
@@ -170,4 +169,29 @@ fn pan_id_compression_is_only_for_frames_with_both_addresses() {
     let mut b = Buf::new();
     h.write(&mut b);
     assert_eq!(b.as_slice(), &[0x03, 0x80, 9, 0x62, 0x1A, 0x01, 0x00]);
+}
+
+#[test]
+fn every_flag_of_the_mac_frame_control_is_written_where_the_standard_puts_it() {
+    let h = mac::Header {
+        frame_type: mac::FRAME_DATA,
+        security: true,
+        pending: true,
+        ack_request: true,
+        seq: 0x42,
+        dst_pan: 0x1A62,
+        dst: Addr::Short(0x0001),
+        src_pan: 0x1A62,
+        src: Addr::Short(0x0002),
+    };
+    let mut b = Buf::new();
+    h.write(&mut b);
+    assert_eq!(b.as_slice(), &[0x79, 0x88, 0x42, 0x62, 0x1A, 0x01, 0x00, 0x02, 0x00]);
+    assert_eq!(mac::Header::parse(b.as_slice()), Some((h, 9)));
+    for (flag, byte) in [(0, 0x71u8), (1, 0x69), (2, 0x59)] {
+        let h = mac::Header { security: flag != 0, pending: flag != 1, ack_request: flag != 2, ..h };
+        let mut b = Buf::new();
+        h.write(&mut b);
+        assert_eq!(b.as_slice()[0], byte);
+    }
 }
