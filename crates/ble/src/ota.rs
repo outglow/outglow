@@ -4,7 +4,6 @@ use crate::{reached, Ble};
 
 const SECTOR: u32 = 0x1000;
 const BOOT_MARK: u32 = 8;
-const BLOCK_MAX: usize = crate::att::MTU_MAX - 3 - 4;
 const ERASE_STEP: u32 = 10 * TICKS_PER_MS;
 const RESTART_AFTER: u32 = 1000 * TICKS_PER_MS;
 
@@ -213,7 +212,7 @@ impl<H: Hal> Ble<H> {
             self.ota.fail();
             return;
         }
-        let mut buf = [0u8; BLOCK_MAX];
+        let mut buf = [0u8; crate::att::MTU_MAX];
         let buf = &mut buf[..block.len()];
         buf.copy_from_slice(block);
         let good = self.ota.account(offset, buf);
