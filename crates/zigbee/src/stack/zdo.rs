@@ -602,3 +602,6 @@ impl<H: Hal> Stack<H> {
         self.addr_map.iter().find(|e| e.0 == ext && e.1 != 0xFFFF).map(|e| e.1)
     }
 }
+
+#[cfg(test)]
+mod tests;

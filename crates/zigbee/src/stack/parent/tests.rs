@@ -296,3 +296,72 @@ fn a_refused_rejoin_of_a_sleepy_device_waits_for_its_poll_when_there_is_room() {
     rejoin(&mut s, 0x5000, 0x80, false);
     assert_eq!(s.indirect.iter().filter(|e| e.addr == 0x5000).count(), 1, "an expired one makes room");
 }
+
+fn frame(s: &mut Stack<Scripted>, slot: usize) {
+    let mut f = crate::util::Buf::new();
+    crate::mac::Header {
+        frame_type: crate::mac::FRAME_DATA,
+        security: false,
+        pending: false,
+        ack_request: true,
+        seq: 1,
+        dst_pan: 0x1A62,
+        dst: crate::mac::Addr::Short(0x2000),
+        src_pan: 0x1A62,
+        src: crate::mac::Addr::Short(0x0042),
+    }
+    .write(&mut f);
+    f.u8(0x55);
+    s.indirect[slot].frame = f;
+}
+
+#[test]
+fn a_poll_takes_a_frame_kept_for_the_childs_extended_address_and_one_without_a_source_takes_nothing() {
+    let mut s = up_parent();
+    child(&mut s, 0, 0x2000, 0, 7_500);
+    s.children[0].ext = EXT;
+    put(&mut s, 0, 0x2000, 50_000);
+    s.indirect[0].ext = true;
+    s.indirect[0].addr = EXT;
+    frame(&mut s, 0);
+    s.on_data_request(crate::mac::Addr::None);
+    assert!(s.hal.sent.is_empty());
+    s.on_data_request(crate::mac::Addr::Short(0x2000));
+    assert_eq!(s.hal.sent.len(), 1);
+    assert!(!s.indirect[0].used);
+}
+
+#[test]
+fn an_association_response_delivered_after_its_child_is_gone_tells_the_trust_center_nothing() {
+    let mut s = up_parent();
+    put(&mut s, 0, 0, 50_000);
+    s.indirect[0].ext = true;
+    s.indirect[0].addr = EXT;
+    s.indirect[0].association = true;
+    frame(&mut s, 0);
+    s.on_data_request(crate::mac::Addr::Ext(EXT));
+    assert_eq!(s.hal.sent.len(), 1, "the response, no update device");
+}
+
+#[test]
+fn a_timeout_request_out_of_range_from_a_device_that_is_no_child_is_refused_to_its_extended_address() {
+    let mut s = up_parent();
+    let mut h = crate::nwk::Header::new(crate::nwk::FRAME_CMD, 0x0042, 0x2000, 1, 1);
+    h.src_ext = Some(EXT);
+    s.on_timeout_request(&h, &[crate::nwk::CMD_TIMEOUT_REQUEST, 15, 0]);
+    assert_eq!(s.hal.sent.len(), 1);
+    let f = &s.hal.sent[0];
+    let (nh, _) = crate::nwk::Header::parse(&f[9..]).unwrap();
+    assert_eq!(nh.dst_ext, Some(EXT));
+}
+
+#[test]
+fn a_broadcast_too_long_to_keep_for_sleeping_children_is_not_kept() {
+    let mut s = up_parent();
+    child(&mut s, 0, 0x2000, 0, 7_500);
+    let h = crate::nwk::Header::new(crate::nwk::FRAME_DATA, 0xFFFF, 0x0000, 5, 1);
+    s.broadcast_to_sleepy(&h, &[0; 120]);
+    assert!(s.indirect.iter().all(|e| !e.used));
+    s.broadcast_to_sleepy(&h, &[0; 10]);
+    assert!(s.indirect.iter().any(|e| e.used && e.broadcast));
+}

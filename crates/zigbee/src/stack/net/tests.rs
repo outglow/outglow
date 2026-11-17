@@ -1058,3 +1058,41 @@ fn a_link_status_from_a_device_that_is_no_neighbour_or_without_options_is_ignore
     s.on_link_status(0x1000, &[nwk::CMD_LINK_STATUS]);
     assert_eq!(s.neighbors[0].age, 2);
 }
+
+#[test]
+fn unsecured_aps_data_while_waiting_for_the_key_is_not_taken() {
+    let read_basic = [0x00, 0x01, 0x00, 0x00, 0x04, 0x01, 0x01, 0x05, 0x00, 0x07, 0x00, 0x05, 0x00];
+    let mut s = relaying();
+    s.state = State::WaitKey;
+    let mut h = nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x1000, 5, 9);
+    h.security = false;
+    let mut f = crate::util::Buf::new();
+    h.write(&mut f);
+    f.bytes(&read_basic);
+    s.on_nwk(0x1000, f.as_slice(), 200);
+    assert!(s.hal.sent.is_empty());
+}
+
+#[test]
+fn frames_of_other_types_or_without_a_payload_are_sent_as_they_are() {
+    let mut s = relaying();
+    for (frame_type, payload) in [(nwk::FRAME_DATA, &[][..]), (nwk::FRAME_CMD, &[][..]), (2, &[0x01][..]), (nwk::FRAME_DATA, &[0x00, 0x01][..])] {
+        let h = nwk::Header::new(frame_type, 0x1001, 0x0042, 5, 1);
+        assert_eq!(s.transmit_nwk(0x1001, &h, payload), crate::hal::TxStatus::Ok);
+    }
+    assert_eq!(s.hal.sent.len(), 4);
+}
+
+#[test]
+fn the_bulbs_own_route_request_heard_back_is_ignored_and_a_cheaper_copy_of_one_heard_is_passed_on() {
+    let mut s = relaying();
+    let mine = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x0042, 5, 2);
+    s.on_route_request(&mine, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3], 1_000);
+    assert!(s.discoveries.iter().all(|d| !d.used));
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x2000, 5, 2);
+    s.on_route_request(&h, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 9], 1_000);
+    s.on_route_request(&h, 0x1001, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 1], 1_000);
+    assert_eq!((s.discoveries[0].sender, s.discoveries[0].forward_cost), (0x1001, 1 + s.neighbors[1].link_cost()));
+    assert!(!s.discoveries[1].used, "the same discovery");
+    assert_eq!(s.bcast.iter().filter(|e| e.used).count(), 1);
+}
