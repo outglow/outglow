@@ -22,6 +22,10 @@ exclude_re = [
   # text for people: error messages, serde's "expecting ..."
   "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
   "::expecting -> ",
+  # equivalent: the operands of these | have no bit in common, so ^ gives the same octet
+  "replace \\| with \\^ in Ble<H>::(set_diag_info|diag_state)$",
+  # equivalent: SHA-256's Ch has disjoint terms and Maj is the same with | in either place
+  "crates/ble/src/sha256\\.rs:(24:32|27:33|27:49): replace \\^ with \\| in compress$",
 ]
 
 # the timeout of a test run is 5x that of the unmutated tree, at least this:
