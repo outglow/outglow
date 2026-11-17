@@ -304,6 +304,7 @@ pub struct World {
     pub listened: Vec<(u64, u64, u8)>,
     pub event_starts: Vec<u64>,
     pub event_ends: Vec<(u64, u64)>,
+    pub anchors: Vec<u64>,
     pub flash_fault: bool,
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
@@ -558,6 +559,7 @@ impl Hal for SimHal {
             c.connected = false;
         }
         w.events.push((ev.channel, true));
+        w.anchors.push(at);
         EventResult { anchor: Some(at as u32) }
     }
 
@@ -767,6 +769,7 @@ impl Rig {
             listened: vec![],
             event_starts: vec![],
             event_ends: vec![],
+            anchors: vec![],
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
         }))

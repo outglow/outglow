@@ -643,3 +643,37 @@ fn an_advertising_event_waits_out_the_bulbs_own_traffic_for_9_ms_at_most_and_thr
         assert!((4 * 300 * MS..4 * 309 * MS + MS).contains(&(w[1] - w[0])), "{} ms between events", (w[1] - w[0]) / MS);
     }
 }
+
+#[test]
+fn the_supervision_timeout_is_over_only_once_it_has_fully_passed() {
+    for (past, lost) in [(0, false), (1, true)] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.central().params.timeout = 100;
+        rig.connect();
+        rig.central().silent = true;
+        let anchor = *rig.world.borrow().anchors.last().unwrap();
+        rig.world.borrow_mut().now = anchor + 1000 * MS + past;
+        rig.ble.borrow_mut().poll();
+        assert_eq!(rig.state() == LinkState::Advertising, lost, "{past} ticks past 1 s");
+    }
+}
+
+#[test]
+fn events_heard_and_connections_are_counted_and_short_control_pdus_are_unknown() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.run(300);
+    let (served, stats) = (rig.central().served, rig.ble.borrow().stats);
+    assert_eq!((stats.connections, stats.events_heard), (1, served));
+    for pdu in [&[0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10][..], &[0x01, 0xff, 0xff, 0xff, 0xff, 0x1f, 0]] {
+        rig.central().control.clear();
+        rig.central().send_control(pdu);
+        rig.run(200);
+        assert_eq!(rig.central().control, [vec![0x07, pdu[0]]], "{pdu:02x?}");
+    }
+    assert_eq!(rig.state(), LinkState::Connected);
+    rig.central().terminate();
+    rig.run(300);
+    rig.connect();
+    assert_eq!(rig.ble.borrow().stats.connections, 2);
+}
