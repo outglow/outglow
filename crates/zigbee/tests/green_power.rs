@@ -1581,3 +1581,35 @@ fn a_proxy_table_answer_takes_entries_up_to_exactly_one_unfragmented_frame() {
     assert_eq!(rsp[1], seq);
     assert_eq!((rsp.len(), rsp[3], rsp[4], rsp[6]), (80, 0x00, 5, 5), "all five entries in exactly 80 bytes");
 }
+
+#[test]
+fn removing_the_first_of_two_sinks_or_groups_keeps_the_second() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    for (ext, short) in [(0x00124B00000000A1u64, 0x00A1u16), (0x00124B00000000A2, 0x00A2)] {
+        let mut sink = Pairing::new(SWITCH, 3);
+        sink.sink = (ext, short);
+        net.coord.gp_pair(&sink);
+    }
+    for g in [0x0B01u16, 0x0B02] {
+        let mut group = Pairing::new(SWITCH, 2);
+        group.group = g;
+        net.coord.gp_pair(&group);
+    }
+    net.run(200);
+    let mut sink = Pairing::new(SWITCH, 3);
+    sink.sink = (0x00124B00000000A1, 0x00A1);
+    sink.add_sink = false;
+    net.coord.gp_pair(&sink);
+    let mut group = Pairing::new(SWITCH, 2);
+    group.group = 0x0B01;
+    group.add_sink = false;
+    net.coord.gp_pair(&group);
+    net.run(200);
+    let (status, entries) = proxy_entries(&mut net, short);
+    assert_eq!(status, 0x00);
+    let has = |bytes: &[u8]| entries.windows(bytes.len()).any(|w| w == bytes);
+    assert!(has(&0x00124B00000000A2u64.to_le_bytes()) && !has(&0x00124B00000000A1u64.to_le_bytes()), "{entries:02x?}");
+    assert!(has(&[1, 0x02, 0x0B]) && !has(&[0x01, 0x0B, 0xFF, 0xFF]), "{entries:02x?}");
+}

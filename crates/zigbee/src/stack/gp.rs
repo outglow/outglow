@@ -1002,7 +1002,7 @@ impl<H: Hal> Stack<H> {
         let i = found.or_else(|| self.proxies.iter().position(|e| !e.used))?;
         let mut e = self.proxies[i];
         if !e.used {
-            e = ProxyEntry { used: true, gpd, endpoint, ..ProxyEntry::EMPTY };
+            e = ProxyEntry { used: true, gpd, ..ProxyEntry::EMPTY };
         }
         match mode {
             MODE_LIGHTWEIGHT_UNICAST => {
@@ -1148,7 +1148,6 @@ impl<H: Hal> Stack<H> {
                 }
                 None
             }
-            0x0B => None,
             _ => Some(UNSUP_COMMAND),
         }
     }
