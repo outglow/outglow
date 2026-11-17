@@ -22,6 +22,12 @@ exclude_re = [
   # text for people: error messages, serde's "expecting ..."
   "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
   "::expecting -> ",
+  # zigbee: the default counters of a HAL without any are HalCounters::default()
+  "replace Hal::counters -> HalCounters with Default::default\\(\\)",
+  # zigbee: frame control fields and flags packed into disjoint bits, where | and ^ are the same
+  "zigbee/src/mac\\.rs:.*replace \\| with \\^ in (Header|Beacon)::write",
+  "zigbee/src/nwk\\.rs:.*replace \\| with \\^ in (Header::write|unsecure)",
+  "zigbee/src/stack/zdo\\.rs:.*replace \\| with \\^ in Stack<H>::on_zdo",
 ]
 
 # the timeout of a test run is 5x that of the unmutated tree, at least this:
