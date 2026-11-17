@@ -708,3 +708,250 @@ fn the_apps_candle_mode() {
     assert_eq!(rig.app_statuses().0.last().unwrap()[12], 0x01);
     assert!(!rig.bulb.state().candle);
 }
+
+fn base_uuid(short: u16) -> Vec<u8> {
+    let mut u = vec![0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00];
+    u.extend_from_slice(&short.to_le_bytes());
+    u.extend_from_slice(&[0, 0]);
+    u
+}
+
+#[test]
+fn a_16_bit_type_asked_for_in_its_128_bit_form_is_found() {
+    let mut rig = connected(DIMMABLE);
+    let short = rig.att(&[0x10, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28]);
+    let long = rig.att(&[&[0x10, 0x01, 0x00, 0xff, 0xff][..], &base_uuid(0x2800)].concat());
+    assert_eq!(long, short, "Read By Group Type of the primary service in the Bluetooth Base UUID");
+    let rsp = rig.att(&[&[0x08, 0x01, 0x00, 0xff, 0xff][..], &base_uuid(0x2a00)].concat());
+    assert_eq!(rsp, [&[0x09, 10, 0x03, 0x00][..], b"unpaired"].concat());
+    let mut other_base = base_uuid(0x2a00);
+    other_base[0] ^= 1;
+    assert_eq!(rig.att(&[&[0x08, 0x01, 0x00, 0xff, 0xff][..], &other_base].concat()), [0x01, 0x08, 0x01, 0x00, 0x0a]);
+    let mut other_short = base_uuid(0x2a00);
+    other_short[14] = 1;
+    assert_eq!(rig.att(&[&[0x08, 0x01, 0x00, 0xff, 0xff][..], &other_short].concat()), [0x01, 0x08, 0x01, 0x00, 0x0a]);
+    let mut grouped = base_uuid(0x2800);
+    grouped[0] ^= 1;
+    assert_eq!(rig.att(&[&[0x10, 0x01, 0x00, 0xff, 0xff][..], &grouped].concat()), [0x01, 0x10, 0x01, 0x00, 0x10]);
+    let long_status = [0x11, 0x19, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00];
+    assert_eq!(
+        rig.att(&[&[0x10, 0x01, 0x00, 0xff, 0xff][..], &long_status].concat()),
+        [0x01, 0x10, 0x01, 0x00, 0x10],
+        "a 128-bit type is never the 16-bit primary service"
+    );
+    assert_eq!(rig.att(&[0x06, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28, 0x11, 0x19]), [0x01, 0x06, 0x01, 0x00, 0x0a], "the first two octets of a 128-bit service are not its value");
+}
+
+#[test]
+fn find_by_type_value_without_a_match_is_attribute_not_found() {
+    let mut rig = connected(DIMMABLE);
+    assert_eq!(rig.att(&[0x06, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28, 0x0f, 0x18]), [0x01, 0x06, 0x01, 0x00, 0x0a]);
+    assert_eq!(rig.att(&[0x06, 0x07, 0x00, 0xff, 0xff, 0x00, 0x28, 0x00, 0x18]), [0x01, 0x06, 0x07, 0x00, 0x0a], "the service before the range");
+    assert_eq!(rig.att(&[0x06, 0x01, 0x00, 0xff, 0xff, 0x00, 0x28, 0x00, 0x18]), [0x07, 0x01, 0x00, 0x06, 0x00]);
+    assert_eq!(rig.att(&[0x06, 0x03, 0x00, 0x03, 0x00, 0x00, 0x2a, b'u', b'n', b'p', b'a', b'i', b'r', b'e', b'd']), [0x07, 0x03, 0x00, 0x03, 0x00], "a value that is not a service is its own group");
+}
+
+#[test]
+fn a_confirmation_needs_no_answer() {
+    let mut rig = connected(DIMMABLE);
+    rig.central().send_att(&[0x1e]);
+    rig.run(300);
+    assert!(rig.central().att.is_empty());
+    assert_eq!(rig.att(&[0x0a, 0x0b, 0x00]), b"\x0bAwoX");
+}
+
+#[test]
+fn a_continuation_without_its_start_is_dropped() {
+    let mut rig = connected(DIMMABLE);
+    rig.central().send_pdu(1, &[0x03, 0x00, 0x04, 0x00, 0x0a, 0x0b, 0x00]);
+    rig.run(300);
+    assert!(rig.central().att.is_empty());
+    rig.central().send_fragments(&[&[0x03, 0x00, 0x04, 0x00, 0x0a][..], &[0x0b, 0x00]]);
+    rig.run(300);
+    assert_eq!(rig.central().att.pop_front().unwrap(), b"\x0bAwoX");
+    rig.central().send_pdu(1, &[0x0b, 0x00]);
+    rig.run(300);
+    assert!(rig.central().att.is_empty(), "the frame was closed by its last fragment");
+}
+
+#[test]
+fn signalling_shorter_than_its_header_is_dropped() {
+    let mut rig = connected(DIMMABLE);
+    rig.central().send_l2cap(5, &[0x1c, 0x61, 0x00]);
+    rig.run(300);
+    assert!(rig.central().signaling.is_empty());
+    rig.central().send_l2cap(5, &[0x1c, 0x61, 0x00, 0x00]);
+    rig.run(300);
+    assert_eq!(rig.central().signaling, [vec![0x01, 0x61, 0x02, 0x00, 0x00, 0x00]]);
+}
+
+#[test]
+fn the_command_characteristic_reads_back_the_last_command() {
+    let mut rig = logged_in(DIMMABLE);
+    assert_eq!(rig.read(COMMAND), [0; 20]);
+    rig.command(OP_POWER, &[0]);
+    let mut want = [0u8; 20];
+    want[..5].copy_from_slice(&[0xff, 0xff, OP_POWER, 0x60, 0x01]);
+    assert_eq!(rig.read(COMMAND), want, "the decrypted payload of a mesh command");
+    let key = rig.key.unwrap();
+    rig.write(COMMAND, &block_packet(&key, 2, &[OP_POWER, 0x60, 0x01, 1]));
+    rig.run(300);
+    let mut want = [0u8; 20];
+    want[1..6].copy_from_slice(&[4, OP_POWER, 0x60, 0x01, 1]);
+    want[0] = crc8_6c(&want[1..6]);
+    assert_eq!(rig.read(COMMAND), want, "the decrypted block of a stock command");
+}
+
+#[test]
+fn a_network_without_a_name_reads_its_device_name_as_one_zero() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    rig.write(PAIR, &[&[4u8][..], &tl_aes_encrypt(&key, &[0; 16])].concat());
+    rig.write(PAIR, &[&[5u8][..], &tl_aes_encrypt(&key, b"s3cret\0\0\0\0\0\0\0\0\0\0")].concat());
+    assert_eq!(rig.read(PAIR)[0], 0x07);
+    assert_eq!(rig.read(0x03), [0]);
+}
+
+#[test]
+fn a_bulb_whose_address_ends_in_zero_is_device_one() {
+    let mut address = ADDRESS;
+    address[0] = 0;
+    let mut rig = Rig::boot(Rig::world(address, None, 0), DIMMABLE);
+    rig.connect();
+    assert!(rig.login(b"unpaired", b"1234"));
+    rig.enable_status();
+    rig.run(400);
+    assert_eq!(rig.statuses_from()[0].2, 0x0001, "the source of its status");
+    let packet = rig.command_packet(0x0001, OP_POWER, &[0]);
+    rig.write(COMMAND, &packet);
+    rig.run(300);
+    assert!(!rig.is_on());
+}
+
+#[test]
+fn a_change_that_finds_the_transmit_queue_full_is_notified_later() {
+    let mut rig = logged_in(DIMMABLE);
+    rig.central().silent = true;
+    for level in [10, 30, 50, 70, 90, 110, 130, 150] {
+        rig.bulb.handle(bulb_core::Command::MoveToLevel { level, transition_ms: 0 });
+        rig.run(300);
+    }
+    assert_eq!(rig.state(), LinkState::Connected);
+    rig.central().silent = false;
+    rig.run(600);
+    let levels: Vec<u8> = rig.statuses().iter().map(|s| s.1[3]).collect();
+    assert_eq!(levels, [5, 15, 25, 35, 45, 75], "five while the queue had room, then the level when it had room again");
+}
+
+#[test]
+fn the_apps_status_waits_for_notifications() {
+    let mut rig = connected(DIMMABLE);
+    assert!(rig.login(b"unpaired", b"1234"));
+    let key = rig.key.unwrap();
+    rig.write(COMMAND, &block_packet(&key, 2, &[0x0a, 0, 0]));
+    rig.run(400);
+    rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x06, 0x00, 0]));
+    rig.run(400);
+    assert!(!rig.is_on());
+    assert!(rig.central().notifications.is_empty());
+    rig.write(0x13, &[1, 0]);
+    rig.run(400);
+    let (s, other) = rig.app_statuses();
+    assert_eq!((s.len(), other), (1, 0));
+    assert_eq!(s[0][12], 0x00, "off");
+    rig.write(COMMAND, &block_packet(&key, 2, &[OP_STATUS, 0x60, 0x01, 0x10]));
+    rig.run(400);
+    assert_eq!(rig.app_statuses().0.len(), 1, "a status request in the app's format");
+}
+
+#[test]
+fn zcl_tunnel_commands_the_bulb_does_not_take_are_ignored() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    let before = rig.bulb.state();
+    for payload in [
+        &[0x00, 0x00, 0x02, 0x06, 0x00, 0x00][..],
+        &[0x00, 0x00, 0x01, 0x06][..],
+        &[0x00, 0x00, 0x01, 0x06, 0x00, 0x40],
+        &[0x00, 0x00, 0x01, 0x06, 0x00],
+        &[0x00, 0x00, 0x01, 0x08, 0x00, 0x04],
+        &[0x00, 0x00, 0x01, 0x08, 0x00, 0x05, 10],
+        &[0x00, 0x00, 0x01, 0x04, 0x00, 0x00, 1],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x41, 2, 1, 0],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x41, 1, 1],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 10, 4, 0, 0],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x00, 10],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x03],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x06, 10],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x07, 1, 2, 3],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x0a, 0x2c],
+        &[0x00, 0x00, 0x01, 0x00, 0x03, 0x02, 10, 0, 0, 0],
+        &[0x00, 0x00, 0x01, 0x00, 0x03],
+    ] {
+        rig.write(COMMAND, &block_packet(&key, 0, payload));
+        rig.run(300);
+        assert_eq!(rig.bulb.state(), before, "{payload:02x?}");
+    }
+}
+
+#[test]
+fn the_apps_hue_and_saturation_commands() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    let tunnel = |zcl: &[u8]| block_packet(&key, 0, &[&[0x00, 0x00, 0x01, 0x00, 0x03][..], zcl].concat());
+    rig.write(COMMAND, &tunnel(&[0x06, 84, 200, 0, 0]));
+    rig.run(400);
+    rig.write(COMMAND, &tunnel(&[0x00, 255, 0, 0, 0]));
+    rig.run(400);
+    assert_eq!((rig.bulb.state().hue, rig.bulb.state().sat), (254, 200), "Move to Hue keeps the saturation; 255 is 254");
+    rig.write(COMMAND, &tunnel(&[0x03, 100, 0, 0]));
+    rig.run(400);
+    assert_eq!((rig.bulb.state().hue, rig.bulb.state().sat), (254, 100), "Move to Saturation keeps the hue");
+    rig.write(COMMAND, &tunnel(&[0x41, 1, 0x00, 0x10]));
+    rig.run(400);
+    assert!(rig.bulb.state().hue_moving);
+    rig.write(COMMAND, &tunnel(&[0x41, 0, 0x00, 0x00]));
+    rig.run(400);
+    assert!(!rig.bulb.state().hue_moving, "Enhanced Move Hue with mode stop");
+    let mut rig = logged_in(TUNABLE);
+    let key = rig.key.unwrap();
+    let before = rig.bulb.state();
+    rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x00, 0x03, 0x06, 84, 200, 0, 0]));
+    rig.run(400);
+    assert_eq!(rig.bulb.state(), before, "no colour on a white bulb");
+}
+
+#[test]
+fn command_packets_of_no_known_format_are_ignored() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    let before = rig.bulb.state();
+    let short = block_packet(&key, 2, &[OP_POWER, 0x60, 0x01, 0]);
+    rig.write(COMMAND, &short[..16]);
+    rig.write(COMMAND, &block_packet(&key, 2, &[0x55, 0, 0]));
+    rig.run(300);
+    assert_eq!(rig.bulb.state(), before);
+    let mut want = [0u8; 20];
+    want[1..5].copy_from_slice(&[3, 0x55, 0, 0]);
+    want[0] = crc8_6c(&want[1..5]);
+    assert_eq!(rig.read(COMMAND), want, "an unknown command of the stock format is taken and does nothing");
+    rig.write(COMMAND, &block_packet(&key, 3, &[OP_POWER, 0x60, 0x01, 0]));
+    rig.run(300);
+    assert_eq!(rig.bulb.state(), before, "a block of kind 3 is not a command to this bulb");
+}
+
+#[test]
+fn pair_writes_of_no_known_kind_change_nothing() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    let name = tl_aes_encrypt(&key, b"EgloTest\0\0\0\0\0\0\0\0");
+    let password = tl_aes_encrypt(&key, b"s3cret\0\0\0\0\0\0\0\0\0\0");
+    rig.write(PAIR, &[&[4u8][..], &name].concat());
+    for value in [[&[7u8][..], &password].concat(), [&[3u8][..], &password].concat(), [&[5u8][..], &password[..15]].concat(), vec![]] {
+        rig.write(PAIR, &value);
+        assert_eq!(rig.read(PAIR), [0; 20], "{value:02x?}");
+    }
+    assert_eq!(rig.read(0x03), b"unpaired");
+    rig.write(PAIR, &[&[5u8][..], &password].concat());
+    assert_eq!(rig.read(PAIR)[0], 0x07, "the name written before still counts");
+}

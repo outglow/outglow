@@ -238,6 +238,8 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     let tw = &TUNABLE;
     let dimm = &DIMMABLE;
     let light = |c| Some(DiagCommand::Light(c));
+    assert_eq!(parse(&[0x01], dimm), Some(DiagCommand::Identify));
+    assert_eq!(parse(&[], dimm), None);
     assert_eq!(parse(&[0x10, 1], dimm), light(Command::On));
     assert_eq!(parse(&[0x10, 2], dimm), light(Command::Toggle));
     assert_eq!(parse(&[0x10], dimm), None);

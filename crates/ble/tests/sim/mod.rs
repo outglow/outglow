@@ -154,6 +154,10 @@ impl Central {
         self.txq.push_back((3, payload.to_vec()));
     }
 
+    pub fn send_pdu(&mut self, llid: u8, payload: &[u8]) {
+        self.txq.push_back((llid, payload.to_vec()));
+    }
+
     pub fn send_l2cap(&mut self, cid: u16, data: &[u8]) {
         let mut frame = (data.len() as u16).to_le_bytes().to_vec();
         frame.extend_from_slice(&cid.to_le_bytes());
@@ -256,6 +260,10 @@ pub struct Ether {
 impl Ether {
     pub fn sent_by(&self, node: usize, pdu_filter: impl Fn(&[u8]) -> bool) -> usize {
         self.sends.iter().filter(|s| s.4 == node && pdu_filter(&s.3)).count()
+    }
+
+    pub fn deliver(&mut self, node: usize, pdu: &[u8]) {
+        self.inbox[node].push_back(pdu.to_vec());
     }
 
     pub fn bursts_of(&self, node: usize) -> Vec<u64> {

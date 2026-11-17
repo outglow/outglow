@@ -1,7 +1,7 @@
 use memcap as _;
 mod sim;
 
-use ble::LinkState;
+use ble::{Hal, LinkState};
 use sim::{Params, Rig, DIMMABLE, MS, UNIT};
 
 fn fields(adv: &[u8]) -> Vec<(u8, Vec<u8>)> {
@@ -339,7 +339,7 @@ fn the_bulb_gives_up_its_own_termination_after_the_supervision_timeout() {
 
 #[test]
 fn a_long_name_is_advertised_as_shortened() {
-    let mut rig = Rig::new(DIMMABLE);
+    let rig = Rig::new(DIMMABLE);
     let mut nv = vec![0xa7];
     nv.extend_from_slice(b"SixteenByteName!");
     nv.extend_from_slice(b"password\0\0\0\0\0\0\0\0");
@@ -448,4 +448,71 @@ fn the_bulbs_own_traffic_only_delays_an_advertising_event_within_its_advdelay() 
     for p in at.windows(2) {
         assert!(p[1] - p[0] <= 310 * MS, "{} ms between two events", (p[1] - p[0]) / MS);
     }
+}
+
+#[test]
+fn control_responses_and_reserved_pdus_get_no_answer() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    for pdu in [&[0x07, 0x12][..], &[0x09, 0, 0, 0, 0, 0, 0, 0, 0], &[0x0d, 0x1a], &[0x13], &[0x15, 27, 0, 0x48, 0x01, 27, 0, 0x48, 0x01]] {
+        rig.central().send_control(pdu);
+        rig.run(200);
+        assert!(rig.central().control.is_empty(), "answer to {pdu:02x?}");
+    }
+    rig.central().send_pdu(0, &[0x03, 0x00, 0x04, 0x00, 0x0a, 0x0b, 0x00]);
+    rig.run(200);
+    assert!(rig.central().att.is_empty(), "the reserved LLID 0");
+    assert_eq!(rig.state(), LinkState::Connected);
+    assert_eq!(rig.read(0x0b), b"AwoX");
+}
+
+#[test]
+fn a_channel_map_of_one_channel_ends_the_connection() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().update_channel_map([0x00, 0x02, 0x00, 0x00, 0x00], 10);
+    rig.run(300);
+    assert_eq!(rig.state(), LinkState::Advertising);
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().update_channel_map([0x00, 0x06, 0x00, 0x00, 0x00], 10);
+    rig.run(1000);
+    assert_eq!(rig.state(), LinkState::Connected, "two channels are enough");
+    assert!(rig.central().channels.iter().rev().take(10).all(|ch| [9, 10].contains(ch)));
+}
+
+fn step_until_radio(rig: &mut Rig, busy: impl Fn(&sim::World) -> usize) -> (u64, u64) {
+    let idle = rig.ble.borrow_mut().idle_time() as u64;
+    let asked = rig.ble.borrow_mut().hal().now() as u64;
+    assert_eq!(asked, rig.world.borrow().now);
+    let before = busy(&rig.world.borrow());
+    loop {
+        let at = rig.world.borrow().now;
+        rig.run_until(at + 1);
+        if busy(&rig.world.borrow()) != before {
+            return (asked + idle, at);
+        }
+    }
+}
+
+#[test]
+fn the_idle_time_ends_when_the_radio_is_next_needed() {
+    let mut rig = Rig::new(DIMMABLE);
+    assert_eq!(rig.ble.borrow_mut().idle_time(), 20 * MS as u32, "the first advertising event 20 ms after the start");
+    for _ in 0..3 {
+        rig.run(7);
+        let (promised, used) = step_until_radio(&mut rig, |w| w.advertised_at.len());
+        assert!((promised..promised + MS / 10).contains(&used), "advertised {} ticks after the idle time", used as i64 - promised as i64);
+    }
+    rig.connect();
+    for wait in [3, 11, 17] {
+        rig.run(wait);
+        let (promised, used) = step_until_radio(&mut rig, |w| w.events.len());
+        assert!((promised..promised + MS / 10).contains(&used), "event {} ticks after the idle time", used as i64 - promised as i64);
+        assert!(rig.ble.borrow_mut().idle_time() as u64 > 20 * MS, "then most of an interval of 30 ms");
+    }
+    rig.central().silent = true;
+    rig.run(100);
+    rig.stall(5000);
+    assert_eq!(rig.ble.borrow_mut().idle_time(), 0, "an event that is overdue");
 }

@@ -4,6 +4,7 @@ mod sim;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use ble::crypto::{mesh_crypt, mesh_mic};
 use sim::{run_all, Ether, Rig, DIMMABLE, MS};
 
 const COMMAND: u16 = 0x15;
@@ -218,4 +219,152 @@ fn step(rigs: &mut [Rig], ms: u64) {
             rig.run_until(now);
         }
     }
+}
+
+fn air_pdu(sn: u32, src: u16, dst: u16, op: u8, params: &[u8], ltk: &[u8; 16]) -> Vec<u8> {
+    let mut p = vec![0u8; 39];
+    p[0] = 0x82;
+    p[1] = 0x25;
+    p[2] = 0x21;
+    p[4..6].copy_from_slice(&[0x03, 0xff]);
+    p[6..8].copy_from_slice(&src.to_le_bytes());
+    p[9..12].copy_from_slice(&sn.to_le_bytes()[..3]);
+    p[12..14].copy_from_slice(&src.to_le_bytes());
+    p[14..16].copy_from_slice(&dst.to_le_bytes());
+    p[16] = op;
+    p[17..19].copy_from_slice(&[0x60, 0x01]);
+    p[19..19 + params.len()].copy_from_slice(params);
+    let nonce: [u8; 8] = p[8..16].try_into().unwrap();
+    let mic = mesh_mic(ltk, &nonce, &p[16..35]);
+    p[35..].copy_from_slice(&mic[..4]);
+    mesh_crypt(ltk, &nonce, &mut p[16..35]);
+    p
+}
+
+fn alone() -> (Rc<RefCell<Ether>>, Rig) {
+    let ether = Rc::new(RefCell::new(Ether::default()));
+    let rig = paired(&ether, B, NAME, PASSWORD, LTK);
+    (ether, rig)
+}
+
+#[test]
+fn a_packet_from_the_air_is_carried_out() {
+    let (ether, mut rig) = alone();
+    ether.borrow_mut().deliver(0, &air_pdu(7, 0x0021, 0xffff, 0xc0 | 0x10, &[0], &LTK));
+    rig.run(1000);
+    assert!(!rig.is_on());
+    assert_eq!(rig.ble.borrow().air_stats().received, 1);
+}
+
+#[test]
+fn packets_that_are_not_the_mesh_format_are_rejected() {
+    let good = air_pdu(7, 0x0021, 0xffff, 0xc0 | 0x10, &[0], &LTK);
+    let mut wrong: Vec<(Vec<u8>, &str)> = vec![(good[..30].to_vec(), "short")];
+    for (i, v, what) in [(1, 0x24, "length"), (0, 0x83, "advertising type"), (2, 0x20, "AD type"), (3, 0x01, "second octet of the AD")] {
+        let mut p = good.clone();
+        p[i] = v;
+        wrong.push((p, what));
+    }
+    let mut plain = good.clone();
+    plain[0] = 0x02;
+    wrong.push((plain, "not encrypted"));
+    let mut damaged = good.clone();
+    damaged[20] ^= 1;
+    wrong.push((damaged, "MIC"));
+    for (pdu, what) in wrong {
+        let (ether, mut rig) = alone();
+        ether.borrow_mut().deliver(0, &pdu);
+        rig.run(1000);
+        assert!(rig.is_on(), "{what}");
+        let stats = rig.ble.borrow().air_stats();
+        assert_eq!((stats.received, stats.rejected), (0, 1), "{what}");
+    }
+}
+
+#[test]
+fn packets_of_other_kinds_are_dropped_without_a_word() {
+    let good = air_pdu(7, 0x0021, 0xffff, 0xc0 | 0x10, &[0], &LTK);
+    let mut quiet: Vec<(Vec<u8>, &str)> = vec![];
+    for kind in [[0xff, 0xee], [0xff, 0xff]] {
+        let mut p = good.clone();
+        p[4..6].copy_from_slice(&kind);
+        quiet.push((p, "a kind the stock leaves alone"));
+    }
+    for op in [0x10, 0x40 | 0x10, 0x80 | 0x10] {
+        quiet.push((air_pdu(7, 0x0021, 0xffff, op, &[0], &LTK), "an opcode without both top bits"));
+    }
+    let mut vendor = good.clone();
+    vendor[17] = 0x61;
+    let nonce: [u8; 8] = good[8..16].try_into().unwrap();
+    let mut body = good[16..35].to_vec();
+    mesh_crypt(&LTK, &nonce, &mut body);
+    body[1] = 0x61;
+    let mic = mesh_mic(&LTK, &nonce, &body);
+    mesh_crypt(&LTK, &nonce, &mut body);
+    vendor[16..35].copy_from_slice(&body);
+    vendor[35..].copy_from_slice(&mic[..4]);
+    quiet.push((vendor, "another vendor"));
+    for (pdu, what) in quiet {
+        let (ether, mut rig) = alone();
+        ether.borrow_mut().deliver(0, &pdu);
+        rig.run(1000);
+        assert!(rig.is_on(), "{what}");
+        let stats = rig.ble.borrow().air_stats();
+        assert_eq!((stats.received, stats.rejected), (0, 0), "{what}");
+    }
+}
+
+fn ask_b(rig: &mut Rig) {
+    let packet = rig.command_packet(0x000b, OP_STATUS, &[0x10]);
+    rig.central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
+    rig.run(100);
+}
+
+fn answer_from_b(rig: &mut Rig, sn: u32) {
+    let ether = rig.world.borrow().ether.clone().unwrap();
+    ether.borrow_mut().deliver(0, &air_pdu(sn, 0x000b, 0x000a, 0xc0 | 0x1b, &[1, 30, 64], &LTK));
+}
+
+fn from_b(rig: &mut Rig) -> usize {
+    rig.statuses_from().iter().filter(|s| (s.0, s.2) == (0xdb, 0x000b)).count()
+}
+
+#[test]
+fn an_answer_from_the_air_goes_to_the_app_when_it_has_room() {
+    let (_ether, mut rigs) = bulbs(&[A]);
+    let rig = &mut rigs[0];
+    ask_b(rig);
+    answer_from_b(rig, 0x40);
+    rig.run(400);
+    assert_eq!(from_b(rig), 1);
+    ask_b(rig);
+    rig.central().silent = true;
+    for _ in 0..5 {
+        rig.bulb.handle(bulb_core::Command::Toggle);
+        rig.run(260);
+    }
+    answer_from_b(rig, 0x41);
+    rig.run(50);
+    assert_eq!(rig.ble.borrow().air_stats().to_app, 2);
+    rig.central().silent = false;
+    rig.run(800);
+    assert_eq!(from_b(rig), 1, "the answer that found the queue full came later");
+}
+
+#[test]
+fn the_app_in_its_own_format_gets_no_mesh_answers() {
+    let (_ether, mut rigs) = bulbs(&[A]);
+    let key = rigs[0].key.unwrap();
+    let mut plain = [0u8; 16];
+    plain[1..4].copy_from_slice(&[2, 0x0a, 0]);
+    plain[0] = ble::crypto::crc8_6c(&plain[1..4]);
+    let packet = [&[2u8][..], &ble::crypto::tl_aes_encrypt(&key, &plain)].concat();
+    rigs[0].write(COMMAND, &packet);
+    rigs[0].run(400);
+    ask_b(&mut rigs[0]);
+    rigs[0].central().notifications.clear();
+    answer_from_b(&mut rigs[0], 0x40);
+    rigs[0].run(400);
+    assert_eq!(from_b(&mut rigs[0]), 0);
+    assert_eq!(rigs[0].ble.borrow().air_stats().to_app, 1, "heard, not passed on");
 }

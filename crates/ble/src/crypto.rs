@@ -128,4 +128,24 @@ mod tests {
         assert_eq!(tl_aes_encrypt(&key, &plain), cipher);
         assert_eq!(tl_aes_decrypt(&key, &cipher), plain);
     }
+
+    #[test]
+    fn the_access_code_breaks_long_alternating_runs_and_codes_too_close_to_0x55555555() {
+        let name = *b"unpaired\0\0\0\0\0\0\0\0";
+        let password = |head: &[u8]| {
+            let mut p = [0u8; 16];
+            p[..head.len()].copy_from_slice(head);
+            p
+        };
+        for (head, code) in [
+            (&b"1234"[..], 0xe29c_f430),
+            (&[0x72], 0xeda5_ae6a),
+            (&[0x53], 0xda30_8095),
+            (&[0x4e, 0x04], 0x82f6_1dea),
+            (&[0x9b, 0x07], 0x6099_9aea),
+            (&[0x8b, 0x3f, 0x07], 0x5555_552b),
+        ] {
+            assert_eq!(mesh_access_code(&name, &password(head)), code, "{head:02x?}");
+        }
+    }
 }

@@ -250,3 +250,69 @@ fn an_image_larger_than_the_staging_area_is_refused() {
     rig.write(OTA, &ota_packet(1, &image[16..32]));
     assert_eq!(status(&mut rig).1, 2);
 }
+
+#[test]
+fn a_block_while_erasing_finishes_the_erase_first() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(20000, 3);
+    let mut erase = [0u8; 20];
+    erase[2] = 6;
+    rig.central().send_att(&[&[0x52, OTA as u8, 0][..], &erase].concat());
+    rig.central().send_att(&[&[0x52, OTA as u8, 0][..], &ota_packet(0, &image[..16])].concat());
+    rig.run(100);
+    assert_eq!(rig.world.borrow().erased_sectors, [0, 0x1000, 0x2000, 0x3000, 0x4000, 0x5000], "all six before the block was written");
+    assert_eq!(status(&mut rig), (3, 0, 1));
+    rig.run(500);
+    assert_eq!(rig.world.borrow().erased_sectors.len(), 6, "and no more afterwards");
+    for (i, block) in image.chunks(16).enumerate().skip(1) {
+        let mut b = block.to_vec();
+        b.resize(16, 0xff);
+        rig.write(OTA, &ota_packet(i as u16, &b));
+    }
+    let blocks = image.len().div_ceil(16) as u16;
+    rig.write(OTA, &ota_packet(blocks, &[]));
+    rig.run(1200);
+    assert!(rig.world.borrow().activated);
+}
+
+#[test]
+fn after_an_erase_the_first_block_must_be_block_zero() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(4000, 3);
+    erase(&mut rig, &image);
+    rig.run(500);
+    assert_eq!(status(&mut rig).0, 2);
+    rig.write(OTA, &ota_packet(1, &image[16..32]));
+    assert_eq!(status(&mut rig).0..=status(&mut rig).1, 4..=2);
+}
+
+#[test]
+fn packets_too_short_for_a_block_are_ignored() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(640, 5);
+    rig.write(OTA, &ota_packet(0, &image[..16]));
+    for packet in [&[0x01, 0x00, 0x00][..], &[0x01], &[0x01, 0x00, 0x00, 0x00, 0x00]] {
+        rig.write(OTA, packet);
+        assert_eq!(status(&mut rig), (3, 0, 1), "{packet:02x?}");
+    }
+}
+
+#[test]
+fn a_finished_transfer_takes_nothing_more_until_its_restart() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(640, 5);
+    let blocks = send_blocks(&mut rig, OTA, &image);
+    rig.write(OTA, &ota_packet(blocks, &[]));
+    rig.write(OTA, &ota_packet(0, &image[..16]));
+    rig.write(OTA, &[0, 0, 4, 0]);
+    rig.write(OTA, &ota_packet(0xfffe, &[]));
+    assert_eq!(status(&mut rig), (4, 0, blocks));
+    rig.run(1200);
+    let w = rig.world.borrow();
+    assert!(w.activated);
+    assert_eq!(w.staging[..image.len()], image[..]);
+}
