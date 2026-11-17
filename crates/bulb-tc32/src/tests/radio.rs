@@ -1277,3 +1277,18 @@ fn resuming_802_15_4_restores_its_tables_dma_and_interrupts_and_turns_the_receiv
     );
     assert_eq!(*w.last().unwrap_or(&Op::W8(0, 0)), Op::W8(reg::IRQ_ENABLE, 1));
 }
+
+#[test]
+fn init_keeps_the_other_interrupt_mask_bits() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| {
+        c.poke32(reg::IRQ_MASK, 0x0010_0001);
+        c.poke8(RF_IRQ_MASK, 0xff);
+        c.poke8(RF_IRQ_MASK + 1, 0xff);
+    });
+    init();
+    let w = sim::with(|c| c.writes());
+    assert!(w.contains(&Op::W16(RF_IRQ_MASK, 0xe001)));
+    assert!(w.contains(&Op::W32(reg::IRQ_MASK, 0x0010_2001)));
+}

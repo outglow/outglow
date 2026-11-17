@@ -382,7 +382,10 @@ mod over_ble {
         let mut link = Link::new();
         let air = central();
         air.borrow_mut().connect = true;
-        poll_until(&mut link, |l, _| l.ble.as_ref().is_some_and(|b| b.link_state() == ble::LinkState::Connected), "a connection");
+        poll_until(&mut link, |l, _| {
+            sim::with(|c| c.tick = c.tick.wrapping_add(1_000 * 16));
+            l.ble.as_ref().is_some_and(|b| b.link_state() == ble::LinkState::Connected)
+        }, "a connection");
         (link, air)
     }
 
@@ -514,6 +517,81 @@ mod over_ble {
         assert!(!poll_with_room(&mut link, 5));
         assert!(poll_with_room(&mut link, 8));
         assert!(!poll_with_room(&mut link, 3));
+    }
+
+    fn network_record() -> Vec<u8> {
+        let mut v = vec![1, 15];
+        v.extend_from_slice(&0x1a62u16.to_le_bytes());
+        v.extend_from_slice(&0x2b3cu16.to_le_bytes());
+        v.extend_from_slice(&0xdddd_dddd_dddd_ddddu64.to_le_bytes());
+        v.extend_from_slice(&[0, 1, 0, 0]);
+        v.extend_from_slice(&[0x11; 16]);
+        v.extend_from_slice(&[0, 0, 0]);
+        v.extend_from_slice(&[0; 16]);
+        v.extend_from_slice(&0x00ab_cdef_0000_0001u64.to_le_bytes());
+        v.extend_from_slice(&[0x5a; 16]);
+        v.extend_from_slice(&[0; 16]);
+        v.push(0);
+        v
+    }
+
+    #[test]
+    fn the_device_page_shows_the_network_the_link_and_the_resets_of_a_joined_bulb() {
+        let _s = sim::session();
+        nv::open().store(NvItem::Network as u8, &network_record());
+        sim::with(|c| {
+            c.set_analog(0x3a, 0x01);
+            c.poke8(0x72, 0x01);
+        });
+        crate::link::BULB_NET.write(4, 3);
+        crate::board::warm_reset();
+        let mut link = Link::new();
+        let _ = link.poll();
+        let mpdu = [0x41, 0x88, 0x07, 0x62, 0x1a, 0x3c, 0x2b, 0x00, 0x00, 0x48, 0x00];
+        crate::radio::tests::queue(&mpdu, 70, 0);
+        let ext = 0x0012_4b00_0102_0304u64.to_le_bytes();
+        let assoc = [&[0x23u8, 0xc8, 0x08, 0x62, 0x1a, 0x3c, 0x2b, 0xff, 0xff][..], &ext, &[0x01, 0x8e]].concat();
+        let poll = [&[0x63u8, 0xc8, 0x09, 0x62, 0x1a, 0x3c, 0x2b][..], &ext, &[0x04]].concat();
+        for i in 0..240 {
+            if i == 10 {
+                crate::radio::tests::queue(&assoc, 70, 0);
+            }
+            if i == 20 {
+                crate::radio::tests::queue(&poll, 70, 0);
+            }
+            sim::with(|c| c.tick = c.tick.wrapping_add(50 * 16_000));
+            for _ in 0..5 {
+                let _ = link.poll();
+            }
+        }
+        let air = central();
+        air.borrow_mut().connect = true;
+        poll_until(&mut link, |l, _| {
+            sim::with(|c| c.tick = c.tick.wrapping_add(1_000 * 16));
+            l.ble.as_ref().is_some_and(|b| b.link_state() == ble::LinkState::Connected)
+        }, "a connection");
+        assert!(poll_with_room(&mut link, 8));
+        let state = read_long(&mut link, &air, 0x24);
+        let st = link.stack.as_mut().expect("the stack");
+        let (starts, wd) = st.resets();
+        let n = st.neighbor_counts();
+        let (lqi, rssi) = st.last_signal();
+        let m = st.mac_counters();
+        assert!(st.is_joined());
+        assert_eq!(state[5], st.reset_cause() as u8);
+        assert_eq!(state[7], wd.min(255) as u8);
+        assert_eq!(state[9], 3);
+        assert_eq!(state[10..12], starts.to_le_bytes());
+        assert_eq!(state[12], 1);
+        assert_eq!(state[13..17], [0x3c, 0x2b, 0x62, 0x1a]);
+        assert_eq!(state[17], 15);
+        assert_eq!(state[18..21], [n.routers.saturating_add(n.end_devices), n.routers, n.end_devices]);
+        assert_eq!(state[21..23], [lqi, rssi as u8]);
+        assert_eq!(state[23..27], m.rx_ucast.to_le_bytes());
+        assert_eq!(state[27..31], m.tx_ucast.to_le_bytes());
+        assert_eq!(state[31..33], (m.tx_ucast_retries as u16).to_le_bytes());
+        assert_eq!(state[33..35], (m.tx_ucast_failures as u16).to_le_bytes());
+        assert!(wd > 0 && lqi > 0 && rssi != 0 && m.rx_ucast > 0 && m.tx_ucast > 0 && m.tx_ucast_retries > 0 && m.tx_ucast_failures > 0);
     }
 
     #[test]

@@ -60,7 +60,7 @@ pub struct Chip {
     pub aes_corrupt: u8,
     aes_words: usize,
     busy_left: u8,
-    mspi_busy: bool,
+    mspi_busy: u8,
 }
 
 pub type Hook = Box<dyn FnMut(&mut Chip, Op)>;
@@ -93,7 +93,7 @@ impl Chip {
             aes_corrupt: 0,
             aes_words: 0,
             busy_left: 0,
-            mspi_busy: false,
+            mspi_busy: 0,
         }
     }
 
@@ -170,7 +170,8 @@ impl Chip {
         }
         if off == reg::MSPI_CTRL {
             let c = self.peek8(reg::MSPI_CTRL) & !reg::MSPI_BUSY;
-            let busy = if std::mem::take(&mut self.mspi_busy) { reg::MSPI_BUSY } else { 0 };
+            let busy = if self.mspi_busy == 2 { reg::MSPI_BUSY } else { 0 };
+            self.mspi_busy = self.mspi_busy.saturating_sub(1);
             self.regs.insert(reg::MSPI_CTRL, c | busy);
         }
         if off == AES_CTRL {
@@ -198,6 +199,9 @@ impl Chip {
 
     fn write(&mut self, off: usize, width: usize, v: u32) {
         let bytes = v.to_le_bytes();
+        if (off == reg::MSPI_DATA || off == reg::MSPI_CTRL) && self.mspi_busy != 0 {
+            panic!("the flash controller was written while it was still busy");
+        }
         if W1C.contains(&off) {
             for i in 0..width {
                 let cur = self.peek8(off + i);
@@ -212,7 +216,7 @@ impl Chip {
             reg::ANA_CTRL => self.analog_strobe(bytes[0]),
             reg::MSPI_CTRL => self.spi_cs(bytes[0] & reg::MSPI_CS_HIGH != 0),
             reg::MSPI_DATA => {
-                self.mspi_busy = true;
+                self.mspi_busy = 2;
                 self.spi_byte(bytes[0])
             }
             reg::PWDN_CTRL if bytes[0] & 0x20 != 0 => self.reset_requested = true,

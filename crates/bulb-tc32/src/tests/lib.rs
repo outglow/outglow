@@ -207,3 +207,20 @@ fn idling_ends_on_the_tick_or_as_soon_as_a_frame_is_waiting() {
     let mut buf = [0u8; 127];
     assert!(crate::radio::receive(&mut buf).is_some());
 }
+
+#[test]
+fn every_zigbee_item_up_to_the_last_is_kept_in_flash() {
+    let _s = sim::session();
+    for id in 1..=NvItem::MAX_ID {
+        nv::open().store(id, &[id, 0x5a]);
+    }
+    for _ in 0..60 {
+        nv::open().store(NvItem::Network as u8, &[0x33; 120]);
+    }
+    let nv = nv::open();
+    let mut buf = [0u8; 4];
+    for id in 2..=NvItem::MAX_ID {
+        assert_eq!(nv.load(id, &mut buf), Some(2), "item {id}");
+        assert_eq!(buf[..2], [id, 0x5a]);
+    }
+}
