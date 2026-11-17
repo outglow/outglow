@@ -2,7 +2,7 @@ use super::super::address_tests::{Scripted, IDENTITY};
 use super::super::diag::k;
 use super::NEIGHBOR_FORGET;
 use crate::nwk;
-use crate::stack::{Stack, AGE_LIMIT, NEIGHBORS};
+use crate::stack::{Stack, State, AGE_LIMIT, NEIGHBORS};
 extern crate std;
 use std::vec::Vec;
 
@@ -130,4 +130,94 @@ fn a_link_status_lists_only_as_many_entries_as_its_count_says() {
     assert_eq!(s.neighbors[0].out_cost, 0, "the second entry is past the count");
     s.on_link_status(0x1000, &[nwk::CMD_LINK_STATUS, 0x62, 0x43, 0x00, 0x11, 0x42, 0x00, 0x33]);
     assert_eq!(s.neighbors[0].out_cost, 3);
+}
+
+fn up() -> Stack<Scripted> {
+    let mut s = stack();
+    s.state = State::Up;
+    s.nib.short = 0x0042;
+    s.ext = 0x00124B00_0000_0042;
+    let c = &mut s.children[0];
+    c.used = true;
+    c.short = 0x2000;
+    c.ext = 0xA;
+    for (i, (short, ext, used)) in [(0x1000, 0xB, true), (0x1001, 0, true), (0x1002, 0xC, false)].into_iter().enumerate() {
+        let n = &mut s.neighbors[i];
+        n.used = used;
+        n.short = short;
+        n.ext = ext;
+    }
+    s.addr_map[0] = (0xD, 0x3000);
+    s.addr_map[1] = (0, 0x3001);
+    s.addr_map[2] = (0xE, 0xFFF8);
+    s.addr_map[3] = (0xF, 0xFFF7);
+    s
+}
+
+#[test]
+fn an_address_seen_with_another_extended_address_than_the_one_known_for_it_is_a_conflict() {
+    let cases: [(u16, u64, bool); 17] = [
+        (0x0042, 0x00124B00_0000_0042, false),
+        (0x0042, 0x99, true),
+        (0x0042, 0, false),
+        (0x0042, u64::MAX, false),
+        (0x2000, 0xA, false),
+        (0x2000, 0x99, true),
+        (0x1000, 0xB, false),
+        (0x1000, 0x99, true),
+        (0x1001, 0x99, false),
+        (0x1002, 0x99, false),
+        (0x3000, 0xD, false),
+        (0x3000, 0x99, true),
+        (0x3001, 0x99, false),
+        (0xFFF8, 0x99, false),
+        (0xFFF7, 0x99, true),
+        (0xFFF7, 0xF, false),
+        (0x5555, 0x99, false),
+    ];
+    for (short, ext, clash) in cases {
+        let mut s = up();
+        assert_eq!(s.address_seen(short, ext), clash, "{short:04X} {ext:X}");
+        assert_eq!(s.conflict.0 == short, clash, "{short:04X} {ext:X}");
+    }
+    let mut s = up();
+    s.state = State::WaitKey;
+    assert!(!s.address_seen(0x0042, 0x99), "not before the bulb is up");
+}
+
+#[test]
+fn a_conflicting_address_of_a_neighbour_is_forgotten_everywhere() {
+    let mut s = up();
+    s.neighbors[3].used = true;
+    s.neighbors[3].short = 0x1000;
+    s.addr_map[1] = (0x77, 0x1000);
+    s.routes[0].status = super::ROUTE_ACTIVE;
+    s.routes[0].dst = 0x1000;
+    s.address_conflict_resolve(0x1000);
+    assert!(!s.neighbors[0].used && !s.neighbors[3].used && s.neighbors[1].used);
+    assert_eq!(s.diag.n[k::NEIGHBOR_REMOVED], 2);
+    assert_eq!((s.addr_map[1], s.addr_map[0]), ((0x77, 0xFFFF), (0xD, 0x3000)));
+    assert_eq!(s.routes[0].status, super::ROUTE_FREE);
+}
+
+#[test]
+fn a_network_status_about_a_conflict_is_taken_only_with_its_address_and_forgets_it() {
+    let mut s = up();
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFD, 0x1001, 30, 1);
+    s.on_nwk_command(&h, 0x1001, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_ADDRESS_CONFLICT, 0x00]);
+    assert!(s.neighbors[0].used && s.diag.status_rx == 0, "too short");
+    s.on_nwk_command(&h, 0x1001, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_ADDRESS_CONFLICT, 0x00, 0x10]);
+    assert!(!s.neighbors[0].used);
+    assert_eq!(s.diag.status_rx, 1);
+    assert_eq!(s.conflict.0, 0x1000);
+}
+
+#[test]
+fn an_unknown_nwk_command_is_answered_only_when_addressed_to_the_bulb() {
+    for (dst, id, answered) in [(0x0042, 0x0D, true), (0x0042, 0x0C, false), (0x0042, 0x01, false), (0xFFFD, 0x0D, false)] {
+        let mut s = up();
+        let h = nwk::Header::new(nwk::FRAME_CMD, dst, 0x1000, 30, 1);
+        s.on_nwk_command(&h, 0x1000, &[id]);
+        assert_eq!(!s.hal.sent.is_empty(), answered, "{dst:04X} {id:02X}");
+    }
 }
