@@ -1684,3 +1684,99 @@ fn a_command_too_long_to_tunnel_is_dropped_and_the_bulb_keeps_running() {
     assert_eq!(got[0].0, short);
     assert_eq!(&got[0].1[10..12], &[0xA0, 78]);
 }
+
+#[test]
+fn a_paired_device_success_or_channel_request_sent_as_data_is_not_tunnelled() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 3));
+    net.run(200);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send(0xE2, &[]);
+    net.run(200);
+    gpd.send(0xE3, &[0x85]);
+    net.run(200);
+    assert!(gp_frames(&net, 0x00).is_empty());
+    gpd.send_and_listen(0x22, &[]);
+    net.run(200);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1, "one that listens after and has nothing to receive");
+}
+
+#[test]
+fn notifications_of_three_devices_at_once_are_all_tunnelled_though_two_can_wait() {
+    let mut net = Net::new();
+    net.join_node();
+    for k in 0..3 {
+        net.coord.gp_pair(&Pairing::new(SWITCH + k, 3));
+        net.run(200);
+    }
+    let mut gpds: Vec<Gpd> = (0..3).map(|k| Gpd::new(&net.air, SWITCH + k, None)).collect();
+    for g in gpds.iter_mut() {
+        g.send(0x22, &[]);
+    }
+    net.run(500);
+    let mut from: Vec<u32> = gp_frames(&net, 0x00).iter().map(|(_, p)| u32::from_le_bytes([p[2], p[3], p[4], p[5]])).collect();
+    from.sort();
+    from.dedup();
+    assert_eq!(from, [SWITCH, SWITCH + 1, SWITCH + 2]);
+}
+
+#[test]
+fn a_secured_frame_of_an_unknown_device_without_a_shared_key_is_dropped() {
+    let mut net = Net::new();
+    net.join_node();
+    let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
+    gpd.individual = false;
+    gpd.send(0x22, &[]);
+    net.run(200);
+    assert!(gp_frames(&net, 0x00).is_empty() && gp_frames(&net, 0x04).is_empty());
+}
+
+#[test]
+fn in_commissioning_a_maintenance_frame_other_than_a_channel_request_is_not_tunnelled() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send_raw(&[0x0D, 0x22]);
+    net.run(500);
+    assert!(gp_frames(&net, 0x04).is_empty());
+}
+
+#[test]
+fn a_commissioning_frame_too_long_to_tunnel_is_dropped_and_of_three_at_once_two_are_tunnelled() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send(0xE0, &[0x02; 80]);
+    net.run(500);
+    assert!(gp_frames(&net, 0x04).is_empty());
+    let mut gpds: Vec<Gpd> = (0..3).map(|k| Gpd::new(&net.air, SWITCH + k, None)).collect();
+    for g in gpds.iter_mut() {
+        g.send(0xE0, &commissioning());
+    }
+    net.run(500);
+    assert_eq!(gp_frames(&net, 0x04).len(), 2, "two wait at a time; the third is not kept");
+}
+
+#[test]
+fn a_pairing_stored_in_another_version_is_not_restored() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 3));
+    net.run(200);
+    let id = net.nodes[n].id;
+    let item = zigbee::hal::NvItem::proxy(0) as u8;
+    let mut stored = net.air.borrow().ports[id].nv[&item].clone();
+    stored[0] ^= 0xFF;
+    net.air.borrow_mut().ports[id].nv.insert(item, stored);
+    net.power_cycle(n);
+    net.run(500);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send(0x22, &[]);
+    net.run(200);
+    assert!(gp_frames(&net, 0x00).is_empty());
+}

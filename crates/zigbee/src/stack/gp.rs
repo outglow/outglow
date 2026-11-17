@@ -559,17 +559,14 @@ impl<H: Hal> Stack<H> {
         match self.gp_pending.iter().position(|p| p.is_none()) {
             Some(slot) => self.gp_pending[slot] = Some(pending),
             None => {
-                self.gp_notify(&pending, true);
-                self.gp_notify(&pending, false);
+                self.gp_notify(&pending, i as u8, true);
+                self.gp_notify(&pending, i as u8, false);
             }
         }
         Some(())
     }
 
-    fn gp_notify(&mut self, p: &Pending, sinks: bool) {
-        let (Forward::Sinks(i) | Forward::Groups(i)) = p.to else {
-            return;
-        };
+    fn gp_notify(&mut self, p: &Pending, i: u8, sinks: bool) {
         let e = self.proxies[i as usize];
         let zcl = &p.zcl[..p.len as usize];
         let mut id: Buffer<9> = Buffer::new();
@@ -680,14 +677,14 @@ impl<H: Hal> Stack<H> {
                     self.gp_alias_broadcast(p.alias, p.seq, nwk::DEFAULT_RADIUS, aps.as_slice());
                 }
                 Forward::Sinks(entry) => {
-                    self.gp_notify(&p, true);
+                    self.gp_notify(&p, entry, true);
                     if p.then == 0 {
-                        self.gp_notify(&p, false);
+                        self.gp_notify(&p, entry, false);
                     } else {
                         self.gp_pending[i] = Some(Pending { at: now.wrapping_add(p.then as u32), to: Forward::Groups(entry), ..p });
                     }
                 }
-                Forward::Groups(_) => self.gp_notify(&p, false),
+                Forward::Groups(entry) => self.gp_notify(&p, entry, false),
                 Forward::Announce => {
                     self.zdo_seq = self.zdo_seq.wrapping_add(1);
                     let mut aps = Buf::new();
@@ -1269,3 +1266,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
