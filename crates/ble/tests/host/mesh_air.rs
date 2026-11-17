@@ -730,3 +730,35 @@ fn a_bulb_does_not_take_its_own_answer_back_from_a_neighbour() {
     let after = rig.ble.borrow().air_stats();
     assert_eq!((after.received, after.relayed), (before.received, before.relayed), "its own answer, passed back by C");
 }
+
+#[test]
+fn a_gap_of_exactly_11_ms_does_not_lengthen_the_train() {
+    for (gap, longer) in [(11 * MS, false), (11 * MS + 1, true)] {
+        let (ether, mut rigs) = bulbs(&[A]);
+        let rig = &mut rigs[0];
+        let packet = rig.command_packet(0x000b, OP_POWER, &[0]);
+        rig.central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
+        let mut seen = 0;
+        let last = loop {
+            let at = rig.world.borrow().now;
+            rig.run_until(at + 1);
+            let bursts = ether.borrow().bursts_of(0);
+            if bursts.len() == seen {
+                continue;
+            }
+            seen = bursts.len();
+            let last = *bursts.last().unwrap();
+            let idle = rig.ble.borrow_mut().idle_time() as u64;
+            let now = rig.world.borrow().now;
+            if seen >= 50 && idle > last + gap + 5 * MS - now && rig.world.borrow().txq_empty() {
+                break last;
+            }
+        };
+        rig.world.borrow_mut().now = last + gap;
+        rig.ble.borrow_mut().poll();
+        assert_eq!(*ether.borrow().bursts_of(0).last().unwrap(), last + gap, "the burst went at the jump");
+        rig.run(1000);
+        let end = *ether.borrow().bursts_of(0).last().unwrap();
+        assert_eq!(end - last > 300 * MS, longer, "a gap of {gap} ticks: the train ran {} ms on", (end - last) / MS);
+    }
+}
