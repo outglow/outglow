@@ -311,7 +311,16 @@ pub fn with<R>(f: impl FnOnce(&mut Chip) -> R) -> R {
 
 pub const REBOOT: &str = "the chip was reset (0x6f = 0x20)";
 
+pub const LOG_MAX: usize = 10_000_000;
+
+fn bounded() {
+    if with(|c| c.log.len() >= LOG_MAX) {
+        panic!("more than {LOG_MAX} register accesses in one test: a driver loop that never ends");
+    }
+}
+
 pub fn read(off: usize, width: usize) -> u32 {
+    bounded();
     with(|c| {
         let v = c.read(off, width);
         c.log.push(match width {
@@ -324,6 +333,7 @@ pub fn read(off: usize, width: usize) -> u32 {
 }
 
 pub fn write(off: usize, width: usize, v: u32) {
+    bounded();
     with(|c| {
         c.log.push(match width {
             1 => Op::W8(off, v as u8),

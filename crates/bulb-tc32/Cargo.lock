@@ -20,13 +20,8 @@ version = "0.1.0"
 dependencies = [
  "ble",
  "bulb-core",
- "memcap",
  "zigbee",
 ]
-
-[[package]]
-name = "memcap"
-version = "0.1.0"
 
 [[package]]
 name = "sense"

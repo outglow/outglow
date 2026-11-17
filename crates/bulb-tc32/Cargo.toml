@@ -32,11 +32,6 @@ bulb-core = { path = "../bulb-core" }
 zigbee = { path = "../zigbee" }
 ble = { path = "../ble", optional = true }
 
-# The host tests (src/tests/, on the simulated register file of src/sim.rs)
-# run on the capped allocator of every host test binary.
-[dev-dependencies]
-memcap = { path = "../memcap" }
-
 [profile.release]
 opt-level = "z"
 panic = "abort"
