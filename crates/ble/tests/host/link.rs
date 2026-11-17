@@ -601,3 +601,19 @@ fn a_connect_request_with_bad_parameters_leaves_the_bulb_advertising_and_an_empt
     assert!(rig.central().control.is_empty());
     assert_eq!(rig.state(), LinkState::Connected);
 }
+
+#[test]
+fn an_unheard_central_is_dropped_when_the_drift_would_reach_half_an_interval_less_the_inter_frame_space() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.central().params = Params { interval: 6, timeout: 3200, ..Params::default() };
+    rig.connect();
+    rig.central().silent = true;
+    let heard = rig.world.borrow().now;
+    let limit = (7500 / 2 - 150) * 16;
+    let after_ms = limit as u64 * 1000 / ((250 + 100) * 16);
+    rig.run_until(heard + (after_ms - 100) * MS);
+    assert_eq!(rig.state(), LinkState::Connected);
+    rig.run_until(heard + (after_ms + 100) * MS);
+    assert_eq!(rig.state(), LinkState::Advertising, "{after_ms} ms after the last event heard");
+    assert_eq!(rig.ble.borrow().stats.links_lost, 1);
+}
