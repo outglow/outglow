@@ -467,3 +467,23 @@ fn every_octet_of_the_sequence_number_tells_packets_apart() {
     }
     assert_eq!(rig.ble.borrow().air_stats().received, 3);
 }
+
+#[test]
+fn a_bulb_passes_a_packet_on_with_one_hop_less_unless_it_is_for_it_or_has_none_left() {
+    let (ether, mut rig) = alone();
+    ether.borrow_mut().deliver(0, &air_pdu_hops(0x51, 0x0021, 0xffff, 0xc0 | 0x10, &[0], 2, &LTK));
+    rig.run(500);
+    let sent = ether.borrow().sent(0);
+    assert!(!sent.is_empty());
+    let mut want = air_pdu_hops(0x51, 0x0021, 0xffff, 0xc0 | 0x10, &[0], 1, &LTK);
+    want[6..8].copy_from_slice(&0x000bu16.to_le_bytes());
+    assert_eq!(sent[0], want, "the same packet from B with one hop less");
+    for (dst, hops) in [(0x000b, 2), (0x0000, 2), (0xffff, 0)] {
+        let (ether, mut rig) = alone();
+        ether.borrow_mut().deliver(0, &air_pdu_hops(0x52, 0x0021, dst, 0xc0 | 0x10, &[0], hops, &LTK));
+        rig.run(500);
+        assert!(!rig.is_on(), "{dst:#06x}");
+        assert_eq!(rig.ble.borrow().air_stats().relayed, 0, "{dst:#06x} with {hops} hops");
+        assert!(ether.borrow().sent(0).is_empty());
+    }
+}

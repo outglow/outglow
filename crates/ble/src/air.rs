@@ -33,7 +33,7 @@ const O_HOPS: usize = 34;
 const O_MIC: usize = 35;
 
 const OP_STATUS_REQUEST: u8 = 0x1a;
-const OP_STATUS_RESPONSE: u8 = 0x1b;
+const STATUS_RESPONSE: u8 = 0xdb;
 
 fn is_request(op: u8) -> bool {
     matches!(op, 0x1a | 0x1d | 0x17 | 0x2a)
@@ -217,7 +217,7 @@ impl<H: Hal> Ble<H> {
             self.mesh_command(p[O_OP], &params, true);
             if op == OP_STATUS_REQUEST {
                 let status = self.mesh_status_params();
-                self.air_queue(build(&sn, me, src, 0xc0 | OP_STATUS_RESPONSE, &status, HOPS));
+                self.air_queue(build(&sn, me, src, STATUS_RESPONSE, &status, HOPS));
             }
         }
         if !to_me && p[O_HOPS] > 0 {
