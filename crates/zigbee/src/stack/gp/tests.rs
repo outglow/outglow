@@ -1,5 +1,5 @@
 use super::super::address_tests::{Scripted, IDENTITY};
-use super::{Commissioning, Forward, Gpd, Pending};
+use super::{Commissioning, Forward, Gpd, Pending, ProxyEntry, KEY_NWK};
 use crate::mac::Addr;
 use crate::stack::{Stack, State};
 use crate::util::Reader;
@@ -28,4 +28,16 @@ fn a_commissioning_frame_finds_no_room_while_two_notifications_wait() {
     s.gp_pending = [Some(waiting), None];
     let _ = s.on_gpdf(0x32, Addr::None, &[0x0C, 0x45, 0x23, 0x71, 0x01, 0xE0, 0x02, 0x00, 0x00], 200, 0);
     assert!(s.gp_pending[1].is_some(), "with room it waits");
+}
+
+#[test]
+fn a_pairing_under_the_network_key_without_its_own_or_a_shared_one_uses_the_network_key() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
+    s.nib.key = [0x42; 16];
+    s.gp_keys.shared_type = KEY_NWK;
+    s.gp_keys.shared = [0; 16];
+    let e = ProxyEntry { key_type: KEY_NWK, ..ProxyEntry::EMPTY };
+    assert_eq!(s.gp_entry_key(&e, 0), Some([0x42; 16]));
+    s.gp_keys.shared = [0x17; 16];
+    assert_eq!(s.gp_entry_key(&e, 0), Some([0x17; 16]), "a shared key of its type first");
 }
