@@ -748,10 +748,12 @@ fn wildcard_answers_nobody_asked_for_change_nothing_either() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
+    net.run(40_000);
+    assert_eq!(net.coord.ota_queries, 1, "the server is known");
     let id = [&MFG.to_le_bytes()[..], &TYPE.to_le_bytes()[..]].concat();
     block_response(&mut net, short, &[&[0x00][..], &id, &0u32.to_le_bytes(), &0u32.to_le_bytes(), &[2, 0xAA, 0xBB]].concat());
     net.run(500);
-    assert_eq!((net.nodes[n].stack.ota_state(), net.coord.ota_block_requests), (OtaState::Idle, 0), "a block for version 0");
+    assert_eq!((net.nodes[n].stack.ota_state(), net.coord.ota_block_requests, net.coord.ota_end), (OtaState::Idle, 0, None), "a block for version 0");
     net.coord.ota_upgrade_end_response(short, 0xFFFF, 0xFFFF, 0xFFFF_FFFF, 0);
     net.run(1_000);
     assert!(!activated(&net, n));
