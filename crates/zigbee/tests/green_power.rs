@@ -1453,3 +1453,44 @@ fn a_notification_says_when_the_device_listens_after_sending() {
     let options: Vec<u16> = got.iter().map(|g| u16::from_le_bytes([g.1[0], g.1[1]]) & (1 << 11)).collect();
     assert_eq!(options, vec![0, 1 << 11]);
 }
+
+fn device_announce(net: &mut Net, short: u16) {
+    let mut annce = short.to_le_bytes().to_vec();
+    annce.extend_from_slice(&0x0015_8D00_0123_4567u64.to_le_bytes());
+    annce.push(0x80);
+    net.coord.zdo(0xFFFD, 0x0013, &annce);
+}
+
+fn announced_for(net: &Net, n: usize, since: u32, alias: u16) -> std::collections::BTreeSet<u8> {
+    net.nwk_sent_by(net.nodes[n].id, since)
+        .into_iter()
+        .filter(|(_, h, p)| h.src == alias && p.len() > 8 && p[2..4] == [0x13, 0x00])
+        .map(|(_, _, p)| p[7])
+        .collect()
+}
+
+#[test]
+fn an_announced_address_clashing_with_an_assigned_alias_is_answered_once() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let mut derived = Pairing::new(SWITCH, 1);
+    derived.alias = Some(0x1111);
+    net.coord.gp_pair(&derived);
+    let mut group = Pairing::new(0x0000_0303, 2);
+    group.group = 0x0B84;
+    group.alias = Some(0x2222);
+    net.coord.gp_pair(&group);
+    net.run(200);
+    for alias in [0x1111u16, 0x2222] {
+        let t = net.now();
+        device_announce(&mut net, alias);
+        net.run(20);
+        device_announce(&mut net, alias);
+        net.run(500);
+        assert_eq!(announced_for(&net, n, t, alias).len(), 1, "one announcement for {alias:#06x}");
+    }
+    let t = net.now();
+    device_announce(&mut net, 0x3333);
+    net.run(500);
+    assert!(announced_for(&net, n, t, 0x3333).is_empty());
+}

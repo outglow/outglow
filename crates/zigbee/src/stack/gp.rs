@@ -756,7 +756,6 @@ impl<H: Hal> Stack<H> {
         z.bytes(&[0x11, self.zcl_seq, GP_COMMISSIONING_NOTIFICATION]);
         let failed = plain.is_none();
         let key_type = match (f.security, failed) {
-            (0, _) => KEY_NONE,
             (_, true) if f.key_bit != 0 => KEY_INDIVIDUAL,
             (_, true) => KEY_NONE,
             _ => key_type,
