@@ -974,3 +974,17 @@ fn removing_all_groups_keeps_the_scenes_of_no_group() {
     assert_eq!(count(&mut net, 0x0000).1, 1, "the scene of no group stays");
     assert_ne!(count(&mut net, 0x1234).0, 0x00, "the group is gone with its scene");
 }
+
+#[test]
+fn a_copy_scene_is_no_remove_scene() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, 0x0005, 0x01, 0x04, &[0x00, 0x00, 1]);
+    net.run(100);
+    net.coord.zcl(short, 0x0005, 0x01, 0x42, &[0x00, 0x00, 0x00, 1, 0x00, 0x00, 2]);
+    net.run(100);
+    net.coord.zcl(short, 0x0005, 0x01, 0x01, &[0x00, 0x00, 1]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, 0x0005, 0x01).unwrap()[3], 0x00, "scene 1 is still there");
+}
