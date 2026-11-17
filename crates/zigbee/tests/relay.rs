@@ -57,3 +57,30 @@ fn a_broadcast_is_passed_on_with_one_hop_less_and_not_at_all_at_the_end_of_its_r
         assert!(copies.iter().all(|&r| r == radius - 1));
     }
 }
+
+#[test]
+fn a_route_record_passed_on_may_fill_the_largest_payload_and_one_without_room_for_the_relay_is_dropped() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let mut z = far_router(&mut net, n, 0x4444);
+    for (relays, passed_on) in [(43usize, true), (44, false)] {
+        net.coord.route_records.clear();
+        let mut p = vec![nwk::CMD_ROUTE_RECORD, relays as u8];
+        for k in 0..relays {
+            p.extend_from_slice(&(0x3000 + k as u16).to_le_bytes());
+        }
+        if relays == 44 {
+            p.pop();
+        }
+        let mut h = z.header(nwk::FRAME_CMD, 0x0000);
+        h.src_ext = None;
+        z.nwk_send(h, &p);
+        net.run(100);
+        let got = net.coord.route_records.iter().find(|(src, _)| *src == 0x4444).map(|(_, r)| r.len());
+        assert_eq!(got, passed_on.then_some(relays + 1), "{} bytes", p.len());
+        if passed_on {
+            assert_eq!(net.coord.route_records[0].1.last(), Some(&me));
+        }
+    }
+}
