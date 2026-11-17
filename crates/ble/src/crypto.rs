@@ -144,6 +144,7 @@ mod tests {
             (&[0x4e, 0x04], 0x82f6_1dea),
             (&[0x9b, 0x07], 0x6099_9aea),
             (&[0x8b, 0x3f, 0x07], 0x5555_552b),
+            (&[0x26, 0x3d, 0x25], 0x555d_5544),
         ] {
             assert_eq!(mesh_access_code(&name, &password(head)), code, "{head:02x?}");
         }
