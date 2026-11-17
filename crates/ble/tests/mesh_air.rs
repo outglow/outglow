@@ -506,3 +506,19 @@ fn a_bulb_without_a_connection_sends_a_packet_64_times_every_5_ms_or_so() {
     }
     assert!(usual.iter().all(|g| (sending + 4500 * MS / 1000..sending + 5250 * MS / 1000 + MS / 10).contains(g)), "{usual:?}");
 }
+
+#[test]
+fn an_advertising_event_left_out_for_the_neighbours_is_listened_for_once_they_are_quiet() {
+    let (_ether, mut rig) = alone();
+    rig.run(700);
+    let last = *rig.world.borrow().advertised_at.last().unwrap();
+    let quiet = last + 330 * MS;
+    rig.world.borrow_mut().zigbee_busy.push((last + 295 * MS, quiet, true));
+    rig.run(700);
+    let w = rig.world.borrow();
+    let next = w.advertised_at.iter().copied().find(|t| *t > last).unwrap();
+    assert!(next > quiet, "the event was left out");
+    let windows: Vec<u64> = w.listened.iter().map(|l| l.0).filter(|t| *t > last + 20 * MS && *t < next).collect();
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert!((quiet..quiet + MS / 5).contains(&windows[0]), "{} ticks after the traffic", windows[0] as i64 - quiet as i64);
+}
