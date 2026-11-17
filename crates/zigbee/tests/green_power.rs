@@ -1798,3 +1798,20 @@ fn a_pairing_stored_in_another_version_is_not_restored() {
     net.run(200);
     assert!(gp_frames(&net, 0x00).is_empty());
 }
+
+#[test]
+fn of_three_commissioning_frames_heard_at_once_the_third_finds_no_room_to_wait() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_commissioning_mode(true, false);
+    net.run(100);
+    let mut gpds: Vec<Gpd> = (0..3).map(|k| Gpd::new(&net.air, SWITCH + k, None)).collect();
+    for g in gpds.iter_mut() {
+        g.send_and_listen(0xE0, &commissioning());
+    }
+    net.run(2_000);
+    let mut from: Vec<u32> = gp_frames(&net, 0x04).iter().map(|(_, p)| u32::from_le_bytes([p[2], p[3], p[4], p[5]])).collect();
+    from.sort();
+    from.dedup();
+    assert_eq!(from, [SWITCH, SWITCH + 1], "two wait at a time");
+}
