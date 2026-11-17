@@ -592,3 +592,44 @@ fn a_burst_the_radio_refuses_is_tried_every_millisecond_a_hundred_more_times() {
     assert!(ether.borrow().sent(0).is_empty());
     assert_eq!(rig.ble.borrow().air_stats().bursts, 0, "a refused burst is not counted");
 }
+
+fn after_the_last_gap(ether: &Rc<RefCell<Ether>>) -> (u64, u64) {
+    let bursts = ether.borrow().bursts_of(0);
+    let last_gap = bursts.windows(2).filter(|w| w[1] - w[0] > 11 * MS).map(|w| w[1]).last().expect("a gap");
+    (last_gap - bursts[0], bursts.last().unwrap() - last_gap)
+}
+
+#[test]
+fn a_train_held_up_by_the_connection_runs_on_a_listening_period_and_a_window_after_its_last_gap() {
+    let (ether, mut rigs) = bulbs(&[A, B]);
+    send(&mut rigs, 0xffff, OP_BRIGHTNESS, &[50], 1500);
+    let (_, rest) = after_the_last_gap(&ether);
+    assert!((320 * MS..327 * MS + MS / 2).contains(&rest), "{} ms", rest / MS);
+
+    let mut tried = 0;
+    for held_after in 30..50 {
+        let (ether, mut rigs) = bulbs(&[A]);
+        let packet = rigs[0].command_packet(0xffff, OP_BRIGHTNESS, &[50]);
+        rigs[0].central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
+        while ether.borrow().sent(0).len() < held_after * 4 {
+            rigs[0].run(1);
+        }
+        let held = rigs[0].world.borrow().now;
+        rigs[0].world.borrow_mut().refuse_sends = true;
+        while rigs[0].world.borrow().now < held + 9 * MS {
+            rigs[0].run(1);
+        }
+        rigs[0].world.borrow_mut().refuse_sends = false;
+        rigs[0].run(1200);
+        let bursts = ether.borrow().bursts_of(0);
+        let gap = bursts.windows(2).map(|w| w[1] - w[0]).filter(|g| *g > 11 * MS).last().unwrap();
+        if !(11 * MS..13 * MS).contains(&gap) {
+            continue;
+        }
+        tried += 1;
+        let (at, rest) = after_the_last_gap(&ether);
+        assert!(at > 150 * MS, "after {held_after} bursts: {} ms into the train", at / MS);
+        assert!((320 * MS..327 * MS + MS / 2).contains(&rest), "after {held_after} bursts: {} ms", rest / MS);
+    }
+    assert!(tried >= 10, "{tried} gaps of 11 to 13 ms");
+}
