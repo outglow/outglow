@@ -625,3 +625,86 @@ fn a_bulb_looking_for_a_network_waits_on_the_initiators_channel_once_it_has_answ
     net.run(6_000);
     assert!(net.sent_by(port, t).iter().any(|f| f[0] & 7 == 3), "beacon requests again");
 }
+
+impl Initiator {
+    #[allow(clippy::too_many_arguments)]
+    fn send_raw(&mut self, net: &mut Net, src: Addr, aps: &[u8], cluster: u16, profile: u16, fc: u8, cmd: u8, payload: &[u8]) {
+        self.seq += 1;
+        let mut f = Buf::new();
+        mac::Header {
+            frame_type: mac::FRAME_DATA,
+            security: false,
+            pending: false,
+            ack_request: false,
+            seq: self.seq,
+            dst_pan: 0xFFFF,
+            dst: Addr::Short(0xFFFF),
+            src_pan: 0x1234,
+            src,
+        }
+        .write(&mut f);
+        f.u16(0x000B);
+        f.bytes(aps);
+        f.u16(cluster);
+        f.u16(profile);
+        f.u8(fc);
+        f.u8(self.seq);
+        f.u8(cmd);
+        f.bytes(payload);
+        net.air.borrow_mut().transmit(self.port, f.as_slice());
+        net.run(20);
+    }
+}
+
+#[test]
+fn only_an_inter_pan_touchlink_command_from_an_extended_address_is_a_scan() {
+    let mut net = Net::new();
+    net.join_node();
+    let mut i = Initiator::new(&mut net);
+    let mut scan = TRANSACTION.to_vec();
+    scan.extend_from_slice(&[0x05, 0x12]);
+    for (src, aps, cluster, profile, fc) in [
+        (Addr::Short(0x1234), vec![0x0B], 0x1000u16, 0xC05Eu16, 0x11u8),
+        (Addr::Ext(INITIATOR), vec![0x08], 0x1000, 0xC05E, 0x11),
+        (Addr::Ext(INITIATOR), vec![0x0B], 0x1001, 0xC05E, 0x11),
+        (Addr::Ext(INITIATOR), vec![0x0B], 0x1000, 0x0104, 0x11),
+        (Addr::Ext(INITIATOR), vec![0x0B], 0x1000, 0xC05E, 0x10),
+        (Addr::Ext(INITIATOR), vec![0x0B], 0x1000, 0xC05E, 0x19),
+        (Addr::Ext(INITIATOR), vec![0x0F], 0x1000, 0xC05E, 0x11),
+    ] {
+        i.send_raw(&mut net, src, &aps, cluster, profile, fc, 0x00, &scan);
+        assert!(i.received(&mut net).is_empty(), "{src:?} {aps:?} {cluster:#06x} {profile:#06x} {fc:#04x}");
+    }
+    i.send_raw(&mut net, Addr::Ext(INITIATOR), &[0x0F, 0xFF, 0xFF], 0x1000, 0xC05E, 0x11, 0x00, &scan);
+    assert_eq!(i.received(&mut net).len(), 1, "a group-addressed one is, past its group");
+}
+
+#[test]
+fn identify_for_the_default_time_and_commands_the_target_does_not_know() {
+    let mut net = Net::new();
+    let mut i = Initiator::new(&mut net);
+    let (n, ext, _) = on_a_touchlink_network(&mut net, &mut i);
+    assert_eq!(scan(&mut net, &mut i).len(), 1);
+    net.nodes[n].commands.clear();
+    let mut identify = TRANSACTION.to_vec();
+    identify.extend_from_slice(&[0xFF, 0xFF]);
+    i.send(&mut net, Some(ext), 0x06, &identify);
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::Identify { times: 3 }));
+    i.send(&mut net, Some(ext), 0x7F, &TRANSACTION);
+    net.run(200);
+    assert!(i.received(&mut net).is_empty());
+    assert_eq!(net.nodes[n].stack.state(), State::Up);
+}
+
+#[test]
+fn a_join_request_with_a_reserved_key_index_is_refused() {
+    let mut net = Net::new();
+    let mut i = Initiator::new(&mut net);
+    let (n, ext, pan) = on_a_touchlink_network(&mut net, &mut i);
+    let (response_id, _) = scan_for(&mut net, &mut i);
+    i.send(&mut net, Some(ext), 0x12, &join_request(7, response_id));
+    let rsp = i.received(&mut net);
+    assert_eq!((rsp[0].0, rsp[0].1[4]), (0x13, 0x01));
+    net.run(1_000);
+    assert_eq!(net.nodes[n].stack.pan_id(), pan);
+}
