@@ -836,7 +836,7 @@ impl<H: Hal> Stack<H> {
                 None => Some(MALFORMED_COMMAND),
             }
         };
-        let found = fc & 0x0B == 0x09 && cmd == GP_PROXY_TABLE_REQUEST && rsp.len() > 3 && rsp.get(3) == SUCCESS;
+        let found = fc & 0x0B == 0x09 && cmd == GP_PROXY_TABLE_REQUEST && rsp.as_slice().get(3) == Some(&SUCCESS);
         if !unicast && !found {
             return Some(());
         }

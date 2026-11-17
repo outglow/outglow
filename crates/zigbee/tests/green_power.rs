@@ -1494,3 +1494,17 @@ fn an_announced_address_clashing_with_an_assigned_alias_is_answered_once() {
     net.run(500);
     assert!(announced_for(&net, n, t, 0x3333).is_empty());
 }
+
+#[test]
+fn a_frame_without_a_command_is_notified_in_commissioning_with_command_zero() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send_raw(&[&[0x0C][..], &SWITCH.to_le_bytes()].concat());
+    net.run(500);
+    let got = gp_frames(&net, 0x04);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].1[10..12], [0x00, 0x00]);
+}
