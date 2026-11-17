@@ -1437,3 +1437,19 @@ fn an_ieee_device_is_matched_to_its_entry_by_endpoint_unless_either_is_all() {
         assert_eq!(gp_frames(&net, 0x00).len(), forwarded, "endpoint {endpoint}");
     }
 }
+
+#[test]
+fn a_notification_says_when_the_device_listens_after_sending() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 3));
+    net.run(200);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send(0x22, &[]);
+    net.run(2_500);
+    gpd.send_and_listen(0x22, &[]);
+    net.run(500);
+    let got = gp_frames(&net, 0x00);
+    let options: Vec<u16> = got.iter().map(|g| u16::from_le_bytes([g.1[0], g.1[1]]) & (1 << 11)).collect();
+    assert_eq!(options, vec![0, 1 << 11]);
+}
