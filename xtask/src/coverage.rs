@@ -210,9 +210,10 @@ fn llvm_cov(c: &mut Ctx, manifest: &Path, args: &[&str]) -> Result<()> {
     };
     let mut cmd = Command::new(cargo);
     cmd.arg("llvm-cov");
-    if let Some(s) = sub {
-        cmd.arg(s);
-    }
+    match sub {
+        Some(s) => cmd.arg(s),
+        None => cmd.env("CARGO_INCREMENTAL", "1"),
+    };
     cmd.arg("--manifest-path").arg(manifest).args(rest);
     let status = c.sh.status(&mut cmd).context("starting cargo llvm-cov (in `nix develop .#coverage`)")?;
     if !status.success() {
@@ -475,11 +476,11 @@ mod tests {
             log,
             [
                 "cargo llvm-cov clean --manifest-path ROOT/Cargo.toml --workspace".to_string(),
-                "cargo llvm-cov --manifest-path ROOT/Cargo.toml --no-report --workspace".into(),
+                "CARGO_INCREMENTAL=1 cargo llvm-cov --manifest-path ROOT/Cargo.toml --no-report --workspace".into(),
                 format!("cargo llvm-cov report --manifest-path ROOT/Cargo.toml --json --summary-only --output-path ROOT/target/coverage/host/summary.json --ignore-filename-regex {skip}"),
                 format!("cargo llvm-cov report --manifest-path ROOT/Cargo.toml --html --output-dir ROOT/target/coverage/host --ignore-filename-regex {skip}"),
                 "cargo llvm-cov clean --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --workspace".into(),
-                "cargo llvm-cov --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --no-report".into(),
+                "CARGO_INCREMENTAL=1 cargo llvm-cov --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --no-report".into(),
                 format!("cargo llvm-cov report --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --json --summary-only --output-path ROOT/target/coverage/bulb-tc32/summary.json --ignore-filename-regex {skip}"),
                 format!("cargo llvm-cov report --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --html --output-dir ROOT/target/coverage/bulb-tc32 --ignore-filename-regex {skip}"),
             ]
@@ -505,8 +506,10 @@ mod tests {
         assert!(text.contains("| xtask | 1/10 | 10.00 | new |"), "{text}");
         let (r, log) = cover(&t, &[("CARGO", "/bin/cargo")], &["--emulator"], "");
         r.unwrap();
-        assert!(log.contains(&"/bin/cargo llvm-cov --manifest-path ROOT/emulator/rs/Cargo.toml --no-report -p tc32emu -p ble -p zbnode".to_string()));
-        assert!(log.contains(&"/bin/cargo llvm-cov --manifest-path ROOT/emulator/rs/Cargo.toml --no-report -p scenarios --lib".to_string()));
+        let run = "CARGO_INCREMENTAL=1 /bin/cargo llvm-cov --manifest-path ROOT/emulator/rs/Cargo.toml --no-report";
+        assert!(log.contains(&format!("{run} -p tc32emu -p ble -p zbnode")), "{log:?}");
+        assert!(log.contains(&format!("{run} -p scenarios --lib")), "{log:?}");
+        assert!(log.contains(&"/bin/cargo llvm-cov clean --manifest-path ROOT/emulator/rs/Cargo.toml --workspace".to_string()), "{log:?}");
     }
 
     #[test]
