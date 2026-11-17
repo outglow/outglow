@@ -41,14 +41,14 @@ fn aps_key(link: &[u8; 16], key_id: u8) -> Option<[u8; 16]> {
 impl<H: Hal> Stack<H> {
     pub(crate) fn on_aps(&mut self, h: &nwk::Header, p: &[u8]) {
         self.diag.add(if nwk::is_broadcast(h.dst) { k::APS_RX_BCAST } else { k::APS_RX_UCAST });
-        match p.first().map(|fc| fc & 3) {
-            Some(0) => {
+        match (p.first().map(|fc| fc & 3), self.state == State::Up) {
+            (Some(0), true) => {
                 let _ = self.on_aps_data(h, p);
             }
-            Some(1) => {
+            (Some(1), _) => {
                 let _ = self.on_aps_command(h, p);
             }
-            Some(2) if self.state == State::Up => {
+            (Some(2), true) => {
                 let _ = self.on_aps_ack(h, p);
             }
             _ => {}
@@ -56,9 +56,6 @@ impl<H: Hal> Stack<H> {
     }
 
     fn on_aps_data(&mut self, h: &nwk::Header, p: &[u8]) -> Option<()> {
-        if self.state != State::Up {
-            return None;
-        }
         let mut r = Reader::new(p);
         let fc = r.u8()?;
         let delivery = (fc >> 2) & 3;

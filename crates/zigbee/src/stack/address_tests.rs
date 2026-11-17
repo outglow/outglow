@@ -94,3 +94,26 @@ fn after_eight_taken_draws_the_lowest_free_address_is_given() {
     assert_eq!(s.new_address(), 0x0003);
     assert_eq!(s.hal.random, [0x0909].to_vec(), "eight draws and no more");
 }
+
+#[test]
+fn the_sequence_numbers_start_from_the_bytes_of_one_random_number() {
+    let s = Stack::new(Scripted { random: [0x1234_5678].to_vec(), now: 0, sent: Vec::new(), deaf: Vec::new() }, IDENTITY);
+    assert_eq!((s.mac_seq, s.nwk_seq, s.aps_counter, s.zdo_seq), (0x78, 0x56, 0x34, 0x12));
+}
+
+#[test]
+fn the_network_opens_after_a_join_only_once_the_device_announce_is_out() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new() }, IDENTITY);
+    s.state = super::State::Up;
+    s.steering = super::join::STEERING_OPEN_DUE;
+    s.announce_at = Some(50_000);
+    s.run_timers(1_000);
+    assert_eq!((s.steering, s.permit_until), (super::join::STEERING_OPEN_DUE, None));
+    s.announce_at = None;
+    s.run_timers(1_000);
+    assert_eq!(s.steering, 0);
+    assert!(s.permit_until.is_some());
+    s.permit_until = None;
+    s.run_timers(1_000);
+    assert_eq!(s.permit_until, None, "once");
+}

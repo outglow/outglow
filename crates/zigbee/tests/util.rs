@@ -31,3 +31,14 @@ fn up_to_four_little_endian_bytes_are_a_number() {
         assert_eq!(le(bytes), value, "{bytes:02X?}");
     }
 }
+
+#[test]
+fn a_reader_tells_how_much_is_left() {
+    let b = [1u8, 2, 3, 4, 5];
+    let mut r = zigbee::util::Reader::new(&b);
+    assert_eq!(r.remaining(), 5);
+    r.skip(2);
+    assert_eq!((r.remaining(), r.pos()), (3, 2));
+    r.rest();
+    assert_eq!(r.remaining(), 0);
+}

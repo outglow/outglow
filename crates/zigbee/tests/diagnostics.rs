@@ -1099,6 +1099,16 @@ fn a_restart_by_the_watchdog_with_nothing_kept_starts_from_the_stored_counters()
 }
 
 #[test]
+fn the_event_log_kept_over_a_restart_comes_back_with_the_counters() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    net.run(1_000);
+    assert!(net.nodes[n].stack.event_seq() > 0);
+    crash_with(&mut net, n, |_| {});
+    assert!((0..8).filter_map(|i| net.nodes[n].stack.event(i)).any(|e| !e.this_start), "events of the start before");
+}
+
+#[test]
 fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
     let mut net = Net::new();
     let n = net.join_node();

@@ -221,8 +221,11 @@ impl Neighbor {
                 let new = nwk::cost_from_delivery(p);
                 let cur = self.cost;
                 let moves = cur == 0
-                    || (new < cur && nwk::cost_from_delivery(p.saturating_sub(DELIVERY_MARGIN)) < cur)
-                    || (new > cur && nwk::cost_from_delivery(p.saturating_add(DELIVERY_MARGIN)) > cur);
+                    || match new.cmp(&cur) {
+                        core::cmp::Ordering::Less => nwk::cost_from_delivery(p.saturating_sub(DELIVERY_MARGIN)) < cur,
+                        core::cmp::Ordering::Greater => nwk::cost_from_delivery(p.saturating_add(DELIVERY_MARGIN)) > cur,
+                        core::cmp::Ordering::Equal => false,
+                    };
                 if moves {
                     self.cost = new;
                 }
