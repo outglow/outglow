@@ -149,3 +149,25 @@ fn a_buffer_overflows_rather_than_grow_and_clearing_it_starts_over() {
     b.u64(1);
     assert!(!b.ok());
 }
+
+#[test]
+fn pan_id_compression_is_only_for_frames_with_both_addresses() {
+    let h = mac::Header {
+        frame_type: mac::FRAME_CMD,
+        security: false,
+        pending: false,
+        ack_request: false,
+        seq: 9,
+        dst_pan: 0xFFFF,
+        dst: Addr::Short(0xFFFF),
+        src_pan: 0xFFFF,
+        src: Addr::None,
+    };
+    let mut b = Buf::new();
+    h.write(&mut b);
+    assert_eq!(b.as_slice(), &[0x03, 0x08, 9, 0xFF, 0xFF, 0xFF, 0xFF]);
+    let h = mac::Header { dst: Addr::None, dst_pan: 0x1A62, src: Addr::Short(0x0001), src_pan: 0x1A62, ..h };
+    let mut b = Buf::new();
+    h.write(&mut b);
+    assert_eq!(b.as_slice(), &[0x03, 0x80, 9, 0x62, 0x1A, 0x01, 0x00]);
+}
