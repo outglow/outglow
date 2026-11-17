@@ -857,3 +857,97 @@ fn a_route_reply_is_taken_only_when_addressed_to_the_bulb_and_a_link_status_also
     s.on_nwk_command(&h, 0x1001, &[nwk::CMD_LINK_STATUS, 0x60]);
     assert_eq!(s.neighbors[1].age, 0);
 }
+
+struct Tried {
+    counts: [u32; 4],
+    to: Vec<u16>,
+    held: bool,
+}
+
+fn try_route(s: &mut Stack<Scripted>, frame_type: u8, src: u16, discover: u8, payload: &[u8], retries: u8) -> Tried {
+    let mut h = nwk::Header::new(frame_type, 0x5000, src, 5, 1);
+    h.discover = discover;
+    s.route_try(&h, payload, retries);
+    Tried {
+        counts: [s.diag.n[k::RELAYED_UCAST], s.diag.n[k::RELAY_DROP_MAC_FAIL], s.diag.n[k::RELAY_DROP_QUEUE_FULL], s.diag.n[k::RELAY_DROP_NO_ROUTE]],
+        to: s.hal.sent.iter().map(|f| u16::from_le_bytes([f[5], f[6]])).collect(),
+        held: s.held.iter().any(|e| e.used),
+    }
+}
+
+fn routed(many_to_one: bool, deaf: &[u16]) -> Stack<Scripted> {
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1002, many_to_one, 0);
+    route(&mut s, 1, 0x3000, 0x1001, false, 0);
+    s.hal.deaf = deaf.to_vec();
+    s
+}
+
+#[test]
+fn a_route_record_that_fails_is_dropped_and_another_command_waits_for_a_new_route() {
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_CMD, 0x3000, 1, &[nwk::CMD_ROUTE_RECORD, 0], 0);
+    assert_eq!((t.counts, t.held), ([0, 1, 0, 0], false));
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_CMD, 0x0042, 1, &[nwk::CMD_ROUTE_RECORD, 0], 0);
+    assert_eq!((t.counts, t.held), ([0, 0, 0, 0], false), "the bulb's own");
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_CMD, 0x3000, 1, &[0x7F], 0);
+    assert_eq!((t.counts, t.held), ([0, 0, 0, 0], true));
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_CMD, 0x3000, 0, &[0x7F], 0);
+    assert_eq!((t.counts, t.held), ([0, 1, 0, 0], false));
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_CMD, 0x0042, 0, &[0x7F], 0);
+    assert_eq!(t.counts, [0, 0, 0, 0]);
+}
+
+#[test]
+fn a_many_to_one_route_whose_hop_failed_goes_through_another_router() {
+    let mut s = routed(true, &[]);
+    s.neighbors[2].failures = super::LINK_FAILURES;
+    s.hal.random = [0].to_vec();
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!((t.to, t.counts), (std::vec![0x1000], [1, 0, 0, 0]));
+    let mut s = routed(false, &[]);
+    s.neighbors[2].failures = super::LINK_FAILURES;
+    s.hal.random = [0].to_vec();
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!(t.to, std::vec![0x1002], "not a many-to-one route");
+}
+
+#[test]
+fn relayed_data_that_fails_on_a_many_to_one_route_is_reported_and_sent_through_another_router() {
+    let mut s = routed(true, &[0x1002]);
+    s.hal.random = [0, 0].to_vec();
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 0);
+    assert_eq!((t.to, t.counts), (std::vec![0x1002, 0x1000, 0x1000], [1, 0, 0, 0]));
+    let mut s = routed(true, &[0x1002]);
+    s.hal.random = [0, 0].to_vec();
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x0042, 0, &[0x00], 0);
+    assert_eq!((t.to, t.counts), (std::vec![0x1002, 0x1000, 0x1000], [0, 0, 0, 0]));
+    let mut s = routed(true, &[0x1002, 0x1000]);
+    s.hal.random = [0, 0].to_vec();
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 1, &[0x00], 0);
+    assert_eq!((t.counts, t.held), ([0, 1, 0, 0], false), "no other router took it");
+    let mut s = routed(true, &[0x1002, 0x1000]);
+    s.hal.random = [0, 0].to_vec();
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x0042, 1, &[0x00], 0);
+    assert_eq!((t.counts, t.held), ([0, 0, 0, 0], true), "the bulb's own waits for a new route");
+}
+
+#[test]
+fn relayed_data_that_fails_is_reported_to_its_source_and_counted_by_why() {
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 0);
+    assert_eq!((t.to, t.counts), (std::vec![0x1002, 0x1001], [0, 1, 0, 0]));
+    let mut s = routed(false, &[0x1002]);
+    for e in s.held.iter_mut() {
+        e.used = true;
+    }
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!((t.to, t.counts), (std::vec![0x1002, 0x1001], [0, 0, 1, 0]));
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x0042, 0, &[0x00], 0);
+    assert_eq!((t.to, t.counts, t.held), (std::vec![0x1002, 0xFFFF], [0, 0, 0, 0], true), "the bulb's own waits for a route request");
+}
