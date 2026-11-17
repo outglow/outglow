@@ -3,6 +3,7 @@ pub const STILL_MS: u64 = 10;
 pub const START_MS: u64 = 100;
 pub const FLICKER_MS: u64 = 128;
 pub const THRESHOLD: u8 = 0xD0;
+pub const MAX_STEPS: usize = 1024;
 
 pub fn base(level: u8) -> u8 {
     level.clamp(20, 238)
@@ -36,7 +37,10 @@ impl Candle {
 
     pub fn tick(&mut self, now_ms: u64, level: u8) -> bool {
         let before = self.shown;
-        while now_ms >= self.next_ms {
+        for _ in 0..MAX_STEPS {
+            if now_ms < self.next_ms {
+                break;
+            }
             let (index, speed) = match self.flicker {
                 Some(f) => f,
                 None => {
@@ -57,6 +61,7 @@ impl Candle {
             self.flicker = Some((index + 1, speed));
             self.next_ms += FLICKER_MS / speed as u64;
         }
+        self.next_ms = self.next_ms.max(now_ms);
         self.shown != before
     }
 }
@@ -125,6 +130,34 @@ mod tests {
                 (4216, 128), (4354, 126), (4482, 128)
             ]
         );
+    }
+
+    #[test]
+    fn a_late_tick_catches_up_as_if_every_millisecond_had_ticked() {
+        let mut every = Candle::new(128, 0, 0x1234_5678);
+        for t in 0..=3000u64 {
+            every.tick(t, 128);
+        }
+        let mut late = Candle::new(128, 0, 0x1234_5678);
+        late.tick(3000, 128);
+        assert_eq!(late, every);
+    }
+
+    #[test]
+    fn a_tick_an_hour_late_stops_after_max_steps_and_flickers_on_from_then() {
+        let mut c = Candle::new(128, 0, 0x1234_5678);
+        c.tick(3_600_000, 128);
+        assert_eq!(c.next_ms, 3_600_000, "behind after {MAX_STEPS} steps, the next one is due at once");
+        let mut changes = 0;
+        let mut last = c.level();
+        for t in 3_600_000..3_660_000u64 {
+            c.tick(t, 128);
+            if c.level() != last {
+                changes += 1;
+                last = c.level();
+            }
+        }
+        assert!(changes > 100, "it flickers after the gap: {changes} changes in a minute");
     }
 
     #[test]
