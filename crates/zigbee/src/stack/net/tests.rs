@@ -731,3 +731,35 @@ fn a_frame_kept_for_a_sleepy_child_counts_as_sent_only_when_it_is_the_bulbs_own_
         assert_eq!(s.diag.n[k::APS_TX_UCAST_SUCCESS] == 1, counted, "{frame_type} {src:04X}");
     }
 }
+
+#[test]
+fn a_source_routed_frame_that_fails_is_counted_by_why_and_reported_unless_it_is_a_status_itself() {
+    let full = k::RELAY_DROP_QUEUE_FULL;
+    let cases: [(u16, u8, u8, u8, bool, [u32; 3], bool); 6] = [
+        (0x3000, nwk::FRAME_DATA, 0x00, 0, false, [0, 1, 0], true),
+        (0x3000, nwk::FRAME_DATA, 0x00, 2, false, [0, 0, 0], false),
+        (0x3000, nwk::FRAME_DATA, 0x00, 2, true, [0, 0, 1], true),
+        (0x3000, nwk::FRAME_CMD, 0x7F, 0, false, [0, 1, 0], true),
+        (0x3000, nwk::FRAME_CMD, nwk::CMD_NETWORK_STATUS, 0, false, [0, 1, 0], false),
+        (0x0042, nwk::FRAME_DATA, 0x00, 0, false, [0, 0, 0], false),
+    ];
+    for (src, frame_type, first, retries, held_full, counts, reported) in cases {
+        let mut s = relaying();
+        s.hal.deaf = [0x1002].to_vec();
+        route(&mut s, 0, 0x3000, 0x1001, false, 0);
+        if held_full {
+            for e in s.held.iter_mut() {
+                e.used = true;
+            }
+        }
+        let h = nwk::Header::new(frame_type, 0x5000, src, 5, 1);
+        s.send_to(0x1002, &h, &[first, 0x00, 0x00, 0x50], retries);
+        let c = [s.diag.n[k::RELAYED_UCAST], s.diag.n[k::RELAY_DROP_MAC_FAIL], s.diag.n[full]];
+        assert_eq!(c, counts, "{src:04X} {frame_type} {first:02X} {retries} {held_full}");
+        let status = s.hal.sent.iter().any(|f| f[5..7] == [0x01, 0x10]);
+        assert_eq!(status, reported, "{src:04X} {frame_type} {first:02X} {retries} {held_full}");
+    }
+    let mut s = relaying();
+    s.send_to(0x1002, &nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x3000, 5, 1), &[0x00], 2);
+    assert_eq!(s.diag.n[k::RELAYED_UCAST], 1);
+}
