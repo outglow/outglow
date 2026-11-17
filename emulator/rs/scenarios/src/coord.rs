@@ -9,11 +9,14 @@ use crate::station::{nx, Station, StationEv};
 pub const TCLK_DEFAULT: Key = *b"ZigBeeAlliance09";
 pub const NWK_KEY: Key = [0x01, 0x03, 0x05, 0x07, 0x09, 0x0b, 0x0d, 0x0f, 0x00, 0x02, 0x04, 0x06, 0x08, 0x0a, 0x0c, 0x0d];
 const UPPER_RETRIES: u32 = 2;
+const APS_ACK_WAIT_MS: f64 = 1600.0;
+const APS_MAX_FRAME_RETRIES: u32 = 3;
 
 pub enum CoordEv {
     LinkStatusTick,
     TransportKey { ext: u64 },
     AckTimeout(u8),
+    ApsAckTimeout(u8),
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +73,8 @@ pub struct Coord {
     fc_in_ext: HashMap<u64, i64>,
     pub route_records: Vec<(f64, u16, Vec<u16>)>,
     pub mute_aps_ack: bool,
+    pub aps_retry: bool,
+    aps_waiting: HashMap<u8, (u16, Vec<u8>, u32)>,
     pub mute_route_reply: bool,
     pub mute_tclk: bool,
     pub tclk_key_load: bool,
@@ -138,6 +143,8 @@ impl Coord {
             fc_in_ext: HashMap::new(),
             route_records: Vec::new(),
             mute_aps_ack: false,
+            aps_retry: false,
+            aps_waiting: HashMap::new(),
             mute_route_reply: false,
             mute_tclk: false,
             tclk_key_load: true,
@@ -190,6 +197,7 @@ impl Coord {
             CoordEv::LinkStatusTick => self.link_status_tick(air),
             CoordEv::TransportKey { ext } => self.send_transport_key(air, ext),
             CoordEv::AckTimeout(seq) => self.ack_timeout(air, seq),
+            CoordEv::ApsAckTimeout(ctr) => self.aps_ack_timeout(air, ctr),
         }
     }
 
@@ -207,6 +215,27 @@ impl Coord {
             let seq = mpdu[2];
             self.waiting_ack.insert(seq, (mpdu, r, upper.unwrap_or(2)));
             air.at(t1 + 1.5, self.cev(CoordEv::AckTimeout(seq)));
+        }
+    }
+
+    fn aps_ack_timeout(&mut self, air: &mut Air, ctr: u8) {
+        let Some((dst, aps, left)) = self.aps_waiting.remove(&ctr) else { return };
+        if left == 0 {
+            self.ev(air, "aps-no-ack", format!("dst={dst:#06x}, counter={ctr}"));
+            return;
+        }
+        self.ev(air, "aps-retry", format!("dst={dst:#06x}, counter={ctr}, left={}", left - 1));
+        self.nwk_send_data(air, dst, &aps);
+        self.aps_waiting.insert(ctr, (dst, aps, left - 1));
+        air.at(air.now() + APS_ACK_WAIT_MS, self.cev(CoordEv::ApsAckTimeout(ctr)));
+    }
+
+    fn aps_acked(&mut self, src: u16, p: &[u8]) {
+        let at = if p[0] & 0x10 != 0 { 1 } else { 7 };
+        if let Some(&ctr) = p.get(at) {
+            if self.aps_waiting.get(&ctr).is_some_and(|w| w.0 == src) {
+                self.aps_waiting.remove(&ctr);
+            }
         }
     }
 
@@ -560,6 +589,7 @@ impl Coord {
         let ack_req = fc & 0x40 != 0;
         let mut i = 1;
         if ftype == 2 {
+            self.aps_acked(src, &p);
             return;
         }
         if ftype == 1 {
@@ -992,6 +1022,11 @@ impl Coord {
         aps.extend_from_slice(&[fc, seq, cmd]);
         aps.extend_from_slice(payload);
         self.nwk_send_data(air, dst, &aps);
+        if self.aps_retry && dst < 0xFFF8 {
+            let ctr = aps[7];
+            self.aps_waiting.insert(ctr, (dst, aps, APS_MAX_FRAME_RETRIES));
+            air.at(air.now() + APS_ACK_WAIT_MS, self.cev(CoordEv::ApsAckTimeout(ctr)));
+        }
         seq
     }
 
@@ -1161,5 +1196,73 @@ impl Coord {
         self.permit_join = permit_join;
         self.st.short = Some(short);
         self.short = short;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::air::World;
+    use crate::frames::Keys;
+
+    const NWK_KEY: [u8; 16] = [7; 16];
+
+    fn world(aps_retry: bool) -> World {
+        let dut = zbnode::Node::new(&[0u8; 0x100], 1, 0).unwrap();
+        let mut coord = Coord::new_plain(11, NWK_KEY);
+        coord.aps_retry = aps_retry;
+        let mut w = World::new(dut, coord, Keys::default(), None);
+        w.air.off.insert(NodeId::Dut);
+        w
+    }
+
+    fn sent_to(w: &World, dst: u16) -> Vec<u8> {
+        w.air.frames.iter().filter(|f| f.who == NodeId::Coord).filter_map(|f| {
+            let m = mac_parse(&f.psdu)?;
+            (m.ty == 1 && m.payload.len() >= 8 && u16::from_le_bytes([m.payload[2], m.payload[3]]) == dst).then(|| m.payload[7])
+        }).fold(Vec::new(), |mut v, s| {
+            if !v.contains(&s) {
+                v.push(s);
+            }
+            v
+        })
+    }
+
+    #[test]
+    fn an_unacknowledged_command_goes_again_after_the_aps_ack_wait_at_most_three_times() {
+        let mut w = world(true);
+        w.coord.zcl_cmd(&mut w.air, 0x1234, 1, 0x0006, 0x00, &[]);
+        w.run_ms(APS_ACK_WAIT_MS - 10.0).unwrap();
+        assert_eq!(sent_to(&w, 0x1234).len(), 1);
+        w.run_ms(APS_ACK_WAIT_MS + 10.0).unwrap();
+        assert_eq!(sent_to(&w, 0x1234).len(), 2);
+        w.run_ms(10.0 * APS_ACK_WAIT_MS).unwrap();
+        assert_eq!(sent_to(&w, 0x1234).len(), 1 + APS_MAX_FRAME_RETRIES as usize);
+        assert_eq!(w.coord.events.iter().filter(|e| e.kind == "aps-retry").count(), APS_MAX_FRAME_RETRIES as usize);
+        assert_eq!(w.coord.events.iter().filter(|e| e.kind == "aps-no-ack").count(), 1);
+    }
+
+    #[test]
+    fn an_acknowledged_command_does_not_go_again() {
+        let mut w = world(true);
+        w.coord.zcl_cmd(&mut w.air, 0x1234, 1, 0x0006, 0x00, &[]);
+        let ctr = w.coord.st.aps_ctr.wrapping_sub(1);
+        w.coord.aps_acked(0x4321, &[0x02, 1, 0x06, 0x00, 0x04, 0x01, 1, ctr]);
+        w.run_ms(1.5 * APS_ACK_WAIT_MS).unwrap();
+        assert_eq!(sent_to(&w, 0x1234).len(), 2, "an ack from another device");
+        w.coord.aps_acked(0x1234, &[0x02, 1, 0x06, 0x00, 0x04, 0x01, 1, ctr]);
+        w.run_ms(10.0 * APS_ACK_WAIT_MS).unwrap();
+        assert_eq!(sent_to(&w, 0x1234).len(), 2);
+        assert!(w.coord.events.iter().all(|e| e.kind != "aps-no-ack"));
+    }
+
+    #[test]
+    fn without_aps_retry_a_command_goes_once() {
+        let mut w = world(false);
+        w.coord.zcl_cmd(&mut w.air, 0x1234, 1, 0x0006, 0x00, &[]);
+        w.run_ms(10.0 * APS_ACK_WAIT_MS).unwrap();
+        assert_eq!(sent_to(&w, 0x1234).len(), 1);
+        w.coord.zcl_send_with(&mut w.air, 0xFFFD, 1, 0x0006, 0x00, &[], HA, true, false, None, false);
+        assert!(w.coord.aps_waiting.is_empty());
     }
 }

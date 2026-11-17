@@ -280,6 +280,7 @@ fn parent(cx: &mut SimCtx, pfw: Fw, jfw: Fw) -> R<()> {
     let (p, j) = (b[0].clone(), b[1].clone());
     s.w.set_t_off(j.id, 8000.0);
     s.w.air.block(NodeId::Coord, j.id, true);
+    s.w.coord.aps_retry = true;
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== parent P: {}; joiner J: {}; channel 11", p.fw.title(), j.fw.title()));
     cx.say(&format!("   {}", describe(&b)));
