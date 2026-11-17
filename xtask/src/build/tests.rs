@@ -199,7 +199,7 @@ fn a_build_runs_the_toolchain_in_order() {
             "sh -c command -v \"$0\" rustc".into(),
             "rustc -vV".into(),
             format!(
-                "cd ROOT/crates/bulb-tc32 && BULB_BOARD=ESMLFzm_w6_Dimm-4.63 BULB_FILE_VERSION=01000000 \
+                "cd ROOT/crates/bulb-tc32 && BULB_BOARD=ESMLFzm_w6_Dimm-4.63 BULB_FILE_VERSION=01000000 BULB_VERSION=1.0.0 \
                  -u CARGO_ENCODED_RUSTFLAGS CARGO_TARGET_DIR={out}/cargo-ID OUTGLOW_RUSTC_WRAPPER=1 RUSTC_BOOTSTRAP=1 \
                  -u RUSTC_WORKSPACE_WRAPPER RUSTC_WRAPPER=/bin/xtask \
                  RUSTFLAGS=-C linker-plugin-lto -C force-frame-pointers=no --emit=llvm-bc --remap-path-prefix=/home/u=~ \
@@ -272,7 +272,7 @@ fn a_variant_with_a_key_a_version_and_its_own_directory() {
     let a = args(&["--board", "EGLO_ZM_TW-4.62", "--no-ble", "--no-sense", "--trace", "--out-dir", r.t.path("out").to_str().unwrap()]);
     run_in(&mut c, &a).unwrap();
     let cargo = fake.log.iter().find(|l| l.contains(" build --release")).unwrap();
-    assert!(cargo.contains(" BULB_BOARD=EGLO_ZM_TW-4.62 BULB_FILE_VERSION=01020003 "), "{cargo}");
+    assert!(cargo.contains(" BULB_BOARD=EGLO_ZM_TW-4.62 BULB_FILE_VERSION=01020003 BULB_VERSION=1.2.3 "), "{cargo}");
     assert!(cargo.contains(&format!("--remap-path-prefix={}=rust ", sysroot.join("lib/rustlib/src/rust/library").display())));
     assert!(cargo.contains(" TOUCHLINK_MASTER_KEY=00112233 "), "{cargo}");
     assert!(cargo.ends_with(" --features=trace -Zbuild-std=core -Zbuild-std-features=compiler-builtins-mem"), "{cargo}");
