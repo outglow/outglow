@@ -195,3 +195,69 @@ fn the_colour_is_reported_once_configured() {
     net.run(3_000);
     assert!(reports(&net, 0x00) >= 1, "hue reported");
 }
+
+fn colour_status(net: &mut Net, short: u16, cmd: u8, payload: &[u8]) -> u8 {
+    let seq = net.coord.zcl(short, COLOR, 0x01, cmd, payload);
+    net.run(50);
+    let r = net.coord.last_zcl(short, COLOR, 0x0B).unwrap();
+    assert_eq!(r[..4], [0x18, seq, 0x0B, cmd]);
+    r[4]
+}
+
+#[test]
+fn colour_commands_with_a_reserved_mode_a_rate_of_zero_or_a_saturation_out_of_range_are_invalid_fields() {
+    let (mut net, _, short) = colour_bulb();
+    for (cmd, payload) in [
+        (0x01u8, vec![2u8, 10]),
+        (0x01, vec![1, 0]),
+        (0x01, vec![3, 0]),
+        (0x02, vec![0, 10, 0]),
+        (0x02, vec![2, 10, 0]),
+        (0x03, vec![255, 0, 0]),
+        (0x04, vec![2, 10]),
+        (0x04, vec![1, 0]),
+        (0x05, vec![0, 10, 0]),
+        (0x05, vec![2, 10, 0]),
+        (0x4B, vec![2, 10, 0, 0, 0, 0, 0]),
+        (0x4B, vec![1, 0, 0, 0, 0, 0, 0]),
+        (0x4C, vec![2, 10, 0, 0, 0, 0, 0, 0, 0]),
+    ] {
+        assert_eq!(colour_status(&mut net, short, cmd, &payload), 0x85, "command {cmd:#04x} {payload:?}");
+    }
+    assert_eq!(colour_status(&mut net, short, 0x04, &[0, 0]), 0x00, "mode 0 stops, rate or not");
+}
+
+#[test]
+fn move_color_runs_to_the_edge_of_the_space_in_both_directions_and_zero_rates_stop() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x40, 0x00, 0x20, 0, 0]);
+    net.run(50);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, COLOR, 0x11, 0x08, &(-0x0400i16).to_le_bytes().iter().chain(&0x0100i16.to_le_bytes()).copied().collect::<Vec<u8>>());
+    net.run(50);
+    assert_eq!(net.nodes[n].commands[before..], [Command::MoveToXy { x: 0, y: 0x2000 + 0x0100 * 16, transition_ms: 16_000 }]);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, COLOR, 0x11, 0x08, &[0, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].commands[before..], [Command::StopColorTransition]);
+}
+
+#[test]
+fn colour_commands_for_a_light_that_is_off_jump_when_told_to_execute_anyway() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, 0x0006, 0x11, 0x00, &[]);
+    net.run(50);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[80, 90, 10, 0, 0x01, 0x01]);
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x40, 0x00, 0x50, 10, 0, 0x01, 0x01]);
+    net.coord.zcl(short, COLOR, 0x11, 0x47, &[0x01, 0x01]);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[81, 91, 10, 0, 0x01, 0x00]);
+    net.run(50);
+    assert_eq!(
+        net.nodes[n].commands[before..],
+        [
+            Command::MoveToHueSaturation { hue: 80, sat: 90, direction: HueDirection::Shortest, transition_ms: 0 },
+            Command::MoveToXy { x: 0x4000, y: 0x5000, transition_ms: 0 }
+        ]
+    );
+}
