@@ -220,6 +220,7 @@ fn the_hal_hands_frames_and_tables_to_the_radio_driver() {
     hal.set_channel(20);
     assert!(sim::with(|c| c.writes()).contains(&Op::W8(0x1244, 0x49)));
     hal.set_filter(0x1a62, 0x0001);
+    assert_eq!(crate::radio::tests::filter(), (0x1a62, 0x0001, hal.ieee()));
     #[cfg(feature = "sense")]
     {
         hal.sense_listen(0x5e55);

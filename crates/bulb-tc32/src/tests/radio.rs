@@ -1349,3 +1349,7 @@ fn the_trace_of_a_transmission_counts_its_attempts_and_the_busy_clear_channel_ch
     assert_eq!(e[2], 0x1234_0000 | mpdu.len() as u32);
     assert_eq!(e[3] & 0xffff, 4 | 20 << 8);
 }
+
+pub fn filter() -> (u16, u16, u64) {
+    (crate::radio::PAN.get(), crate::radio::SHORT.get(), u64::from_le_bytes(crate::radio::EXT.get()))
+}
