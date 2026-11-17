@@ -1320,3 +1320,37 @@ fn a_pairing_that_gives_the_device_the_bulbs_own_address_as_alias_makes_the_bulb
     net.coord.gp_pair(&p);
     net.run_until(20_000, "a new address", |net| net.nodes[n].stack.short_address() != short);
 }
+
+#[test]
+fn the_alias_of_a_device_whose_low_half_is_no_address_is_derived_from_both_halves() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_commissioning_mode(true, false);
+    net.run(100);
+    for (id, alias) in [(0x1234_FFFFu32, 0xEDCBu16), (0x0012_0000, 0x0012), (0xFFF8_FFF8, 0x0007), (0x0000_FFFF, 0xFFF7)] {
+        let mut gpd = Gpd::new(&net.air, id, None);
+        net.coord.zcl_rx.clear();
+        gpd.send(0xE0, &commissioning());
+        net.run(1_000);
+        let got = gp_frames(&net, 0x04);
+        assert_eq!(got.first().map(|g| g.0), Some(alias), "device {id:#010x}");
+    }
+}
+
+#[test]
+fn a_frame_from_an_ieee_device_with_no_address_is_not_taken() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    for ieee in [0u64, u64::MAX] {
+        let mut gpd = Gpd::with_ieee(&net.air, ieee, 1, None);
+        net.coord.zcl_rx.clear();
+        gpd.send(0xE0, &commissioning());
+        net.run(500);
+        assert!(gp_frames(&net, 0x04).is_empty(), "{ieee:#x}");
+    }    let mut gpd = Gpd::with_ieee(&net.air, 0x00124B0000001122, 1, None);
+    gpd.send(0xE0, &commissioning());
+    net.run(500);
+    assert_eq!(gp_frames(&net, 0x04).len(), 1, "one with an address is");
+}
