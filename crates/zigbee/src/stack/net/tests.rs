@@ -479,3 +479,63 @@ fn a_full_broadcast_table_takes_a_new_broadcast_only_in_place_of_one_kept_at_mos
     assert_eq!(s.seen_before(0x2001, 9, now, true), Some(false), "forced");
     assert_eq!(s.seen[4].src, 0x2001);
 }
+
+fn rreq(s: &mut Stack<Scripted>, i: usize, src: u16, id: u8) {
+    let e = &mut s.bcast[i];
+    e.used = true;
+    e.header = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, src, 5, 1);
+    e.payload[..6].copy_from_slice(&[nwk::CMD_ROUTE_REQUEST, 0, id, 0x55, 0x55, 0]);
+    e.len = 6;
+}
+
+#[test]
+fn a_route_request_passed_on_replaces_the_queued_copy_of_the_same_request_and_waits_a_jitter() {
+    let mut s = up();
+    fill(&mut s);
+    s.neighbors[0].out_cost = 1;
+    s.neighbors[0].lqi = 255;
+    rreq(&mut s, 0, 0x2000, 7);
+    rreq(&mut s, 1, 0x2001, 7);
+    rreq(&mut s, 2, 0x2000, 8);
+    s.hal.random = [130].to_vec();
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x2000, 5, 2);
+    s.on_route_request(&h, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3], 1_000);
+    let e = s.bcast[0];
+    assert!(e.used && s.bcast[1].used && s.bcast[2].used && !s.bcast[3].used);
+    assert_eq!((e.header.seq, e.header.radius, e.at, e.left), (2, 4, 1_010, 1 + super::RREQ_RELAY_RETRIES));
+    assert_eq!(e.payload[..6], [nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3 + s.neighbors[0].link_cost()]);
+    let mut s = up();
+    fill(&mut s);
+    s.neighbors[0].out_cost = 1;
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x2000, 1, 2);
+    s.on_route_request(&h, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3], 1_000);
+    assert!(s.bcast.iter().all(|e| !e.used), "at the end of its radius");
+    assert!(s.discoveries[0].used);
+}
+
+#[test]
+fn a_broadcast_is_queued_only_up_to_the_largest_nwk_payload() {
+    let mut s = up();
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0xFFFD, 0x2000, 5, 2);
+    s.queue_broadcast(&h, &[1; MAX_NWK_PAYLOAD], 2_000, 3);
+    assert_eq!((s.bcast[0].used, s.bcast[0].len, s.bcast[0].at, s.bcast[0].left), (true, MAX_NWK_PAYLOAD as u8, 2_000, 3));
+    s.queue_broadcast(&h, &[1; MAX_NWK_PAYLOAD + 1], 2_000, 3);
+    assert!(!s.bcast[1].used);
+}
+
+#[test]
+fn a_route_reply_to_the_bulbs_own_request_stops_its_rebroadcasts() {
+    let mut s = up();
+    fill(&mut s);
+    rreq(&mut s, 0, 0x0042, 7);
+    rreq(&mut s, 1, 0x0042, 8);
+    rreq(&mut s, 2, 0x2000, 7);
+    s.bcast[3] = s.bcast[0];
+    s.bcast[3].payload[0] = nwk::CMD_ROUTE_REPLY;
+    s.discoveries[0] = super::Discovery { used: true, id: 7, src: 0x0042, sender: 0x0042, forward_cost: 0, residual_cost: 0xFF, expires: 9_000 };
+    s.routes[0] = super::Route { status: super::ROUTE_DISCOVERY, dst: 0x5555, next: 0xFFFF, many_to_one: false, no_cache: false, record_due: false, at: 0 };
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1000, 5, 2);
+    s.on_route_reply(&h, 0x1000, &[nwk::CMD_ROUTE_REPLY, 0, 7, 0x42, 0x00, 0x55, 0x55, 2]);
+    assert_eq!([s.bcast[0].used, s.bcast[1].used, s.bcast[2].used, s.bcast[3].used], [false, true, true, true]);
+    assert_eq!((s.routes[0].status, s.routes[0].next, s.discoveries[0].residual_cost), (super::ROUTE_ACTIVE, 0x1000, 2));
+}
