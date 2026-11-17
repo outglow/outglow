@@ -127,6 +127,7 @@ pub struct Port {
     pub probe_pan: u16,
     pub busy: u32,
     pub no_black_box: bool,
+    pub no_noise: bool,
 }
 
 pub struct Air {
@@ -219,6 +220,7 @@ impl Air {
             probe_pan: 0xFFFF,
             busy: 0,
             no_black_box: false,
+            no_noise: false,
         });
         let n = self.ports.len();
         for row in self.lqi.iter_mut() {
@@ -457,7 +459,7 @@ impl Hal for SimHal {
         Some(&mut self.bx)
     }
     fn noise_dbm(&mut self) -> Option<i8> {
-        Some(-97)
+        (!self.air.borrow().ports[self.id].no_noise).then_some(-97)
     }
     fn reset_cause(&mut self) -> ResetCause {
         self.air.borrow().ports[self.id].reset_cause

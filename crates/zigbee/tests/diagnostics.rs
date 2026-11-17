@@ -1128,6 +1128,21 @@ fn a_boot_record_of_another_version_restarts_the_reset_count() {
 }
 
 #[test]
+fn without_a_noise_measurement_the_noise_stays_unknown() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].no_noise = true;
+    net.power_cycle(n);
+    net.run(70_000);
+    assert_eq!(mfr1(&mut net, short, 0x501A), 0x80, "i8::MIN: not measured");
+    net.air.borrow_mut().ports[id].no_noise = false;
+    net.run(2_000);
+    assert_eq!(mfr1(&mut net, short, 0x501A), -97i8 as u8 as u32, "measured a second after the last try");
+}
+
+#[test]
 fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
     let mut net = Net::new();
     let n = net.join_node();
