@@ -747,6 +747,9 @@ impl World {
                 return Ok(());
             }
             let step = target.min(now + quantum);
+            if self.idle_quantum(step) {
+                continue;
+            }
             if self.air.t < step {
                 self.run_ms(step)?;
             }
@@ -756,6 +759,40 @@ impl World {
                 }
             }
         }
+    }
+
+    fn idle_quantum(&mut self, step: f64) -> bool {
+        let air = &mut self.air;
+        if air.t < step {
+            if air.next_event().is_some_and(|t| t <= step) {
+                return false;
+            }
+            if air.off.contains(&NodeId::Dut) {
+                air.t = air.t.max(step);
+            } else {
+                let off = air.t_off;
+                if air.dut_tap.is_some() || !air.dut.advance_idle(r6(step - off)) {
+                    return false;
+                }
+                air.t = air.t.max(r6(air.dut.ms()) + off).max(step);
+            }
+        }
+        for i in 0..air.bulbs.len() {
+            if air.bulbs[i].t >= step {
+                continue;
+            }
+            let powered = !air.off.contains(&NodeId::Bulb(i as u8));
+            let b = &mut air.bulbs[i];
+            if !powered {
+                b.t = step;
+                continue;
+            }
+            if b.tap.is_some() || !b.node.advance_idle(r6(step - b.t_off)) {
+                return false;
+            }
+            b.t = b.t.max(r6(b.node.ms()) + b.t_off).max(step);
+        }
+        true
     }
 
     fn lockstep_par(&mut self, target: f64, quantum: f64) -> Result<(), String> {

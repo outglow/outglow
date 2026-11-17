@@ -454,6 +454,13 @@ impl Node {
         }
     }
 
+    pub fn advance_idle(&mut self, target: f64) -> bool {
+        if !self.radio.b().tx_pending.is_empty() || !self.air_pending.borrow().is_empty() {
+            return false;
+        }
+        self.m.ms() >= target || self.m.idle_advance(target, &self.idle)
+    }
+
     pub fn tx_committed(&self) -> bool {
         self.radio.committed(&self.m)
     }
