@@ -26,7 +26,7 @@ fn reached(now: u32, t: u32) -> bool {
 }
 
 pub struct Glue {
-    refresh_at: u32,
+    pub(crate) refresh_at: u32,
     frames_seen: u32,
     log_seq: Option<u16>,
     links: (u32, u32, u32),

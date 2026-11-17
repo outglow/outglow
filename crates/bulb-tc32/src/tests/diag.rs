@@ -93,3 +93,36 @@ pub(crate) fn last_frame_time() -> u32 {
     let bytes = b.bytes();
     u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
 }
+
+#[test]
+fn the_page_data_is_refreshed_once_a_second_and_what_changed_right_away() {
+    let _s = sim::session();
+    let mut slot = None;
+    let stack = stack_in(&mut slot);
+    let mut ble = ble::Ble::new(crate::ble::BleHal::new(), IDENTITY);
+    let mut g = Glue::new();
+    at_ms(stack, 100);
+    g.start(&mut ble, stack);
+    assert_eq!(g.refresh_at, 1_100);
+    assert_eq!(g.frames_seen, FRAMES_IN.get());
+    assert_eq!(g.log_seq, Some(stack.event_seq()));
+    at_ms(stack, 1_099);
+    frame(1, 2, 3, 4, 5, 6, 7);
+    ble.stats.connections = 1;
+    g.refresh(&mut ble, stack);
+    assert_eq!(g.refresh_at, 1_100);
+    assert_eq!(g.frames_seen, FRAMES_IN.get());
+    assert_eq!(g.links, (1, 0, 0));
+    ble.stats.disconnects = 2;
+    ble.stats.links_lost = 3;
+    stack.log_identify();
+    g.refresh(&mut ble, stack);
+    assert_eq!(g.links, (1, 2, 3));
+    assert_eq!(g.log_seq, Some(stack.event_seq()));
+    at_ms(stack, 1_100);
+    g.refresh(&mut ble, stack);
+    assert_eq!(g.refresh_at, 2_100);
+    at_ms(stack, 2_500);
+    g.refresh(&mut ble, stack);
+    assert_eq!(g.refresh_at, 3_500);
+}

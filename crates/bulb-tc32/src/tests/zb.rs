@@ -490,6 +490,32 @@ mod over_ble {
         assert_eq!(nv::open().load(NvItem::Network as u8, &mut buf), Some(3));
     }
 
+    fn poll_with_room(link: &mut Link, room_ms: u32) -> bool {
+        for _ in 0..20_000 {
+            let now = sim::with(|c| c.tick);
+            let next = BLE_NEXT.get().unwrap_or(now);
+            let left = next.wrapping_sub(now) as i32;
+            if left > (room_ms as i32 + 1) * 16_000 {
+                sim::with(|c| c.tick = next.wrapping_sub(room_ms * 16_000));
+                link.diag.refresh_at = link.stack.as_mut().map(|s| s.hal.now_ms()).unwrap_or(0).wrapping_sub(1);
+                let before = link.diag.refresh_at;
+                let _ = link.poll();
+                return link.diag.refresh_at != before;
+            }
+            let _ = link.poll();
+        }
+        panic!("no room of {room_ms} ms before a BLE event");
+    }
+
+    #[test]
+    fn the_device_page_is_refreshed_only_with_6_ms_to_spare_before_the_next_ble_event() {
+        let _s = sim::session();
+        let (mut link, _air) = connected();
+        assert!(!poll_with_room(&mut link, 5));
+        assert!(poll_with_room(&mut link, 8));
+        assert!(!poll_with_room(&mut link, 3));
+    }
+
     #[test]
     fn a_poll_frees_the_staging_area_no_update_is_using_and_publishes_the_link_figures() {
         let _s = sim::session();
