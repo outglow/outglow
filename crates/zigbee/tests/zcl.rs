@@ -294,3 +294,78 @@ fn a_cluster_command_for_the_diagnostics_other_than_clear_and_one_for_an_object_
         assert_eq!(net.coord.last_zcl_ep(short, ep, cluster, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x00, 0x81], "endpoint {ep}");
     }
 }
+
+fn global(net: &mut Net, short: u16, cluster: u16, cmd: u8, payload: &[u8]) -> Option<Vec<u8>> {
+    net.coord.zcl_rx.clear();
+    let seq = net.coord.zcl(short, cluster, 0x00, cmd, payload);
+    net.run(100);
+    let rsp = net.coord.zcl_rx.iter().rev().find(|(s, c, f)| *s == short && *c == cluster && f[1] == seq)?.2.clone();
+    assert_eq!(rsp[0], 0x18);
+    Some(rsp[2..].to_vec())
+}
+
+#[test]
+fn a_write_with_a_type_of_unknown_length_stops_at_that_record() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(
+        global(&mut net, short, LEVEL, 0x02, &[0x11, 0x00, 0x99, 40, 0x11, 0x00, 0x20, 41]),
+        Some(vec![0x04, 0x8D, 0x11, 0x00])
+    );
+    assert_eq!(read(&mut net, short, LEVEL, &[0x0011]), vec![ok(0x11, &[0x20, 0xFF])], "nor is the next record written");
+    assert_eq!(global(&mut net, short, LEVEL, 0x02, &[0x11, 0x00, 0x20]), Some(vec![0x04, 0x8D, 0x11, 0x00]), "a value cut short");
+    assert_eq!(
+        global(&mut net, short, ON_OFF, 0x02, &[0x01, 0x40, 0x22, 1, 2, 3, 0x01, 0x40, 0x21, 30, 0]),
+        Some(vec![0x04, 0x8D, 0x01, 0x40])
+    );
+    assert_eq!(read(&mut net, short, ON_OFF, &[0x4001]), vec![ok(0x4001, &[0x21, 30, 0])], "a three-byte value is skipped as one");
+    assert_eq!(global(&mut net, short, BASIC, 0x02, &[0x06, 0x00, 0x42, 3, b'a', b'b', b'c']), Some(vec![0x04, 0x88, 0x06, 0x00]));
+    assert_eq!(global(&mut net, short, BASIC, 0x02, &[0x0A, 0x00, 0x41, 0xFF]), Some(vec![0x04, 0x88, 0x0A, 0x00]), "an invalid string is no length");
+}
+
+#[test]
+fn write_attributes_no_response_writes_without_an_answer() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(global(&mut net, short, ON_OFF, 0x05, &[0x02, 0x40, 0x21, 0x2C, 0x01]), None);
+    assert_eq!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0x2C, 0x01])]);
+    assert_eq!(global(&mut net, short, ON_OFF, 0x05, &[0x00, 0x00, 0x10, 0]), None, "nor for a failed one");
+}
+
+#[test]
+fn an_undivided_write_with_a_record_cut_short_writes_nothing() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(global(&mut net, short, LEVEL, 0x03, &[0x11, 0x00, 0x20, 40, 0x0F, 0x00, 0x18]), Some(vec![0x04, 0x8D, 0x0F, 0x00]));
+    assert_eq!(read(&mut net, short, LEVEL, &[0x0011]), vec![ok(0x11, &[0x20, 0xFF])]);
+}
+
+#[test]
+fn configure_reporting_answers_each_failed_record_and_stops_at_one_cut_short() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(global(&mut net, short, ON_OFF, 0x06, &[0x01, 0x00, 0x00, 0x10, 0x00]), Some(vec![0x07, 0x00]), "a timeout for received reports");
+    assert_eq!(global(&mut net, short, ON_OFF, 0x06, &[0x01, 0x00, 0x00, 0x10]), Some(vec![0x07, 0x00]), "its timeout cut short");
+    assert_eq!(
+        global(&mut net, short, ON_OFF, 0x06, &[0x00, 0x01, 0x00, 0x10, 1, 0, 2, 0, 0x00, 0x00, 0x40, 0x10, 1, 0, 2, 0]),
+        Some(vec![0x07, 0x86, 0x00, 0x01, 0x00, 0x8C, 0x00, 0x00, 0x40])
+    );
+    assert_eq!(global(&mut net, short, ON_OFF, 0x06, &[0x00, 0x00, 0x00, 0x20, 1, 0, 2, 0, 0]), Some(vec![0x07, 0x8D, 0x00, 0x00, 0x00]));
+    assert_eq!(global(&mut net, short, LEVEL, 0x06, &[0x00, 0x00, 0x00, 0x20, 1, 0, 2, 0]), Some(vec![0x07, 0x00]), "the change cut short");
+    assert_eq!(global(&mut net, short, LEVEL, 0x06, &[0x00, 0x00, 0x00, 0x20, 1, 0]), Some(vec![0x07, 0x00]), "the interval cut short");
+    assert_eq!(
+        global(&mut net, short, LEVEL, 0x08, &[0x00, 0x00, 0x00]),
+        Some(vec![0x09, 0x00, 0x00, 0x00, 0x00, 0x20, 1, 0, 0x10, 0x0E, 1]),
+        "none of them changed the defaults"
+    );
+}
+
+#[test]
+fn read_reporting_configuration_of_what_is_not_reported() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(
+        global(&mut net, short, ON_OFF, 0x08, &[0x01, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        Some(vec![0x09, 0x8C, 0x01, 0x00, 0x00, 0x8C, 0x00, 0x00, 0x40, 0x86, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0, 0, 0x10, 0x0E])
+    );
+    assert_eq!(
+        global(&mut net, short, DIAG, 0x08, &[0x00, 0x00, 0x01]),
+        Some(vec![0x09, 0x00, 0x00, 0x00, 0x01, 0x23, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0]),
+        "a reportable counter without a configuration"
+    );
+}
