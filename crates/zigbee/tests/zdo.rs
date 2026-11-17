@@ -270,3 +270,73 @@ fn an_unsupported_request_is_not_supported_when_unicast_and_ignored_when_broadca
         assert_eq!(ask(&mut net, 0xFFFD, cluster, &[0, 0]), None);
     }
 }
+
+fn zdo_from(net: &mut Net, short: u16, src: u16, cluster: u16, payload: &[u8]) {
+    let aps = net.coord.aps_frame(0x00, 0, cluster, 0x0000, 0, payload);
+    let mut h = net.coord.header(nwk::FRAME_DATA, short, 30);
+    h.src = src;
+    net.coord.nwk_send(h, &aps, None);
+}
+
+#[test]
+fn a_device_announce_cut_short_teaches_nothing() {
+    let (mut net, n, short) = bulb();
+    zdo_from(&mut net, short, 0x0000, 0x0013, &[0x50, 0x21, 0x43]);
+    net.run(200);
+    assert_eq!(net.nodes[n].stack.state(), zigbee::stack::State::Up);
+}
+
+#[test]
+fn a_match_descriptor_response_without_a_match_finds_no_ota_server() {
+    let mut net = Net::new();
+    net.coord.ota_hidden = true;
+    let n = net.join_node();
+    net.run(31_000);
+    let short = net.nodes[n].short();
+    zdo_from(&mut net, short, 0x0000, 0x8006, &[0x40, 0x00, 0x00, 0x00, 0]);
+    net.run(200);
+    assert_eq!(net.coord.ota_queries, 0);
+    zdo_from(&mut net, short, 0x0000, 0x8006, &[0x41, 0x80, 0x00, 0x00, 1, 1]);
+    net.run(200);
+    assert_eq!(net.coord.ota_queries, 0, "nor a failed one");
+    zdo_from(&mut net, short, 0x0000, 0x8006, &[0x42, 0x00, 0x00, 0x00, 1, 1]);
+    net.run(200);
+    assert_eq!(net.coord.ota_queries, 1, "one with a match does");
+}
+
+#[test]
+fn a_router_without_children_announces_none_after_a_restart() {
+    let (mut net, n, short) = bulb();
+    net.power_cycle(n);
+    net.run(30_000);
+    assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != short || *c != 0x001F));
+}
+
+#[test]
+fn a_parent_announce_of_its_own_cut_short_or_naming_strangers_is_not_answered() {
+    let (mut net, _, short) = bulb();
+    let stranger = 0x00124B00000000E1u64.to_le_bytes();
+    zdo_from(&mut net, short, short, 0x001F, &[[0x51, 1].as_slice(), &stranger].concat());
+    zdo_from(&mut net, short, 0x0000, 0x001F, &[0x52, 2, 1, 2, 3, 4, 5, 6, 7, 8]);
+    zdo_from(&mut net, short, 0x0000, 0x001F, &[[0x53, 1].as_slice(), &stranger].concat());
+    net.run(500);
+    assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != short || *c != 0x801F));
+}
+
+#[test]
+fn reports_to_a_neighbouring_router_go_straight_to_its_address() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let b = net.join_node();
+    net.run(40_000);
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    let me = ext_of(&net, a);
+    let eb = ext_of(&net, b);
+    assert_eq!(ask(&mut net, sa, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(eb, 1))), Some(vec![0x00]));
+    let t = net.now();
+    net.coord.zcl(sa, LEVEL, 0x11, 0x04, &[77, 0, 0, 0, 0]);
+    net.run(2_000);
+    let sent = net.nwk_sent_by(net.nodes[a].id, t);
+    assert!(sent.iter().any(|(_, h, p)| h.dst == sb && p.get(2..4) == Some(&LEVEL.to_le_bytes()[..])));
+    assert!(!sent.iter().any(|(_, h, p)| h.dst == 0xFFFD && p.get(2..4) == Some(&[0, 0][..])), "no address asked for");
+}
