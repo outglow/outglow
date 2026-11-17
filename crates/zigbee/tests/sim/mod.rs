@@ -806,7 +806,7 @@ impl Coord {
         f
     }
 
-    fn aps_command(&mut self, link: &[u8; 16], key_id: u8, payload: &[u8]) -> Vec<u8> {
+    pub fn aps_command(&mut self, link: &[u8; 16], key_id: u8, payload: &[u8]) -> Vec<u8> {
         let key = match key_id {
             0 => *link,
             2 => crypto::hmac_mmo(link, &[0x00]),

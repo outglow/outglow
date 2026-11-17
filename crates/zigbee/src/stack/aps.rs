@@ -165,9 +165,6 @@ impl<H: Hal> Stack<H> {
         let body_at = f.len();
         f.bytes(payload);
         f.bytes(&[0; crypto::MIC_LEN]);
-        if !f.ok() {
-            return;
-        }
         let aes = Aes128::with_engine(&self.nib.tclk, H::AES);
         let nonce = nwk::nonce(self.ext, counter, 0x25);
         let (head, body) = f.as_mut_slice().split_at_mut(body_at);
@@ -495,9 +492,6 @@ impl<H: Hal> Stack<H> {
             f.u8(0x21);
             f.u8(self.aps_counter);
             self.aps_secure(&mut f, payload);
-            if !f.ok() {
-                return;
-            }
         } else {
             f.u8(0x01);
             f.u8(self.aps_counter);
