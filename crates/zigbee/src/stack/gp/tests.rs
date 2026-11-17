@@ -18,7 +18,7 @@ fn a_device_address_is_read_for_the_source_id_and_ieee_application_ids_only() {
 
 #[test]
 fn a_commissioning_frame_finds_no_room_while_two_notifications_wait() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
     s.state = State::Up;
     s.gp_mode = Some(Commissioning { until: 60_000, sink: 0x0000, unicast: true, exit_on_pairing: false });
     let waiting = Pending { at: 50_000, to: Forward::Sink(0x0000), alias: 0, seq: 0, then: 0, len: 3, zcl: [0; 96] };

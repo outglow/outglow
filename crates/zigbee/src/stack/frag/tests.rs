@@ -5,7 +5,7 @@ use std::vec::Vec;
 
 #[test]
 fn a_fragment_acknowledgement_counts_only_from_the_peer_of_the_transfer() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
     s.frag_out.active = true;
     s.frag_out.a.peer = 0x0000;
     s.frag_out.a.counter = 5;

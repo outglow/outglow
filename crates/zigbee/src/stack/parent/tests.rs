@@ -5,7 +5,7 @@ extern crate std;
 use std::vec::Vec;
 
 fn stack() -> Stack<Scripted> {
-    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY)
+    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY)
 }
 
 fn child(s: &mut Stack<Scripted>, i: usize, short: u16, polled_at: u32, poll_ms: u32) {

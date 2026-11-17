@@ -6,7 +6,7 @@ extern crate std;
 use std::vec::Vec;
 
 fn stack() -> Stack<Scripted> {
-    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY)
+    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY)
 }
 
 fn candidate(short: u16, lqi: u8, router_capacity: bool, depth: u8) -> Candidate {

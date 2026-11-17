@@ -24,7 +24,7 @@ fn the_average_retries_of_nothing_sent_is_zero() {
 
 #[test]
 fn without_a_noise_measurement_the_next_try_is_a_second_later() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
     s.diag.noise_at = 1_000;
     s.diag_noise(1_000);
     assert_eq!(s.diag.noise_at, 2_000);
@@ -85,7 +85,7 @@ fn the_event_log_round_trips_and_one_with_an_impossible_head_or_length_or_cut_sh
 
 #[test]
 fn a_frame_sent_is_counted_as_unicast_or_broadcast_and_one_not_sent_on_a_busy_channel_is_not() {
-    let stack = || Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0 }, IDENTITY);
+    let stack = || Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
     let mut s = stack();
     s.neighbors[0].used = true;
     s.neighbors[0].short = 0x1000;
@@ -120,8 +120,114 @@ fn a_frame_sent_is_counted_as_unicast_or_broadcast_and_one_not_sent_on_a_busy_ch
 
 #[test]
 fn a_frame_sent_after_attempts_on_a_busy_channel_counts_as_sent() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: true, attempts: 3 }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: true, attempts: 3, bx: None }, IDENTITY);
     let h = crate::nwk::Header::new(crate::nwk::FRAME_DATA, 0x1000, 0x0042, 5, 1);
     s.transmit_nwk(0x1000, &h, &[0x00]);
     assert_eq!((s.diag.n[k::MAC_TX_UCAST], s.diag.n[k::MAC_TX_UCAST_RETRY], s.diag.n[k::CHANNEL_ACCESS_FAILURES]), (1, 2, 1));
+}
+
+fn with_neighbors() -> Stack<Scripted> {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: Some(std::boxed::Box::new(crate::BlackBox::EMPTY)) }, IDENTITY);
+    for (i, short) in [0x0000u16, 0x1000, 0x1001, 0x1002, 0x1003, 0x1004].into_iter().enumerate() {
+        let n = &mut s.neighbors[i];
+        n.used = true;
+        n.short = short;
+        n.ext = 0x00124B00_0000_0000 + short as u64 + 1;
+        n.age = 1;
+        n.lqi = 255;
+    }
+    s
+}
+
+fn route(s: &mut Stack<Scripted>, i: usize, dst: u16, next: u16, status: u8, many_to_one: bool) {
+    s.routes[i] = crate::stack::Route { status, dst, next, many_to_one, no_cache: false, record_due: false, at: 0 };
+}
+
+#[test]
+fn the_way_to_the_coordinator_is_a_live_neighbour_or_else_an_active_route() {
+    let mut s = with_neighbors();
+    assert_eq!(s.coordinator_route().0, 0x0000);
+    s.neighbors[0].age = crate::stack::AGE_LIMIT + 1;
+    route(&mut s, 0, 0x7777, 0x1002, crate::stack::ROUTE_ACTIVE, false);
+    route(&mut s, 1, 0x0000, 0x1003, crate::stack::ROUTE_DISCOVERY, false);
+    route(&mut s, 2, 0x0000, 0x1001, crate::stack::ROUTE_ACTIVE, true);
+    assert_eq!(s.coordinator_route(), (0x1001, s.neighbors[2].link_cost(), true));
+    s.neighbors[2].used = false;
+    assert_eq!(s.coordinator_route(), (0x1001, 0, true), "a next hop that is no neighbour has no cost");
+    s.routes[2].status = crate::stack::ROUTE_FREE;
+    assert_eq!(s.coordinator_route(), (0xFFFF, 0, false));
+}
+
+#[test]
+fn a_black_box_row_has_the_coordinators_link_measured_and_the_stale_neighbours() {
+    let mut s = with_neighbors();
+    s.neighbors[0].attempts = 200;
+    s.neighbors[0].delivery = 0xC812;
+    s.neighbors[3].confirmed = true;
+    s.neighbors[3].age = crate::stack::AGE_LIMIT + 1;
+    s.neighbors[4].confirmed = true;
+    s.neighbors[4].age = crate::stack::AGE_LIMIT;
+    s.neighbors[5].age = crate::stack::AGE_LIMIT + 1;
+    for now in [1_000, 1_000 + super::blackbox::ROW_MS] {
+        s.hal.bx.as_mut().unwrap().row_at = now;
+        s.box_timers(now);
+    }
+    let mut out = [0u8; 64];
+    let mut rows = Vec::new();
+    for p in 0..super::blackbox::BOX_PAGES as u16 {
+        let n = s.hal.bx.as_mut().unwrap().page(p, 1_000, &[0; crate::stack::NEIGHBORS], &mut out);
+        rows.extend_from_slice(&out[..n]);
+    }
+    let at = super::blackbox::BOX_LEN - super::blackbox::ROWS * super::blackbox::ROW_ENTRY;
+    let r = &rows[at..at + super::blackbox::ROW_ENTRY];
+    assert!(s.neighbors[0].measured());
+    assert_eq!((r[8] & 0x18, r[9], r[10]), (0x08 | 0x10, 0xC8, 1));
+}
+
+#[test]
+fn a_hop_that_is_no_address_is_not_measured_even_by_a_neighbour_listed_under_it() {
+    let mut s = with_neighbors();
+    s.neighbors[0].used = false;
+    s.neighbors[1].short = 0xFFFF;
+    s.neighbors[1].attempts = 200;
+    s.neighbors[1].delivery = 0xC812;
+    for now in [1_000, 1_000 + super::blackbox::ROW_MS] {
+        s.hal.bx.as_mut().unwrap().row_at = now;
+        s.box_timers(now);
+    }
+    let mut out = [0u8; 64];
+    let mut rows = Vec::new();
+    for p in 0..super::blackbox::BOX_PAGES as u16 {
+        let n = s.hal.bx.as_mut().unwrap().page(p, 1_000, &[0; crate::stack::NEIGHBORS], &mut out);
+        rows.extend_from_slice(&out[..n]);
+    }
+    let at = super::blackbox::BOX_LEN - super::blackbox::ROWS * super::blackbox::ROW_ENTRY;
+    assert_eq!((rows[at + 8] & 0x08, rows[at + 9]), (0, 0));
+}
+
+#[test]
+fn a_neighbour_page_lists_its_four_neighbours_and_marks_those_that_are_children() {
+    let mut s = with_neighbors();
+    s.children[0].used = true;
+    s.children[0].joined = true;
+    s.children[0].ext = s.neighbors[5].ext;
+    s.children[0].capability = 0x8E;
+    let mut out = [0u8; 64];
+    let n = s.diag_bytes(Octets::NeighborPage(1), &mut out);
+    assert_eq!(n, 4 * super::NEIGHBOR_ENTRY);
+    let e = |i: usize| &out[i * super::NEIGHBOR_ENTRY..(i + 1) * super::NEIGHBOR_ENTRY];
+    assert_eq!((u16::from_le_bytes([e(0)[0], e(0)[1]]), u16::from_le_bytes([e(1)[0], e(1)[1]])), (0x1003, 0x1004));
+    assert_eq!((e(0)[5] & 0x08, e(1)[5] & 0x08), (0, 0x08), "the second is a child");
+}
+
+#[test]
+fn end_devices_counted_are_joined_children_that_are_no_routers() {
+    let mut s = with_neighbors();
+    for (i, (joined, capability)) in [(true, 0x80u8), (false, 0x80), (true, 0x8E)].into_iter().enumerate() {
+        let c = &mut s.children[i];
+        c.used = true;
+        c.joined = joined;
+        c.capability = capability;
+    }
+    assert_eq!(s.neighbor_counts().end_devices, 1);
 }

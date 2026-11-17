@@ -1201,6 +1201,21 @@ fn every_write_to_persistent_memory_is_counted() {
 }
 
 #[test]
+fn leaving_the_network_keeps_the_count_of_restarts() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    net.power_cycle(n);
+    net.run(1_000);
+    assert_eq!(net.nodes[n].stack.resets(), (2, 0));
+    net.coord.permit_join = false;
+    net.nodes[n].stack.leave();
+    net.run(200);
+    net.power_cycle(n);
+    net.run(500);
+    assert_eq!(net.nodes[n].stack.resets(), (3, 0));
+}
+
+#[test]
 fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
     let mut net = Net::new();
     let n = net.join_node();
