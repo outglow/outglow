@@ -11,6 +11,7 @@ mod fragments;
 mod frames;
 mod green_power;
 mod hal_defaults;
+mod mac_rx;
 mod network;
 mod nv;
 mod objects;
