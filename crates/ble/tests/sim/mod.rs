@@ -371,6 +371,12 @@ impl Drop for World {
     }
 }
 
+impl World {
+    pub fn txq_empty(&self) -> bool {
+        self.txq.is_empty()
+    }
+}
+
 #[derive(Clone)]
 pub struct SimHal(pub Rc<RefCell<World>>);
 

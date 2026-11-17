@@ -544,3 +544,31 @@ fn a_burst_goes_only_with_4_ms_to_spare_before_the_next_advertising_event() {
         assert_eq!(ether.borrow().sent(0).len() > before, sent, "{left} ticks left");
     }
 }
+
+#[test]
+fn a_connected_bulb_sends_a_burst_early_rather_than_have_its_connection_event_delay_it() {
+    for (left, early) in [(6 * MS - 1, true), (6 * MS, false)] {
+        let ether = Rc::new(RefCell::new(Ether::default()));
+        let mut rig = paired(&ether, A, NAME, PASSWORD, LTK);
+        rig.central().params.interval = 40;
+        rig.connect();
+        assert!(rig.login(b"EgloMesh", b"s3cret"));
+        let packet = rig.command_packet(0x000b, OP_POWER, &[0]);
+        rig.central().send_att(&[&[0x52, COMMAND as u8, 0][..], &packet].concat());
+        let sent = |e: &Rc<RefCell<Ether>>| e.borrow().sent(0).len();
+        loop {
+            let before = sent(&ether);
+            let at = rig.world.borrow().now;
+            rig.run_until(at + 1);
+            if sent(&ether) == before + 4 && before >= 8 {
+                let idle = rig.ble.borrow_mut().idle_time() as u64;
+                if (6 * MS + MS / 2..10 * MS).contains(&idle) && rig.world.borrow().txq_empty() {
+                    break;
+                }
+            }
+        }
+        let before = sent(&ether);
+        jump_to_idle(&mut rig, left);
+        assert_eq!(sent(&ether) > before, early, "{left} ticks before the connection event");
+    }
+}
