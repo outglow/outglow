@@ -1,5 +1,5 @@
 use super::super::address_tests::{Scripted, IDENTITY};
-use super::{Commissioning, Forward, Gpd, Pending, ProxyEntry, KEY_NWK};
+use super::{Commissioning, Forward, Gpd, Pending, ProxyEntry, DMAX, DMIN_U, KEY_NWK};
 use crate::mac::Addr;
 use crate::stack::{Stack, State};
 use crate::util::Reader;
@@ -40,4 +40,28 @@ fn a_pairing_under_the_network_key_without_its_own_or_a_shared_one_uses_the_netw
     assert_eq!(s.gp_entry_key(&e, 0), Some([0x42; 16]));
     s.gp_keys.shared = [0x17; 16];
     assert_eq!(s.gp_entry_key(&e, 0), Some([0x17; 16]), "a shared key of its type first");
+}
+
+#[test]
+fn a_device_announced_at_an_alias_in_use_is_answered_once_after_a_jitter() {
+    let fresh = || {
+        let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
+        s.state = State::Up;
+        s.proxies[0] = ProxyEntry { used: true, gpd: Gpd::Src(0x0171_2345), ..ProxyEntry::EMPTY };
+        s
+    };
+    let mut s = fresh();
+    s.hal.random = std::vec![DMAX - DMIN_U];
+    s.gp_device_announced(0x2345, 0x99);
+    let p = s.gp_pending[0].unwrap();
+    assert!(p.to == Forward::Announce && p.alias == 0x2345 && p.at == 1_000 + DMAX);
+    s.gp_device_announced(0x2345, 0x99);
+    assert!(s.gp_pending[1].is_none(), "one answer waits already");
+    let other = Pending { at: 9_000, to: Forward::Announce, alias: 0x1111, seq: 0, then: 0, len: 0, zcl: [0; 96] };
+    for waiting in [other, Pending { to: Forward::Sink(0x0000), alias: 0x2345, ..other }] {
+        let mut s = fresh();
+        s.gp_pending[0] = Some(waiting);
+        s.gp_device_announced(0x2345, 0x99);
+        assert!(s.gp_pending[1].is_some_and(|p| p.to == Forward::Announce && p.alias == 0x2345));
+    }
 }
