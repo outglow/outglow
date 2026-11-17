@@ -573,3 +573,18 @@ fn advertising_events_come_every_300_ms_plus_a_random_delay_below_9_ms() {
     assert!(gaps.iter().all(|g| (300 * MS..309 * MS + MS / 10).contains(g)), "{gaps:?}");
     assert!(gaps.iter().any(|g| *g < 301 * MS) && gaps.iter().any(|g| *g > 308 * MS), "the delay takes all its values: {gaps:?}");
 }
+
+#[test]
+fn the_bulb_advertises_again_right_after_a_disconnection() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().terminate();
+    while rig.state() == LinkState::Connected {
+        let at = rig.world.borrow().now;
+        rig.run_until(at + 1);
+    }
+    let gone = rig.world.borrow().now;
+    rig.run(10);
+    let next = *rig.world.borrow().advertised_at.last().unwrap();
+    assert!((gone..gone + MS / 5).contains(&next), "{} ticks later", next as i64 - gone as i64);
+}
