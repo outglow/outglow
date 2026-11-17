@@ -227,6 +227,9 @@ mod tests {
         assert_eq!(mmo_hash(&[&m]).to_vec(), hex("A7977E88BC0B61E8210827109A228F2D"));
         let long: std::vec::Vec<u8> = (0..8191).map(|i| i as u8).collect();
         assert_eq!(mmo_hash(&[&long]).to_vec(), hex("24EC2FE75BBFFCB34789BC0610E7F165"));
+        for (n, hash) in [(13, "c739f7adf9a38702bf7fb93a941bc003"), (14, "e1a60c630b87492e437de49a5c8aa6fd"), (15, "0ed9e35668fe9e546f25271e36c6a5bc")] {
+            assert_eq!(mmo_hash(&[&m[..n]]).to_vec(), hex(hash), "{n} bytes, the padding around the block end");
+        }
     }
 
     #[test]
