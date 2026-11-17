@@ -242,7 +242,6 @@ fn group_end(handle: u16) -> u16 {
 pub(crate) struct Host {
     frame: [u8; FRAME_MAX],
     have: usize,
-    want: usize,
     open: bool,
     pub mtu: usize,
     configuration: [u8; 2],
@@ -254,7 +253,7 @@ impl Host {
     }
 
     pub fn new() -> Host {
-        Host { frame: [0; FRAME_MAX], have: 0, want: 0, open: false, mtu: MTU_DEFAULT, configuration: [0; 2] }
+        Host { frame: [0; FRAME_MAX], have: 0, open: false, mtu: MTU_DEFAULT, configuration: [0; 2] }
     }
 }
 
@@ -332,19 +331,15 @@ impl<H: Hal> Ble<H> {
         let n = data.len().min(FRAME_MAX - at);
         h.frame[at..at + n].copy_from_slice(&data[..n]);
         h.have += data.len();
-        if h.have < 4 {
-            return;
-        }
-        h.want = 4 + u16_at(&h.frame, 0) as usize;
-        if h.have < h.want {
+        let len = 4 + u16_at(&h.frame, 0) as usize;
+        if h.have < len {
             return;
         }
         h.open = false;
-        if h.have > h.want {
+        if h.have > len {
             return;
         }
         let frame = h.frame;
-        let len = h.want;
         h.have = 0;
         let cid = u16_at(&frame, 2);
         if len > FRAME_MAX {
