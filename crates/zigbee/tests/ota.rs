@@ -543,3 +543,26 @@ fn an_image_notify_during_a_download_changes_nothing() {
     net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
     assert_eq!(net.coord.ota_end, Some(0x00));
 }
+
+#[test]
+fn an_image_block_on_another_cluster_is_not_taken() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(800, 9);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_drop_blocks = 1;
+    net.coord.ota_notify(short);
+    net.run_until(10_000, "the first block asked for", |net| net.coord.ota_drop_blocks == 0);
+    let mut zcl = vec![0x19, 0x72, 0x05, 0x00];
+    zcl.extend_from_slice(&MFG.to_le_bytes());
+    zcl.extend_from_slice(&TYPE.to_le_bytes());
+    zcl.extend_from_slice(&NEW.to_le_bytes());
+    zcl.extend_from_slice(&0u32.to_le_bytes());
+    zcl.push(8);
+    zcl.extend_from_slice(&[0xEE; 8]);
+    let aps = net.coord.aps_frame(0x00, 1, 0x0006, 0x0104, 1, &zcl);
+    net.coord.nwk_data(short, &aps);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    assert_eq!(net.coord.ota_end, Some(0x00));
+}

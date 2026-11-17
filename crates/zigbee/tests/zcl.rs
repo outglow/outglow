@@ -81,7 +81,8 @@ fn missing(id: u16) -> (u16, u8, Vec<u8>) {
 
 #[test]
 fn every_basic_attribute_has_its_type_and_value() {
-    let (mut net, _, short) = bulb_with(Identity { app_version: 7, hw_version: 3, sw_build: "1.2.3", ..IDENTITY });
+    let (mut net, n, short) = bulb_with(Identity { app_version: 7, hw_version: 3, sw_build: "1.2.3", ble: true, ..IDENTITY });
+    net.nodes[n].stack.set_ble_active(true);
     let ids = [0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008, 0x0009, 0x000A, 0x000B, 0x0012, 0x4000, 0xFFFD, 0x0010];
     assert_eq!(
         read(&mut net, short, BASIC, &ids),
@@ -108,7 +109,8 @@ fn every_basic_attribute_has_its_type_and_value() {
 
 #[test]
 fn every_attribute_of_the_light_clusters_has_its_type_and_value() {
-    let (mut net, _, short) = bulb_with(IDENTITY);
+    let (mut net, n, short) = bulb_with(IDENTITY_BLE);
+    net.nodes[n].stack.set_ble_active(true);
     assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000, 0xFFFD, 0x0001]), vec![ok(0, &[0x21, 0, 0]), ok(0xFFFD, &[0x21, 2, 0]), missing(1)]);
     assert_eq!(read(&mut net, short, GROUPS, &[0x0000, 0xFFFD]), vec![ok(0, &[0x18, 0]), ok(0xFFFD, &[0x21, 3, 0])]);
     assert_eq!(
@@ -140,14 +142,15 @@ fn every_attribute_of_the_light_clusters_has_its_type_and_value() {
         level,
         vec![ok(1, &[0x21, 0, 0]), ok(2, &[0x20, 1]), ok(3, &[0x20, 254]), ok(0x0F, &[0x18, 0]), ok(0x11, &[0x20, 0xFF]), ok(0xFFFD, &[0x21, 2, 0]), missing(4)]
     );
-    assert_eq!(read(&mut net, short, LEVEL, &[0x4000])[0].2[0], 0x20);
+    assert_eq!(read(&mut net, short, LEVEL, &[0x4000]), vec![ok(0x4000, &[0x20, 0xFF])], "the previous level at power-on");
     assert_eq!(read(&mut net, short, TOUCHLINK, &[0xFFFD, 0x0000]), vec![ok(0xFFFD, &[0x21, 3, 0]), missing(0)]);
     assert_eq!(read(&mut net, short, DIAG, &[0xFFFD]), vec![ok(0xFFFD, &[0x21, 3, 0])]);
 }
 
 #[test]
 fn the_colour_attributes_of_a_tunable_white_and_a_colour_light() {
-    let (mut net, _, short) = bulb_with(IDENTITY_TW);
+    let (mut net, n, short) = bulb_with(Identity { ble: true, ..IDENTITY_TW });
+    net.nodes[n].stack.set_ble_active(true);
     let ids = [0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0007, 0x0008, 0x000F, 0x0010, 0x4001, 0x400A, 0x400B, 0x400C, 0x400D, 0x4010, 0xFFFD];
     let tw = read(&mut net, short, COLOR, &ids);
     let ct_min = bulb_core::CT_MIN.to_le_bytes();
@@ -620,4 +623,46 @@ fn switching_off_on_or_toggling_ends_the_remaining_time_of_a_transition() {
         assert_eq!(read(&mut net, short, LEVEL, &[0x0001]), vec![ok(1, &[0x21, 0, 0])], "command {cmd}");
         assert_eq!(read(&mut net, short, COLOR, &[0x0002]), vec![ok(2, &[0x21, 0, 0])], "command {cmd}");
     }
+}
+
+#[test]
+fn a_string_written_to_a_number_is_skipped_whole_and_the_next_record_is_written() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(
+        global(&mut net, short, ON_OFF, 0x02, &[0x01, 0x40, 0x42, 3, b'a', b'b', b'c', 0x02, 0x40, 0x21, 0x2C, 0x01]),
+        Some(vec![0x04, 0x8D, 0x01, 0x40])
+    );
+    assert_eq!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0x2C, 0x01])]);
+}
+
+#[test]
+fn start_up_on_off_takes_only_its_defined_values() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    for v in [0u8, 1, 2, 0xFF] {
+        assert_eq!(global(&mut net, short, ON_OFF, 0x02, &[0x03, 0x40, 0x30, v]), Some(vec![0x04, 0x00]), "{v}");
+    }
+    for v in [3u8, 0x80, 0xFE] {
+        assert_eq!(global(&mut net, short, ON_OFF, 0x02, &[0x03, 0x40, 0x30, v]), Some(vec![0x04, 0x87, 0x03, 0x40]), "{v}");
+    }
+}
+
+#[test]
+fn the_firmware_sets_the_options_only_where_the_cluster_is() {
+    let (mut net, n, short) = bulb_with(IDENTITY_TW);
+    assert!(net.nodes[n].stack.set_color_options(0x00));
+    assert!(!net.nodes[n].stack.set_color_options(0x04), "a reserved bit");
+    assert_eq!(read(&mut net, short, COLOR, &[0x000F]), vec![ok(0x0F, &[0x18, 0x00])]);
+    let (mut net, n, _) = bulb_with(IDENTITY);
+    assert!(!net.nodes[n].stack.set_color_options(0x01), "no Color Control on a dimmable light");
+    net.run(1);
+}
+
+#[test]
+fn a_broadcast_global_command_is_answered() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl_rx.clear();
+    net.coord.zcl_rx_ep.clear();
+    let seq = net.coord.zcl(0xFFFD, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(500);
+    assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x01).unwrap()[..3], [0x18, seq, 0x01]);
 }
