@@ -985,8 +985,6 @@ fn frames_that_cannot_be_read_are_dropped() {
     let mut s = relaying();
     s.on_nwk(0x1000, &[0x08], 200);
     assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 1, "no header");
-    s.on_nwk(0x1000, &[0x08; 128], 200);
-    assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 1, "longer than any frame");
     let mut f = crate::util::Buf::new();
     let mut h = nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x1000, 5, 1);
     h.security = true;

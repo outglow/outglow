@@ -134,17 +134,12 @@ impl<H: Hal> Stack<H> {
         self.timer = now.wrapping_add(RETRY_MS + self.hal.random() % 2000);
     }
 
-    pub(crate) fn join_timers(&mut self, now: u32) {
-        if !due(now, self.timer) {
-            return;
-        }
-        if matches!(self.state, State::Down | State::Scan) && self.searching.is_none() {
-            if let Some(t) = self.touchlink.filter(|t| !due(now, t.until)) {
-                self.timer = t.until;
-                return;
-            }
-        }
+    pub(crate) fn timers(&mut self, now: u32) {
+        let touchlink = self.touchlink.filter(|t| self.searching.is_none() && !due(now, t.until));
         match self.state {
+            State::Up => self.run_timers(now),
+            _ if !due(now, self.timer) => {}
+            State::Down | State::Scan if touchlink.is_some() => self.timer = touchlink.map_or(self.timer, |t| t.until),
             State::Down => {
                 self.state = State::Scan;
                 self.scan_index = 0;
@@ -213,7 +208,6 @@ impl<H: Hal> Stack<H> {
             State::AssocWait => self.join_next(now),
             State::WaitKey if self.steering == STEERING_JOINING => self.join_next(now),
             State::WaitKey => self.down(now),
-            State::Up => {}
         }
     }
 

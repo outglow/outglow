@@ -835,10 +835,7 @@ impl<H: Hal> Stack<H> {
             }
         }
         let now = self.hal.now_ms();
-        match self.state {
-            State::Up => self.run_timers(now),
-            _ => self.join_timers(now),
-        }
+        self.timers(now);
         self.take_command()
     }
 

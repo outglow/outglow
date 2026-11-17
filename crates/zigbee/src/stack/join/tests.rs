@@ -177,19 +177,15 @@ fn a_candidate_heard_again_with_a_better_link_moves_up() {
 }
 
 #[test]
-fn the_join_timers_of_a_bulb_waiting_for_a_key_outside_a_join_take_it_down_and_leave_one_that_is_up_alone() {
+fn a_bulb_waiting_for_a_key_outside_a_join_goes_down_when_the_wait_is_over() {
     let mut s = stack();
     s.state = State::WaitKey;
     s.steering = 0;
-    s.timer = 1_000;
-    s.join_timers(1_000);
+    s.timer = 1_001;
+    s.timers(1_000);
+    assert_eq!(s.state, State::WaitKey);
+    s.timers(1_001);
     assert_eq!(s.state, State::Down);
-    let mut s = stack();
-    s.state = State::Up;
-    s.timer = 1_000;
-    s.join_timers(1_000);
-    assert_eq!(s.state, State::Up);
-    assert!(s.hal.sent.is_empty());
 }
 
 #[test]

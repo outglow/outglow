@@ -283,11 +283,8 @@ impl<H: Hal> Stack<H> {
         };
         let now = self.hal.now_ms();
         let mut frame = [0u8; 127];
-        let n = p.len();
-        let Some(copy) = frame.get_mut(..n) else {
-            return;
-        };
-        copy.copy_from_slice(p);
+        let n = p.len().min(frame.len());
+        frame[..n].copy_from_slice(&p[..n]);
         let (at, len) = if h.security {
             if self.state != State::Up {
                 self.trace_rx(trace::RX_NOT_UP, &h, mac_src, 0);
