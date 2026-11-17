@@ -12,6 +12,7 @@ mod frames;
 mod green_power;
 mod hal_defaults;
 mod joining;
+mod keys;
 mod mac_rx;
 mod network;
 mod nv;
