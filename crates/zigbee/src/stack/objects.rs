@@ -141,7 +141,8 @@ impl XReport {
 pub(crate) const XREPORTS: usize = 11;
 const REPORTS_VERSION: u8 = 1;
 const XREPORT_LEN: usize = 14;
-const _: () = assert!(1 + XREPORTS * XREPORT_LEN <= 160, "the reporting configurations fit one record");
+const REPORTS_LEN: usize = 155;
+const _: () = assert!(REPORTS_LEN == 1 + XREPORTS * XREPORT_LEN && REPORTS_LEN <= 160, "the reporting configurations fit one record");
 
 pub(crate) fn reportable(ep: u8, cluster: u16, attr: u16, mfr: bool) -> bool {
     if cluster == super::zcl::DIAGNOSTICS && ep == super::aps::ENDPOINT {
@@ -256,7 +257,7 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn store_xreports(&mut self) {
-        let mut b = [0u8; 1 + XREPORTS * XREPORT_LEN];
+        let mut b = [0u8; REPORTS_LEN];
         b[0] = REPORTS_VERSION;
         let mut n = 1;
         for r in self.xreports.iter().filter(|r| r.ep != 0) {
@@ -273,7 +274,7 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn load_xreports(&mut self, now: u32) {
-        let mut raw = [0u8; 1 + XREPORTS * XREPORT_LEN];
+        let mut raw = [0u8; REPORTS_LEN];
         let Some(len) = self.hal.nv_load(NvItem::Reports, &mut raw) else {
             return;
         };
@@ -291,9 +292,7 @@ impl<H: Hal> Stack<H> {
         }
         for i in 0..XREPORTS {
             let r = self.xreports[i];
-            if r.ep != 0 {
-                self.xreports[i].last = self.xreport_value(&r).map_or(0, |v| v.0);
-            }
+            self.xreports[i].last = self.xreport_value(&r).map_or(0, |v| v.0);
         }
     }
 

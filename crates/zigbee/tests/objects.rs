@@ -217,3 +217,14 @@ fn a_present_value_is_reported_only_for_a_change_of_at_least_the_reportable_chan
         assert_eq!(got, reported, "a change of 1 against {step}");
     }
 }
+
+#[test]
+fn end_devices_are_allowed_until_written_otherwise() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    assert!(net.nodes[n].stack.allows_children());
+    net.coord.zcl_ep(short, 7, 0x0010, 0x00, 0x02, &[0x55, 0x00, 0x10, 0]);
+    net.run(100);
+    assert!(!net.nodes[n].stack.allows_children());
+}
