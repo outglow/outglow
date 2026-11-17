@@ -270,3 +270,19 @@ fn a_bulb_resumed_with_its_trust_center_key_requested_but_not_confirmed_asks_to_
         assert_eq!(s.tclk_step, step, "{state}");
     }
 }
+
+#[test]
+fn outside_a_rejoin_the_depth_of_a_router_does_not_rank_it() {
+    let mut s = stack();
+    s.candidate_add(candidate(1, 250, true, 4));
+    s.candidate_add(candidate(2, 200, true, 1));
+    assert_eq!(order(&s), [1, 2]);
+}
+
+#[test]
+fn a_bulb_that_goes_down_tries_again_after_up_to_two_more_seconds() {
+    let mut s = stack();
+    s.hal.random = std::vec![1_999];
+    s.down(1_000);
+    assert_eq!((s.state, s.timer), (State::Down, 1_000 + super::RETRY_MS + 1_999));
+}
