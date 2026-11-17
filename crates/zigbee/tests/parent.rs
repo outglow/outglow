@@ -1516,3 +1516,22 @@ fn a_timeout_request_cut_short_is_not_answered() {
     zed.poll(&mut net, 20);
     assert!(!zed.rx.iter().any(|(_, p)| p[0] == nwk::CMD_TIMEOUT_RESPONSE));
 }
+
+#[test]
+fn mgmt_lqi_lists_the_router_neighbours_and_then_the_end_device_children() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let seq = net.coord.zdo(sa, 0x0031, &[0]);
+    net.run(300);
+    let rsp = net.coord.last_zdo(sa, 0x8031).unwrap();
+    assert_eq!(rsp[..5], [seq, 0x00, 2, 0, 2], "the coordinator and the child");
+    let child = &rsp[5 + 22..5 + 44];
+    assert_eq!(child[8..16], zed.ext.to_le_bytes());
+    assert_eq!(child[16..18], zed.short.to_le_bytes());
+    assert_eq!(child[18], 0x02 | 0 << 2 | 1 << 4, "an end device, receiver off when idle, a child");
+    let seq = net.coord.zdo(sa, 0x0031, &[1]);
+    net.run(300);
+    let rsp = net.coord.last_zdo(sa, 0x8031).unwrap();
+    assert_eq!(rsp[..5], [seq, 0x00, 2, 1, 1]);
+    assert_eq!(rsp[5 + 16..5 + 18], zed.short.to_le_bytes());
+}
