@@ -192,6 +192,16 @@ mod tests {
     }
 
     #[test]
+    fn the_s_boxes_are_those_of_fips_197_whether_computed_at_build_or_run_time() {
+        let sbox = gen_sbox();
+        assert_eq!(sbox, SBOX);
+        assert_eq!([sbox[0x00], sbox[0x01], sbox[0x53], sbox[0x8F], sbox[0xC9], sbox[0xFF]], [0x63, 0x7C, 0xED, 0x73, 0xDD, 0x16]);
+        let inv = gen_inverse(&sbox);
+        assert_eq!(inv, INV_SBOX);
+        assert_eq!([inv[0x63], inv[0x7C], inv[0xED], inv[0x16], inv[0x00]], [0x00, 0x01, 0x53, 0xFF, 0x52]);
+    }
+
+    #[test]
     fn fips_197_appendix_c1() {
         let mut key = [0u8; 16];
         let mut block = [0u8; 16];
