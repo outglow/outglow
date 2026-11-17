@@ -98,7 +98,7 @@ static FIFO_STARTED: Shared<u8> = Shared::new(0);
 static RESET_PENDING: Shared<u8> = Shared::new(0);
 
 const RX_SLOTS: usize = 8;
-const RX_SLOT: usize = 2 + LL_PAYLOAD_MAX;
+const RX_SLOT: usize = 29;
 static RX_QUEUE: SharedBuf<{ RX_SLOTS * RX_SLOT }> = SharedBuf::new([0; RX_SLOTS * RX_SLOT]);
 static RX_HEAD: Shared<u8> = Shared::new(0);
 static RX_TAIL: Shared<u8> = Shared::new(0);

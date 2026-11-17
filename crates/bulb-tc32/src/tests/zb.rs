@@ -349,3 +349,186 @@ fn the_counters_gather_the_radio_flash_and_ble_figures() {
         assert_eq!((c.ble_connections, c.ble_disconnects, c.ble_links_lost, c.ble_events, c.ble_events_skipped), (2, 6, 7, 3, 5));
     }
 }
+
+#[cfg(feature = "ble")]
+mod over_ble {
+    use super::*;
+    use crate::ble_radio::tests::{att, central_link as central, Central};
+
+    fn poll_until(link: &mut Link, mut done: impl FnMut(&mut Link, Option<Command>) -> bool, what: &str) {
+        for _ in 0..20_000 {
+            let c = link.poll();
+            if done(link, c) {
+                return;
+            }
+        }
+        panic!("{what} did not happen");
+    }
+
+    fn connected() -> (Link, Central) {
+        crate::board::warm_reset();
+        let mut link = Link::new();
+        let air = central();
+        air.borrow_mut().connect = true;
+        poll_until(&mut link, |l, _| l.ble.as_ref().is_some_and(|b| b.link_state() == ble::LinkState::Connected), "a connection");
+        (link, air)
+    }
+
+    fn request(link: &mut Link, air: &Central, pdu: &[u8]) -> Vec<u8> {
+        air.borrow_mut().att_received();
+        air.borrow_mut().out.push_back(att(pdu));
+        let mut got = None;
+        poll_until(link, |_, _| {
+            got = air.borrow_mut().att_received().into_iter().find(|r| r[0] == pdu[0] + 1 || r[0] == 0x01);
+            got.is_some()
+        }, "an ATT response");
+        got.unwrap_or_default()
+    }
+
+    fn read_long(link: &mut Link, air: &Central, handle: u16) -> Vec<u8> {
+        let h = handle.to_le_bytes();
+        let mut v = request(link, air, &[0x0a, h[0], h[1]])[1..].to_vec();
+        while v.len() % 22 == 0 {
+            let o = (v.len() as u16).to_le_bytes();
+            let more = request(link, air, &[0x0c, h[0], h[1], o[0], o[1]]);
+            if more[0] != 0x0d || more.len() == 1 {
+                break;
+            }
+            v.extend_from_slice(&more[1..]);
+        }
+        v
+    }
+
+    #[test]
+    fn an_identify_from_the_device_page_makes_the_bulb_blink() {
+        let _s = sim::session();
+        let (mut link, air) = connected();
+        air.borrow_mut().out.push_back(att(&[0x12, 0x28, 0x00, 0x01]));
+        let mut seen = false;
+        poll_until(&mut link, |_, c| {
+            seen |= c == Some(Command::Identify { times: 3 });
+            seen
+        }, "the identify command");
+        let state = read_long(&mut link, &air, 0x24);
+        assert_eq!(state[0], 1);
+    }
+
+    fn login(link: &mut Link, air: &Central) -> [u8; 16] {
+        let pad = |s: &[u8]| {
+            let mut b = [0u8; 16];
+            b[..s.len()].copy_from_slice(s);
+            b
+        };
+        let block: [u8; 16] = std::array::from_fn(|i| pad(b"unpaired")[i] ^ pad(b"1234")[i]);
+        let random = [1, 2, 3, 4, 5, 6, 7, 8];
+        let proof = ble::crypto::tl_aes_encrypt(&pad(&random), &block);
+        let mut packet = vec![0x12, 0x1e, 0x00, 0x0c];
+        packet.extend_from_slice(&random);
+        packet.extend_from_slice(&proof[..8]);
+        assert_eq!(request(link, air, &packet), vec![0x13]);
+        let rsp = request(link, air, &[0x0a, 0x1e, 0x00]);
+        assert_eq!(rsp[1], 0x0d, "the login is accepted");
+        let mut both = [0u8; 16];
+        both[..8].copy_from_slice(&random);
+        both[8..].copy_from_slice(&rsp[2..10]);
+        ble::crypto::tl_aes_encrypt(&block, &both)
+    }
+
+    fn mesh_command(link: &mut Link, key: &[u8; 16], sn: u32, op: u8, params: &[u8]) -> Vec<u8> {
+        let mut addr = [0u8; 6];
+        flash::read(MAC_SECTOR, &mut addr);
+        let sn = &sn.to_le_bytes()[..3];
+        let mut nonce = [0u8; 8];
+        nonce[..4].copy_from_slice(&addr[..4]);
+        nonce[4] = 1;
+        nonce[5..].copy_from_slice(sn);
+        let mut payload = [0u8; 15];
+        payload[..2].copy_from_slice(&0xffffu16.to_le_bytes());
+        payload[2] = op;
+        payload[3..5].copy_from_slice(&[0x60, 0x01]);
+        payload[5..5 + params.len()].copy_from_slice(params);
+        let mic = ble::crypto::mesh_mic(key, &nonce, &payload);
+        ble::crypto::mesh_crypt(key, &nonce, &mut payload);
+        let _ = link;
+        [vec![0x52, 0x15, 0x00], sn.to_vec(), mic[..2].to_vec(), payload.to_vec()].concat()
+    }
+
+    #[test]
+    fn a_command_from_the_app_reaches_the_bulb_and_the_page_can_restart_it() {
+        let _s = sim::session();
+        let (mut link, air) = connected();
+        let key = login(&mut link, &air);
+        air.borrow_mut().out.push_back(att(&mesh_command(&mut link, &key, 1, 0xd0, &[1])));
+        let mut on = false;
+        poll_until(&mut link, |_, c| {
+            on |= c == Some(Command::On);
+            on
+        }, "the power command");
+        nv::open().store(NvItem::Network as u8, &[1, 2, 3]);
+        assert_eq!(request(&mut link, &air, &[0x12, 0x28, 0x00, 0x30]), vec![0x13]);
+        let t0 = link.stack.as_mut().map(|s| s.hal.now_ms()).unwrap_or(0);
+        let mut last = t0;
+        assert!(sim::reboots(|| poll_until(&mut link, |l, _| {
+            last = l.stack.as_mut().map(|s| s.hal.now_ms()).unwrap_or(0);
+            sim::with(|c| c.tick = c.tick.wrapping_add(16_000));
+            false
+        }, "the restart")));
+        assert!((400..=510).contains(&last.wrapping_sub(t0)), "{}", last.wrapping_sub(t0));
+        let mut buf = [0u8; 4];
+        assert_eq!(nv::open().load(NvItem::Network as u8, &mut buf), Some(3));
+    }
+
+    #[test]
+    fn the_device_page_reads_the_bulb_identity_its_settings_and_its_counters() {
+        let _s = sim::session();
+        let (mut link, air) = connected();
+        let info = read_long(&mut link, &air, 0x22);
+        let ieee = link.stack.as_mut().map(|s| s.hal.ieee()).unwrap_or(0);
+        let model = crate::ble::IDENTITY.model.as_bytes();
+        assert_eq!(info[..4], [1, BOARD.tunable() as u8, 1 | (cfg!(feature = "sense") as u8) << 1, FILE_VERSION as u8]);
+        assert_eq!(info[4..12], ieee.to_le_bytes());
+        assert_eq!(info[12] as usize, model.len());
+        assert_eq!(&info[13..13 + model.len()], model);
+        let config = read_long(&mut link, &air, 0x2c);
+        let ls = link.stack.as_mut().map(|s| s.light_settings());
+        assert_eq!(config[..4], [1, ls.map_or(0, |l| l.start_up_on_off), ls.map_or(0, |l| l.start_up_level), ls.map_or(0, |l| l.level_options)]);
+        let counters = read_long(&mut link, &air, 0x2e);
+        let mut ours = [0u8; zigbee::stack::DIAG_COUNTERS_MAX];
+        let n = link.stack.as_mut().map(|s| s.diag_counters(&mut ours)).unwrap_or(0);
+        assert_eq!(counters.len(), n);
+        let log = read_long(&mut link, &air, 0x26);
+        assert!(log[0] >= 1);
+        assert_eq!(log.len(), 1 + 6 * log[0] as usize);
+    }
+
+    #[test]
+    fn the_device_page_sees_the_uptime_grow_each_second_and_the_frames_heard() {
+        let _s = sim::session();
+        let (mut link, air) = connected();
+        let up = |s: &[u8]| u32::from_le_bytes([s[1], s[2], s[3], s[4]]);
+        let first = up(&read_long(&mut link, &air, 0x24));
+        for _ in 0..3 {
+            sim::with(|c| c.tick = c.tick.wrapping_add(1_200 * 16_000));
+            poll_until(&mut link, |_, _| true, "a poll");
+        }
+        if let Some(s) = link.stack.as_mut() {
+            s.hal.zcl_received(0x1234, 0x0006, 0x01, 0x11, 200, -40);
+        }
+        let later = up(&read_long(&mut link, &air, 0x24));
+        assert!(later >= first + 3, "{first} {later}");
+        let frames = read_long(&mut link, &air, 0x2a);
+        assert!(frames[0] >= 1);
+    }
+}
+
+#[cfg(feature = "ble")]
+#[test]
+fn a_zcl_frame_received_is_logged_for_the_device_page_with_its_second() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    let n = crate::diag::tests::frames_in();
+    sim::with(|c| c.tick = c.tick.wrapping_add(16_000 * 2_500));
+    hal.zcl_received(0x1234, 0x0006, 0x01, 0x11, 200, -40);
+    assert_eq!(crate::diag::tests::frames_in(), n.wrapping_add(1));
+    assert_eq!(crate::diag::tests::last_frame_time(), hal.ms / 1000);
+}

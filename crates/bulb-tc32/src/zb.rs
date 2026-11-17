@@ -32,7 +32,7 @@ pub(crate) const IDENTITY: Identity = Identity {
     manufacturer_code: 0x1141,
     app_version: 1,
     hw_version: BOARD.hw_version,
-    color_temperature: BOARD.cold.is_some() || BOARD.rgb.is_some(),
+    color_temperature: BOARD.tunable(),
     ct_min: BOARD.ct_min,
     ct_max: BOARD.ct_max,
     color: BOARD.rgb.is_some(),

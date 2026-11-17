@@ -55,6 +55,9 @@ pub struct Chip {
     reset_requested: bool,
     erased: bool,
     pub hook: Option<Hook>,
+    pub flash_busy_polls: u8,
+    busy_left: u8,
+    mspi_busy: bool,
 }
 
 pub type Hook = Box<dyn FnMut(&mut Chip, Op)>;
@@ -82,6 +85,9 @@ impl Chip {
             reset_requested: false,
             erased: false,
             hook: None,
+            flash_busy_polls: 1,
+            busy_left: 0,
+            mspi_busy: false,
         }
     }
 
@@ -156,6 +162,11 @@ impl Chip {
                 self.regs.insert(reg::SYSTEM_TICK + i, *b);
             }
         }
+        if off == reg::MSPI_CTRL {
+            let c = self.peek8(reg::MSPI_CTRL) & !reg::MSPI_BUSY;
+            let busy = if std::mem::take(&mut self.mspi_busy) { reg::MSPI_BUSY } else { 0 };
+            self.regs.insert(reg::MSPI_CTRL, c | busy);
+        }
         if off == AES_CTRL {
             let mut c = self.peek8(AES_CTRL) & !0x06;
             if self.aes_in.len() < 16 {
@@ -194,7 +205,10 @@ impl Chip {
         match off {
             reg::ANA_CTRL => self.analog_strobe(bytes[0]),
             reg::MSPI_CTRL => self.spi_cs(bytes[0] & reg::MSPI_CS_HIGH != 0),
-            reg::MSPI_DATA => self.spi_byte(bytes[0]),
+            reg::MSPI_DATA => {
+                self.mspi_busy = true;
+                self.spi_byte(bytes[0])
+            }
             reg::PWDN_CTRL if bytes[0] & 0x20 != 0 => self.reset_requested = true,
             AES_DATA if width == 4 => self.aes_feed(bytes),
             TX_FIFO_RPTR => {
@@ -241,6 +255,7 @@ impl Chip {
         if matches!(self.spi, Spi::ProgramData { .. } | Spi::Erase { .. }) || self.erased {
             self.write_enabled = false;
             self.erased = false;
+            self.busy_left = self.flash_busy_polls;
         }
         self.spi = if high { Spi::Idle } else { Spi::Command };
     }
@@ -292,7 +307,9 @@ impl Chip {
                 }
             }
             Spi::Status => {
-                self.regs.insert(reg::MSPI_DATA, 0);
+                let busy = self.busy_left > 0;
+                self.busy_left = self.busy_left.saturating_sub(1);
+                self.regs.insert(reg::MSPI_DATA, busy as u8);
                 Spi::Status
             }
             Spi::Other => Spi::Other,

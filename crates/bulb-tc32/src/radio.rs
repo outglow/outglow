@@ -67,7 +67,7 @@ const CAP_TRIM_ADDR: usize = 0xfe000;
 
 const RX_BUF_LEN: usize = 144;
 const SLOTS: usize = 16;
-const SLOT_LEN: usize = 6 + 125;
+const SLOT_LEN: usize = 131;
 
 const STATE_TX: u8 = 0;
 const STATE_RX: u8 = 1;

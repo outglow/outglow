@@ -83,3 +83,13 @@ fn frames_heard_are_logged_with_their_time_and_counted() {
     assert_eq!(FRAMES.get().bytes(), expect.bytes());
     assert_eq!(FRAMES_IN.get(), n.wrapping_add(2));
 }
+
+pub(crate) fn frames_in() -> u32 {
+    FRAMES_IN.get()
+}
+
+pub(crate) fn last_frame_time() -> u32 {
+    let b = FRAMES.get();
+    let bytes = b.bytes();
+    u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+}

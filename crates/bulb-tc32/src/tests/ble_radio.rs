@@ -277,6 +277,8 @@ pub(crate) fn reset_statics() {
     FIFO_FREED.set(0);
     FIFO_WORD.set(0);
     FIFO_KIND.set([0; 16]);
+    TX_QUEUE.copy_from(0, &[0; TX_SLOTS * TX_SLOT]);
+    RX_QUEUE.copy_from(0, &[0; RX_SLOTS * RX_SLOT]);
 }
 
 pub(crate) fn fresh_link() {
@@ -675,11 +677,12 @@ fn queued_packets_follow_a_sacrificial_empty_packet_into_an_empty_fifo_and_leave
     fresh_link();
     assert!(tx_push(2, &[1, 2, 3]));
     assert!(tx_push(3, &[4]));
+    FIFO_KIND.set([9; 16]);
     let ev = event_now(7, 2_500, 30_000);
     let ack = Step::Rx { bytes: TRACED_EMPTY.to_vec(), sn: 1, nesn: 1, stamp_ago: 80 * 16, rptr: Some(2) };
     run_event(&ev, vec![ack, Step::Status(0x0020)]);
     assert_eq!(pushes(), vec![EMPTY.addr() as u16, slot(0), slot(1)]);
-    assert_eq!(FIFO_KIND.get()[..3], [0, 1, 1]);
+    assert_eq!(FIFO_KIND.get(), [0, 1, 1, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]);
     assert_eq!((TX_HEAD.get(), TX_HANDED.get(), TX_TAIL.get()), (1, 2, 2));
     assert_eq!(tx_free(), TX_SLOTS - 1);
     assert!(!tx_idle());
@@ -722,6 +725,7 @@ fn a_fifo_that_still_holds_packets_gets_no_empty_packet_and_is_freed_across_its_
     let _s = sim::session();
     fresh_link();
     sim::with(|c| c.poke8(TX_FIFO_WPTR, 14));
+    FIFO_KIND.set([9; 16]);
     assert!(tx_push(2, &[1]));
     let ev = event_now(7, 2_500, 30_000);
     run_event(&ev, vec![]);
@@ -733,8 +737,7 @@ fn a_fifo_that_still_holds_packets_gets_no_empty_packet_and_is_freed_across_its_
     run_event(&ev, vec![ack, Step::Status(0x0020)]);
     assert_eq!(pushes(), vec![slot(1)]);
     assert!(sim::with(|c| c.writes()).contains(&Op::W8(TX_FIFO_RPTR, 0x4e)));
-    assert_eq!(FIFO_KIND.get()[14..16], [0, 1]);
-    assert_eq!(FIFO_KIND.get()[0], 1);
+    assert_eq!(FIFO_KIND.get(), [1, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 1]);
     assert_eq!((FIFO_FREED.get(), TX_HEAD.get()), (1, 2));
     assert!(tx_idle());
 }
@@ -1488,4 +1491,165 @@ fn a_silent_mesh_listen_lasts_exactly_its_ticks() {
         _ => None,
     }).collect();
     assert_eq!(ticks.last().copied(), Some(ticks[0].wrapping_add(1_000 * TICKS_PER_US)));
+}
+
+#[derive(Default)]
+pub(crate) struct CentralState {
+    pub connect: bool,
+    pub connected: bool,
+    pub silent: bool,
+    pub out: std::collections::VecDeque<Vec<u8>>,
+    pub received: Vec<(u8, Vec<u8>)>,
+    pub events: usize,
+    fifo: [u16; 16],
+    sn: u8,
+    nesn: u8,
+    dma: u16,
+    armed: bool,
+    sent: usize,
+    pending_tx: bool,
+}
+
+pub(crate) type Central = std::rc::Rc<std::cell::RefCell<CentralState>>;
+
+const CONNECT_INTERVAL: u16 = 24;
+const CONNECT_TIMEOUT: u16 = 500;
+
+fn connect_payload(adv_a: [u8; 6]) -> Vec<u8> {
+    let mut p = vec![0x66, 0x55, 0x44, 0x33, 0x22, 0x11];
+    p.extend_from_slice(&adv_a);
+    p.extend_from_slice(&AA.to_le_bytes());
+    p.extend_from_slice(&CRC_INIT.to_le_bytes()[..3]);
+    p.push(2);
+    p.extend_from_slice(&0u16.to_le_bytes());
+    p.extend_from_slice(&CONNECT_INTERVAL.to_le_bytes());
+    p.extend_from_slice(&0u16.to_le_bytes());
+    p.extend_from_slice(&CONNECT_TIMEOUT.to_le_bytes());
+    p.extend_from_slice(&[0xff, 0xff, 0xff, 0xff, 0x1f]);
+    p.push(0x27);
+    p
+}
+
+fn slot_packet(addr: u16) -> Option<(u8, Vec<u8>)> {
+    (0..TX_SLOTS).find(|i| slot(*i) == addr).map(|i| {
+        let at = i * TX_SLOT;
+        let n = TX_QUEUE.read(at + 5) as usize;
+        let mut p = vec![0u8; n];
+        TX_QUEUE.copy_to(at + 6, &mut p);
+        (TX_QUEUE.read(at + 4), p)
+    })
+}
+
+pub(crate) fn central_link() -> Central {
+    let st: Central = Default::default();
+    let s = st.clone();
+    sim::with(|c| {
+        c.on(move |c, op| {
+            let mut s = s.borrow_mut();
+            match op {
+                Op::W8(RF_CMD, 0x87) => c.raise16(RF_IRQ_STATUS, STATUS_TX),
+                Op::W16(RF_IRQ_STATUS, STATUS_TX) if s.connect && !s.connected && !s.armed => {
+                    let mut adv_a = [0u8; 6];
+                    ADV.copy_to(6, &mut adv_a);
+                    rx_buffer(RX_CURRENT.get()).copy_from(0, &answer(0x05, &connect_payload(adv_a)));
+                    c.raise16(RF_IRQ_STATUS, STATUS_RX);
+                    s.connected = true;
+                }
+                Op::W16(TX_FIFO_PUSH, a) => {
+                    let w = c.peek8(TX_FIFO_WPTR).wrapping_sub(1) & 0x0f;
+                    s.fifo[w as usize] = a;
+                }
+                Op::W16(DMA_RX_ADDR, a) => s.dma = a,
+                Op::W8(RF_CMD, 0x82) => {
+                    s.armed = !s.silent;
+                    s.sent = 0;
+                    s.events += 1;
+                }
+                Op::W8(RF_CMD, 0x80) => s.armed = false,
+                Op::R16(RF_IRQ_STATUS, st) if s.armed && st & (STATUS_RX | STATUS_TX) == 0 => {
+                    if s.pending_tx {
+                        s.pending_tx = false;
+                        let r = c.peek8(TX_FIFO_RPTR) & 0x0f;
+                        if r != c.peek8(TX_FIFO_WPTR) & 0x0f {
+                            if let Some(p) = slot_packet(s.fifo[r as usize]) {
+                                s.received.push(p);
+                            }
+                            c.poke8(TX_FIFO_RPTR, (r + 1) & 0x0f);
+                        }
+                    }
+                    if s.sent >= 4 {
+                        c.raise16(RF_IRQ_STATUS, 0x0020);
+                        s.armed = false;
+                        return;
+                    }
+                    let (llid, payload) = match s.out.pop_front() {
+                        Some(p) => (2u8, p),
+                        None => (1u8, vec![]),
+                    };
+                    s.sent += 1;
+                    let pkt = rx_packet(llid, &payload);
+                    if let Some(b) = RX.iter().find(|b| b.addr() as u16 == s.dma) {
+                        b.copy_from(0, &pkt);
+                    }
+                    s.nesn ^= 1;
+                    s.sn ^= 1;
+                    c.poke8(RF_SN, s.sn);
+                    c.poke8(RF_NESN, s.nesn << 4);
+                    c.poke32(RF_TIMESTAMP, c.tick.wrapping_sub(80 * TICKS_PER_US));
+                    c.raise16(RF_IRQ_STATUS, STATUS_RX);
+                    s.pending_tx = true;
+                }
+                _ => {}
+            }
+        })
+    });
+    st
+}
+
+pub(crate) fn att(pdu: &[u8]) -> Vec<u8> {
+    [(pdu.len() as u16).to_le_bytes().to_vec(), vec![0x04, 0x00], pdu.to_vec()].concat()
+}
+
+impl CentralState {
+    pub(crate) fn att_received(&mut self) -> Vec<Vec<u8>> {
+        let r = self.received.drain(..).filter(|(llid, p)| *llid == 2 && p.len() >= 4 && p[2] == 4).map(|(_, p)| p[4..].to_vec());
+        r.collect()
+    }
+}
+
+#[test]
+fn a_packet_of_the_longest_ll_payload_is_queued_for_sending() {
+    let _s = sim::session();
+    connection_reset();
+    assert!(tx_push(2, &[0x77; LL_PAYLOAD_MAX]));
+    assert!(!tx_push(2, &[0x77; LL_PAYLOAD_MAX + 1]));
+    assert_eq!(tx_free(), TX_SLOTS - 1);
+    let mut buf = [0u8; 6 + LL_PAYLOAD_MAX];
+    TX_QUEUE.copy_to(0, &mut buf);
+    assert_eq!(buf[..6], [LL_PAYLOAD_MAX as u8 + 2, 0, 0, 0, 2, LL_PAYLOAD_MAX as u8]);
+    assert_eq!(buf[6..], [0x77; LL_PAYLOAD_MAX]);
+    assert!(tx_push(0x07, &[1]));
+    assert_eq!(TX_QUEUE.read(TX_SLOT + 4), 3);
+}
+
+#[test]
+fn a_full_length_packet_does_not_spill_into_the_next_slot() {
+    let _s = sim::session();
+    fresh_link();
+    for i in 1..RX_SLOTS {
+        RX_QUEUE.write(i * RX_SLOT, 3);
+        RX_QUEUE.write(i * RX_SLOT + 1, 1);
+        RX_QUEUE.write(i * RX_SLOT + 2, i as u8);
+    }
+    RX_TAIL.set(1);
+    RX_HEAD.set(RX_SLOTS as u8);
+    let p = rx_packet(0x02, &[0x5a; LL_PAYLOAD_MAX]);
+    let ev = event_now(7, 2_500, 30_000);
+    run_event(&ev, vec![rx(&p, 1, 1), Step::Status(0x0020)]);
+    let got = pop_all();
+    assert_eq!(got.len(), RX_SLOTS);
+    for (i, (llid, data)) in got[..RX_SLOTS - 1].iter().enumerate() {
+        assert_eq!((*llid, data.clone()), (3, vec![i as u8 + 1]));
+    }
+    assert_eq!(got[RX_SLOTS - 1], (2, vec![0x5a; LL_PAYLOAD_MAX]));
 }

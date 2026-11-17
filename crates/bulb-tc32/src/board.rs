@@ -40,6 +40,12 @@ pub struct Board {
     pub image_type: u16,
 }
 
+impl Board {
+    pub const fn tunable(&self) -> bool {
+        self.cold.is_some() || self.rgb.is_some()
+    }
+}
+
 pub const BOARD: Board = board_named(match option_env!("BULB_BOARD") {
     Some(name) => name,
     None => "ESMLFzm_w6_Dimm-4.63",
@@ -115,18 +121,13 @@ pub fn init() {
 }
 
 fn wait_for_crystal() {
-    for _ in 0..10 {
+    let ticking = |_| {
         let t0 = reg::tick();
-        let mut spins = 0u32;
-        while spins < 2000 {
-            if reg::tick().wrapping_sub(t0) > 320 {
-                return;
-            }
-            spins += 1;
-        }
+        (0..2000).any(|_| reg::tick().wrapping_sub(t0) > 320)
+    };
+    if !(0..10).any(ticking) {
+        reboot()
     }
-    reg::write8(reg::PWDN_CTRL, 0x20);
-    loop {}
 }
 
 fn calibrate_rc_24m() {
@@ -193,8 +194,9 @@ pub fn watchdog_feed() {
 }
 
 pub fn reboot() -> ! {
-    reg::write8(reg::PWDN_CTRL, 0x20);
-    loop {}
+    loop {
+        reg::write8(reg::PWDN_CTRL, 0x20);
+    }
 }
 
 pub struct FlashWords;
@@ -227,26 +229,30 @@ fn analog_read(addr: u8) -> u8 {
     reg::analog_read(addr)
 }
 
-pub struct LedPwm;
+pub struct LedPwm(&'static Board);
 
 impl LedPwm {
     pub fn new() -> Self {
+        Self::on(&BOARD)
+    }
+
+    fn on(b: &'static Board) -> Self {
         reg::write8(reg::PWM_CLK_DIV, 0);
-        start(BOARD.warm);
-        if let Some(cold) = BOARD.cold {
-            start(cold);
+        start(b, b.warm);
+        if let Some(cold) = b.cold {
+            start(b, cold);
         }
-        if let Some(rgb) = BOARD.rgb {
+        if let Some(rgb) = b.rgb {
             for o in rgb {
-                start(o);
+                start(b, o);
             }
         }
-        LedPwm
+        LedPwm(b)
     }
 }
 
-fn start(o: Out) {
-    reg::write16(reg::pwm_max(o.pwm), BOARD.period);
+fn start(b: &Board, o: Out) {
+    reg::write16(reg::pwm_max(o.pwm), b.period);
     reg::write16(reg::pwm_cmp(o.pwm), 0);
     reg::modify8(o.mux, !(3 << o.shift), o.value << o.shift);
     reg::clear8(o.gpio, o.bit);
@@ -258,33 +264,33 @@ fn start(o: Out) {
 
 impl Pwm for LedPwm {
     fn max_duty(&self) -> u16 {
-        BOARD.period
+        self.0.period
     }
 
     fn set_duty(&mut self, duty: u16) {
-        reg::write16(reg::pwm_cmp(BOARD.warm.pwm), duty.min(BOARD.period));
+        reg::write16(reg::pwm_cmp(self.0.warm.pwm), duty.min(self.0.period));
     }
 
     fn has_cold_channel(&self) -> bool {
-        BOARD.cold.is_some()
+        self.0.cold.is_some()
     }
 
     fn set_cold_duty(&mut self, duty: u16) {
-        if let Some(cold) = BOARD.cold {
-            reg::write16(reg::pwm_cmp(cold.pwm), duty.min(BOARD.period));
+        if let Some(cold) = self.0.cold {
+            reg::write16(reg::pwm_cmp(cold.pwm), duty.min(self.0.period));
         }
     }
 
     fn ct_range(&self) -> (u16, u16) {
-        (BOARD.ct_min, BOARD.ct_max)
+        (self.0.ct_min, self.0.ct_max)
     }
 
     fn has_rgb(&self) -> bool {
-        BOARD.rgb.is_some()
+        self.0.rgb.is_some()
     }
 
     fn set_rgb(&mut self, r: u16, g: u16, b: u16) {
-        if let Some([or, og, ob]) = BOARD.rgb {
+        if let Some([or, og, ob]) = self.0.rgb {
             reg::write16(reg::pwm_cmp(or.pwm), r);
             reg::write16(reg::pwm_cmp(og.pwm), g);
             reg::write16(reg::pwm_cmp(ob.pwm), b);
@@ -292,15 +298,15 @@ impl Pwm for LedPwm {
     }
 
     fn white_tw_curve(&self) -> bool {
-        BOARD.cold.is_some() || BOARD.rgb.is_some()
+        self.0.tunable()
     }
 
     fn rgb_beside_white(&self) -> bool {
-        BOARD.rgb_beside_white
+        self.0.rgb_beside_white
     }
 
     fn colour_default(&self) -> (u8, u8) {
-        BOARD.colour_default
+        self.0.colour_default
     }
 }
 
@@ -354,15 +360,22 @@ impl bulb_core::store::Flash for BoardFlash {
 
 impl FlashStore {
     pub fn erase() {
-        let mut s = Self::new();
-        s.0.erase();
-        if let Some(c) = s.1.as_mut() {
+        Self::new().erase_all();
+    }
+
+    fn erase_all(&mut self) {
+        self.0.erase();
+        if let Some(c) = self.1.as_mut() {
             c.erase();
         }
     }
 
     pub fn new() -> Self {
-        let colour = BOARD.rgb.map(|_| LightLog::of_records(BoardFlash, COLOUR_SECTORS, SECTOR_SIZE, is_colour));
+        Self::on(&BOARD)
+    }
+
+    fn on(b: &Board) -> Self {
+        let colour = b.rgb.map(|_| LightLog::of_records(BoardFlash, COLOUR_SECTORS, SECTOR_SIZE, is_colour));
         FlashStore(LightLog::new(BoardFlash, CONFIG_SECTORS, SECTOR_SIZE), colour)
     }
 }

@@ -149,4 +149,4 @@ impl Glue {
 
 #[cfg(test)]
 #[path = "tests/diag.rs"]
-mod tests;
+pub(crate) mod tests;

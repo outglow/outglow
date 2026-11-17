@@ -208,3 +208,126 @@ fn the_light_settings_survive_a_store_and_load() {
     FlashStore::erase();
     assert_eq!(FlashStore::new().load(&mut buf), None);
 }
+
+fn outputs(b: &Board) -> Vec<Out> {
+    let mut v = vec![b.warm];
+    v.extend(b.cold);
+    v.extend(b.rgb.iter().flatten().copied());
+    v
+}
+
+#[test]
+fn every_board_starts_each_of_its_pwm_outputs_on_its_pin() {
+    for b in crate::boards::BOARDS.iter() {
+        let _s = sim::session();
+        let mut regs = std::collections::HashMap::new();
+        for o in outputs(b) {
+            regs.insert(o.mux, 0xa5u8);
+            regs.insert(o.gpio, 0xa5u8);
+        }
+        regs.insert(reg::PWM_ENABLE, 0x00);
+        regs.insert(reg::PWM0_ENABLE, 0x00);
+        sim::with(|c| regs.iter().for_each(|(a, v)| c.poke8(*a, *v)));
+        let _led = LedPwm::on(b);
+        let mut expected = vec![Op::W8(reg::PWM_CLK_DIV, 0)];
+        for o in outputs(b) {
+            expected.push(Op::W16(0x796 + 4 * o.pwm as usize, b.period));
+            expected.push(Op::W16(0x794 + 4 * o.pwm as usize, 0));
+            let m = regs[&o.mux] & !(3 << o.shift) | o.value << o.shift;
+            regs.insert(o.mux, m);
+            expected.push(Op::W8(o.mux, m));
+            let g = regs[&o.gpio] & !o.bit;
+            regs.insert(o.gpio, g);
+            expected.push(Op::W8(o.gpio, g));
+            let (en, bit) = if o.pwm == 0 { (reg::PWM0_ENABLE, 0x01) } else { (reg::PWM_ENABLE, 1 << o.pwm) };
+            let e = regs[&en] | bit;
+            regs.insert(en, e);
+            expected.push(Op::W8(en, e));
+        }
+        assert_eq!(sim::with(|c| c.writes()), expected, "{}", b.name);
+    }
+}
+
+#[test]
+fn every_board_drives_its_channels_and_tells_its_light_kind() {
+    for b in crate::boards::BOARDS.iter() {
+        let _s = sim::session();
+        let mut led = LedPwm::on(b);
+        sim::with(|c| c.log.clear());
+        led.set_duty(b.period + 1);
+        led.set_duty(b.period - 1);
+        led.set_cold_duty(b.period + 7);
+        led.set_cold_duty(3);
+        led.set_rgb(10, 20, 30);
+        let mut expected = vec![Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period), Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period - 1)];
+        if let Some(c) = b.cold {
+            expected.extend([Op::W16(0x794 + 4 * c.pwm as usize, b.period), Op::W16(0x794 + 4 * c.pwm as usize, 3)]);
+        }
+        if let Some([r, g, bl]) = b.rgb {
+            expected.extend([Op::W16(0x794 + 4 * r.pwm as usize, 10), Op::W16(0x794 + 4 * g.pwm as usize, 20), Op::W16(0x794 + 4 * bl.pwm as usize, 30)]);
+        }
+        assert_eq!(sim::with(|c| c.writes()), expected, "{}", b.name);
+        assert_eq!(led.max_duty(), b.period);
+        assert_eq!(led.has_cold_channel(), b.cold.is_some());
+        assert_eq!(led.has_rgb(), b.rgb.is_some());
+        assert_eq!(led.white_tw_curve(), b.cold.is_some() || b.rgb.is_some());
+        assert_eq!(b.tunable(), b.cold.is_some() || b.rgb.is_some());
+        assert_eq!(led.ct_range(), (b.ct_min, b.ct_max));
+        assert_eq!(led.rgb_beside_white(), b.rgb_beside_white);
+        assert_eq!(led.colour_default(), b.colour_default);
+    }
+    let kinds: Vec<(bool, bool, bool)> = crate::boards::BOARDS.iter().map(|b| (b.cold.is_some(), b.rgb.is_some(), b.tunable())).collect();
+    assert!(kinds.contains(&(false, false, false)) && kinds.contains(&(true, false, true)) && kinds.contains(&(false, true, true)));
+    assert!(crate::boards::BOARDS.iter().any(|b| b.rgb_beside_white) && crate::boards::BOARDS.iter().any(|b| b.colour_default != (170, 254)));
+}
+
+#[test]
+fn a_colour_bulb_keeps_its_colour_record_and_rewrites_it_only_when_it_changes() {
+    let _s = sim::session();
+    let rgb = crate::boards::BOARDS.iter().find(|b| b.rgb.is_some()).expect("a colour board");
+    let mut s = FlashStore::on(rgb);
+    let mut buf = [0u8; bulb_core::colour::RECORD_LEN];
+    assert_eq!(s.load_colour(&mut buf), None);
+    let record = bulb_core::colour::ColourRecord { mode: bulb_core::command::ColorMode::Temperature, xy: false, hue: 10, sat: 20, x: 1, y: 2 }.encode();
+    let stores = crate::flash::STORES.get();
+    s.store_colour(&record);
+    assert_eq!(crate::flash::STORES.get(), stores.wrapping_add(1));
+    assert_eq!(FlashStore::on(rgb).load_colour(&mut buf), Some(record.len()));
+    assert_eq!(buf, record);
+    let programs = sim::with(|c| c.flash_ops.len());
+    s.store_colour(&record);
+    assert_eq!(sim::with(|c| c.flash_ops.len()), programs);
+    assert_eq!(crate::flash::STORES.get(), stores.wrapping_add(1));
+    let other = bulb_core::colour::ColourRecord { mode: bulb_core::command::ColorMode::Temperature, xy: false, hue: 10, sat: 21, x: 1, y: 2 }.encode();
+    s.store_colour(&other);
+    assert_eq!(crate::flash::STORES.get(), stores.wrapping_add(2));
+    assert!(is_colour(&record));
+    assert!(!is_colour(&[0xff; bulb_core::colour::RECORD_LEN]));
+    s.erase_all();
+    assert_eq!(FlashStore::on(rgb).load_colour(&mut buf), None);
+    assert!(sim::with(|c| c.flash_ops.contains(&(0x20, COLOUR_SECTORS[0])) || c.flash_ops.contains(&(0x20, COLOUR_SECTORS[1]))));
+}
+
+#[test]
+fn a_board_name_that_is_not_in_the_table_stops_the_build() {
+    let _s = sim::session();
+    assert!(std::panic::catch_unwind(|| board_named("no such board")).is_err());
+    for b in crate::boards::BOARDS.iter() {
+        assert!(str_eq(board_named(b.name).name, b.name));
+        assert!(str_eq(board_named(b.name).tag, b.tag));
+    }
+    assert!(!str_eq("ab", "ba"));
+    assert!(str_eq("", ""));
+}
+
+#[test]
+fn the_crystal_runs_once_its_tick_has_moved_more_than_20_us() {
+    let _s = sim::session();
+    init();
+    assert_eq!(sim::with(|c| c.ticks_read()).len(), 22);
+    drop(_s);
+    let _s = sim::session();
+    sim::with(|c| c.tick_step = 0);
+    assert!(sim::reboots(init));
+    assert_eq!(sim::with(|c| c.ticks_read()).len(), 10 * 2001);
+}

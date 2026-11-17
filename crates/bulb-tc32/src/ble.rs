@@ -13,7 +13,7 @@ pub const IDENTITY: Identity = Identity {
     model: BOARD.model,
     firmware_revision: crate::zb::VERSION,
     hardware_revision: BOARD.hw_revision,
-    tunable: BOARD.cold.is_some() || BOARD.rgb.is_some(),
+    tunable: BOARD.tunable(),
     ct_min: BOARD.ct_min,
     ct_max: BOARD.ct_max,
     colour: BOARD.rgb.is_some(),
