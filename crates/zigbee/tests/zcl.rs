@@ -924,3 +924,53 @@ fn the_power_source_is_mains() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, 0x0000, 0x01).unwrap(), vec![0x18, seq, 0x01, 0x07, 0x00, 0x00, 0x30, 0x01]);
 }
+
+fn read_u16(net: &mut Net, short: u16, cluster: u16, id: u16) -> u16 {
+    let seq = net.coord.zcl(short, cluster, 0x00, 0x00, &id.to_le_bytes());
+    net.run(100);
+    let rsp = net.coord.last_zcl(short, cluster, 0x01).unwrap();
+    assert_eq!(rsp[1], seq);
+    u16::from_le_bytes([rsp[7], rsp[8]])
+}
+
+#[test]
+fn recalling_the_global_scene_clears_the_off_wait_only_without_an_on_time() {
+    for on_time in [0u16, 30] {
+        let mut net = Net::new();
+        let n = net.join_node();
+        let short = net.nodes[n].short();
+        net.coord.zcl(short, 0x0006, 0x01, 0x40, &[0, 0]);
+        net.run(100);
+        let mut w = vec![0x01, 0x40, 0x21];
+        w.extend_from_slice(&on_time.to_le_bytes());
+        w.extend_from_slice(&[0x02, 0x40, 0x21, 50, 0]);
+        net.coord.zcl(short, 0x0006, 0x00, 0x02, &w);
+        net.run(100);
+        net.coord.zcl(short, 0x0006, 0x01, 0x41, &[]);
+        net.run(100);
+        assert_eq!(read_u16(&mut net, short, 0x0006, 0x4002) != 0, on_time != 0, "on time {on_time}");
+    }
+}
+
+#[test]
+fn removing_all_groups_keeps_the_scenes_of_no_group() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, 0x0004, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(100);
+    net.coord.zcl(short, 0x0005, 0x01, 0x04, &[0x00, 0x00, 1]);
+    net.coord.zcl(short, 0x0005, 0x01, 0x04, &[0x34, 0x12, 2]);
+    net.run(100);
+    net.coord.zcl(short, 0x0004, 0x01, 0x04, &[]);
+    net.run(100);
+    let count = |net: &mut Net, group: u16| {
+        let g = group.to_le_bytes();
+        net.coord.zcl(short, 0x0005, 0x01, 0x06, &[g[0], g[1]]);
+        net.run(100);
+        let rsp = net.coord.last_zcl(short, 0x0005, 0x06).unwrap();
+        (rsp[3], rsp.get(7).copied().unwrap_or(0))
+    };
+    assert_eq!(count(&mut net, 0x0000).1, 1, "the scene of no group stays");
+    assert_ne!(count(&mut net, 0x1234).0, 0x00, "the group is gone with its scene");
+}
