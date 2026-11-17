@@ -671,3 +671,46 @@ fn a_power_cut_resumes_with_the_file_header_already_read_and_skips_an_element_af
     assert_eq!(staged(&net, n, image.len()), image);
     assert!(net.coord.ota_blocks - before < 150, "resumed, not started over: {} blocks", net.coord.ota_blocks - before);
 }
+
+fn cut_and_resume(net: &mut Net, n: usize, data: Vec<u8>, cut_at: usize) {
+    let short = net.nodes[n].short();
+    net.coord.ota_file = Some(OtaFile { manufacturer: MFG, image_type: TYPE, version: NEW, data });
+    net.coord.ota_notify(short);
+    net.run_until(60_000, "the cut", |net| net.coord.ota_blocks as usize * 48 >= cut_at);
+    net.power_cycle(n);
+    net.run(2_000);
+    net.coord.ota_notify(short);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    net.run(2_000);
+}
+
+#[test]
+fn a_power_cut_in_an_element_after_the_image_resumes_outside_the_image() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let image = make_image(8192, 22);
+    let mut data = make_ota_file(&image, MFG, TYPE, NEW, 4, false);
+    data.extend_from_slice(&[0x01, 0x00]);
+    data.extend_from_slice(&400u32.to_le_bytes());
+    data.extend_from_slice(&[0xA5; 400]);
+    let total = data.len() as u32;
+    data[52..56].copy_from_slice(&total.to_le_bytes());
+    let blocks = data.len().div_ceil(48) as u32;
+    cut_and_resume(&mut net, n, data, 60 + 6 + 8192 + 100);
+    assert_eq!(net.coord.ota_end, Some(0x00));
+    assert_eq!(staged(&net, n, image.len()), image, "nothing of the other element in the image");
+    assert!(net.coord.ota_blocks < blocks + 20, "resumed: {} blocks for {blocks}", net.coord.ota_blocks);
+}
+
+#[test]
+fn a_power_cut_after_a_bad_marker_still_ends_in_an_invalid_image() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let mut image = make_image(9500, 23);
+    image[9] = b'X';
+    seal_image(&mut image);
+    let data = make_ota_file(&image, MFG, TYPE, NEW, 0, false);
+    cut_and_resume(&mut net, n, data, 6_000);
+    assert_eq!(net.coord.ota_end, Some(0x96));
+    assert!(!activated(&net, n));
+}
