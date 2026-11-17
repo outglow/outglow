@@ -865,3 +865,24 @@ fn a_zcl_frame_received_is_logged_for_the_device_page_with_its_second() {
     assert_eq!(crate::diag::tests::frames_in(), n.wrapping_add(1));
     assert_eq!(crate::diag::tests::last_frame_time(), hal.ms / 1000);
 }
+
+#[cfg(feature = "trace")]
+#[test]
+fn a_zigbee_trace_of_a_transmission_gets_the_radio_figures() {
+    use zigbee::hal::{trace, Trace};
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    crate::trace::tests::rewind();
+    let t0 = sim::with(|c| c.tick);
+    radio::LAST_TX.set([3, 2, t0]);
+    for (kind, detail, filled) in [(trace::TX, trace::TX_BUSY, true), (trace::TX, 0, true), (trace::TX, trace::TX_BUSY + 1, false), (trace::TX + 1, 0, false)] {
+        hal.trace(Trace { kind, detail, seq: 1, src: 2, peer: 3, aux: 0xdead_beef });
+        let n = crate::trace::tests::count() - 1;
+        let aux = crate::trace::tests::entry(n)[3];
+        if filled {
+            assert_eq!(aux & 0xffff, 0x0203, "{kind} {detail}");
+        } else {
+            assert_eq!(aux, 0xdead_beef, "{kind} {detail}");
+        }
+    }
+}

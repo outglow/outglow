@@ -64,3 +64,7 @@ pub(crate) fn rewind() {
 fn the_ring_holds_a_header_and_512_entries_of_16_octets() {
     assert_eq!(core::mem::size_of_val(&ring::ZB_TRACE), 8 + ring::ENTRIES * 16);
 }
+
+pub(crate) fn count() -> usize {
+    ring::ZB_TRACE.read32(4) as usize
+}
