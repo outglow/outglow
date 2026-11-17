@@ -239,11 +239,10 @@ impl<H: Hal> Stack<H> {
             let changed = match ty {
                 T_SINGLE => {
                     let (a, b) = (f32::from_bits(value), f32::from_bits(r.last));
-                    let d = if a > b { a - b } else { b - a };
+                    let d = (a - b).abs();
                     let step = f32::from_bits(r.change);
                     a != b && d >= step.max(0.0)
                 }
-                T_BOOL | T_BITMAP8 | diag::T_ENUM8 => value != r.last,
                 _ => value != r.last && value.wrapping_sub(r.last).min(r.last.wrapping_sub(value)) >= r.change.max(1),
             };
             let periodic = r.max_s != 0 && since >= r.max_s as u32 * 1000;
@@ -339,3 +338,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
