@@ -450,10 +450,10 @@ fn a_command_goes_on_air_in_the_stock_packet_format() {
 #[test]
 fn a_bulb_does_not_take_its_own_packet_back_from_a_neighbour() {
     let (_ether, mut rigs) = bulbs(&[A, B]);
-    send(&mut rigs, 0xffff, OP_POWER, &[0], 1500);
-    assert!(rigs[1].ble.borrow().air_stats().relayed >= 1, "B passed it on");
+    send(&mut rigs, 0xffff, OP_STATUS, &[0x10], 1500);
+    assert!(rigs[1].ble.borrow().air_stats().relayed >= 1, "B passed the request on");
     let a = rigs[0].ble.borrow().air_stats();
-    assert_eq!((a.received, a.relayed), (0, 0), "A heard it back and knew it");
+    assert_eq!((a.received, a.to_app, a.relayed), (1, 1, 0), "A, listening for answers, took B's answer and knew its own request");
 }
 
 #[test]
@@ -710,4 +710,23 @@ fn an_answer_for_a_bulb_without_an_app_goes_nowhere() {
     let stats = rig.ble.borrow().air_stats();
     assert_eq!((stats.received, stats.to_app, stats.relayed), (1, 1, 0));
     assert!(ether.borrow().sent(0).is_empty());
+}
+
+#[test]
+fn a_bulb_does_not_take_its_own_answer_back_from_a_neighbour() {
+    let (ether, mut rig) = alone();
+    let sn = 0x03_0201;
+    ether.borrow_mut().deliver(0, &air_pdu(sn, 0x0021, 0x000b, 0xc0 | 0x1a, &[0x10], &LTK));
+    rig.run(400);
+    let answer = air_pdu_hops(sn, 0x000b, 0x0021, 0xdb, &[1, 127, 64], 2, &LTK);
+    let mut want = answer.clone();
+    want[6..8].copy_from_slice(&0x000bu16.to_le_bytes());
+    assert_eq!(ether.borrow().sent(0)[0], want, "B answered");
+    let mut echo = air_pdu_hops(sn, 0x000b, 0x0021, 0xdb, &[1, 127, 64], 1, &LTK);
+    echo[6..8].copy_from_slice(&0x000cu16.to_le_bytes());
+    let before = rig.ble.borrow().air_stats();
+    ether.borrow_mut().deliver(0, &echo);
+    rig.run(800);
+    let after = rig.ble.borrow().air_stats();
+    assert_eq!((after.received, after.relayed), (before.received, before.relayed), "its own answer, passed back by C");
 }
