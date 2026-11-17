@@ -109,3 +109,30 @@ fn a_node_descriptor_response_after_the_key_exchange_changes_nothing() {
         .count();
     assert_eq!(opens, 0, "the network is not opened again");
 }
+
+#[test]
+fn a_rejoin_response_counts_only_from_the_parent_asked_for_this_bulb_and_whole() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let ext = ext_of(&net, n);
+    net.coord.ignore_rejoin = true;
+    net.coord.permit_join = false;
+    net.coord.nwk_command(short, 1, &[zigbee::nwk::CMD_LEAVE, 0x60]);
+    net.run_until(10_000, "rejoin", |net| !net.coord.rejoins.is_empty());
+    let respond = |net: &mut Net, src_ext: Option<u64>, dst_ext: Option<u64>, body: &[u8]| {
+        let mut rh = net.coord.header(zigbee::nwk::FRAME_CMD, short, 1);
+        rh.src_ext = src_ext;
+        rh.dst_ext = dst_ext;
+        let mut f = vec![zigbee::nwk::CMD_REJOIN_RESPONSE];
+        f.extend_from_slice(body);
+        net.coord.nwk_send(rh, &f, Some(short));
+        net.run(20);
+    };
+    respond(&mut net, Some(0x00124B00000000AB), Some(ext), &[0x77, 0x77, 0x00]);
+    respond(&mut net, Some(COORD_EXT), Some(ext ^ 1), &[0x77, 0x77, 0x00]);
+    respond(&mut net, Some(COORD_EXT), Some(ext), &[0x77, 0x77]);
+    assert_ne!(net.nodes[n].stack.short_address(), 0x7777, "none of those was taken");
+    respond(&mut net, Some(COORD_EXT), Some(ext), &[0x78, 0x77, 0x00]);
+    assert_eq!(net.nodes[n].stack.short_address(), 0x7778);
+}
