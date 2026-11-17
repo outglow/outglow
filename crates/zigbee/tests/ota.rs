@@ -780,3 +780,26 @@ fn a_new_image_after_an_abandoned_download_starts_from_the_beginning() {
     assert_eq!(net.coord.ota_end, Some(0x00));
     assert_eq!(staged(&net, n, second.len()), second);
 }
+
+#[test]
+fn a_download_whose_staged_part_is_gone_after_a_power_cut_starts_again_from_the_beginning() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(9500, 32);
+    offer(&mut net, &image, NEW);
+    let whole = (image.len() + 62).div_ceil(48) as u32;
+    net.coord.ota_notify(short);
+    net.run_until(60_000, "past a checkpoint", |net| net.coord.ota_blocks >= 6000 / 48);
+    net.power_cycle(n);
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].staging.clear();
+    net.run(2_000);
+    let before = net.coord.ota_blocks;
+    net.coord.ota_notify(short);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    net.run(2_000);
+    assert_eq!(net.coord.ota_end, Some(0x00));
+    assert_eq!(staged(&net, n, image.len()), image);
+    assert!(net.coord.ota_blocks - before >= whole, "from the beginning");
+}
