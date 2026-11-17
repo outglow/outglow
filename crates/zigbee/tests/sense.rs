@@ -746,7 +746,7 @@ fn a_probe_of_another_network_is_taken_by_the_sensing_and_other_frames_are_left_
 #[test]
 fn the_automatic_calibration_turned_off_stays_off_over_a_power_cycle_and_a_record_of_another_version_is_not_taken() {
     let (mut net, _, n, [sa, _]) = two();
-    assert_eq!(write(&mut net, sa, SENSE, 0x0000, T_U8, &[40]), 0);
+    assert_eq!(write(&mut net, sa, SENSE, 0x0000, T_U8, &[55]), 0);
     assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![0]));
     net.power_cycle(n[0]);
     net.run(1000);
