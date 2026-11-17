@@ -14,6 +14,7 @@ mod hal_defaults;
 mod joining;
 mod keys;
 mod mac_rx;
+mod neighbors;
 mod network;
 mod nv;
 mod nwk_commands;
