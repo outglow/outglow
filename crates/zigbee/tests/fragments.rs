@@ -325,3 +325,24 @@ fn a_frame_to_the_green_power_endpoint_for_another_cluster_is_ignored() {
     net.run(100);
     assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
 }
+
+#[test]
+fn a_last_block_may_fill_the_largest_transfer_but_not_go_past_it_and_may_not_be_empty() {
+    for (counter, last, taken) in [(0x40u8, 50usize, true), (0x41, 51, false), (0x42, 0, false)] {
+        let mut net = Net::new();
+        let n = net.join_node();
+        let short = net.nodes[n].short();
+        let mut first = vec![0x00, 0x7F, 0x00];
+        first.extend_from_slice(&[0x00; 47]);
+        fragment(&mut net, short, counter, 1, 5, &first);
+        net.run(50);
+        for b in 1..4u8 {
+            fragment(&mut net, short, counter, 2, b, &[0x00; 50]);
+            net.run(50);
+        }
+        let t = net.now();
+        fragment(&mut net, short, counter, 2, 4, &vec![0x00; last]);
+        net.run(100);
+        assert_eq!(!acked(&net, n, t).is_empty(), taken, "last block of {last}");
+    }
+}
