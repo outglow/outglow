@@ -1613,3 +1613,55 @@ fn removing_the_first_of_two_sinks_or_groups_keeps_the_second() {
     assert!(has(&0x00124B00000000A2u64.to_le_bytes()) && !has(&0x00124B00000000A1u64.to_le_bytes()), "{entries:02x?}");
     assert!(has(&[1, 0x02, 0x0B]) && !has(&[0x01, 0x0B, 0xFF, 0xFF]), "{entries:02x?}");
 }
+
+#[test]
+fn the_proxy_table_attribute_is_read_whole_when_it_fits_one_frame() {
+    let table_of = |seq_caps: u32| {
+        let mut net = Net::new();
+        let n = net.join_node();
+        let short = net.nodes[n].short();
+        for id in 1..=3u32 {
+            let mut sink = Pairing::new(0x0000_1000 + id, 3);
+            sink.sink = (COORD_EXT, 0x0000);
+            sink.seq_cap = id <= seq_caps;
+            if sink.seq_cap {
+                sink.counter = Some(5);
+            }
+            net.coord.gp_pair(&sink);
+        }
+        let mut derived = Pairing::new(0x0000_3000, 1);
+        derived.alias = Some(0x0777);
+        net.coord.gp_pair(&derived);
+        net.run(300);
+        let seq = net.coord.gp_unicast(short, 0x08, 0x00, &[0x11, 0x00]);
+        net.run(100);
+        let rsp = net.coord.last_zcl(short, GP, 0x01).unwrap();
+        assert_eq!(rsp[1], seq);
+        rsp[3..].to_vec()
+    };
+    let fits = table_of(2);
+    assert_eq!(fits[..4], [0x11, 0x00, 0x00, 0x43]);
+    assert_eq!(u16::from_le_bytes([fits[4], fits[5]]), 71);
+    assert_eq!(3 + fits.len(), 80, "exactly one frame");
+    assert_eq!(table_of(3), vec![0x11, 0x00, 0x89], "75 bytes of table do not fit");
+}
+
+#[test]
+fn a_proxy_entry_that_is_fixed_and_in_range_stays_so_over_a_restart() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut p = Pairing::new(SWITCH, 3);
+    p.fixed = true;
+    net.coord.gp_pair(&p);
+    net.run(200);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send(0x22, &[]);
+    net.run(11_000);
+    net.power_cycle(n);
+    net.run(2_000);
+    let (status, entries) = proxy_entries(&mut net, short);
+    assert_eq!(status, 0x00);
+    let options = u16::from_le_bytes([entries[3], entries[4]]);
+    assert_eq!(options & (1 << 10 | 1 << 11), 1 << 10 | 1 << 11, "in range and fixed: {options:#06x}");
+}
