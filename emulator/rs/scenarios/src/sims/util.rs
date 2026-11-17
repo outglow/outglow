@@ -10,6 +10,15 @@ pub fn hex_list(v: &[u16]) -> String {
     format!("[{}]", v.iter().map(|x| format!("'{x:#x}'")).collect::<Vec<_>>().join(", "))
 }
 
+pub fn firmware_revision_ok(img: &Image, got: &[u8]) -> bool {
+    if !is_outglow(img) {
+        return got == b"3.0.2_1610";
+    }
+    let Ok(s) = std::str::from_utf8(got) else { return false };
+    let parts: Vec<&str> = s.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
+}
+
 pub fn is_outglow(img: &Image) -> bool {
     const TAG: &[u8] = b"outglow-board:";
     img.bytes().map(|b| b.windows(TAG.len()).any(|w| w == TAG)).unwrap_or(false)

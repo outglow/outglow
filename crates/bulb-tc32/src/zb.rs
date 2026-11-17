@@ -28,7 +28,7 @@ static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, c
 const IDENTITY: Identity = Identity {
     manufacturer: "Outglow",
     model: BOARD.kind,
-    sw_build: "outglow",
+    sw_build: VERSION,
     manufacturer_code: 0x1141,
     app_version: 1,
     hw_version: BOARD.hw_version,
@@ -69,6 +69,11 @@ const fn parse_key(s: &str) -> [u8; 16] {
 }
 
 pub const IMAGE_TYPE: u16 = BOARD.image_type;
+
+pub const VERSION: &str = match option_env!("BULB_VERSION") {
+    Some(v) => v,
+    None => "1.0.0",
+};
 
 pub const FILE_VERSION: u32 = match option_env!("BULB_FILE_VERSION") {
     Some(s) => parse_hex(s),

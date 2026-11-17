@@ -11,7 +11,7 @@ use crate::staging::{self, Owner};
 pub const IDENTITY: Identity = Identity {
     product: BOARD.ble_product,
     model: BOARD.model,
-    firmware_revision: "3.0.2_1610",
+    firmware_revision: crate::zb::VERSION,
     hardware_revision: BOARD.hw_revision,
     tunable: BOARD.cold.is_some() || BOARD.rgb.is_some(),
     ct_min: BOARD.ct_min,

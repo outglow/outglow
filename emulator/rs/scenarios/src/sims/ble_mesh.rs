@@ -135,10 +135,10 @@ fn run(cx: &mut SimCtx) -> R<()> {
             .join(", ")
     );
     t.check(
-        "Device Information like stock",
+        "Device Information: the vendor's manufacturer, model and hardware revision, the firmware's own version",
         get("2a29 mfr").as_deref() == Some("AwoX")
             && get("2a24 model").as_deref() == Some(exp_model)
-            && get("2a26 fw").as_deref() == Some("3.0.2_1610")
+            && get("2a26 fw").is_some_and(|v| super::util::firmware_revision_ok(&img, v.as_bytes()))
             && get("2a27 hw").as_deref() == Some("4.63"),
         &di_text,
     );

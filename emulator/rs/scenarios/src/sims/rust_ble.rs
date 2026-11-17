@@ -201,11 +201,11 @@ fn run(cx: &mut SimCtx) -> R<()> {
     check(cx, "802.15.4 radio registers are the same after connection events", d.is_empty(), &diff_text(&d));
     b.ble_crc_errors(D, 4);
     let s0 = b.ble_stats(D);
-    let want = |h: u16| -> &'static [u8] {
+    let want = |h: u16, got: &[u8]| -> bool {
         match h {
-            0x0B => b"AwoX",
-            0x0F => b"4.63",
-            _ => b"3.0.2_1610",
+            0x0B => got == b"AwoX",
+            0x0F => got == b"4.63",
+            _ => super::util::firmware_revision_ok(&img, got),
         }
     };
     let mut good = 0;
@@ -214,9 +214,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
         let mut q = vec![0x0a];
         q.extend_from_slice(&h.to_le_bytes());
         if let Ok(r) = b.att(D, &q, 3000.0, 2.0)? {
-            let mut w = vec![0x0b];
-            w.extend_from_slice(want(h));
-            good += (r == w) as i64;
+            good += (r.first() == Some(&0x0b) && want(h, &r[1..])) as i64;
         }
     }
     let damaged = b.ble_crc_errors(D, 0);

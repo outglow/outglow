@@ -179,6 +179,7 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     let version = a.file_version.clone().or_else(|| std::env::var("BULB_FILE_VERSION").ok()).unwrap_or_else(|| "01000000".into());
     let file_version = u32::from_str_radix(version.trim_start_matches("0x"), 16).with_context(|| format!("file version {version}"))?;
     let version = format!("{file_version:08x}");
+    let release = format!("{}.{}.{}", file_version >> 24, (file_version >> 16) & 0xff, file_version & 0xffff);
     let mut features = Vec::new();
     let mut suffix = String::new();
     if !a.no_ble {
@@ -235,6 +236,7 @@ fn build(root: &Path, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         .env("RUSTC_BOOTSTRAP", "1")
         .env("__CARGO_TESTS_ONLY_SRC_ROOT", &rust_src)
         .env("BULB_FILE_VERSION", &version)
+        .env("BULB_VERSION", &release)
         .env("BULB_BOARD", board_name)
         .env("RUSTFLAGS", rustflags)
         .env("CARGO_TARGET_DIR", &cargo_dir)

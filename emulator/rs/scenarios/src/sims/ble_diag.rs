@@ -590,7 +590,7 @@ fn body(s: &mut S, tw: bool, img: &crate::image::Image) -> R<()> {
     s.check(
         "info: model, firmware, variant, IEEE as in Zigbee",
         info.model == if tw { "ESMLFzm_w6_TW" } else { "ESMLFzm_w6_Dimm" }
-            && info.firmware == "3.0.2_1610"
+            && super::util::firmware_revision_ok(&img, info.firmware.as_bytes())
             && info.tunable == tw
             && info.flags == 0x03
             && info.ieee == ieee,
