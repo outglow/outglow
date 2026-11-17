@@ -41,6 +41,35 @@ jobs:
       - name: Emulator unit tests
         run: cargo test --manifest-path emulator/rs/Cargo.toml -p tc32emu -p ble -p zbnode && cargo test --manifest-path emulator/rs/Cargo.toml -p scenarios --lib
 
+  # line and region coverage of the same host tests (and the emulator's unit
+  # tests), in the shell `nix develop .#coverage` (the official rustc with its
+  # llvm-tools; flake.nix). The per-crate table goes to the job summary, the
+  # HTML report is an artifact; a crate below its baseline in
+  # xtask/coverage.tsv fails the job (README, "Coverage and mutation testing")
+  coverage:
+    name: Coverage
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix-shell
+        with:
+          shell: coverage
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+          workspaces: |
+            .
+            emulator/rs
+      - run: cargo xtask coverage --emulator --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-html
+          path: |
+            target/coverage/*/html
+            target/coverage/*/summary.json
+
   site:
     name: Website and flasher
     runs-on: ubuntu-latest
