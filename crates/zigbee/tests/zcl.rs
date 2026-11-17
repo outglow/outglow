@@ -914,3 +914,13 @@ fn a_change_is_reported_no_sooner_than_the_minimum_interval_after_the_last_repor
     assert_eq!(times.len(), 2, "{times:?}");
     assert!(times[1] - times[0] >= 5_000 && times[1] - times[0] < 6_000, "{times:?}");
 }
+
+#[test]
+fn the_power_source_is_mains() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let seq = net.coord.zcl(short, 0x0000, 0x00, 0x00, &[0x07, 0x00]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, 0x0000, 0x01).unwrap(), vec![0x18, seq, 0x01, 0x07, 0x00, 0x00, 0x30, 0x01]);
+}
