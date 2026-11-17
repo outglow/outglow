@@ -78,4 +78,50 @@ mod tests {
         f[40] ^= 1;
         assert_eq!(check(&f), Err("CRC mismatch".into()));
     }
+
+    fn smallest(body_len: usize) -> Vec<u8> {
+        let mut v = raw(body_len);
+        v[6..8].copy_from_slice(&CRC_MARKER);
+        v[SIZE_AT..SIZE_AT + 4].copy_from_slice(&((body_len + 4) as u32).to_le_bytes());
+        let crc = image_crc(&v);
+        v.extend_from_slice(&crc.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn the_image_crc_is_the_crc32_register_not_inverted() {
+        assert_eq!(image_crc(b"123456789"), 0x340B_C6D9);
+        assert_eq!(image_crc(b""), 0xFFFF_FFFF);
+    }
+
+    #[test]
+    fn the_size_and_crc_fields_of_a_finalized_image() {
+        let f = finalize(&raw(32));
+        assert_eq!(f.len(), 36);
+        assert_eq!(&f[6..8], &[0x5D, 0x02]);
+        assert_eq!(u32::from_le_bytes(f[0x18..0x1C].try_into().unwrap()), 36);
+        assert_eq!(u32::from_le_bytes(f[32..36].try_into().unwrap()), image_crc(&f[..32]));
+        assert!(f[..32].iter().zip(raw(32)).enumerate().all(|(i, (a, b))| *a == b || (6..8).contains(&i) || (0x18..0x1C).contains(&i)));
+    }
+
+    #[test]
+    fn the_smallest_image_holds_the_size_field_and_the_crc() {
+        assert_eq!(check(&smallest(0x1C)), Ok(()));
+        assert!(verify(&smallest(0x1C)));
+    }
+
+    #[test]
+    fn what_the_bootloader_check_refuses() {
+        assert_eq!(check(&[0; 20]), Err("too short to be an image".into()));
+        assert_eq!(check(&smallest(0x1C)[..31]), Err("too short to be an image".into()));
+        let mut no_knlt = smallest(0x40);
+        no_knlt[9] = b'X';
+        assert_eq!(check(&no_knlt), Err("no KNLT marker at 0x08".into()));
+        assert_eq!(check(&raw(0x40)), Err("no CRC marker at 0x06 (not finalized)".into()));
+        let mut long = smallest(0x40);
+        long.push(0xFF);
+        assert_eq!(check(&long), Err("the size at 0x18 is 0x44, the file 0x45".into()));
+        assert!(!verify(&long));
+        assert!(!is_finalized(&[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x5D]));
+    }
 }

@@ -34,6 +34,8 @@ exclude_re = [
   "crates/ble/src/ota\\.rs:72:19: replace < with <= in Ota::account$",
   # equivalent: SHA-256's Ch has disjoint terms and Maj is the same with | in either place
   "crates/ble/src/sha256\\.rs:(24:32|27:33|27:49): replace \\^ with \\| in compress$",
+  # equivalent: the bits are disjoint, so | and ^ give the same value
+  "replace \\| with \\^ in Header::field_control",
 ]
 
 # the timeout of a test run is 5x that of the unmutated tree, at least this:
