@@ -125,8 +125,8 @@ config in `.cargo/mutants.toml`) changes the code one small step at a time
 and checks that the tests of the crate notice.
 
 ```sh
-cargo mutants -p sense -j 4                       # every mutant of a crate; results in mutants.out/
-cargo mutants --in-diff <(git diff main) -j 4     # only the lines a change touches
+cargo mutants -p sense -j 2                       # every mutant of a crate; results in mutants.out/
+cargo mutants --in-diff <(git diff main) -j 2     # only the lines a change touches
 cargo xtask mutants-report mutants.out            # the table per crate, the missed mutants
 cargo xtask mutants                               # the hand-written mutations of xtask/src/mutants/
 ```
@@ -138,7 +138,16 @@ weekly in 16 parts, with the table per crate in the summary of the job
 break behaviour the specifications describe (a counter not counted, a frame
 not relayed, a timeout of the wrong length) across whole statements and
 constants, which cargo-mutants' operator and return-value mutants do not
-reach.
+reach. The test infrastructure (bulb-sim, memcap) is not mutated, and
+bulb-core's mutants run bulb-sim's tests too:
+
+```sh
+cargo mutants -p bulb-core --test-package bulb-core,bulb-sim --timeout 120 -j 2
+```
+
+Every host test binary runs on memcap's capped allocator (4 GiB,
+`OUTGLOW_TEST_MEM_LIMIT_MB`): a mutant that makes a test allocate without
+end stops there. Locally, keep `-j` at 2 on a laptop.
 
 ## Flashing
 

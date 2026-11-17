@@ -12,6 +12,8 @@
 exclude_globs = [
   # the simulated bulb the tests of bulb-core run on: a test double
   "crates/bulb-sim/**",
+  # the capped allocator every host test binary runs on: test infrastructure
+  "crates/memcap/**",
   # the hand-written mutation lists of `cargo xtask mutants`: data
   "xtask/src/mutants/**",
 ]
