@@ -79,3 +79,23 @@ fn a_poll_that_leaves_frames_waiting_does_not_count_as_the_childs_poll_interval(
     s.on_data_request(crate::mac::Addr::Short(0x0A00));
     assert_eq!(s.children[0].poll_ms, 7_000);
 }
+
+#[test]
+fn an_unauthenticated_child_goes_after_thirty_seconds_and_a_joined_end_device_after_its_timeout() {
+    let mut s = stack();
+    child(&mut s, 0, 0x0A00, 0, 0);
+    s.children[0].joined = false;
+    s.children[0].heard = 500;
+    s.parent_timers(500 + 30_000);
+    assert!(s.children[0].used);
+    s.parent_timers(500 + 30_001);
+    assert!(!s.children[0].used);
+    child(&mut s, 1, 0x0B00, 0, 0);
+    s.children[1].heard = 500;
+    s.children[1].timeout = 0;
+    let limit = s.children[1].timeout_ms();
+    s.parent_timers(500 + limit);
+    assert!(s.children[1].used);
+    s.parent_timers(500 + limit + 1);
+    assert!(!s.children[1].used);
+}

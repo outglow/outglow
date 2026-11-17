@@ -695,18 +695,6 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn publish_children(&mut self) {
-        let mut n = 0;
-        let mut same = true;
-        for c in self.children.iter().filter(|c| c.used && c.capability & CAP_FFD == 0) {
-            if self.polled.get(n) != Some(&c.short) {
-                same = false;
-                break;
-            }
-            n += 1;
-        }
-        if same && self.polled.get(n).is_none_or(|s| *s == 0xFFFF) {
-            return;
-        }
         let mut list = [0xFFFFu16; CHILDREN];
         let mut n = 0;
         for c in self.children.iter().filter(|c| c.used && c.capability & CAP_FFD == 0) {
