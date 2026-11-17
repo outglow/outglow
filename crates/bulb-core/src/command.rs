@@ -186,4 +186,36 @@ mod tests {
         assert_eq!(Command::decode(&[4, 127, 0xE8]), None);
         assert_eq!(Command::decode(&[5]), None);
     }
+
+    #[test]
+    fn power_on_behaviour_as_the_zcl_start_up_on_off_value() {
+        for (b, v) in [
+            (PowerOnBehavior::Off, 0),
+            (PowerOnBehavior::On, 1),
+            (PowerOnBehavior::Toggle, 2),
+            (PowerOnBehavior::Previous, 0xFF),
+        ] {
+            assert_eq!(b.to_u8(), v);
+            assert_eq!(PowerOnBehavior::from_u8(v), b);
+        }
+        assert_eq!(PowerOnBehavior::from_u8(3), PowerOnBehavior::Previous);
+        assert_eq!(Command::decode(&[6, 0]), Some(Command::SetPowerOnBehavior(PowerOnBehavior::Off)));
+        assert_eq!(Command::decode(&[6, 2]), Some(Command::SetPowerOnBehavior(PowerOnBehavior::Toggle)));
+    }
+
+    #[test]
+    fn decode_colour_settings_hue_moves_and_candle() {
+        assert_eq!(Command::decode(&[11, 0x2C, 0x01]), Some(Command::SetStartupColorTemperature(300)));
+        assert_eq!(Command::decode(&[11, 0x2C]), None);
+        assert_eq!(Command::decode(&[16, 1, 0x10, 0x00]), Some(Command::MoveHue { up: true, rate: 16 }));
+        assert_eq!(Command::decode(&[16, 0, 0x00, 0x01]), Some(Command::MoveHue { up: false, rate: 256 }));
+        assert_eq!(Command::decode(&[17, 1]), Some(Command::Candle(true)));
+        assert_eq!(Command::decode(&[17, 0]), Some(Command::Candle(false)));
+        assert_eq!(Command::decode(&[17]), None);
+        assert_eq!(Command::decode(&[18]), None);
+        assert_eq!(
+            Command::decode(&[14, 255, 7, 1, 0, 0, 0, 0]),
+            Some(Command::MoveToHueSaturation { hue: 254, sat: 7, direction: HueDirection::Longest, transition_ms: 0 })
+        );
+    }
 }

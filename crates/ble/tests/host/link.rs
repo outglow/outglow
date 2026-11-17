@@ -1,8 +1,6 @@
-use memcap as _;
-mod sim;
 
-use ble::LinkState;
-use sim::{Params, Rig, DIMMABLE, MS, UNIT};
+use ble::{Hal, LinkState};
+use crate::sim::{Params, Rig, DIMMABLE, MS, UNIT};
 
 fn fields(adv: &[u8]) -> Vec<(u8, Vec<u8>)> {
     let mut out = vec![];
@@ -25,7 +23,7 @@ fn advertises_like_the_stock_bulb() {
     let _ = &c;
     let adv = &c.advertisements[0];
     assert_eq!(adv[0], 0x00, "ADV_IND from a public address");
-    assert_eq!(adv[2..8], sim::ADDRESS);
+    assert_eq!(adv[2..8], crate::sim::ADDRESS);
     assert_eq!(
         fields(adv),
         [
@@ -258,7 +256,7 @@ fn refuses_pairing_and_unknown_signaling() {
     assert_eq!(c.signaling, [vec![0x01, 0x09, 0x02, 0x00, 0x00, 0x00]]);
 }
 
-fn deaf_until(rig: &mut Rig, lead: u16, change: impl FnOnce(&mut sim::Central)) {
+fn deaf_until(rig: &mut Rig, lead: u16, change: impl FnOnce(&mut crate::sim::Central)) {
     rig.run(300);
     let instant = {
         let mut c = rig.central();
@@ -339,7 +337,7 @@ fn the_bulb_gives_up_its_own_termination_after_the_supervision_timeout() {
 
 #[test]
 fn a_long_name_is_advertised_as_shortened() {
-    let mut rig = Rig::new(DIMMABLE);
+    let rig = Rig::new(DIMMABLE);
     let mut nv = vec![0xa7];
     nv.extend_from_slice(b"SixteenByteName!");
     nv.extend_from_slice(b"password\0\0\0\0\0\0\0\0");
@@ -448,4 +446,235 @@ fn the_bulbs_own_traffic_only_delays_an_advertising_event_within_its_advdelay() 
     for p in at.windows(2) {
         assert!(p[1] - p[0] <= 310 * MS, "{} ms between two events", (p[1] - p[0]) / MS);
     }
+}
+
+#[test]
+fn control_responses_and_reserved_pdus_get_no_answer() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    for pdu in [&[0x07, 0x12][..], &[0x09, 0, 0, 0, 0, 0, 0, 0, 0], &[0x0d, 0x1a], &[0x13], &[0x15, 27, 0, 0x48, 0x01, 27, 0, 0x48, 0x01]] {
+        rig.central().send_control(pdu);
+        rig.run(200);
+        assert!(rig.central().control.is_empty(), "answer to {pdu:02x?}");
+    }
+    rig.central().send_pdu(0, &[0x03, 0x00, 0x04, 0x00, 0x0a, 0x0b, 0x00]);
+    rig.run(200);
+    assert!(rig.central().att.is_empty(), "the reserved LLID 0");
+    assert_eq!(rig.state(), LinkState::Connected);
+    assert_eq!(rig.read(0x0b), b"AwoX");
+}
+
+#[test]
+fn a_channel_map_of_one_channel_ends_the_connection() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().update_channel_map([0x00, 0x02, 0x00, 0x00, 0x00], 10);
+    rig.run(300);
+    assert_eq!(rig.state(), LinkState::Advertising);
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().update_channel_map([0x00, 0x06, 0x00, 0x00, 0x00], 10);
+    rig.run(1000);
+    assert_eq!(rig.state(), LinkState::Connected, "two channels are enough");
+    assert!(rig.central().channels.iter().rev().take(10).all(|ch| [9, 10].contains(ch)));
+}
+
+fn step_until_radio(rig: &mut Rig, busy: impl Fn(&crate::sim::World) -> usize) -> (u64, u64) {
+    let idle = rig.ble.borrow_mut().idle_time() as u64;
+    let asked = rig.ble.borrow_mut().hal().now() as u64;
+    assert_eq!(asked, rig.world.borrow().now);
+    let before = busy(&rig.world.borrow());
+    loop {
+        let at = rig.world.borrow().now;
+        assert!(at < asked + idle + 400 * MS, "the radio was not used within 400 ms of the idle time's end");
+        rig.run_until(at + 1);
+        if busy(&rig.world.borrow()) != before {
+            return (asked + idle, at);
+        }
+    }
+}
+
+#[test]
+fn the_idle_time_ends_when_the_radio_is_next_needed() {
+    let mut rig = Rig::new(DIMMABLE);
+    assert_eq!(rig.ble.borrow_mut().idle_time(), 20 * MS as u32, "the first advertising event 20 ms after the start");
+    for _ in 0..3 {
+        rig.run(7);
+        let (promised, used) = step_until_radio(&mut rig, |w| w.advertised_at.len());
+        assert!((promised..promised + MS / 10).contains(&used), "advertised {} ticks after the idle time", used as i64 - promised as i64);
+    }
+    rig.connect();
+    for wait in [3, 11, 17] {
+        rig.run(wait);
+        let (promised, used) = step_until_radio(&mut rig, |w| w.events.len());
+        assert!((promised..promised + MS / 10).contains(&used), "event {} ticks after the idle time", used as i64 - promised as i64);
+        assert!(rig.ble.borrow_mut().idle_time() as u64 > 20 * MS, "then most of an interval of 30 ms");
+    }
+    rig.central().silent = true;
+    rig.run(100);
+    rig.stall(5000);
+    assert_eq!(rig.ble.borrow_mut().idle_time(), 0, "an event that is overdue");
+}
+
+#[test]
+fn an_event_may_run_4_ms_past_its_window_and_ends_2_ms_before_the_next_can_start() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.run(500);
+    let w = rig.world.borrow();
+    assert!(w.event_ends.iter().skip(1).all(|&(window_end, deadline)| deadline - window_end == 4 * MS));
+    drop(w);
+    for win_size in [3u8, 4] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.central().params = Params { interval: 6, win_size, ..Params::default() };
+        rig.connect();
+        let w = rig.world.borrow();
+        let (window_end, deadline) = w.event_ends[0];
+        let gap = w.event_starts[1] as i64 - deadline as i64;
+        if win_size == 3 {
+            assert!((2 * MS as i64..2 * MS as i64 + 2000).contains(&gap), "{gap} ticks to the next event");
+        } else {
+            assert_eq!(deadline - window_end, MS, "never less than 1 ms");
+        }
+    }
+}
+
+#[test]
+fn the_receive_window_widens_by_both_clocks_accuracy_and_32_us() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.central().params = Params { interval: 800, timeout: 1000, ..Params::default() };
+    rig.connect();
+    rig.run(3000);
+    let widening = |ms: u64| ms * (250 + 100) * 16 / 1000 + 32 * 16;
+    let window = |rig: &Rig| {
+        let w = rig.world.borrow();
+        let i = w.event_starts.len() - 1;
+        w.event_ends[i].0 - w.event_starts[i]
+    };
+    assert_eq!(window(&rig), 2 * widening(1000), "a second after the last anchor, 250 ppm for the central, 100 for the bulb");
+    rig.central().silent = true;
+    rig.run(1000);
+    rig.central().silent = false;
+    rig.run(1000);
+    let w = rig.world.borrow();
+    let i = w.event_starts.len() - 1;
+    let windows: Vec<u64> = (i - 1..=i).map(|k| w.event_ends[k].0 - w.event_starts[k]).collect();
+    assert!(windows.contains(&(2 * widening(2000))), "two seconds after it: {windows:?}");
+}
+
+#[test]
+fn advertising_events_come_every_300_ms_plus_a_random_delay_below_9_ms() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(20_000);
+    let at = rig.world.borrow().advertised_at.clone();
+    assert_eq!(at[0], 25 * MS, "20 ms after the start");
+    let gaps: Vec<u64> = at.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.iter().all(|g| (300 * MS..309 * MS + MS / 10).contains(g)), "{gaps:?}");
+    assert!(gaps.iter().any(|g| *g < 301 * MS) && gaps.iter().any(|g| *g > 308 * MS), "the delay takes all its values: {gaps:?}");
+}
+
+#[test]
+fn the_bulb_advertises_again_right_after_a_disconnection() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().terminate();
+    while rig.state() == LinkState::Connected {
+        let at = rig.world.borrow().now;
+        rig.run_until(at + 1);
+    }
+    let gone = rig.world.borrow().now;
+    rig.run(10);
+    let next = *rig.world.borrow().advertised_at.last().unwrap();
+    assert!((gone..gone + MS / 5).contains(&next), "{} ticks later", next as i64 - gone as i64);
+}
+
+#[test]
+fn a_connect_request_with_bad_parameters_leaves_the_bulb_advertising_and_an_empty_control_pdu_is_ignored() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.central().params.interval = 5;
+    rig.central().connect = true;
+    rig.run(400);
+    assert_eq!(rig.state(), LinkState::Advertising);
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().send_control(&[]);
+    rig.run(200);
+    assert!(rig.central().control.is_empty());
+    assert_eq!(rig.state(), LinkState::Connected);
+}
+
+#[test]
+fn an_unheard_central_is_dropped_when_the_drift_would_reach_half_an_interval_less_the_inter_frame_space() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.central().params = Params { interval: 6, timeout: 3200, ..Params::default() };
+    rig.connect();
+    rig.central().silent = true;
+    let heard = rig.world.borrow().now;
+    let limit = (7500 / 2 - 150) * 16;
+    let after_ms = limit as u64 * 1000 / ((250 + 100) * 16);
+    rig.run_until(heard + (after_ms - 100) * MS);
+    assert_eq!(rig.state(), LinkState::Connected);
+    rig.run_until(heard + (after_ms + 100) * MS);
+    assert_eq!(rig.state(), LinkState::Advertising, "{after_ms} ms after the last event heard");
+    assert_eq!(rig.ble.borrow().stats.links_lost, 1);
+}
+
+#[test]
+fn an_advertising_event_waits_out_the_bulbs_own_traffic_for_9_ms_at_most_and_three_at_most_give_way_to_the_neighbours() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(400);
+    for (busy, waited) in [(5 * MS, 5 * MS), (30 * MS, 30 * MS), (2 * MS, 2 * MS), (8 * MS, 8 * MS)] {
+        let previous = *rig.world.borrow().advertised_at.last().unwrap();
+        let now = rig.world.borrow().now;
+        let next = now + rig.ble.borrow_mut().idle_time() as u64;
+        rig.world.borrow_mut().zigbee_busy.push((next - MS, next + busy, false));
+        rig.run(400);
+        let late = *rig.world.borrow().advertised_at.iter().find(|t| **t > previous).unwrap();
+        let want = (next + waited).min(previous + 309 * MS).max(next);
+        assert!((want..want + MS / 5).contains(&late), "{busy} ticks of traffic: {} ticks off", late as i64 - want as i64);
+    }
+    assert_eq!(rig.ble.borrow().stats.adv_events as usize, rig.world.borrow().advertised_at.len());
+
+    let t0 = rig.world.borrow().now;
+    rig.world.borrow_mut().zigbee_busy.push((t0, u64::MAX, true));
+    rig.run(6000);
+    let at = advertised_since(&rig, t0);
+    assert!(at.len() >= 4);
+    for w in at.windows(2) {
+        assert!((4 * 300 * MS..4 * 309 * MS + MS).contains(&(w[1] - w[0])), "{} ms between events", (w[1] - w[0]) / MS);
+    }
+}
+
+#[test]
+fn the_supervision_timeout_is_over_only_once_it_has_fully_passed() {
+    for (past, lost) in [(0, false), (1, true)] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.central().params.timeout = 100;
+        rig.connect();
+        rig.central().silent = true;
+        let anchor = *rig.world.borrow().anchors.last().unwrap();
+        rig.world.borrow_mut().now = anchor + 1000 * MS + past;
+        rig.ble.borrow_mut().poll();
+        assert_eq!(rig.state() == LinkState::Advertising, lost, "{past} ticks past 1 s");
+    }
+}
+
+#[test]
+fn events_heard_and_connections_are_counted_and_short_control_pdus_are_unknown() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.run(300);
+    let (served, stats) = (rig.central().served, rig.ble.borrow().stats);
+    assert_eq!((stats.connections, stats.events_heard), (1, served));
+    for pdu in [&[0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10][..], &[0x01, 0xff, 0xff, 0xff, 0xff, 0x1f, 0]] {
+        rig.central().control.clear();
+        rig.central().send_control(pdu);
+        rig.run(200);
+        assert_eq!(rig.central().control, [vec![0x07, pdu[0]]], "{pdu:02x?}");
+    }
+    assert_eq!(rig.state(), LinkState::Connected);
+    rig.central().terminate();
+    rig.run(300);
+    rig.connect();
+    assert_eq!(rig.ble.borrow().stats.connections, 2);
 }

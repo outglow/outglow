@@ -28,8 +28,8 @@ enum Cmd {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::Ble(c) => flash::run(c),
-        Cmd::Diag(a) => diag::run_diag(a),
+        Cmd::Ble(c) => flash::bt::run(c),
+        Cmd::Diag(a) => diag::mqtt::run_diag(a),
         Cmd::Box(a) => diag::run_box(a),
         Cmd::Image(a) => image::run(a),
     }

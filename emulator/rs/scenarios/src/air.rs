@@ -61,7 +61,42 @@ pub enum Ev {
 }
 
 pub fn r6(x: f64) -> f64 {
+    r6_exact(x).unwrap_or_else(|| r6_text(x))
+}
+
+fn r6_text(x: f64) -> f64 {
     format!("{x:.6}").parse().unwrap()
+}
+
+fn r6_exact(x: f64) -> Option<f64> {
+    if !x.is_finite() {
+        return None;
+    }
+    let bits = x.abs().to_bits();
+    let (exp, frac) = ((bits >> 52) as i32, bits & ((1 << 52) - 1));
+    let (m, e) = if exp == 0 { (frac, -1074) } else { (frac | 1 << 52, exp - 1075) };
+    let num = m as u128 * 1_000_000;
+    let q = if e >= 0 {
+        if e > 20 {
+            return None;
+        }
+        num << e
+    } else if -e >= 127 {
+        0
+    } else {
+        let s = -e as u32;
+        let (q, r, half) = (num >> s, num & ((1u128 << s) - 1), 1u128 << (s - 1));
+        if r > half || (r == half && q & 1 == 1) {
+            q + 1
+        } else {
+            q
+        }
+    };
+    if q >= 1 << 53 {
+        return None;
+    }
+    let v = q as f64 / 1e6;
+    Some(if x.is_sign_negative() { -v } else { v })
 }
 
 pub type Log = Rc<dyn Fn(&str)>;
@@ -386,7 +421,8 @@ pub struct World {
     pool: Option<Pool>,
     pub par_stats: ParStats,
     pub ble_retry: bool,
-    ble_again: HashMap<Vec<u8>, u8>,
+    pub busy_retry: bool,
+    again: HashMap<Vec<u8>, u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -420,12 +456,40 @@ pub struct ParStats {
     pub main_busy: std::time::Duration,
 }
 
+const BLE_FATES: [&str; 3] = ["BLE mode", "off at start: BLE mode", "off at start: switching to or from BLE"];
+const BUSY_FATES: [&str; 8] = [
+    "BLE mode",
+    "off at start: BLE mode",
+    "off at start: switching to or from BLE",
+    "other channel",
+    "off at start: transmitting",
+    "off at start: TX mode",
+    "off at end: transmitting",
+    "off at end: TX mode",
+];
+
+fn retried_fates(ble: bool, busy: bool) -> &'static [&'static str] {
+    match (ble, busy) {
+        (_, true) => &BUSY_FATES,
+        (true, false) => &BLE_FATES,
+        (false, false) => &[],
+    }
+}
+
 impl World {
     pub fn lent_to_ble(&self, t0: f64, len: usize) -> bool {
+        self.dut_missed(t0, len, &BLE_FATES)
+    }
+
+    pub fn dut_missed(&self, t0: f64, len: usize, fates: &[&str]) -> bool {
         let off = self.air.t_off;
         self.air.dut.radio.b().rx_log.as_ref().is_some_and(|log| {
-            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode" | "off at start: switching to or from BLE"))
+            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && fates.contains(&e.fate))
         })
+    }
+
+    fn retry_missed(&self, t0: f64, len: usize) -> bool {
+        self.dut_missed(t0, len, retried_fates(self.ble_retry, self.busy_retry))
     }
 
     pub fn dut_rx_log(&mut self) {
@@ -467,7 +531,8 @@ impl World {
             pool: None,
             par_stats: ParStats::default(),
             ble_retry: false,
-            ble_again: HashMap::new(),
+            busy_retry: false,
+            again: HashMap::new(),
         }
     }
 
@@ -501,13 +566,13 @@ impl World {
         match ev {
             Ev::Deliver { idx, rx, psdu, ch, t0, t1 } => {
                 let dut_rssi = rx.iter().find(|x| x.0 == NodeId::Dut).map(|x| x.1);
-                if self.ble_retry {
+                if self.ble_retry || self.busy_retry {
                     let sender = self.air.frames[idx].who;
                     let scripted = matches!(sender, NodeId::Coord | NodeId::Peer(_) | NodeId::Coord2(_));
                     let broadcast = psdu.len() > 7 && psdu[0] & 0x27 == 0x01 && psdu[5..7] == [0xFF, 0xFF];
                     if let (true, true, Some(rssi)) = (scripted, broadcast, dut_rssi) {
-                        if self.lent_to_ble(t0, psdu.len()) {
-                            let n = self.ble_again.entry((*psdu).clone()).or_insert(0);
+                        if self.retry_missed(t0, psdu.len()) {
+                            let n = self.again.entry((*psdu).clone()).or_insert(0);
                             if *n < 3 {
                                 *n += 1;
                                 let ev = Ev::Again { sender, psdu: psdu.clone(), ch, dur: t1 - t0, rssi };
@@ -712,6 +777,9 @@ impl World {
                 return Ok(());
             }
             let step = target.min(now + quantum);
+            if self.idle_quantum(step) {
+                continue;
+            }
             if self.air.t < step {
                 self.run_ms(step)?;
             }
@@ -721,6 +789,40 @@ impl World {
                 }
             }
         }
+    }
+
+    fn idle_quantum(&mut self, step: f64) -> bool {
+        let air = &mut self.air;
+        if air.t < step {
+            if air.next_event().is_some_and(|t| t <= step) {
+                return false;
+            }
+            if air.off.contains(&NodeId::Dut) {
+                air.t = air.t.max(step);
+            } else {
+                let off = air.t_off;
+                if air.dut_tap.is_some() || !air.dut.advance_idle(r6(step - off)) {
+                    return false;
+                }
+                air.t = air.t.max(r6(air.dut.ms()) + off).max(step);
+            }
+        }
+        for i in 0..air.bulbs.len() {
+            if air.bulbs[i].t >= step {
+                continue;
+            }
+            let powered = !air.off.contains(&NodeId::Bulb(i as u8));
+            let b = &mut air.bulbs[i];
+            if !powered {
+                b.t = step;
+                continue;
+            }
+            if b.tap.is_some() || !b.node.advance_idle(r6(step - b.t_off)) {
+                return false;
+            }
+            b.t = b.t.max(r6(b.node.ms()) + b.t_off).max(step);
+        }
+        true
     }
 
     fn lockstep_par(&mut self, target: f64, quantum: f64) -> Result<(), String> {
@@ -928,6 +1030,56 @@ impl Drop for World {
                 use std::io::Write as _;
                 let _ = writeln!(f, "{} {} {h:016x}", self.air.dut_name, self.air.frames.len());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn r6_as_the_text_round_trip() {
+        let mut seed = 0x9E3779B97F4A7C15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut xs = vec![0.0, -0.0, 0.0078125, 0.0234375, -0.0078125, 2.5e-6, 5e-7, 1e-300, 4.9e-324, 1e15, 9.007e9, 123456.7890125];
+        for k in 0..300_000u64 {
+            let r = next();
+            xs.push(match k % 5 {
+                0 => (r >> 11) as f64 / (1u64 << 53) as f64 * 1e6,
+                1 => (r % 1_000_000_000_000) as f64 / 1e6 + (r >> 60) as f64 * 1e-7,
+                2 => (r >> 40) as f64 / 128.0,
+                3 => f64::from_bits(r),
+                _ => -((r >> 20) as f64 / 1e7),
+            });
+        }
+        for x in xs {
+            if !x.is_finite() {
+                continue;
+            }
+            let (a, b) = (r6(x), r6_text(x));
+            assert!(a.to_bits() == b.to_bits(), "{x:e}: {a:e} {b:e}");
+        }
+    }
+
+    #[test]
+    fn a_busy_bulb_gets_the_broadcasts_it_could_not_hear_again() {
+        assert!(retried_fates(false, false).is_empty());
+        assert_eq!(retried_fates(true, false), &BLE_FATES[..]);
+        assert_eq!(retried_fates(true, true), &BUSY_FATES[..]);
+        let busy = retried_fates(false, true);
+        assert!(BLE_FATES.iter().all(|f| busy.contains(f)));
+        for f in ["off at start: transmitting", "off at end: transmitting", "off at start: TX mode", "off at end: TX mode", "other channel"] {
+            assert!(busy.contains(&f), "{f}");
+            assert!(!retried_fates(true, false).contains(&f), "{f}");
+        }
+        for f in ["received", "collision", "bad FCS", "RX DMA off", "overwritten", "off at start: RX state off"] {
+            assert!(!busy.contains(&f), "{f}");
         }
     }
 }

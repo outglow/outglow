@@ -97,6 +97,82 @@ pub fn is_weekly(name: &str) -> bool {
     WEEKLY.contains(&name.trim_start_matches("sims::"))
 }
 
+pub const WITH_STOCK: &[&str] = &[
+    "rust_radio",
+    "rust_gp",
+    "rust_touchlink",
+    "interop",
+    "app_colour",
+    "migrate",
+    "back_to_stock_ota",
+    "back_to_stock_ble",
+    "mixed_parent_stock",
+    "mixed_ota_relay",
+];
+
+pub fn needs_stock(name: &str) -> bool {
+    WITH_STOCK.contains(&name.trim_start_matches("sims::"))
+}
+
+pub const FIRMWARE_VAR: &str = "SIMS_FIRMWARE";
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Firmware {
+    #[default]
+    Rust,
+    Stock,
+    C,
+}
+
+impl Firmware {
+    pub fn parse(v: &str) -> Result<Firmware, String> {
+        match v {
+            "rust" | "outglow" => Ok(Firmware::Rust),
+            "stock" | "original" => Ok(Firmware::Stock),
+            "c" => Ok(Firmware::C),
+            _ => Err(format!("firmware {v:?}: rust, stock or c")),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Firmware::Rust => "rust",
+            Firmware::Stock => "stock",
+            Firmware::C => "c",
+        }
+    }
+
+    pub fn of(img: &Image) -> &'static str {
+        if !img.path.exists() {
+            "missing"
+        } else if util::is_outglow(img) {
+            "Rust"
+        } else if img.path.to_string_lossy().contains("open-eglo") {
+            "C"
+        } else {
+            "stock"
+        }
+    }
+
+    pub fn instead_of_stock(self, rel: &str) -> String {
+        let Some(board) = stock_board_of(rel) else { return rel.to_string() };
+        match self {
+            Firmware::Stock => rel.to_string(),
+            Firmware::Rust => format!("target/{}/bulb-tc32.bin", crate::profile::board_dir(&board)),
+            Firmware::C => match board.as_str() {
+                "ESMLFzm_w6_Dimm-4.63" => "firmware/build/open-eglo.bin".into(),
+                "ESMLFzm_w6_TW-4.63" => "firmware/build-tw/open-eglo.bin".into(),
+                _ => format!("firmware/build-{}/open-eglo.bin", board.to_lowercase()),
+            },
+        }
+    }
+}
+
+pub fn is_bulb_image(path: &std::path::Path) -> bool {
+    let p = path.to_string_lossy();
+    p.ends_with(".bin") && !p.ends_with("-ota.bin")
+}
+
 pub fn image_path(rel: &str) -> std::path::PathBuf {
     let here = crate::runner::repo_root().join(rel);
     if here.exists() {
@@ -136,27 +212,62 @@ pub struct SimCtx {
     pub results: Vec<(String, bool, String)>,
     pub t_wall: Instant,
     pub missing: std::cell::RefCell<Vec<String>>,
+    pub firmware: Firmware,
+    pub bulbs: std::cell::RefCell<Vec<(String, std::path::PathBuf)>>,
 }
 
 impl SimCtx {
+    pub fn new(cpi: i64, verbose: u8, images: Vec<Image>, firmware: Firmware) -> SimCtx {
+        SimCtx {
+            cpi,
+            verbose,
+            images,
+            out: String::new(),
+            results: Vec::new(),
+            t_wall: Instant::now(),
+            missing: Default::default(),
+            firmware,
+            bulbs: Default::default(),
+        }
+    }
+
     pub fn image(&self, label: &str, default: &str) -> Image {
-        self.images
+        let img = self.images.iter().find(|i| i.label == label).cloned().unwrap_or_else(|| {
+            let rel = self.firmware.instead_of_stock(default);
+            let path = image_path(&rel);
+            let mut missing = self.missing.borrow_mut();
+            if !path.exists() && !missing.iter().any(|m| *m == rel) {
+                missing.push(rel);
+            }
+            Image { label: label.into(), path, link_shift: None }
+        });
+        let mut bulbs = self.bulbs.borrow_mut();
+        if is_bulb_image(&img.path) && !bulbs.iter().any(|b| b.0 == label) {
+            bulbs.push((label.to_string(), img.path.clone()));
+        }
+        img
+    }
+
+    pub fn firmware_line(&self) -> Option<String> {
+        let bulbs = self.bulbs.borrow();
+        if bulbs.is_empty() {
+            return None;
+        }
+        let each: Vec<String> = bulbs
             .iter()
-            .find(|i| i.label == label)
-            .cloned()
-            .unwrap_or_else(|| {
-                let path = image_path(default);
-                let mut missing = self.missing.borrow_mut();
-                if !path.exists() && !missing.iter().any(|m| m == default) {
-                    missing.push(default.into());
-                }
-                Image { label: label.into(), path, link_shift: None }
+            .map(|(label, path)| {
+                let img = Image { label: label.clone(), path: path.clone(), link_shift: None };
+                format!("{label} = {} ({})", Firmware::of(&img), util::rel(&img))
             })
+            .collect();
+        Some(format!("firmware: {}", each.join(", ")))
     }
 
     pub fn how_to_get(path: &str) -> &'static str {
         if path.starts_with("stock/") {
             "the original firmware: OUTGLOW_STOCK_DIR=<checkout of outglow/original-firmware>, or tools/extract-stock-images.sh"
+        } else if path.starts_with("firmware/") {
+            "the C firmware of outglow-lab: make -C firmware [VARIANT=tw] ota there, SCENARIOS_IMAGE_DIRS=<lab>"
         } else {
             "the Rust firmware: cargo xtask build (--board, --file-version)"
         }

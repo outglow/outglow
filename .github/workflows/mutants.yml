@@ -5,9 +5,10 @@ name: Mutants
 # operator swapped, a function returning a constant); the tests of its
 # crate must fail on it. README, "Coverage and mutation testing".
 #
-# - pull requests: only the mutants in the lines the pull request changes
-#   (`--in-diff`); a missed one fails the job: the changed code needs a test
-#   that notices it.
+# - pull requests and pushes to main: only the mutants in the lines they
+#   change (`--in-diff`); a missed one fails the job: the changed code needs
+#   a test that notices it. (Most changes go straight to main, so the push
+#   is checked too: the diff from the commit before the push.)
 # - weekly (and by hand): every mutant of the host workspace and of
 #   crates/bulb-tc32, in parts (`--shard K/N`), then one table per crate in the summary of the job
 #   `report` and every outcome as artifacts. Missed mutants do not fail it:
@@ -15,6 +16,8 @@ name: Mutants
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "23 1 * * 6"
@@ -23,8 +26,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: mutants-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  group: mutants-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -32,19 +35,23 @@ env:
 jobs:
   diff:
     name: Mutants in the changed code
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       # the pull request's head, not the merge commit: the diff's lines are its lines
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-      - name: The pull request's changes to Rust sources
+      - name: The changes to Rust sources
         id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          git diff "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" -- '*.rs' > "$RUNNER_TEMP/pr.diff"
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then BASE=$(git rev-parse "$HEAD^"); fi
+          git diff "$BASE...$HEAD" -- '*.rs' > "$RUNNER_TEMP/pr.diff"
           if [ -s "$RUNNER_TEMP/pr.diff" ]; then echo "rust=true" >> "$GITHUB_OUTPUT"; else echo "No Rust changes: no mutants." >> "$GITHUB_STEP_SUMMARY"; fi
       - if: steps.diff.outputs.rust
         uses: ./.github/actions/nix-shell
@@ -79,7 +86,7 @@ jobs:
   # bulb-sim's tests in 2, bulb-tc32 (its own workspace) in 1
   shard:
     name: Mutants (${{ matrix.part.name }})
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     strategy:
@@ -123,7 +130,7 @@ jobs:
   report:
     name: Mutants per crate
     needs: shard
-    if: always() && github.event_name != 'pull_request'
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

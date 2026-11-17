@@ -155,6 +155,12 @@ fn clip(b: &[u8], o: usize, size: usize) -> &[u8] {
 }
 
 #[inline]
+pub(crate) fn even_bits(x: u32) -> u8 {
+    let x = (x | x >> 1) & 0x3333;
+    let x = (x | x >> 2) & 0x0F0F;
+    ((x | x >> 4) & 0x00FF) as u8
+}
+
 pub(crate) fn size_mask(size: usize) -> u32 {
     if size >= 4 {
         u32::MAX
@@ -320,6 +326,8 @@ pub struct Machine {
     pub(crate) sym_names: Vec<String>,
 
     pub idle_skipped: i64,
+    pub(crate) idle_parked: bool,
+    pub(crate) wake_exact: bool,
 }
 
 impl Machine {
@@ -470,6 +478,8 @@ impl Machine {
             sym_addrs: Vec::new(),
             sym_names: Vec::new(),
             idle_skipped: 0,
+            idle_parked: false,
+            wake_exact: false,
             cfg,
         };
         m.level_sources = vec![Rc::new(|m: &mut Machine| (m.regs[0x623] & 0x07) as u32)];
@@ -668,6 +678,7 @@ impl Machine {
         self.v = 0;
         self.cycles = 0;
         self.idle_skipped = 0;
+        self.idle_parked = false;
         self.cpu_hz = CPU_HZ;
         self.ms_base = 0.0;
         self.ms_base_cyc = 0;
@@ -2090,12 +2101,8 @@ impl Machine {
             }
         }
         let pulls = self.analog[0x0E + 2 * port] as u32 | (self.analog[0x0F + 2 * port] as u32) << 8;
-        let (mut up, mut none) = (0u8, 0u8);
-        for bit in 0..8 {
-            let pull = (pulls >> (2 * bit)) & 3;
-            up |= ((pull & 1) as u8) << bit;
-            none |= ((pull == 0) as u8) << bit;
-        }
+        let (lo, hi) = (pulls & 0x5555, (pulls >> 1) & 0x5555);
+        let (up, none) = (even_bits(lo), even_bits(!(lo | hi) & 0x5555));
         (lvl | (up & rest), none & rest)
     }
 

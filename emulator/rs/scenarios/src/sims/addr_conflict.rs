@@ -1040,6 +1040,8 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
     cx.say(&format!("image: {}", super::util::rel(&img)));
     let b = bulb_node(&img, cx.cpi, "B", 0xa4c1380000000011)?;
     let mut net = Net::new(b, Coord::new_plain(11, NWK_KEY), cx.verbose > 0);
+    net.s.w.dut_rx_log();
+    net.s.w.busy_retry = true;
     let ok = net.run_until(60000.0, |n| n.short_of_bulb("B").is_some())?;
     cx.check(net.now(), "bulb joins", ok, "");
     if !ok {
@@ -1075,17 +1077,20 @@ fn run_btt(cx: &mut SimCtx) -> R<()> {
         let mut good = true;
         for (what, who, src, seq) in [("r's Device_annce", rid, 0x4444u16, aseq), ("the coordinator's permit-join", NodeId::Coord, 0x0000, pseq)] {
             let is = |f: &CapFrame| f.nwk.as_ref().is_some_and(|n| n.src == src && n.seq == seq && n.dst >= 0xFFF8);
-            let Some(orig) = net.cap[m..].iter().find(|f| f.who == who && is(f)).map(|f| f.t1) else {
+            let sent: Vec<f64> = net.cap[m..].iter().filter(|f| f.who == who && is(f)).map(|f| f.t1).collect();
+            let Some(&orig) = sent.first() else {
                 parts.push(format!("{what}: not sent"));
                 good = false;
                 continue;
             };
-            let copies: Vec<f64> = net.cap[m..].iter().filter(|f| f.who == NodeId::Dut && is(f)).map(|f| f.t0 - orig).collect();
-            let first = copies.first().copied();
-            let late = copies.iter().filter(|d| **d > LATE_MS).count();
+            let relays: Vec<f64> = net.cap[m..].iter().filter(|f| f.who == NodeId::Dut && is(f)).map(|f| f.t0).collect();
+            let heard = relays.first().and_then(|r| sent.iter().rev().find(|t| **t <= *r)).copied().unwrap_or(orig);
+            let first = relays.first().map(|r| r - heard);
+            let late = relays.iter().filter(|r| **r - orig > LATE_MS).count();
             good &= first.is_some_and(|d| d <= RELAY_BOUND_MS) && late == 0;
-            let ds: Vec<String> = copies.iter().map(|d| format!("{d:.1}")).collect();
-            parts.push(format!("{what} (seq {seq}) relayed after [{}] ms", ds.join(", ")));
+            let ds: Vec<String> = relays.iter().map(|r| format!("{:.1}", r - heard)).collect();
+            let again = if sent.len() > 1 { format!(", sent {} times (the bulb could not hear it)", sent.len()) } else { String::new() };
+            parts.push(format!("{what} (seq {seq}) relayed after [{}] ms{again}", ds.join(", ")));
         }
         cx.check(
             net.now(),

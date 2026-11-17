@@ -17,10 +17,14 @@ pub struct Comment {
 }
 
 pub fn run(a: &Args) -> Result<()> {
-    let root = crate::root();
+    println!("{}", run_in(&crate::root(), a)?);
+    Ok(())
+}
+
+pub fn run_in(root: &Path, a: &Args) -> Result<String> {
     let mut found = 0;
     let mut fixed = 0;
-    for path in rust_files(&root) {
+    for path in rust_files(root) {
         let src = std::fs::read_to_string(&path)?;
         let comments = find(&src);
         if comments.is_empty() {
@@ -31,21 +35,19 @@ pub fn run(a: &Args) -> Result<()> {
             fixed += 1;
             continue;
         }
-        let rel = path.strip_prefix(&root).unwrap_or(&path).display().to_string();
+        let rel = path.strip_prefix(root).unwrap_or(&path).display().to_string();
         for c in &comments {
             println!("{rel}:{}: {}", c.line, c.text.lines().next().unwrap_or(""));
         }
         found += comments.len();
     }
     if a.fix {
-        println!("comments removed from {fixed} files");
-        return Ok(());
+        return Ok(format!("comments removed from {fixed} files"));
     }
     if found > 0 {
         bail!("{found} comments in Rust sources (cargo xtask comments --fix removes them)");
     }
-    println!("no comments in Rust sources");
-    Ok(())
+    Ok("no comments in Rust sources".into())
 }
 
 pub fn rust_files(root: &Path) -> Vec<PathBuf> {
@@ -192,16 +194,65 @@ mod tests {
         assert!(find(&strip(src, true)).is_empty());
     }
 
+    use crate::sh::fake::Tmp;
+
+    #[test]
+    fn listing_and_fixing_a_tree() {
+        let t = Tmp::new("comments");
+        t.put("a.rs", "fn a() {} // x\n");
+        t.put("sub/b.rs", "/// doc\nfn b() {}\n");
+        t.put("cli.rs", "use clap::Parser;\n/// help\nstruct A;\n");
+        t.put("clean.rs", "fn c() {}\n");
+        t.put("notes.txt", "// not rust\n");
+        t.put("target/x.rs", "// built\n");
+        t.put("target-tc32/x.rs", "// built\n");
+        t.put(".git/x.rs", "// git\n");
+        t.put("node_modules/x.rs", "// js\n");
+        t.put("dist/x.rs", "// site\n");
+        let files: Vec<String> = rust_files(&t.0).iter().map(|p| p.strip_prefix(&t.0).unwrap().display().to_string()).collect();
+        assert_eq!(files, ["a.rs", "clean.rs", "cli.rs", "sub/b.rs"]);
+        let e = run_in(&t.0, &Args { fix: false }).unwrap_err().to_string();
+        assert_eq!(e, "3 comments in Rust sources (cargo xtask comments --fix removes them)");
+        assert_eq!(run_in(&t.0, &Args { fix: true }).unwrap(), "comments removed from 3 files");
+        assert_eq!(std::fs::read_to_string(t.path("a.rs")).unwrap(), "fn a() {}\n");
+        assert_eq!(std::fs::read_to_string(t.path("sub/b.rs")).unwrap(), "fn b() {}\n");
+        assert_eq!(std::fs::read_to_string(t.path("cli.rs")).unwrap(), "use clap::Parser;\n#[doc = \" help\"]\nstruct A;\n");
+        assert_eq!(run_in(&t.0, &Args { fix: false }).unwrap(), "no comments in Rust sources");
+        assert_eq!(run_in(&t.0, &Args { fix: true }).unwrap(), "comments removed from 0 files");
+        t.put("bad.rs", [0xffu8, 0xfe]);
+        assert!(run_in(&t.0, &Args { fix: false }).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_directory_is_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = Tmp::new("comments-perm");
+        t.put("ok.rs", "fn a() {}\n");
+        t.put("locked/x.rs", "// hidden\n");
+        let locked = t.path("locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let files = rust_files(&t.0);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(files, [t.path("ok.rs")]);
+        assert!(rust_files(&t.path("nonexistent")).is_empty());
+    }
+
+    #[test]
+    fn strip_at_the_ends_of_a_file() {
+        assert_eq!(strip("fn a() {}", false), "fn a() {}\n");
+        assert_eq!(strip("fn a() {} // end", false), "fn a() {}\n");
+        assert_eq!(strip("// only", false), "");
+        assert_eq!(strip("fn a() {}\n\n\n\nfn b() {}\n\n", false), "fn a() {}\n\nfn b() {}\n");
+        assert_eq!(strip("    /* a */ x();\n", false), "     x();\n");
+        assert_eq!(strip("/* a\n b */\nfn c() {}\n", false), "fn c() {}\n");
+        assert_eq!(doc_attribute("/// a \\ b"), "#[doc = \" a \\\\ b\"]");
+        assert_eq!(doc_attribute("//! inner"), "#[doc = \"//! inner\"]");
+        assert!(uses_clap("x clap::Parser") && !uses_clap("clap"));
+        assert_eq!(find("/* a\nb */ // c\n"), [Comment { line: 1, text: "/* a\nb */".into() }, Comment { line: 2, text: "// c".into() }]);
+    }
+
     #[test]
     fn the_rust_sources_have_no_comments() {
-        let root = crate::root();
-        let mut bad = Vec::new();
-        for path in rust_files(&root) {
-            let src = std::fs::read_to_string(&path).unwrap();
-            for c in find(&src) {
-                bad.push(format!("{}:{}", path.strip_prefix(&root).unwrap_or(&path).display(), c.line));
-            }
-        }
-        assert!(bad.is_empty(), "{} comments (cargo xtask comments --fix): {}", bad.len(), bad.iter().take(20).cloned().collect::<Vec<_>>().join(", "));
+        run_in(&crate::root(), &Args { fix: false }).unwrap();
     }
 }

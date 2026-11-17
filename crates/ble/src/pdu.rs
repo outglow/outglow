@@ -21,18 +21,6 @@ pub fn advertising(kind: u8, addr: &[u8; 6], data: &[u8], out: &mut [u8; ADV_PDU
     8 + n
 }
 
-pub fn is_scan_req_for(pdu: &[u8], addr: &[u8; 6]) -> bool {
-    pdu.len() >= 14 && pdu[0] & 0x0f == SCAN_REQ && pdu[0] & 0x80 == 0 && pdu[1] == 12 && pdu[8..14] == addr[..]
-}
-
-pub fn is_connect_ind_for(pdu: &[u8], addr: &[u8; 6]) -> bool {
-    pdu.len() >= 2 + CONNECT_LEN
-        && pdu[0] & 0x0f == CONNECT_IND
-        && pdu[0] & 0x80 == 0
-        && pdu[1] as usize == CONNECT_LEN
-        && pdu[8..14] == addr[..]
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConnectInd {
     pub access_address: u32,
@@ -83,17 +71,8 @@ pub fn next_channel(unmapped: &mut u8, hop: u8, map: &[u8; 5]) -> u8 {
     if is_used(map, *unmapped) {
         return *unmapped;
     }
-    let used = used_channels(map).max(1);
-    let mut index = *unmapped % used;
-    for channel in 0..37 {
-        if is_used(map, channel) {
-            if index == 0 {
-                return channel;
-            }
-            index -= 1;
-        }
-    }
-    *unmapped
+    let index = *unmapped % used_channels(map).max(1);
+    (0..37).filter(|c| is_used(map, *c)).nth(index as usize).unwrap_or(*unmapped)
 }
 
 pub fn sca_ppm(sca: u8) -> u32 {

@@ -60,16 +60,11 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
     }
 
     fn blank(&self, sector: usize) -> bool {
-        let mut chunk = [0u8; 32];
-        let mut off = 0;
-        while off < self.size {
+        let mut chunk = [0u8; CHUNK];
+        (0..self.size).step_by(CHUNK).all(|off| {
             self.flash.read(sector + off, &mut chunk);
-            if chunk.iter().any(|&b| b != 0xff) {
-                return false;
-            }
-            off += chunk.len();
-        }
-        true
+            chunk.iter().all(|&b| b == 0xff)
+        })
     }
 
     fn write(&mut self, addr: usize, data: &[u8]) {
@@ -108,17 +103,12 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
 
     fn erased_from(&self, off: usize) -> bool {
         let base = self.sectors[self.active];
-        let mut chunk = [0u8; 32];
-        let mut at = off;
-        while at < self.size {
-            let n = (self.size - at).min(chunk.len());
+        let mut chunk = [0u8; CHUNK];
+        (off..self.size).step_by(CHUNK).all(|at| {
+            let n = (at + CHUNK).min(self.size) - at;
             self.flash.read(base + at, &mut chunk[..n]);
-            if chunk[..n].iter().any(|&b| b != 0xff) {
-                return false;
-            }
-            at += n;
-        }
-        true
+            chunk[..n].iter().all(|&b| b == 0xff)
+        })
     }
 
     pub fn load(&self, id: u8, buf: &mut [u8]) -> Option<usize> {
@@ -209,8 +199,7 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
             }
         });
         let mut off = HEADER;
-        let mut other = 1;
-        while other < N {
+        for other in 1..N {
             if other != id as usize {
                 if let Some((at, len)) = latest[other] {
                     let mut item = [0u8; MAX_ITEM];
@@ -219,7 +208,6 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
                 }
             }
             (self.feed)();
-            other += 1;
         }
         off = self.append(self.sectors[target], off, id, data);
         let next = old_valid.map_or(0, |g| g.wrapping_add(1));
@@ -248,9 +236,5 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
         if !self.blank(self.sectors[old]) {
             self.flash.erase(self.sectors[old]);
         }
-    }
-
-    pub fn flash(&self) -> &F {
-        &self.flash
     }
 }

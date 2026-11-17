@@ -20,10 +20,6 @@ pub fn known(name: &str) -> Option<&'static Known> {
     BOARDS.iter().find(|b| b.name == name)
 }
 
-pub fn by_model(model: &str, hw_revision: &str) -> Option<&'static Known> {
-    BOARDS.iter().find(|b| b.model == model && b.hw_revision == hw_revision)
-}
-
 pub fn tag(image: &[u8]) -> Option<String> {
     let at = find(image, TAG).map(|i| i + TAG.len()).or_else(|| find(image, LEGACY_TAG).map(|i| i + LEGACY_TAG.len()))?;
     let rest = &image[at..];
@@ -39,17 +35,12 @@ pub fn tag(image: &[u8]) -> Option<String> {
 }
 
 pub fn kind(image: &[u8]) -> Option<&'static str> {
-    for prefix in [&b"outglow-"[..], &b"open-eglo-"[..]] {
-        let mut from = 0;
-        while let Some(i) = find(&image[from..], prefix) {
-            let rest = &image[from + i + prefix.len()..];
-            if let Some(k) = KINDS.iter().find(|k| rest.starts_with(&k.as_bytes()["outglow-".len()..])) {
-                return Some(k);
-            }
-            from += i + 1;
-        }
-    }
-    None
+    [&b"outglow-"[..], &b"open-eglo-"[..]].into_iter().find_map(|prefix| {
+        image.windows(prefix.len()).enumerate().filter(|(_, w)| *w == prefix).find_map(|(i, _)| {
+            let rest = &image[i + prefix.len()..];
+            KINDS.iter().find(|k| rest.starts_with(&k.as_bytes()["outglow-".len()..])).copied()
+        })
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,5 +133,49 @@ mod tests {
         let img = b"..ESMLFzm_w6_TW\0..v3.0.2.. 4.63\0..14.633..";
         assert_eq!(identify(img), Ok(Identity::Original { model: "ESMLFzm_w6_TW".into(), hw_revision: "4.63".into() }));
         assert!(identify(b"ESMLFzm_w6_TW\0 4.60 4.63").is_err());
+    }
+
+    #[test]
+    fn the_model_and_revision_of_either_identity() {
+        let o = Identity::Outglow { board: "EGLO_ZM_RGB_TW-4.62".into() };
+        assert_eq!(o.model_and_revision(), ("EGLO_ZM_RGB_TW".into(), "4.62".into()));
+        let o = Identity::Outglow { board: "nodash".into() };
+        assert_eq!(o.model_and_revision(), ("nodash".into(), "".into()));
+        let s = Identity::Original { model: "ESMLFzm_w6_TW".into(), hw_revision: "4.63".into() };
+        assert_eq!(s.model_and_revision(), ("ESMLFzm_w6_TW".into(), "4.63".into()));
+    }
+
+    #[test]
+    fn a_revision_is_4_dot_two_digits_standing_alone() {
+        assert_eq!(revisions(b"4.63"), ["4.63"]);
+        assert_eq!(revisions(b"4.63 x4.60;4.69\0"), ["4.60", "4.63", "4.69"]);
+        assert_eq!(revisions(b"4.62 4.62"), ["4.62"]);
+        for not in [&b"14.63"[..], b"4.631", b".4.63", b"4.63.", b"x5.63", b"4x63", b"4.x3", b"4.6x", b" ab12 ", b"4.6", b""] {
+            assert_eq!(revisions(not), Vec::<String>::new(), "{}", String::from_utf8_lossy(not));
+        }
+        assert_eq!(revisions(b"ab 4.631"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_original_image_needs_a_known_model() {
+        assert!(identify(b"Unknown_Model\0 4.63").is_err());
+        assert_eq!(
+            identify(b"ESMLFzm_w6_TW 4.63"),
+            Err("cannot tell the board of the image: model None, revisions [\"4.63\"]".into())
+        );
+        assert_eq!(identify(b"x EGLO_ZM_TW_CLP\0 4.60"), Ok(Identity::Original { model: "EGLO_ZM_TW_CLP".into(), hw_revision: "4.60".into() }));
+        assert_eq!(identify(b"x EGLO_ZM_TW\0 4.60"), Ok(Identity::Original { model: "EGLO_ZM_TW".into(), hw_revision: "4.60".into() }));
+    }
+
+    #[test]
+    fn no_kind_in_an_image_without_one() {
+        assert_eq!(kind(b"outglow-board:X-4.60 outglow-xyz open-eglo-"), None);
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW-4.6"), None);
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW+4.63"), None);
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW-x.63"), None);
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW-4x63"), None);
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW-4.x3"), None);
+        assert_eq!(tag(b"outglow-board:ESMLFzm_w6_TW-4.6x"), None);
+        assert_eq!(tag(b"no tag"), None);
     }
 }

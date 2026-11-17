@@ -29,4 +29,14 @@ mod tests {
     fn crc32_check_value() {
         assert_eq!(super::crc32(b"123456789"), 0xCBF4_3926);
     }
+
+    #[test]
+    fn find_the_first_occurrence() {
+        assert_eq!(super::find(b"abab", b"ab"), Some(0));
+        assert_eq!(super::find(b"xabab", b"ab"), Some(1));
+        assert_eq!(super::find(b"ab", b"ab"), Some(0));
+        assert_eq!(super::find(b"a", b"ab"), None);
+        assert_eq!(super::find(b"abc", b"x"), None);
+        assert_eq!(super::find(b"abc", b""), None);
+    }
 }

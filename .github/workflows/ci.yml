@@ -5,11 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # the long scenarios (Rust and stock firmware moved into each other, OTA
-  # through a stock router, the whole scenario set): jobs nightly-build,
-  # firmware-nightly (in parts) and firmware-nightly-tw; on Sundays (the
-  # second schedule) the measurements of the original firmware instead, job
-  # firmware-weekly (nightly-build, then only that)
+  # the long scenarios (the whole scenario set on the Rust firmware, the
+  # comparisons with the original firmware): jobs nightly-build,
+  # firmware-nightly (in parts), firmware-nightly-stock and
+  # firmware-nightly-tw; on Sundays (the second schedule) the address
+  # conflict measurements instead, job firmware-weekly (nightly-build, then
+  # only that)
   schedule:
     - cron: "17 2 * * *"
     - cron: "41 3 * * 0"
@@ -119,7 +120,8 @@ jobs:
             target/tc32/bulb-tc32.elf
             target/tc32/bulb-tc32.map
 
-  # the image built once, the emulator runs in parallel jobs
+  # the image built once, the emulator runs in parallel jobs; every bulb on
+  # the Rust firmware (the original firmware: firmware-nightly-stock)
   firmware:
     name: Firmware in the emulator (${{ matrix.part.name }})
     needs: firmware-build
@@ -130,7 +132,6 @@ jobs:
       matrix:
         part:
           - { name: scenarios, run: cargo sims-quick, devtools: true }
-          - { name: with the original firmware, run: cargo sims-stock, stock: true }
           # full fidelity (--cpi 24 shifts timings) against the committed
           # verdicts of emulator/rs/scenarios/expect/{zigbee,ble}-dimm.txt
           - { name: Zigbee conformance, run: cargo spec && cargo ble-spec }
@@ -152,10 +153,6 @@ jobs:
           git clone -q https://github.com/goyamamoto/tc32-devtools "$RUNNER_TEMP/tc32-devtools"
           git -C "$RUNNER_TEMP/tc32-devtools" checkout -q 2e1bcaed762e3124b024047db981172d2b0395ba
           echo "TC32_DEVTOOLS=$RUNNER_TEMP/tc32-devtools" >> "$GITHUB_ENV"
-      - if: matrix.part.stock
-        uses: ./.github/actions/original-firmware
-        with:
-          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
       - run: ${{ matrix.part.run }}
 
   nightly-build:
@@ -182,7 +179,8 @@ jobs:
             target/tc32*/bulb-tc32.elf
 
   # every scenario, in parts: `--shard K/N` gives every part about the same
-  # time, the longest scenario a part of its own
+  # time, the longest scenario a part of its own. Every bulb on the Rust
+  # firmware, no original firmware here (firmware-nightly-stock)
   firmware-nightly:
     name: Every scenario (part ${{ matrix.shard }} of 6)
     needs: nightly-build
@@ -205,9 +203,6 @@ jobs:
         with:
           workspaces: emulator/rs
           shared-key: emulator
-      - uses: ./.github/actions/original-firmware
-        with:
-          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
       # 4.6 from the Wireshark developers' PPA: the expectations of wireshark and
       # ble_wireshark are Wireshark 4.6's reading; Ubuntu 24.04's own 4.2 decodes
       # some frames differently (touchlink commands, BLE advertising names)
@@ -218,21 +213,28 @@ jobs:
           sudo apt-get update -q
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tshark
           tshark --version | head -1
-      # but the weekly measurements of the original firmware (job firmware-weekly)
-      - name: Scenarios (the long ones with the original firmware among them)
+      # but the weekly measurements (job firmware-weekly) and the scenarios
+      # with the original firmware (job firmware-nightly-stock)
+      - name: Scenarios (every bulb on the Rust firmware)
         run: cargo sims -- --shard ${{ matrix.shard }}/6
 
-  # the measurements of the original firmware that feed the address conflict
-  # study (addr_conflict*, enddev_wallswitch*; emulator/rs/scenarios/src/sims/mod.rs,
-  # WEEKLY): their checks fail only when the bulbs do not join, so once a week.
-  # addr_conflict_house, nine original bulbs that never idle, takes about 22
-  # min; the others run beside it
-  firmware-weekly:
-    name: Measurements of the original firmware (weekly)
+  # the original firmware: the scenarios that compare with it or act on it
+  # (WITH_STOCK in emulator/rs/scenarios/src/sims/mod.rs, `--with-stock`),
+  # and the mixed networks with their stock bulbs on the original firmware
+  # (`--firmware stock`; by default every bulb there runs the Rust firmware)
+  firmware-nightly-stock:
+    name: With the original firmware (${{ matrix.part.name }})
     needs: nightly-build
-    if: github.event.schedule == '41 3 * * 0' || github.event_name == 'workflow_dispatch'
+    if: github.event.schedule != '41 3 * * 0'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part:
+          - { name: comparisons, run: cargo sims-stock }
+          - name: mixed networks
+            run: cargo sims -- --firmware stock --exact mixed_parent_rust mixed_mesh mixed_chain mixed_rejoin mixed_group mixed_conflict
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-shell
@@ -247,8 +249,41 @@ jobs:
       - uses: ./.github/actions/original-firmware
         with:
           key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+      - run: ${{ matrix.part.run }}
+
+  # the measurements that feed the address conflict study (addr_conflict*,
+  # enddev_wallswitch*; emulator/rs/scenarios/src/sims/mod.rs, WEEKLY): on
+  # the original firmware (`--firmware stock`) their checks fail only when
+  # the bulbs do not join, so once a week; on the Rust firmware they check
+  # what Outglow does. addr_conflict_house, nine original bulbs that never
+  # idle, takes about 22 min; the others run beside it
+  firmware-weekly:
+    name: Address conflict measurements, ${{ matrix.firmware }} firmware (weekly)
+    needs: nightly-build
+    if: github.event.schedule == '41 3 * * 0' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        firmware: [stock, rust]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/nix-shell
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-every
+          path: target
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: emulator/rs
+          shared-key: emulator
+      - if: matrix.firmware == 'stock'
+        uses: ./.github/actions/original-firmware
+        with:
+          key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
       - name: The weekly scenarios
-        run: cargo sims-weekly
+        run: cargo sims-weekly --firmware ${{ matrix.firmware }}
 
   # what pull requests do not run: the conformance tests on the tunable white
   # image (where the Color Control tests apply) and the Zigbee2MQTT converter
@@ -352,7 +387,7 @@ jobs:
           key: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
       - name: The stock-and-Rust scenarios on the tunable white pair
         run: >
-          cargo sims -- mixed_parent mixed_mesh mixed_group rust_radio rust_gp rust_touchlink
+          cargo sims -- --firmware stock mixed_parent mixed_mesh mixed_group rust_radio rust_gp rust_touchlink
           --image rust=target/tc32-tw/bulb-tc32.bin --image stock=stock/stock-tw.bin
       - name: The device page's BLE service on the tunable white bulb
         run: cargo sims -- ble_diag --image bin=target/tc32-tw/bulb-tc32.bin --image tw=target/tc32-tw/bulb-tc32.bin

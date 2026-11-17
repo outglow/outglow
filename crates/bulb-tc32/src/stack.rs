@@ -28,5 +28,5 @@ pub fn free() -> (u32, u32) {
 
 #[cfg(not(target_os = "none"))]
 pub fn free() -> (u32, u32) {
-    (0, 0)
+    (1_024, 512)
 }

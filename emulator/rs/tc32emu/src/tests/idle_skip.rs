@@ -125,3 +125,35 @@ fn idle_skip() {
         at - start
     );
 }
+
+fn idle_machine() -> Machine {
+    let mut m = machine(&[0x3001, 0xE7FD], &[]);
+    m.reg_write(0x643, 1, 1).unwrap();
+    m.reg_write(0x642, 1, 1 << (IRQ_STIMER - 16)).unwrap();
+    compare_in(&mut m, 0.0137);
+    m
+}
+
+fn irq_in_chunks(m: &mut Machine, chunk: i64, advance: bool) -> (i64, u32) {
+    m.hooks.insert(0x10, Rc::new(|_m: &mut Machine| Err(stop_err("irq"))));
+    loop {
+        let to = m.cycles + chunk;
+        if advance && m.idle_advance(to as f64 * 1000.0 / CPU_HZ as f64, &IDLE) {
+            continue;
+        }
+        match m.run(to, &IDLE, 32) {
+            Err(e) if e.is_stop() => return (m.cycles, m.r[0]),
+            Err(e) => panic!("{}", e),
+            Ok(()) => assert!(m.cycles < CPU_HZ, "no interrupt"),
+        }
+    }
+}
+
+#[test]
+fn idle_skip_ignores_where_a_run_ends() {
+    let whole = irq_in_chunks(&mut idle_machine(), CPU_HZ, false);
+    for chunk in [997, 4_000, 6_001, 24_000, 100_003] {
+        assert_eq!(irq_in_chunks(&mut idle_machine(), chunk, false), whole, "runs of {chunk} cycles");
+        assert_eq!(irq_in_chunks(&mut idle_machine(), chunk, true), whole, "advances of {chunk} cycles");
+    }
+}

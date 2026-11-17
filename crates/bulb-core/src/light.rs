@@ -475,14 +475,10 @@ pub fn warm_dead_band(warm: u16, max: u16) -> u16 {
     let half = edge / 2;
     if warm < half {
         0
-    } else if warm < edge {
-        edge
     } else if warm > max - half {
         max
-    } else if warm > max - edge {
-        max - edge
     } else {
-        warm
+        warm.clamp(edge, max - edge)
     }
 }
 
@@ -527,13 +523,16 @@ mod tests {
 
     struct RgbPwm {
         rgb: [u16; 3],
+        white: u16,
         beside: bool,
     }
     impl Pwm for RgbPwm {
         fn max_duty(&self) -> u16 {
             48000
         }
-        fn set_duty(&mut self, _d: u16) {}
+        fn set_duty(&mut self, d: u16) {
+            self.white = d;
+        }
         fn has_rgb(&self) -> bool {
             true
         }
@@ -546,7 +545,7 @@ mod tests {
     }
 
     fn rgb_light(beside: bool) -> (Light, RgbPwm) {
-        let mut pwm = RgbPwm { rgb: [0; 3], beside };
+        let mut pwm = RgbPwm { rgb: [0; 3], white: 0, beside };
         let mut l = Light::new();
         l.set_immediate(&mut pwm, 0, true, 254);
         (l, pwm)
@@ -691,5 +690,219 @@ mod tests {
         assert!(!l.is_on());
         assert_eq!(p.0, 0);
         assert_eq!(l.level(), 180);
+    }
+
+    #[test]
+    fn the_dead_band_edges() {
+        assert_eq!([359, 360, 719, 720, 721].map(|w| warm_dead_band(w, 48000)), [0, 720, 720, 720, 721]);
+        assert_eq!([47279, 47280, 47281, 47640, 47641].map(|w| warm_dead_band(w, 48000)), [47279, 47280, 47280, 47280, 48000]);
+        assert_eq!([0, 1, 66].map(|w| warm_dead_band(w, 66)), [0, 1, 66]);
+    }
+
+    #[test]
+    fn the_colour_default_of_the_board() {
+        let mut l = Light::new();
+        l.set_colour_default(10, 20);
+        assert_eq!(l.colour(), (10, 20, 0, 0));
+        assert_eq!((l.shown().hue, l.shown().sat), (10, 20));
+        assert_eq!((l.colour_record().hue, l.colour_record().sat), (10, 20));
+        assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn a_restored_colour_is_drawn() {
+        let (mut l, mut p) = rgb_light(false);
+        let r = ColourRecord { mode: ColorMode::HueSaturation, xy: false, hue: 85, sat: 254, x: 5, y: 6 };
+        l.restore_colour(&mut p, &r);
+        assert_eq!((l.color_mode(), l.colour(), l.colour_record()), (ColorMode::HueSaturation, (85, 254, 5, 6), r));
+        assert_eq!(p.rgb, colour::hs_duties(85, 254, 254, 48000));
+        assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn hue_and_saturation_fade_in_a_straight_line() {
+        let (mut l, mut p) = rgb_light(false);
+        l.move_to_hue_sat(&mut p, 0, 250, 254, HueDirection::Shortest, 0);
+        assert!(!l.in_transition());
+        l.move_to_hue_sat(&mut p, 1000, 10, 100, HueDirection::Shortest, 1000);
+        assert!(l.in_transition());
+        assert_eq!(l.colour(), (10, 100, 0, 0), "the target");
+        l.tick(&mut p, 1500);
+        assert_eq!((l.shown().hue, l.shown().sat), (2, 177));
+        assert_eq!(p.rgb, colour::hs_duties(2, 177, 254, 48000));
+        l.tick(&mut p, 1999);
+        assert_eq!((l.shown().hue, l.shown().sat), (9, 101));
+        assert!(l.in_transition());
+        l.tick(&mut p, 2000);
+        assert_eq!((l.shown().hue, l.shown().sat), (10, 100));
+        assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn a_hue_move_starts_from_the_shown_hue_not_an_old_xy() {
+        let (mut l, mut p) = rgb_light(false);
+        l.move_to_xy(&mut p, 0, RED.0, RED.1, 0);
+        l.move_to_hue_sat(&mut p, 0, 85, 254, HueDirection::Shortest, 0);
+        l.move_to_hue_sat(&mut p, 0, 170, 254, HueDirection::Shortest, 1000);
+        l.tick(&mut p, 500);
+        assert_eq!(l.shown().hue, 127);
+    }
+
+    #[test]
+    fn xy_fades_along_xy() {
+        let (mut l, mut p) = rgb_light(false);
+        l.move_to_xy(&mut p, 0, RED.0, RED.1, 0);
+        l.move_to_xy(&mut p, 1000, GREEN.0, GREEN.1, 1000);
+        assert!(l.in_transition());
+        l.tick(&mut p, 1500);
+        assert_eq!(p.rgb, colour::xy_duties(30802, 30474, 254, 48000));
+        l.tick(&mut p, 2000);
+        assert_eq!(p.rgb, colour::xy_duties(GREEN.0, GREEN.1, 254, 48000));
+        assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn xy_0_0_is_ignored_one_zero_is_not() {
+        let (mut l, mut p) = rgb_light(false);
+        l.move_to_xy(&mut p, 0, 0, 0, 0);
+        assert_eq!(l.color_mode(), ColorMode::Temperature);
+        l.move_to_xy(&mut p, 0, 0, 5, 0);
+        assert_eq!((l.color_mode(), l.colour().2, l.colour().3), (ColorMode::Xy, 0, 5));
+        l.move_to_xy(&mut p, 0, 7, 0, 0);
+        assert_eq!((l.colour().2, l.colour().3), (7, 0));
+    }
+
+    #[test]
+    fn a_colour_temperature_from_hue_and_saturation_keeps_the_last_xy() {
+        let (mut l, mut p) = rgb_light(false);
+        l.move_to_xy(&mut p, 0, RED.0, RED.1, 0);
+        l.move_to_hue_sat(&mut p, 0, 85, 254, HueDirection::Shortest, 0);
+        l.move_to_color_temp(&mut p, 0, 300, 0);
+        assert_eq!(l.colour(), (85, 254, RED.0, RED.1));
+        assert_eq!((p.rgb, p.white), ([0; 3], 48000));
+    }
+
+    #[test]
+    fn the_whites_are_off_while_an_rgb_bulb_shows_a_colour() {
+        let (mut l, mut p) = rgb_light(false);
+        assert_eq!(p.white, 48000);
+        l.move_to_hue_sat(&mut p, 0, 85, 254, HueDirection::Shortest, 0);
+        assert_eq!(p.white, 0);
+        let (mut l, mut p) = rgb_light(true);
+        l.move_to_hue_sat(&mut p, 0, 85, 254, HueDirection::Shortest, 0);
+        assert_eq!(p.white, 48000);
+        l.move_to_color_temp(&mut p, 0, 300, 0);
+        assert_eq!(p.white, 48000);
+    }
+
+    #[test]
+    fn colour_temperature_fades_in_a_straight_line() {
+        let mut p = TwPwm(0, 0, (153, 454));
+        let mut l = Light::new();
+        l.turn_on(&mut p, 0, 254, 0);
+        l.move_to_color_temp(&mut p, 1000, 433, 1000);
+        assert!(l.in_transition());
+        assert_eq!(l.color_temp(), 433);
+        l.tick(&mut p, 1500);
+        assert_eq!(l.shown().mireds, 383);
+        l.tick(&mut p, 1999);
+        assert_eq!(l.shown().mireds, 432);
+        l.tick(&mut p, 2000);
+        assert_eq!(l.shown().mireds, 433);
+        assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn a_fade_alone_is_a_transition() {
+        let mut p = TestPwm(0);
+        let mut l = Light::new();
+        assert!(!l.in_transition());
+        l.turn_on(&mut p, 0, 200, 1000);
+        assert!(l.in_transition());
+        l.tick(&mut p, 1000);
+        assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn what_is_shown_while_off_is_the_level_to_come_back_to() {
+        let mut p = TestPwm(0);
+        let mut l = Light::new();
+        l.turn_on(&mut p, 0, 99, 0);
+        l.turn_off(&mut p, 0, 0);
+        assert_eq!(l.shown(), crate::command::Shown { level: 99, mireds: 333, hue: 170, sat: 254 });
+        l.turn_on(&mut p, 0, 120, 0);
+        assert_eq!(l.shown().level, 120);
+    }
+
+    #[test]
+    fn the_candle_is_the_stock_candle_seeded_from_the_time() {
+        let mut p = TestPwm(0);
+        let mut l = Light::new();
+        l.turn_on(&mut p, 0, 128, 0);
+        assert!(!l.candle());
+        l.set_candle(&mut p, 1234, true);
+        assert!(l.candle());
+        let mut c = crate::candle::Candle::new(128, 1234, 1234 ^ 0x9e37_79b9);
+        let mut changes = 0;
+        for t in 1234..6000u64 {
+            l.tick(&mut p, t);
+            if c.tick(t, 128) {
+                changes += 1;
+            }
+            assert_eq!(p.0, crate::curve::duty(c.level(), 1000, false), "at {t} ms");
+        }
+        assert!(changes > 20);
+        l.set_candle(&mut p, 6000, true);
+        l.tick(&mut p, 6000);
+        assert_eq!(p.0, crate::curve::duty(c.level(), 1000, false), "turning it on again keeps it");
+        l.set_candle(&mut p, 6000, false);
+        assert!(!l.candle());
+        assert_eq!(p.0, crate::curve::duty(128, 1000, false));
+    }
+
+    #[test]
+    fn the_candle_waits_for_a_fade_and_is_dark_while_off() {
+        let mut p = TestPwm(0);
+        let mut l = Light::new();
+        l.turn_on(&mut p, 0, 128, 0);
+        l.set_candle(&mut p, 0, true);
+        l.turn_on(&mut p, 0, 254, 1000);
+        l.tick(&mut p, 500);
+        assert_eq!(p.0, crate::curve::duty(l.current_level(), 1000, false));
+        assert_ne!(l.current_level(), 238);
+        l.turn_off(&mut p, 2000, 0);
+        for t in 2000..3000 {
+            l.tick(&mut p, t);
+            assert_eq!(p.0, 0, "at {t} ms");
+        }
+    }
+
+    #[test]
+    fn a_hue_move_at_rate_0_stops_and_one_from_xy_starts_at_its_hue() {
+        let (mut l, mut p) = rgb_light(false);
+        l.move_to_xy(&mut p, 0, GREEN.0, GREEN.1, 0);
+        l.move_to_xy(&mut p, 0, RED.0, RED.1, 0);
+        l.move_hue(&mut p, 0, true, 0x0100);
+        assert!(l.hue_moving());
+        assert_eq!((l.color_mode(), l.colour().0), (ColorMode::HueSaturation, 0));
+        l.move_hue(&mut p, 0, true, 0);
+        assert!(!l.hue_moving());
+    }
+
+    #[test]
+    fn stopping_a_fade_to_off_where_it_shows_0_is_off() {
+        let mut p = TestPwm(0);
+        let mut l = Light::default();
+        assert_eq!(l.level(), 254);
+        l.turn_on(&mut p, 0, 254, 0);
+        l.stop(&mut p);
+        assert!(l.is_on());
+        l.turn_off(&mut p, 0, 1000);
+        l.tick(&mut p, 999);
+        assert_eq!(l.current_level(), 0);
+        assert!(l.is_fading());
+        l.stop(&mut p);
+        assert!(!l.is_on() && !l.is_fading());
+        assert_eq!(p.0, 0);
     }
 }

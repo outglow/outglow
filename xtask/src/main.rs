@@ -11,6 +11,7 @@ mod index;
 mod mutants;
 mod mutants_report;
 mod notes;
+mod sh;
 mod toolchain;
 
 #[derive(Parser)]
@@ -43,7 +44,7 @@ enum Task {
 }
 
 fn main() -> anyhow::Result<()> {
-    if let Some(code) = build::rustc_wrapper() {
+    if let Some(code) = build::rustc_wrapper(&sh::process_env, std::env::args_os().collect()) {
         std::process::exit(code);
     }
     match Cli::parse().task {

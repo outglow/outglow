@@ -42,18 +42,8 @@ pub trait Hal {
     fn ota_write(&mut self, offset: u32, data: &[u8]);
     fn ota_activate(&mut self) -> bool;
 
-    fn radio_busy(&mut self) -> bool {
-        false
-    }
-
-    fn neighbours_talking(&mut self) -> bool {
-        false
-    }
-
-    fn mesh_listen(&mut self, _channel: u8, _access_code: u32, _ticks: u32, _pdu: &mut [u8; ADV_PDU_MAX]) -> Option<usize> {
-        None
-    }
-    fn mesh_send(&mut self, _channels: &[u8], _access_code: u32, _pdu: &[u8]) -> bool {
-        true
-    }
+    fn radio_busy(&mut self) -> bool;
+    fn neighbours_talking(&mut self) -> bool;
+    fn mesh_listen(&mut self, channel: u8, access_code: u32, ticks: u32, pdu: &mut [u8; ADV_PDU_MAX]) -> Option<usize>;
+    fn mesh_send(&mut self, channels: &[u8], access_code: u32, pdu: &[u8]) -> bool;
 }

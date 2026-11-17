@@ -3,6 +3,7 @@ use crate::store::Flash;
 pub const BOOT_MARK: usize = 8;
 pub const MARK: u8 = 0x4b;
 const MIN_SIZE: u32 = 0x40;
+const CHUNK: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Owner {
@@ -54,10 +55,9 @@ pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bo
     }
     let body = size as usize - 4;
     let mut crc = 0xffff_ffffu32;
-    let mut at = 0;
-    let mut chunk = [0u8; 64];
-    while at < body {
-        let n = (body - at).min(chunk.len());
+    let mut chunk = [0u8; CHUNK];
+    for at in (0..body).step_by(CHUNK) {
+        let n = (body - at).min(CHUNK);
         flash.read(base + at, &mut chunk[..n]);
         if at == 0 {
             chunk[BOOT_MARK] = MARK;
@@ -65,8 +65,7 @@ pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bo
         for b in &chunk[..n] {
             crc = crc32_update(crc, *b);
         }
-        at += n;
-        if at % 0x4000 == 0 {
+        if (at + n) % 0x4000 == 0 {
             feed();
         }
     }

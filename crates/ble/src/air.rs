@@ -33,7 +33,7 @@ const O_HOPS: usize = 34;
 const O_MIC: usize = 35;
 
 const OP_STATUS_REQUEST: u8 = 0x1a;
-const OP_STATUS_RESPONSE: u8 = 0x1b;
+const STATUS_RESPONSE: u8 = 0xdb;
 
 fn is_request(op: u8) -> bool {
     matches!(op, 0x1a | 0x1d | 0x17 | 0x2a)
@@ -217,7 +217,7 @@ impl<H: Hal> Ble<H> {
             self.mesh_command(p[O_OP], &params, true);
             if op == OP_STATUS_REQUEST {
                 let status = self.mesh_status_params();
-                self.air_queue(build(&sn, me, src, 0xc0 | OP_STATUS_RESPONSE, &status, HOPS));
+                self.air_queue(build(&sn, me, src, STATUS_RESPONSE, &status, HOPS));
             }
         }
         if !to_me && p[O_HOPS] > 0 {
@@ -292,15 +292,13 @@ impl<H: Hal> Ble<H> {
         if budget < MIN_BUDGET {
             return;
         }
-        let mut end = now.wrapping_add(LISTEN.min(budget - MARGIN));
+        let mut length = LISTEN.min(budget - MARGIN);
         if self.link_connected() && self.hal.tx_idle() {
             for slot in self.air.tx.iter().flatten() {
-                let wait = (slot.due.wrapping_sub(now) as i32).max(0) as u32;
-                if wait < end.wrapping_sub(now) {
-                    end = now.wrapping_add(wait);
-                }
+                length = length.min((slot.due.wrapping_sub(now) as i32).max(0) as u32);
             }
         }
+        let end = now.wrapping_add(length);
         let channel = CHANNELS[self.air.channel % CHANNELS.len()];
         self.air.channel = self.air.channel.wrapping_add(1);
         loop {

@@ -11,9 +11,9 @@ use crate::staging::{self, Owner};
 pub const IDENTITY: Identity = Identity {
     product: BOARD.ble_product,
     model: BOARD.model,
-    firmware_revision: "3.0.2_1610",
+    firmware_revision: crate::zb::VERSION,
     hardware_revision: BOARD.hw_revision,
-    tunable: BOARD.cold.is_some() || BOARD.rgb.is_some(),
+    tunable: BOARD.tunable(),
     ct_min: BOARD.ct_min,
     ct_max: BOARD.ct_max,
     colour: BOARD.rgb.is_some(),
@@ -26,6 +26,8 @@ const MAC_SECTOR: usize = 0xf_f000;
 pub const MESH_SECTOR: usize = 0xf_3000;
 const SECTOR_SIZE: usize = 0x1000;
 const RECORD_MAX: usize = 64;
+const RECORD_BUF: usize = 67;
+const _: () = assert!(RECORD_BUF == RECORD_MAX + 3);
 
 fn checksum(data: &[u8]) -> u8 {
     data.iter().fold(0x5a, |c, b| c.rotate_left(1) ^ *b)
@@ -129,7 +131,7 @@ impl Hal for BleHal {
             flash::erase_sector(MESH_SECTOR);
             free = 0;
         }
-        let mut rec = [0u8; RECORD_MAX + 3];
+        let mut rec = [0u8; RECORD_BUF];
         rec[0] = 0xa5;
         rec[1] = len as u8;
         rec[2..2 + len].copy_from_slice(&data[..len]);
@@ -178,3 +180,7 @@ impl Hal for BleHal {
         ble_radio::mesh_send(channels, access_code, pdu)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/ble.rs"]
+mod tests;

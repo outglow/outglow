@@ -73,6 +73,21 @@ pub fn clear8(off: usize, bits: u8) {
 }
 
 #[inline(always)]
+pub fn modify8(off: usize, keep: u8, bits: u8) {
+    write8(off, read8(off) & keep | bits);
+}
+
+#[inline(always)]
+pub fn modify16(off: usize, keep: u16, bits: u16) {
+    write16(off, read16(off) & keep | bits);
+}
+
+#[inline(always)]
+pub fn modify32(off: usize, keep: u32, bits: u32) {
+    write32(off, read32(off) & keep | bits);
+}
+
+#[inline(always)]
 pub fn tick() -> u32 {
     read32(SYSTEM_TICK)
 }
@@ -104,6 +119,11 @@ pub fn analog_write(addr: u8, value: u8) {
     while read8(ANA_CTRL) & 0x01 != 0 {}
     write8(ANA_CTRL, 0x00);
     irq_restore(s);
+}
+
+#[inline(always)]
+pub fn analog_modify(addr: u8, keep: u8, bits: u8) {
+    analog_write(addr, analog_read(addr) & keep | bits);
 }
 
 #[inline(always)]
@@ -169,3 +189,7 @@ pub const PWM_ENABLE: usize = 0x780;
 pub const TIMER_CTRL: usize = 0x620;
 pub const TIMER_STATUS: usize = 0x623;
 pub const TIMER2_TICK: usize = 0x638;
+
+#[cfg(test)]
+#[path = "tests/reg.rs"]
+mod tests;

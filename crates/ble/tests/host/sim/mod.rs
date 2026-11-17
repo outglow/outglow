@@ -154,6 +154,10 @@ impl Central {
         self.txq.push_back((3, payload.to_vec()));
     }
 
+    pub fn send_pdu(&mut self, llid: u8, payload: &[u8]) {
+        self.txq.push_back((llid, payload.to_vec()));
+    }
+
     pub fn send_l2cap(&mut self, cid: u16, data: &[u8]) {
         let mut frame = (data.len() as u16).to_le_bytes().to_vec();
         frame.extend_from_slice(&cid.to_le_bytes());
@@ -258,6 +262,14 @@ impl Ether {
         self.sends.iter().filter(|s| s.4 == node && pdu_filter(&s.3)).count()
     }
 
+    pub fn sent(&self, node: usize) -> Vec<Vec<u8>> {
+        self.sends.iter().filter(|s| s.4 == node).map(|s| s.3.clone()).collect()
+    }
+
+    pub fn deliver(&mut self, node: usize, pdu: &[u8]) {
+        self.inbox[node].push_back(pdu.to_vec());
+    }
+
     pub fn bursts_of(&self, node: usize) -> Vec<u64> {
         let first = self.sends.iter().find(|s| s.4 == node).map(|s| s.1);
         self.sends.iter().filter(|s| s.4 == node && Some(s.1) == first).map(|s| s.0).collect()
@@ -284,8 +296,17 @@ pub struct World {
     pub nv_writes: u32,
     pub staging: Vec<u8>,
     pub erased_sectors: Vec<u32>,
+    pub erased_at: Vec<u64>,
+    pub refuse_sends: bool,
+    pub send_attempts: Vec<u64>,
     pub activated: bool,
     pub mesh_listens: u32,
+    pub listened: Vec<(u64, u64, u8)>,
+    pub event_starts: Vec<u64>,
+    pub event_ends: Vec<(u64, u64)>,
+    pub anchors: Vec<u64>,
+    stuck: (u64, u32),
+    pub commands: Vec<Command>,
     pub flash_fault: bool,
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
@@ -356,12 +377,27 @@ impl Drop for World {
     }
 }
 
+impl World {
+    pub fn txq_empty(&self) -> bool {
+        self.txq.is_empty()
+    }
+}
+
 #[derive(Clone)]
 pub struct SimHal(pub Rc<RefCell<World>>);
 
 impl Hal for SimHal {
     fn now(&mut self) -> u32 {
-        self.0.borrow().now as u32
+        let mut w = self.0.borrow_mut();
+        let now = w.now;
+        assert!(now < 600_000 * MS, "past 600 s of simulated time: a test waiting for what never comes");
+        if w.stuck.0 == now {
+            w.stuck.1 += 1;
+            assert!(w.stuck.1 < 1_000_000, "the bulb asked for the time a million times while none passed: an endless loop");
+        } else {
+            w.stuck = (now, 0);
+        }
+        now as u32
     }
 
     fn random(&mut self) -> u32 {
@@ -453,6 +489,8 @@ impl Hal for SimHal {
         let w = &mut *w;
         let start = w.now + ev.start.wrapping_sub(w.now as u32) as i32 as i64 as u64;
         assert!(start + ev.window as u64 >= w.now, "event that is already over");
+        w.event_starts.push(start);
+        w.event_ends.push((start + ev.window as u64, start + ev.deadline.wrapping_sub(ev.start) as u64));
         let room = ev.deadline.wrapping_sub(ev.start.wrapping_add(ev.window));
         assert!((16_000..=64_000).contains(&room), "1 to 4 ms for the event after its window: {room}");
         w.now = w.now.max(start);
@@ -505,7 +543,7 @@ impl Hal for SimHal {
             if w.nesn != c.sn {
                 c.sn ^= 1;
                 if let Some((3, p)) = c.txq.pop_front() {
-                    if p[0] == 0x02 {
+                    if p.first() == Some(&0x02) {
                         c.ended = true;
                     }
                 }
@@ -532,6 +570,7 @@ impl Hal for SimHal {
             c.connected = false;
         }
         w.events.push((ev.channel, true));
+        w.anchors.push(at);
         EventResult { anchor: Some(at as u32) }
     }
 
@@ -582,6 +621,8 @@ impl Hal for SimHal {
         assert!(offset % 0x1000 == 0 && (offset as usize) < STAGING);
         w.staging[offset as usize..offset as usize + 0x1000].fill(0xff);
         w.erased_sectors.push(offset);
+        let at = w.now;
+        w.erased_at.push(at);
         w.now += 40 * MS;
     }
 
@@ -604,6 +645,11 @@ impl Hal for SimHal {
 
     fn mesh_send(&mut self, channels: &[u8], access_code: u32, pdu: &[u8]) -> bool {
         let mut w = self.0.borrow_mut();
+        let at = w.now;
+        w.send_attempts.push(at);
+        if w.refuse_sends {
+            return false;
+        }
         if w.central.connected && !w.txq.is_empty() {
             w.now += 100 * TICKS_PER_US as u64;
             return false;
@@ -633,6 +679,8 @@ impl Hal for SimHal {
     fn mesh_listen(&mut self, channel: u8, access_code: u32, ticks: u32, pdu: &mut [u8; ADV_PDU_MAX]) -> Option<usize> {
         let mut w = self.0.borrow_mut();
         w.mesh_listens += 1;
+        let at = w.now;
+        w.listened.push((at, at + ticks as u64, channel));
         let Some(ether) = w.ether.clone() else {
             w.now += ticks as u64;
             return None;
@@ -667,7 +715,12 @@ pub struct BleLink(pub Rc<RefCell<Ble<SimHal>>>);
 
 impl Radio for BleLink {
     fn poll(&mut self) -> Option<Command> {
-        self.0.borrow_mut().poll()
+        let mut ble = self.0.borrow_mut();
+        let c = ble.poll();
+        if let Some(c) = c {
+            ble.hal().0.borrow_mut().commands.push(c);
+        }
+        c
     }
 
     fn report(&mut self, state: &StateReport) {
@@ -721,11 +774,20 @@ impl Rig {
             nv_writes: 0,
             staging: vec![0xa5; STAGING],
             erased_sectors: vec![],
+            erased_at: vec![],
+            refuse_sends: false,
+            send_attempts: vec![],
             activated: false,
             flash_fault: false,
             zigbee_busy: vec![],
             advertised_at: vec![],
             mesh_listens: 0,
+            listened: vec![],
+            event_starts: vec![],
+            event_ends: vec![],
+            anchors: vec![],
+            stuck: (0, 0),
+            commands: vec![],
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
         }))
@@ -759,6 +821,7 @@ impl Rig {
     }
 
     pub fn run_until(&mut self, end: u64) {
+        assert!(end < 600_000 * MS, "past 600 s of simulated time: a test waiting for what never comes");
         while self.world.borrow().now < end {
             self.bulb.tick();
             self.world.borrow_mut().now += 100 * TICKS_PER_US as u64;

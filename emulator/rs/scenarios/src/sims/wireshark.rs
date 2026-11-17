@@ -366,8 +366,15 @@ fn captures(cx: &mut SimCtx, zb: &Zb, paths: &[PathBuf]) -> R<usize> {
 const BULB: &str = "btle_rf.pdu_type == 3";
 const BULB_ADV: &str = "btle.advertising_address == a4:c1:38:11:22:33 && btle.advertising_header.pdu_type in {0x00, 0x04}";
 
-const BLE_INTENDED: [(&str, &str); 8] = [
+const BLE_INTENDED: [(&str, &str); 15] = [
+    ("a_continuation_without_its_start_is_dropped", "Missing Fragment Start"),
+    ("malformed_writes_and_searches_get_their_errors_and_an_empty_pdu_nothing", ""),
+    ("signalling_shorter_than_its_header_is_dropped", ""),
+    ("blocks_may_be_one_octet_and_the_last_shorter_but_none_longer_than_the_first", "exceed current ATT_MTU"),
     ("the_version_is_exchanged_once_and_odd_control_packets_are_refused", ""),
+    ("control_responses_and_reserved_pdus_get_no_answer", ""),
+    ("a_connect_request_with_bad_parameters_leaves_the_bulb_advertising_and_an_empty_control_pdu_is_ignored", ""),
+    ("events_heard_and_connections_are_counted_and_short_control_pdus_are_unknown", ""),
     ("a_change_whose_instant_has_passed_ends_the_connection", ""),
     ("refuses_pairing_and_unknown_signaling", ""),
     ("requests_that_cannot_be_served_get_the_right_error", ""),
@@ -376,8 +383,9 @@ const BLE_INTENDED: [(&str, &str); 8] = [
     ("a_frame_that_does_not_match_its_length_is_discarded", ""),
     ("a_signalling_packet_over_the_signalling_mtu_is_rejected", ""),
 ];
-const BLE_QUIRKS: [(&str, &str); 2] = [
+const BLE_QUIRKS: [(&str, &str); 3] = [
     ("a_larger_mtu_gives_longer_responses_in_fragments", "exceed current ATT_MTU"),
+    ("a_blob_read_at_the_end_of_the_value_is_empty_and_a_range_from_handle_zero_is_invalid", "Read Blob Response"),
     ("the_version_is_exchanged_once_and_odd_control_packets_are_refused", "control procedure"),
 ];
 
@@ -461,6 +469,13 @@ fn bobjections(pcap: &Path) -> Result<Vec<(usize, bool, String)>, String> {
     Ok(rows)
 }
 
+fn bare(stem: &str) -> &str {
+    match stem.split_once('.') {
+        Some((module, rest)) if module.chars().all(|c| c.is_ascii_lowercase() || c == '_') && !rest.is_empty() && !rest.chars().all(|c| c.is_ascii_digit()) => rest,
+        _ => stem,
+    }
+}
+
 fn run_ble(cx: &mut SimCtx) -> R<()> {
     if !have_tshark() {
         return Err(Stop::Error("tshark not found".into()));
@@ -490,7 +505,7 @@ fn run_ble(cx: &mut SimCtx) -> R<()> {
     let (mut packets, mut bulb, mut att) = (0, 0, 0);
     for name in &caps {
         let path = dir.join(name);
-        let test = &name[..name.len() - 5];
+        let test = bare(&name[..name.len() - 5]);
         packets += bcount(&path, "frame").map_err(e)?;
         bulb += bcount(&path, &format!("({BULB}) || ({BULB_ADV})")).map_err(e)?;
         att += bcount(&path, &format!("({BULB}) && btatt")).map_err(e)?;
@@ -508,7 +523,7 @@ fn run_ble(cx: &mut SimCtx) -> R<()> {
     }
     let mut by_test: Vec<(String, Vec<PathBuf>)> = Vec::new();
     for name in &caps {
-        let stem = &name[..name.len() - 5];
+        let stem = bare(&name[..name.len() - 5]);
         let test = match stem.rsplit_once('.') {
             Some((a, b)) if !b.is_empty() && b.chars().all(|c| c.is_ascii_digit()) => a.to_string(),
             _ => stem.to_string(),
@@ -542,4 +557,17 @@ fn run_ble(cx: &mut SimCtx) -> R<()> {
     cx.results.push(("ble_wireshark".into(), failures.is_empty(), String::new()));
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
+}
+
+#[cfg(test)]
+mod bare_tests {
+    use super::bare;
+
+    #[test]
+    fn a_capture_name_loses_its_test_module_but_not_its_numbering() {
+        assert_eq!(bare("link.refuses_pairing_and_unknown_signaling"), "refuses_pairing_and_unknown_signaling");
+        assert_eq!(bare("profile.a_blob_read.3"), "a_blob_read.3");
+        assert_eq!(bare("refuses_pairing_and_unknown_signaling"), "refuses_pairing_and_unknown_signaling");
+        assert_eq!(bare("refuses_pairing_and_unknown_signaling.2"), "refuses_pairing_and_unknown_signaling.2");
+    }
 }

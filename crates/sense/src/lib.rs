@@ -137,9 +137,19 @@ impl Line {
         let mut sum = 0u8;
         for &d in &self.dev {
             let wq = (d as u16 * 4) / thr_q4 as u16;
-            sum += if wq > 3 { 3 } else { wq as u8 };
+            sum += wq.min(3) as u8;
         }
         sum
+    }
+
+    fn quiet_s(&self, from: u8) -> u8 {
+        (2..=from)
+            .rev()
+            .find(|&s| {
+                let (thr, m) = params(s);
+                (self.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16
+            })
+            .unwrap_or(1)
     }
 
     fn restart(&mut self) {
@@ -181,22 +191,21 @@ impl Line {
     }
 
     fn on_if_due(&mut self, now: u32) {
-        if self.flags & F_RULE != 0 && now.wrapping_sub(self.t_rule) >= (100 - self.s as u32) * 10 {
+        if now.wrapping_sub(self.t_rule) >= (100 - self.s as u32) * 10 {
             self.flags |= F_ON;
         }
     }
 }
 
 fn median5(h: &[i8; HIST]) -> i8 {
-    let mut v = [0i8; HIST];
-    for i in 0..HIST {
-        let x = h[i];
-        let mut j = i;
-        while j > 0 && v[j - 1] > x {
-            v[j] = v[j - 1];
-            j -= 1;
+    let mut v = *h;
+    for i in 1..HIST {
+        for j in (1..=i).rev() {
+            if v[j - 1] <= v[j] {
+                break;
+            }
+            v.swap(j - 1, j);
         }
-        v[j] = x;
     }
     v[HIST / 2]
 }
@@ -364,22 +373,10 @@ impl Core {
             if cal {
                 l.cal_n = l.cal_n.wrapping_add(1);
                 l.cal_sum = l.cal_sum.wrapping_add(dev as u32);
-                while l.cal_s > 1 {
-                    let (thr, m) = params(l.cal_s);
-                    if (l.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16 {
-                        break;
-                    }
-                    l.cal_s -= 1;
-                }
+                l.cal_s = l.quiet_s(l.cal_s);
             }
             if auto_cal {
-                while l.hour_cal_s > 1 {
-                    let (thr, m) = params(l.hour_cal_s);
-                    if (l.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16 {
-                        break;
-                    }
-                    l.hour_cal_s -= 1;
-                }
+                l.hour_cal_s = l.quiet_s(l.hour_cal_s);
             }
             if nothing_on && l.flags & F_ON == 0 && l.hour_cnt < 0xFFFF {
                 l.hour_cnt += 1;
@@ -444,8 +441,7 @@ impl Core {
                 continue;
             }
             let noise = ((l.cal_sum.wrapping_mul(32)) / l.cal_n as u32) as u16;
-            let s = if l.cal_s > CAL_MARGIN { l.cal_s - CAL_MARGIN } else { 1 };
-            l.set_s(s, if noise != 0 { noise } else { 1 });
+            l.set_s(l.cal_s.saturating_sub(CAL_MARGIN).max(1), if noise != 0 { noise } else { 1 });
             l.flags &= !F_RULE;
             self.dirty = true;
         }
@@ -465,14 +461,12 @@ impl Core {
             }
             if l.hour_cnt >= HOUR_MIN_FRAMES {
                 let mean = ((l.hour_sum.wrapping_mul(32)) / l.hour_cnt as u32) as u16;
-                if mean < l.day_min {
-                    l.day_min = mean;
-                }
+                l.day_min = l.day_min.min(mean);
                 l.day_sum = l.day_sum.wrapping_add(l.hour_sum);
                 l.day_cnt = l.day_cnt.wrapping_add(l.hour_cnt as u32);
                 l.day_hours += 1;
-                if auto_cal && l.hour_cal_s > l.day_cal_s {
-                    l.day_cal_s = l.hour_cal_s;
+                if auto_cal {
+                    l.day_cal_s = l.day_cal_s.max(l.hour_cal_s);
                 }
             }
             l.hour_cnt = 0;
@@ -482,24 +476,23 @@ impl Core {
                 continue;
             }
             if auto_cal && l.anchor_noise == 0 && l.day_hours >= DAY_MIN_HOURS && l.day_cal_s != 0 && l.s != 0 {
-                let s = if l.day_cal_s > CAL_MARGIN { l.day_cal_s - CAL_MARGIN } else { 1 };
-                l.set_s(s, l.day_min.max(1));
+                l.set_s(l.day_cal_s.saturating_sub(CAL_MARGIN).max(1), l.day_min.max(1));
                 l.flags &= !F_RULE;
                 dirty = true;
             } else if l.day_hours >= DAY_MIN_HOURS && l.s != 0 {
                 let day_mean = ((l.day_sum.wrapping_mul(32)) / l.day_cnt) as u16;
                 let span = TUNE_STEP * TUNE_LEVELS;
                 let lo = if l.anchor_s > span { l.anchor_s - span } else { 1 };
-                let hi = if l.anchor_s < 100 - span { l.anchor_s + span } else { 100 };
+                let hi = (l.anchor_s + span).min(100);
                 if l.anchor_noise == 0 {
                     l.anchor_noise = if day_mean != 0 { day_mean } else { 1 };
                     dirty = true;
                 } else if selftune {
                     if l.day_min as u32 > 2 * l.anchor_noise as u32 && l.s > lo {
-                        l.s = if l.s - lo > TUNE_STEP { l.s - TUNE_STEP } else { lo };
+                        l.s = l.s.saturating_sub(TUNE_STEP).max(lo);
                         dirty = true;
                     } else if (day_mean as u32) * 2 < l.anchor_noise as u32 && l.s < hi {
-                        l.s = if hi - l.s > TUNE_STEP { l.s + TUNE_STEP } else { hi };
+                        l.s = (l.s + TUNE_STEP).min(hi);
                         dirty = true;
                     }
                 }
@@ -536,7 +529,7 @@ impl Core {
                 l.t_hit = now;
                 l.on_if_due(now);
             }
-            if l.flags & F_ON != 0 && l.flags & F_RULE == 0 && now.wrapping_sub(l.t_hit) >= off_ms {
+            if l.flags & F_RULE == 0 && now.wrapping_sub(l.t_hit) >= off_ms {
                 l.flags &= !F_ON;
             }
             if l.flags & F_ON != 0 {
@@ -545,5 +538,43 @@ impl Core {
         }
         self.on_mask = on;
         on
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::env_u8;
+
+    #[test]
+    fn a_build_setting_is_a_decimal_byte() {
+        assert_eq!(env_u8(None, 4), 4);
+        assert_eq!(env_u8(Some("7"), 4), 7);
+        assert_eq!(env_u8(Some("042"), 4), 42);
+        assert_eq!(env_u8(Some("255"), 4), 255);
+        assert_eq!(env_u8(Some("190"), 4), 190);
+    }
+
+    #[test]
+    #[should_panic(expected = "a number 0..=255")]
+    fn an_empty_build_setting_is_refused() {
+        env_u8(Some(""), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "a number 0..=255")]
+    fn a_build_setting_of_four_digits_is_refused() {
+        env_u8(Some("0001"), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "a number 0..=255")]
+    fn a_build_setting_above_255_is_refused() {
+        env_u8(Some("256"), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "a number 0..=255")]
+    fn a_build_setting_with_a_letter_is_refused() {
+        env_u8(Some("1x"), 4);
     }
 }

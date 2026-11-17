@@ -174,4 +174,38 @@ mod tests {
         let c = Config { startup_level: StartupLevel::Minimum, ..Config::default() };
         assert_eq!(Config::decode(&c.encode()), Some(c));
     }
+
+    #[test]
+    fn the_crc_is_crc8_with_polynomial_7() {
+        assert_eq!(crc8(b"123456789"), 0xF4);
+        assert_eq!(crc8(&[]), 0);
+        assert_eq!(crc8(&[0x80]), 0x89);
+    }
+
+    #[test]
+    fn a_block_needs_its_magic_and_its_version_each() {
+        let good = Config::default().encode();
+        for (at, v) in [(0, MAGIC ^ 1), (1, VERSION + 1)] {
+            let mut b = good;
+            b[at] = v;
+            b[7] = crc8(&b[0..7]);
+            assert_eq!(Config::decode(&b), None, "byte {at}");
+        }
+        assert_eq!(Config::decode(&good[..7]), None);
+        let mut longer = [0u8; 9];
+        longer[..8].copy_from_slice(&good);
+        assert_eq!(Config::decode(&longer), Some(Config::default()));
+    }
+
+    #[test]
+    fn the_flags_byte_holds_behaviour_low_bits_and_last_on() {
+        let c = Config {
+            power_on_behavior: PowerOnBehavior::Toggle,
+            last_on: true,
+            last_color_temp: 301,
+            startup_color_temp: 193,
+            ..Config::default()
+        };
+        assert_eq!(c.encode()[2], 0x80 | 0x08 | 0x04 | 2);
+    }
 }

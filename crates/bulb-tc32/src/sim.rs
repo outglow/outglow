@@ -54,7 +54,16 @@ pub struct Chip {
     pub tx_kicks: usize,
     reset_requested: bool,
     erased: bool,
+    pub hook: Option<Hook>,
+    pub flash_busy_polls: u8,
+    pub aes_takes: usize,
+    pub aes_corrupt: u8,
+    aes_words: usize,
+    busy_left: u8,
+    mspi_busy: u8,
 }
+
+pub type Hook = Box<dyn FnMut(&mut Chip, Op)>;
 
 impl Chip {
     fn new() -> Self {
@@ -78,6 +87,13 @@ impl Chip {
             tx_kicks: 0,
             reset_requested: false,
             erased: false,
+            hook: None,
+            flash_busy_polls: 1,
+            aes_takes: 4,
+            aes_corrupt: 0,
+            aes_words: 0,
+            busy_left: 0,
+            mspi_busy: 0,
         }
     }
 
@@ -89,12 +105,45 @@ impl Chip {
         self.regs.insert(off, v);
     }
 
+    pub fn poke32(&mut self, off: usize, v: u32) {
+        for (i, b) in v.to_le_bytes().iter().enumerate() {
+            self.regs.insert(off + i, *b);
+        }
+    }
+
+    pub fn raise16(&mut self, off: usize, bits: u16) {
+        let [lo, hi] = bits.to_le_bytes();
+        let (a, b) = (self.peek8(off), self.peek8(off + 1));
+        self.regs.insert(off, a | lo);
+        self.regs.insert(off + 1, b | hi);
+    }
+
+    pub fn ticks_read(&self) -> Vec<u32> {
+        self.log.iter().filter_map(|o| match *o {
+            Op::R32(reg::SYSTEM_TICK, t) => Some(t),
+            _ => None,
+        }).collect()
+    }
+
     pub fn analog(&self, addr: u8) -> u8 {
         self.analog[addr as usize]
     }
 
     pub fn set_analog(&mut self, addr: u8, v: u8) {
         self.analog[addr as usize] = v;
+    }
+
+    pub fn on(&mut self, hook: impl FnMut(&mut Chip, Op) + 'static) {
+        self.hook = Some(Box::new(hook));
+    }
+
+    fn run_hook(&mut self, op: Op) {
+        if let Some(mut h) = self.hook.take() {
+            h(self, op);
+            if self.hook.is_none() {
+                self.hook = Some(h);
+            }
+        }
     }
 
     pub fn writes(&self) -> Vec<Op> {
@@ -119,9 +168,15 @@ impl Chip {
                 self.regs.insert(reg::SYSTEM_TICK + i, *b);
             }
         }
+        if off == reg::MSPI_CTRL {
+            let c = self.peek8(reg::MSPI_CTRL) & !reg::MSPI_BUSY;
+            let busy = if self.mspi_busy == 2 { reg::MSPI_BUSY } else { 0 };
+            self.mspi_busy = self.mspi_busy.saturating_sub(1);
+            self.regs.insert(reg::MSPI_CTRL, c | busy);
+        }
         if off == AES_CTRL {
             let mut c = self.peek8(AES_CTRL) & !0x06;
-            if self.aes_in.len() < 16 {
+            if self.aes_words < self.aes_takes {
                 c |= 0x02;
             }
             if self.aes_ready && self.aes_out.len() == 16 {
@@ -144,6 +199,9 @@ impl Chip {
 
     fn write(&mut self, off: usize, width: usize, v: u32) {
         let bytes = v.to_le_bytes();
+        if (off == reg::MSPI_DATA || off == reg::MSPI_CTRL) && self.mspi_busy != 0 {
+            panic!("the flash controller was written while it was still busy");
+        }
         if W1C.contains(&off) {
             for i in 0..width {
                 let cur = self.peek8(off + i);
@@ -157,9 +215,21 @@ impl Chip {
         match off {
             reg::ANA_CTRL => self.analog_strobe(bytes[0]),
             reg::MSPI_CTRL => self.spi_cs(bytes[0] & reg::MSPI_CS_HIGH != 0),
-            reg::MSPI_DATA => self.spi_byte(bytes[0]),
+            reg::MSPI_DATA => {
+                self.mspi_busy = 2;
+                self.spi_byte(bytes[0])
+            }
             reg::PWDN_CTRL if bytes[0] & 0x20 != 0 => self.reset_requested = true,
             AES_DATA if width == 4 => self.aes_feed(bytes),
+            TX_FIFO_RPTR => {
+                let w = self.peek8(TX_FIFO_WPTR) & 0x0f;
+                let r = if bytes[0] & 0x10 != 0 { w } else { bytes[0] & 0x0f };
+                self.regs.insert(TX_FIFO_RPTR, r);
+            }
+            TX_FIFO_PUSH => {
+                let w = self.peek8(TX_FIFO_WPTR);
+                self.regs.insert(TX_FIFO_WPTR, (w + 1) & 0x0f);
+            }
             DMA_TX_READY if bytes[0] & 0x08 != 0 => {
                 self.tx_kicks += 1;
                 if self.tx_completes {
@@ -175,6 +245,7 @@ impl Chip {
         if off == AES_CTRL && bytes[0] & 0x01 == 0 {
             self.aes_in.clear();
             self.aes_out.clear();
+            self.aes_words = 0;
         }
     }
 
@@ -195,6 +266,7 @@ impl Chip {
         if matches!(self.spi, Spi::ProgramData { .. } | Spi::Erase { .. }) || self.erased {
             self.write_enabled = false;
             self.erased = false;
+            self.busy_left = self.flash_busy_polls;
         }
         self.spi = if high { Spi::Idle } else { Spi::Command };
     }
@@ -246,7 +318,9 @@ impl Chip {
                 }
             }
             Spi::Status => {
-                self.regs.insert(reg::MSPI_DATA, 0);
+                let busy = self.busy_left > 0;
+                self.busy_left = self.busy_left.saturating_sub(1);
+                self.regs.insert(reg::MSPI_DATA, busy as u8);
                 Spi::Status
             }
             Spi::Other => Spi::Other,
@@ -254,13 +328,16 @@ impl Chip {
     }
 
     fn aes_feed(&mut self, bytes: [u8; 4]) {
+        self.aes_words += 1;
         if self.aes_in.len() >= 16 {
             return;
         }
         self.aes_in.extend_from_slice(&bytes);
-        if self.aes_in.len() == 16 {
-            let mut block: [u8; 16] = self.aes_in[..].try_into().unwrap_or([0; 16]);
+        if self.aes_in.len() == 16 || self.aes_words == self.aes_takes {
+            let mut block = [0u8; 16];
+            block[..self.aes_in.len()].copy_from_slice(&self.aes_in);
             zigbee::aes::Aes128::new(&self.aes_key).encrypt(&mut block);
+            block[15] ^= self.aes_corrupt;
             self.aes_out = block.to_vec();
         }
     }
@@ -270,6 +347,9 @@ const AES_CTRL: usize = 0x540;
 const AES_DATA: usize = 0x548;
 const AES_KEY: usize = 0x550;
 const RF_IRQ_STATUS: usize = 0xf20;
+const TX_FIFO_RPTR: usize = 0xc2a;
+const TX_FIFO_WPTR: usize = 0xc2b;
+const TX_FIFO_PUSH: usize = 0xc2c;
 const DMA_TX_READY: usize = 0xc24;
 const W1C: [usize; 2] = [0xf20, 0xf21];
 
@@ -283,14 +363,37 @@ pub struct Session {
     _guard: MutexGuard<'static, ()>,
 }
 
+pub const SESSION_MAX: std::time::Duration = std::time::Duration::from_secs(10);
+
+static STARTED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static WATCHDOG: std::sync::Once = std::sync::Once::new();
+
+fn watch() {
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let started = *STARTED.lock().unwrap_or_else(|e| e.into_inner());
+        if started.is_some_and(|t| t.elapsed() > SESSION_MAX) {
+            eprintln!("a test ran {SESSION_MAX:?} on the simulated chip: a loop that never ends without touching a register");
+            std::process::abort();
+        }
+    }
+}
+
 pub fn session() -> Session {
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    WATCHDOG.call_once(|| {
+        std::thread::spawn(watch);
+    });
+    *STARTED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     CHIP.with(|c| *c.borrow_mut() = Some(Chip::new()));
+    #[cfg(test)]
+    crate::tests::reset_statics();
     Session { _guard: guard }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        *STARTED.lock().unwrap_or_else(|e| e.into_inner()) = None;
         CHIP.with(|c| *c.borrow_mut() = None);
     }
 }
@@ -311,11 +414,12 @@ pub fn with<R>(f: impl FnOnce(&mut Chip) -> R) -> R {
 
 pub const REBOOT: &str = "the chip was reset (0x6f = 0x20)";
 
-pub const LOG_MAX: usize = 10_000_000;
+pub const LOG_MAX: usize = 1_000_000;
 
 fn bounded() {
     if with(|c| c.log.len() >= LOG_MAX) {
-        panic!("more than {LOG_MAX} register accesses in one test: a driver loop that never ends");
+        eprintln!("more than {LOG_MAX} register accesses in one test: a driver loop that never ends");
+        std::process::abort();
     }
 }
 
@@ -323,11 +427,13 @@ pub fn read(off: usize, width: usize) -> u32 {
     bounded();
     with(|c| {
         let v = c.read(off, width);
-        c.log.push(match width {
+        let op = match width {
             1 => Op::R8(off, v as u8),
             2 => Op::R16(off, v as u16),
             _ => Op::R32(off, v),
-        });
+        };
+        c.log.push(op);
+        c.run_hook(op);
         v
     })
 }
@@ -335,12 +441,14 @@ pub fn read(off: usize, width: usize) -> u32 {
 pub fn write(off: usize, width: usize, v: u32) {
     bounded();
     with(|c| {
-        c.log.push(match width {
+        let op = match width {
             1 => Op::W8(off, v as u8),
             2 => Op::W16(off, v as u16),
             _ => Op::W32(off, v),
-        });
+        };
+        c.log.push(op);
         c.write(off, width, v);
+        c.run_hook(op);
     })
 }
 
@@ -348,10 +456,10 @@ pub fn flash8(addr: usize) -> u8 {
     with(|c| c.flash.get(addr).copied().unwrap_or(0xff))
 }
 
-pub fn reboots<F: FnOnce() + std::panic::UnwindSafe>(f: F) -> bool {
+pub fn reboots<F: FnOnce()>(f: F) -> bool {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    let r = std::panic::catch_unwind(f);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     std::panic::set_hook(hook);
     match r {
         Ok(()) => false,

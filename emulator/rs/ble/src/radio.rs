@@ -364,7 +364,7 @@ impl RadioRef {
             }
             let first = r5.b().sched.front().map(|e| e.ms);
             if let Some(ms) = first {
-                let mut lim = ((ms - m.ms()) * m.cpu_hz as f64 / 1000.0) as i64;
+                let mut lim = m.cycles_until_ms(ms);
                 if lim < 0 {
                     lim = 0;
                 }

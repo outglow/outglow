@@ -588,13 +588,16 @@ pub fn boards() -> Result<Vec<(String, bool, String)>, String> {
         .collect())
 }
 
-pub fn image_dir(name: &str) -> PathBuf {
-    let d = match name {
+pub fn board_dir(name: &str) -> String {
+    match name {
         "ESMLFzm_w6_Dimm-4.63" => "tc32".to_string(),
         "ESMLFzm_w6_TW-4.63" => "tc32-tw".to_string(),
         _ => format!("tc32-{}", name.to_lowercase()),
-    };
-    repo_root().join("target").join(d)
+    }
+}
+
+pub fn image_dir(name: &str) -> PathBuf {
+    repo_root().join("target").join(board_dir(name))
 }
 
 pub fn stock_of(name: &str) -> Result<J, String> {

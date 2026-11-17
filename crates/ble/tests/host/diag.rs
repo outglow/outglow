@@ -1,9 +1,7 @@
-use memcap as _;
-mod sim;
 
 use ble::diag::{self, parse, zigbee_event, DiagCommand, FrameLog, Info, LogEntry, State};
 use bulb_core::command::{Command, PowerOnBehavior};
-use sim::{Rig, DIMMABLE, TUNABLE};
+use crate::sim::{Rig, DIMMABLE, TUNABLE};
 use zigbee::stack::{ev, LightSettings};
 
 const INFO: u16 = 0x22;
@@ -238,6 +236,8 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     let tw = &TUNABLE;
     let dimm = &DIMMABLE;
     let light = |c| Some(DiagCommand::Light(c));
+    assert_eq!(parse(&[0x01], dimm), Some(DiagCommand::Identify));
+    assert_eq!(parse(&[], dimm), None);
     assert_eq!(parse(&[0x10, 1], dimm), light(Command::On));
     assert_eq!(parse(&[0x10, 2], dimm), light(Command::Toggle));
     assert_eq!(parse(&[0x10], dimm), None);
@@ -258,11 +258,15 @@ fn commands_are_parsed_as_the_c_firmware_takes_them() {
     assert_eq!(parse(&[0x24, 0xff, 0xff], tw), light(Command::SetStartupColorTemperature(0xffff)));
     assert_eq!(parse(&[0x24, 0x2c, 0x01], tw), light(Command::SetStartupColorTemperature(300)));
     assert_eq!(parse(&[0x24, 0x64, 0x00], tw), None);
+    assert_eq!(parse(&[0x24, 0xff, 0xff], dimm), None);
     assert_eq!(parse(&[0x30], dimm), Some(DiagCommand::Restart));
     assert_eq!(parse(&[0x31, b'R', b'S', b'T'], dimm), Some(DiagCommand::FactoryReset));
     assert_eq!(parse(&[0x31, b'R', b'S'], dimm), None);
     assert_eq!(parse(&[0x31, b'r', b'S', b'T'], dimm), None);
     assert_eq!(parse(&[0x99], dimm), None);
+    for short in [&[0x11u8][..], &[0x11, 60], &[0x12, 0x90], &[0x12, 0x90, 0x01, 10], &[0x21], &[0x22], &[0x23], &[0x24, 0xff], &[0x20]] {
+        assert_eq!(parse(short, tw), None, "{short:02x?}");
+    }
 }
 
 #[test]
@@ -277,4 +281,27 @@ fn the_stacks_events_take_the_c_firmwares_codes_where_they_mean_the_same() {
     assert_eq!(zigbee_event(ev::TX_FAIL, 0x1234, 0xe9, 15), (50, 0xe9), "the MAC status");
     assert_eq!(zigbee_event(ev::STATUS_RX, 0x0b, 0x1234, 15), (41, 0x0b), "the status code");
     assert_eq!(zigbee_event(ev::BLE_LOST, 2, 0, 15), (49, 2));
+}
+
+#[test]
+fn long_names_are_cut_to_what_the_48_octets_hold() {
+    let mut rig = connected(DIMMABLE);
+    let info = |model, firmware, sense| Info { tunable: false, watchdog: false, sense, release: 1, ieee: 1, model, firmware };
+    rig.ble.borrow_mut().set_diag_info(&info("M".repeat(40).leak(), "F".repeat(20).leak(), true));
+    let i = read_long(&mut rig, INFO);
+    assert_eq!(i.len(), 48);
+    assert_eq!(i[2], 0x02, "sense without the watchdog");
+    assert_eq!((i[12], i[46], i[47]), (33, 1, b'F'), "33 octets of model leave one for the firmware");
+    rig.ble.borrow_mut().set_diag_info(&info("Model", "F".repeat(40).leak(), false));
+    let i = read_long(&mut rig, INFO);
+    assert_eq!(i.len(), 48);
+    assert_eq!((i[2], i[12], i[18]), (0x00, 5, 29));
+}
+
+#[test]
+fn a_bulb_outside_a_network_shows_no_address() {
+    let mut rig = connected(DIMMABLE);
+    rig.ble.borrow_mut().set_diag_state(&State { joined: false, short: 0x1234, pan: 0xabcd, ..State::default() });
+    let s = read_long(&mut rig, STATE);
+    assert_eq!(s[12..17], [0, 0xff, 0xff, 0xff, 0xff]);
 }

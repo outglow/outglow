@@ -142,3 +142,26 @@ fn a_sector_that_is_not_as_this_counter_leaves_it_starts_over() {
     store.w[9] = 0xFFFE;
     starts_over(store);
 }
+
+#[test]
+fn the_step_counts_the_power_ons_of_the_sequence() {
+    let (c, _) = PowerCycles::power_on(Words::new(64));
+    assert_eq!(c.step(), 1);
+    let (store, _) = sequence(&[1, 1]);
+    let (c, _) = PowerCycles::power_on(store);
+    assert_eq!(c.step(), 3);
+}
+
+#[test]
+fn the_words_are_erased_only_when_all_are_used() {
+    let mut store = Words::new(64);
+    for _ in 0..62 {
+        store = power(store, 31).0;
+    }
+    assert_eq!(store.erases, 0);
+    for _ in 0..62 {
+        store = power(store, 31).0;
+    }
+    assert_eq!(store.erases, 1);
+}
+

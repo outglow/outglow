@@ -8,14 +8,14 @@ use crate::session::R;
 
 pub fn defs() -> Vec<SimDef> {
     vec![
-        SimDef { name: "mixed_parent_rust", doc: "a stock bulb out of the coordinator's range joins through a Rust bulb", run: parent_rust },
+        SimDef { name: "mixed_parent_rust", doc: "a bulb out of the coordinator's range joins through a Rust bulb (a stock one with --firmware stock)", run: parent_rust },
         SimDef { name: "mixed_parent_stock", doc: "a Rust bulb out of the coordinator's range joins through a stock bulb", run: parent_stock },
-        SimDef { name: "mixed_mesh", doc: "a Rust and a stock bulb relay for each other: routes, many-to-one, source routes, broadcasts", run: mesh },
-        SimDef { name: "mixed_chain", doc: "a chain coordinator - stock - Rust - stock: joins hop by hop, traffic both ways, route records", run: chain },
-        SimDef { name: "mixed_rejoin", doc: "in the chain the Rust bulb, then a stock bulb behind it, then the first stock bulb lose power and come back", run: rejoin },
-        SimDef { name: "mixed_group", doc: "groups and scenes on a group of a Rust and a stock bulb (groupcast)", run: group },
+        SimDef { name: "mixed_mesh", doc: "two bulbs relay for each other: routes, many-to-one, source routes, broadcasts (Rust and stock with --firmware stock)", run: mesh },
+        SimDef { name: "mixed_chain", doc: "a chain coordinator - S1 - R - S2 (S stock with --firmware stock): joins hop by hop, traffic both ways, route records", run: chain },
+        SimDef { name: "mixed_rejoin", doc: "in the chain S1 - R - S2 the first bulb, then the last, lose power and come back", run: rejoin },
+        SimDef { name: "mixed_group", doc: "groups and scenes on a group of two bulbs, groupcast (Rust and stock with --firmware stock)", run: group },
         SimDef { name: "mixed_ota_relay", doc: "Zigbee OTA of a Rust bulb whose frames all go through a stock router", run: ota_relay },
-        SimDef { name: "mixed_conflict", doc: "a stock and a Rust bulb with the same short address: the conflict is resolved", run: conflict },
+        SimDef { name: "mixed_conflict", doc: "two bulbs with the same short address, the conflict is resolved (Rust and stock with --firmware stock)", run: conflict },
     ]
 }
 
@@ -25,6 +25,7 @@ pub const QUANTUM: f64 = 0.25;
 pub enum Fw {
     Rust,
     Stock,
+    C,
 }
 
 impl Fw {
@@ -32,18 +33,28 @@ impl Fw {
         match self {
             Fw::Rust => "rust",
             Fw::Stock => "stock",
+            Fw::C => "c",
         }
     }
     pub fn default_image(self) -> &'static str {
         match self {
             Fw::Rust => "target/tc32/bulb-tc32.bin",
             Fw::Stock => "stock/stock-dimm.bin",
+            Fw::C => "firmware/build/open-eglo.bin",
         }
     }
     pub fn title(self) -> &'static str {
         match self {
             Fw::Rust => "Rust",
             Fw::Stock => "stock",
+            Fw::C => "C",
+        }
+    }
+    pub fn of(img: &Image) -> Fw {
+        match super::Firmware::of(img) {
+            "Rust" => Fw::Rust,
+            "C" => Fw::C,
+            _ => Fw::Stock,
         }
     }
 }
@@ -69,6 +80,12 @@ pub struct Bulb {
     pub img: Image,
 }
 
+impl Bulb {
+    pub fn who(&self) -> String {
+        format!("{} ({})", self.name, self.fw.title())
+    }
+}
+
 pub type Spec = (Fw, &'static str, [u8; 5]);
 
 pub fn build(cx: &SimCtx, specs: &[Spec]) -> R<(Sim, Vec<Bulb>)> {
@@ -91,7 +108,7 @@ pub fn build_on(cx: &SimCtx, coord: Coord, specs: &[Spec]) -> R<(Sim, Vec<Bulb>)
             }
             Some(s) => s.w.add_bulb(node, name),
         };
-        bulbs.push(Bulb { id, fw: *fw, name: name.to_string(), ext: ieee_of(*fw, &rec), img });
+        bulbs.push(Bulb { id, fw: Fw::of(&img), name: name.to_string(), ext: ieee_of(*fw, &rec), img });
     }
     let s = sim.ok_or_else(|| crate::session::Stop::Error("no bulbs".into()))?;
     Ok((s, bulbs))
@@ -263,13 +280,14 @@ fn parent(cx: &mut SimCtx, pfw: Fw, jfw: Fw) -> R<()> {
     let (p, j) = (b[0].clone(), b[1].clone());
     s.w.set_t_off(j.id, 8000.0);
     s.w.air.block(NodeId::Coord, j.id, true);
+    s.w.coord.aps_retry = true;
     s.w.coord.start(&mut s.w.air);
-    cx.say(&format!("== parent P: {}; joiner J: {}; channel 11", pfw.title(), jfw.title()));
+    cx.say(&format!("== parent P: {}; joiner J: {}; channel 11", p.fw.title(), j.fw.title()));
     cx.say(&format!("   {}", describe(&b)));
 
     let ok = s.run_until(15000.0, 10.0, |s| s.announced(p.ext).is_some())?;
     let ps = s.announced(p.ext);
-    if !cx.check(s.now(), &format!("the {} bulb P joins at the coordinator", pfw.title()), ok, &format!("P={}", hexo(ps))) {
+    if !cx.check(s.now(), &format!("the {} bulb P joins at the coordinator", p.fw.title()), ok, &format!("P={}", hexo(ps))) {
         cx.say(&format!("   coordinator events: {}", tail_events(&s, 12)));
         finish(cx, &s, &b);
         return Ok(());
@@ -281,7 +299,7 @@ fn parent(cx: &mut SimCtx, pfw: Fw, jfw: Fw) -> R<()> {
     let ok = s.run_until(60000.0, 10.0, |s| s.announced(j.ext).is_some())?;
     let js = s.announced(j.ext);
     let now = s.now();
-    if !cx.check(now, &format!("the {} bulb J, hearing only P, joins through it", jfw.title()), ok,
+    if !cx.check(now, &format!("the {} bulb J, hearing only P, joins through it", j.fw.title()), ok,
                  &format!("J={}, {:.1} s after its power-on", hexo(js), (now - 8000.0) / 1000.0)) {
         cx.say(&format!("   coordinator events: {}", tail_events(&s, 12)));
         finish(cx, &s, &b);
@@ -360,14 +378,14 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     s.run(34000.0)?;
     let nr = neighbors(&mut s, r)?;
     let nt = neighbors(&mut s, t)?;
-    cx.check(s.now(), "the Rust bulb (S's parent) lists the stock bulb and the coordinator as neighbours",
+    cx.check(s.now(), &format!("{}, S's parent, lists {} and the coordinator as neighbours", rb.who(), sb.who()),
              nr.as_ref().is_some_and(|v| v.contains(&t) && v.contains(&0)), &format!("R's neighbours: {}", hex_list(nr.as_deref().unwrap_or(&[]))));
-    cx.check(s.now(), "the stock bulb lists the Rust bulb as a neighbour", nt.as_ref().is_some_and(|v| v.contains(&r)),
+    cx.check(s.now(), &format!("{} lists {} as a neighbour", sb.who(), rb.who()), nt.as_ref().is_some_and(|v| v.contains(&r)),
              &format!("S's neighbours: {}", hex_list(nt.as_deref().unwrap_or(&[]))));
 
     for (far, near) in [(&sb, &rb), (&rb, &sb)] {
         let (fs, ns) = (sh[if far.id == rid { 0 } else { 1 }], sh[if near.id == rid { 0 } else { 1 }]);
-        cx.say(&format!("-- the {} bulb out of the coordinator's range: everything goes through the {} bulb", far.fw.title(), near.fw.title()));
+        cx.say(&format!("-- {} out of the coordinator's range: everything goes through {}", far.who(), near.who()));
         if far.id == rid {
             s.w.air.block(NodeId::Coord, near.id, false);
             s.w.air.block(NodeId::Coord, far.id, true);
@@ -380,10 +398,10 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
             debug_frames(cx, &s, &b, t0);
         }
         let off = !l.on;
-        cx.check(s.now(), &format!("Off reaches the {} bulb through the {} bulb and the answer finds its way back", far.fw.title(), near.fw.title()),
+        cx.check(s.now(), &format!("Off reaches {} through {} and the answer finds its way back", far.who(), near.who()),
                  dt.is_some() && off, &after(dt, "no default response"));
         let n = relayed(&s, ns, fs, t0, None);
-        cx.check(s.now(), &format!("the {} bulb relayed the {} bulb's frames", near.fw.title(), far.fw.title()), n >= 1, &format!("{n} frame(s)"));
+        cx.check(s.now(), &format!("{} relayed {}'s frames", near.who(), far.who()), n >= 1, &format!("{n} frame(s)"));
         let mut tt = Vec::new();
         for _ in 0..6 {
             tt.push(command2(&mut s, fs, 0x0006, 0x02, &[], 3000.0)?);
@@ -393,21 +411,21 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
         let t0 = s.now();
         concentrator(&mut s)?;
         let n = relayed(&s, ns, 0x0000, t0, Some(0xFFFC));
-        cx.check(s.now(), &format!("the {} bulb relays the coordinator's many-to-one route request", near.fw.title()), n >= 1,
+        cx.check(s.now(), &format!("{} relays the coordinator's many-to-one route request", near.who()), n >= 1,
                  &format!("{n} relayed frame(s)"));
         let dt = command(&mut s, fs, 0x0006, 0x01, &[], 3000.0)?;
         let rec = records(&s, n0, fs);
-        cx.check(s.now(), &format!("the {} bulb's Route Record arrives with the {} bulb added as relay", far.fw.title(), near.fw.title()),
+        cx.check(s.now(), &format!("{}'s Route Record arrives with {} added as relay", far.who(), near.who()),
                  dt.is_some() && rec.iter().any(|x| *x == [ns]), &format!("records from {}: {}", far.name, records_text(&rec)));
         let dt = command(&mut s, ns, 0x0006, 0x02, &[], 3000.0)?;
         let own = s.w.coord.route_records[n0..].iter().any(|x| x.1 == ns && x.2.is_empty());
-        cx.check(s.now(), &format!("the {} bulb sends its own Route Record (no relays) before its answer", near.fw.title()), dt.is_some() && own,
+        cx.check(s.now(), &format!("{} sends its own Route Record (no relays) before its answer", near.who()), dt.is_some() && own,
                  &records_text(&records(&s, n0, ns)));
         s.w.coord.st.via.remove(&fs);
         s.w.coord.source_routes.insert(fs, vec![ns]);
         let (dt, l) = light_cmd(&mut s, far.id, fs, 0x0006, 0x00, &[], 3000.0)?;
         let off = !l.on;
-        cx.check(s.now(), &format!("a source-routed frame to the {} bulb is relayed by the {} bulb", far.fw.title(), near.fw.title()),
+        cx.check(s.now(), &format!("a source-routed frame to {} is relayed by {}", far.who(), near.who()),
                  dt.is_some() && off, &dt.map(|d| format!("answered after {d:.0} ms")).unwrap_or_else(|| "no answer".into()));
         s.w.coord.source_routes.remove(&fs);
     }
@@ -421,7 +439,7 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     bcast_acked(&mut s, 0x01, tid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
-    cx.check(s.now(), "a broadcast On is relayed by the stock bulb to the Rust bulb", was_off && lr && lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
+    cx.check(s.now(), &format!("a broadcast On is relayed by {} to {}", sb.who(), rb.who()), was_off && lr && lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
     s.w.coord.st.via.remove(&r);
     s.w.air.block(NodeId::Coord, rid, false);
     s.w.air.block(NodeId::Coord, tid, true);
@@ -429,7 +447,7 @@ fn mesh(cx: &mut SimCtx) -> R<()> {
     bcast_acked(&mut s, 0x00, rid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
-    cx.check(s.now(), "a broadcast Off is relayed by the Rust bulb to the stock bulb", !lr && !lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
+    cx.check(s.now(), &format!("a broadcast Off is relayed by {} to {}", rb.who(), sb.who()), !lr && !lt, &format!("R {}, S {}", onoff(lr), onoff(lt)));
     bcast_acked(&mut s, 0x02, rid)?;
     s.run(3000.0)?;
     let (lr, lt) = (s.light(rid).on, s.light(tid).on);
@@ -616,7 +634,7 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
     s.w.coord.start(&mut s.w.air);
     cx.say(&format!("== coordinator - S1 - R - S2: {}; channel 11", describe(&b)));
     let ok = s.run_until(12000.0, 10.0, |s| s.announced(b[0].ext).is_some())?;
-    if !cx.check(s.now(), "S1 (stock) joins at the coordinator", ok, &shorts_text(&s, &b)) {
+    if !cx.check(s.now(), &format!("{} joins at the coordinator", b[0].who()), ok, &shorts_text(&s, &b)) {
         return Ok((s, b, None));
     }
     s.run(300.0)?;
@@ -638,7 +656,7 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
         }
     }
     let Some(sh) = join_all(&mut s, &b, 0.0)? else {
-        cx.check(s.now(), "R (Rust) and S2 (stock) join, each through its neighbour in the chain", false,
+        cx.check(s.now(), &format!("{} and {} join, each through its neighbour in the chain", b[1].who(), b[2].who()), false,
                  &format!("{}; coordinator events: {}", shorts_text(&s, &b), tail_events(&s, 10)));
         fates_dump(cx, &s, &b, r);
         if std::env::var_os("MIXED_DEBUG").is_some() {
@@ -662,7 +680,7 @@ fn chain_setup(cx: &mut SimCtx) -> R<(Sim, Vec<Bulb>, Option<Vec<u16>>)> {
             .and_then(|e| e.get("router").and_then(|x| u16::from_str_radix(x.trim_start_matches("0x"), 16).ok()))
     };
     let (ur, us2) = (upd(&s, b[1].ext), upd(&s, b[2].ext));
-    cx.check(s.now(), "R (Rust) joins through S1 and S2 (stock) through R: the Update-Device comes from the parent (R22 4.6.3.2)",
+    cx.check(s.now(), &format!("{} joins through S1 and {} through R: the Update-Device comes from the parent (R22 4.6.3.2)", b[1].who(), b[2].who()),
              ur == Some(sh[0]) && us2 == Some(sh[1]),
              &format!("{}; R reported by {}, S2 by {}", shorts_text(&s, &b), hexo(ur), hexo(us2)));
     let confirmed = |s: &Sim| -> Vec<bool> { sh.iter().map(|&x| key_confirmed(s, x)).collect() };
@@ -684,7 +702,7 @@ fn chain(cx: &mut SimCtx) -> R<()> {
         return Ok(());
     };
     let (s1, r, s2) = (sh[0], sh[1], sh[2]);
-    for (k, what) in [(2usize, "S2 (stock, three hops: S1, R)"), (1, "R (Rust, two hops: S1)")] {
+    for (k, what) in [(2usize, format!("S2 ({}, three hops: S1, R)", b[2].fw.title())), (1, format!("R ({}, two hops: S1)", b[1].fw.title()))] {
         let dt = command2(&mut s, sh[k], 0x0006, 0x00, &[], 5000.0)?;
         s.run(SETTLE_MS)?;
         let l = s.light(b[k].id);
@@ -707,7 +725,7 @@ fn chain(cx: &mut SimCtx) -> R<()> {
     cx.check(s.now(), "six Toggles to S2, each answered within 3 s (sent once more if not)", tt.iter().all(|x| x.is_some()), &times(&tt));
     let (down, up) = (relayed(&s, r, 0x0000, t0, Some(s2)), relayed(&s, r, s2, t0, Some(0x0000)));
     let (down1, up1) = (relayed(&s, s1, 0x0000, t0, Some(s2)), relayed(&s, s1, s2, t0, Some(0x0000)));
-    cx.check(s.now(), "both relays carried them both ways (R: Rust, S1: stock)", down >= 6 && up >= 6 && down1 >= 6 && up1 >= 6,
+    cx.check(s.now(), &format!("both relays carried them both ways (R: {}, S1: {})", b[1].fw.title(), b[0].fw.title()), down >= 6 && up >= 6 && down1 >= 6 && up1 >= 6,
              &format!("R relayed {down} down, {up} up; S1 {down1} down, {up1} up"));
     let n0 = s.w.coord.route_records.len();
     concentrator(&mut s)?;
@@ -731,7 +749,7 @@ fn chain(cx: &mut SimCtx) -> R<()> {
     cx.check(s.now(), "a broadcast On reaches the whole chain", on.iter().all(|x| *x),
              &b.iter().zip(&on).map(|(x, o)| format!("{} {}", x.name, onoff(*o))).collect::<Vec<_>>().join(", "));
     if let Some(lost) = dropped_by_driver(&s, &b[1]) {
-        cx.check(s.now(), "the Rust bulb's driver takes every frame its radio received: none cleared unread before a \
+        cx.check(s.now(), "R's driver (Rust) takes every frame its radio received: none cleared unread before a \
                   transmission or a BLE event, none overwritten by the next one before its interrupt ran",
                  lost.is_empty(), &if lost.is_empty() { "none lost".to_string() } else { lost.join("; ") });
     }
@@ -874,7 +892,7 @@ fn group(cx: &mut SimCtx) -> R<()> {
         seen_off |= !s.light(b[1].id).on;
     }
     s.run(1000.0)?;
-    cx.say(&format!("   the stock bulb went off for a moment after Store Scene (its own confirmation): {seen_off}"));
+    cx.say(&format!("   {} went off for a moment after Store Scene (the stock firmware's own confirmation): {seen_off}", b[1].who()));
     let (lr, ls) = both(&s);
     cx.check(s.now(), "Move to Level 254 to the group: both at full", lr.duty > 99.0 && ls.duty > 99.0, &format!("R {}, S {}", lt(&lr), lt(&ls)));
     groupcast(&mut s, G, 0x0005, 0x05, &[G as u8, (G >> 8) as u8, 0x01]);
@@ -884,12 +902,12 @@ fn group(cx: &mut SimCtx) -> R<()> {
              (lr.duty - lvl127.0).abs() < 1.0 && (ls.duty - lvl127.1).abs() < 1.0,
              &format!("R {}, S {} (stored {:.1} %, {:.1} %)", lt(&lr), lt(&ls), lvl127.0, lvl127.1));
     let rm = ask(&mut s, sh[1], 0x0004, 0x03, &[G as u8, (G >> 8) as u8], 0x03)?;
-    cx.check(s.now(), "Remove Group from the stock bulb: SUCCESS", rm.as_deref() == Some(&[0x00, G as u8, (G >> 8) as u8][..]),
+    cx.check(s.now(), &format!("Remove Group from {}: SUCCESS", b[1].who()), rm.as_deref() == Some(&[0x00, G as u8, (G >> 8) as u8][..]),
              &rm.as_deref().map(hx).unwrap_or_else(|| "none".into()));
     groupcast(&mut s, G, 0x0006, 0x00, &[]);
     s.run(3000.0)?;
     let (lr, ls) = both(&s);
-    cx.check(s.now(), "Off to the group: the Rust bulb (still a member) off, the stock bulb (no longer) stays on", !lr.on && ls.on,
+    cx.check(s.now(), &format!("Off to the group: {} (still a member) off, {} (no longer) stays on", b[0].who(), b[1].who()), !lr.on && ls.on,
              &format!("R {}, S {}", lt(&lr), lt(&ls)));
     let (ok, rs) = resets_text(&s, &b);
     cx.check(s.now(), "no resets", ok, &format!("resets {rs}"));
@@ -1003,7 +1021,7 @@ fn conflict(cx: &mut SimCtx) -> R<()> {
     cx.say(&format!("== {}", describe(&b)));
     let ok = s.run_until(15000.0, 10.0, |s| s.announced(b[0].ext).is_some())?;
     let r0 = s.announced(b[0].ext);
-    if !cx.check(s.now(), "the Rust bulb joins", ok, &format!("R={}", hexo(r0))) {
+    if !cx.check(s.now(), &format!("{} joins", b[0].who()), ok, &format!("R={}", hexo(r0))) {
         finish(cx, &s, &b);
         return Ok(());
     }
@@ -1013,7 +1031,7 @@ fn conflict(cx: &mut SimCtx) -> R<()> {
     s.w.coord.set_next_short(r0);
     let ok = s.run_until(60000.0, 10.0, |s| s.announced(b[1].ext).is_some())?;
     let s0 = s.announced(b[1].ext);
-    if !cx.check(s.now(), "while it is off, the stock bulb joins and is given the same address", ok && s0 == Some(r0),
+    if !cx.check(s.now(), &format!("while it is off, {} joins and is given the same address", b[1].who()), ok && s0 == Some(r0),
                  &format!("S={}", hexo(s0))) {
         finish(cx, &s, &b);
         return Ok(());
@@ -1024,7 +1042,7 @@ fn conflict(cx: &mut SimCtx) -> R<()> {
     s.run(5000.0)?;
     let back = s.events("device-announce")[ann0..].iter().any(|e| e.get("ext") == Some(fmt_ext(b[0].ext).as_str())
         && e.get("short") == Some(format!("{r0:#06x}").as_str()));
-    cx.check(s.now(), "the Rust bulb is back with the address from its NV and announces it: two devices on one address", back,
+    cx.check(s.now(), &format!("{} is back with the address from its NV and announces it: two devices on one address", b[0].who()), back,
              &s.events("device-announce")[ann0..].iter().map(|e| e.details.clone()).collect::<Vec<_>>().join("; "));
     s.run(60000.0)?;
     let now = own_shorts(&s, &b, s.now() - 20000.0);

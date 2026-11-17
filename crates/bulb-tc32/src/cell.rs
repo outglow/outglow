@@ -90,19 +90,15 @@ impl<const N: usize> SharedBuf<N> {
 
     #[inline(always)]
     pub fn copy_from(&self, at: usize, src: &[u8]) {
-        let mut i = 0;
-        while i < src.len() {
-            self.write(at + i, src[i]);
-            i += 1;
+        for (i, b) in src.iter().enumerate() {
+            self.write(at + i, *b);
         }
     }
 
     #[inline(always)]
     pub fn copy_to(&self, at: usize, dst: &mut [u8]) {
-        let mut i = 0;
-        while i < dst.len() {
-            dst[i] = self.read(at + i);
-            i += 1;
+        for (i, b) in dst.iter_mut().enumerate() {
+            *b = self.read(at + i);
         }
     }
 
@@ -132,4 +128,13 @@ impl<T> TakeOnce<T> {
         self.taken.set(true);
         Some(unsafe { (*self.value.get()).write(f()) })
     }
+
+    #[cfg(test)]
+    pub fn release(&self) {
+        self.taken.set(false);
+    }
 }
+
+#[cfg(test)]
+#[path = "tests/cell.rs"]
+mod tests;

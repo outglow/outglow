@@ -17,6 +17,9 @@ pub fn def() -> SimDef {
 }
 
 const NAMES: [&str; 3] = ["K1", "K2", "K3"];
+const LEVEL_READS: usize = 10;
+const LEVEL_READ_GAP_MS: f64 = 400.0;
+const JUMP_DB: f64 = 10.0;
 const EXTS: [u64; 3] = [0xa4c1381122330001, 0xa4c1384455660002, 0xa4c1387788990003];
 
 fn index(id: NodeId) -> Option<usize> {
@@ -33,7 +36,7 @@ fn is_probe(psdu: &[u8]) -> bool {
 
 struct Corridor {
     ch: [[Option<model::Channel>; 3]; 3],
-    g: model::Rng,
+    g: [[[model::Rng; 2]; 3]; 3],
 }
 
 impl Corridor {
@@ -49,7 +52,8 @@ impl Corridor {
                 }
             }
         }
-        Corridor { ch, g: model::Rng(11) }
+        let g = std::array::from_fn(|i| std::array::from_fn(|j| std::array::from_fn(|k| model::Rng(11 + 1000 * (3 * i + j) as u64 + k as u64))));
+        Corridor { ch, g }
     }
 
     fn both(&mut self, a: usize, b: usize, mut f: impl FnMut(&mut model::Channel)) {
@@ -68,6 +72,7 @@ impl AirChannel for Air {
         let mut c = self.0.borrow_mut();
         let Corridor { ch, g } = &mut *c;
         let link = ch[s][r].as_mut().unwrap();
+        let g = &mut g[s][r][is_probe(psdu) as usize];
         match link.rssi(g, t0.max(0.0) as u32) {
             Some(v) => Fate::Ok(v as i64),
             None if is_probe(psdu) => Fate::Lost,
@@ -190,17 +195,27 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let acks = x.s.w.air.frames.iter().filter(|f| 64_000.0 <= f.t0 && f.t0 < 76_000.0 && f.psdu.len() == 5 && ps.iter().any(|p| 0.0 < f.t0 - p.0 && f.t0 - p.0 < 2.0)).count();
     x.check(cx, "nobody acknowledges a probe", acks == 0, &format!("ACK={acks}"));
 
-    let ln = x.read(sh[0], CL_SENSE, A_LINES, Some(MANU))?.unwrap_or_default();
-    let lines: Vec<(u16, i8, u8, u8, u8)> = (0..ln.len() / 6).map(|k| {
-        let i = 6 * k;
-        (u16::from_le_bytes([ln[i], ln[i + 1]]), ln[i + 2] as i8, ln[i + 3], ln[i + 4], ln[i + 5])
-    }).collect();
-    let level_of = |src: u16| lines.iter().find(|l| l.0 == src).map(|l| l.1 as i32);
+    let mut lines: Vec<(u16, i8, u8, u8, u8)> = Vec::new();
+    let mut levels: Vec<Vec<f64>> = vec![Vec::new(); 2];
+    for _ in 0..LEVEL_READS {
+        let ln = x.read(sh[0], CL_SENSE, A_LINES, Some(MANU))?.unwrap_or_default();
+        lines = (0..ln.len() / 6).map(|k| {
+            let i = 6 * k;
+            (u16::from_le_bytes([ln[i], ln[i + 1]]), ln[i + 2] as i8, ln[i + 3], ln[i + 4], ln[i + 5])
+        }).collect();
+        for (v, src) in levels.iter_mut().zip([sh[1], sh[2]]) {
+            v.extend(lines.iter().filter(|l| l.0 == src).map(|l| l.1 as f64));
+        }
+        x.s.run(LEVEL_READ_GAP_MS)?;
+    }
+    let mean = |v: &[f64]| (v.len() == LEVEL_READS).then(|| v.iter().sum::<f64>() / v.len() as f64);
+    let (m12, m13) = (mean(&levels[0]), mean(&levels[1]));
     let (l12, l13) = (model::link("K1", "K2").level, model::link("K1", "K3").level);
-    let near = |v: Option<i32>, want: f64| v.is_some_and(|v| (v as f64 - want).abs() <= 4.0);
+    let near = |v: Option<f64>, want: f64| v.is_some_and(|v| (v - want).abs() <= 4.0);
     let ltext = py::list(lines.iter().map(|(s, r, n, sm, st)| py::tuple([format!("'{s:#x}'"), r.to_string(), py::float(*n as f64 / 8.0), sm.to_string(), st.to_string()])));
-    x.check(cx, &format!("K1's lines: from K2 near {l12:.1} dBm, from K3 near {l13:.1} dBm (the measured levels)"),
-            lines.len() == 2 && near(level_of(sh[1]), l12) && near(level_of(sh[2]), l13), &ltext);
+    let shown = |m: Option<f64>| m.map_or("none".to_string(), |m| format!("{m:.1}"));
+    x.check(cx, &format!("K1's lines: from K2 near {l12:.1} dBm, from K3 near {l13:.1} dBm (the measured levels; the last sample of each line, read {LEVEL_READS} times)"),
+            lines.len() == 2 && near(m12, l12) && near(m13, l13), &format!("means {} and {}; last read {ltext}", shown(m12), shown(m13)));
 
     let r = x.zcl(sh[0], 0x0006, 0x00, &[], None, true)?;
     x.s.run(1500.0)?;
@@ -276,11 +291,11 @@ fn run(cx: &mut SimCtx) -> R<()> {
     x.s.run(8000.0)?;
 
     let t0 = x.now();
-    corridor.borrow_mut().both(0, 1, |c| c.offset = -8.0);
+    corridor.borrow_mut().both(0, 1, |c| c.offset = -JUMP_DB);
     x.zcl(sh[1], 0x0006, 0x00, &[], None, true)?;
     x.s.run(12_000.0)?;
     let (a, b) = (occupied_since(&x, sh[0], t0).len(), occupied_since(&x, sh[1], t0).len());
-    x.check(cx, "K2 off + a jump of 8 dB on K1-K2: no occupancy (K1 from the counter in the probe, K2 from its own light)",
+    x.check(cx, &format!("K2 off + a jump of {JUMP_DB:.0} dB on K1-K2: no occupancy (K1 from the counter in the probe, K2 from its own light)"),
             a == 0 && b == 0, &format!("K1={a} K2={b}"));
     corridor.borrow_mut().both(0, 1, |c| c.offset = 0.0);
     x.s.run(6000.0)?;

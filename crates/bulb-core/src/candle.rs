@@ -3,6 +3,7 @@ pub const STILL_MS: u64 = 10;
 pub const START_MS: u64 = 100;
 pub const FLICKER_MS: u64 = 128;
 pub const THRESHOLD: u8 = 0xD0;
+pub const MAX_STEPS: usize = 1024;
 
 pub fn base(level: u8) -> u8 {
     level.clamp(20, 238)
@@ -36,7 +37,10 @@ impl Candle {
 
     pub fn tick(&mut self, now_ms: u64, level: u8) -> bool {
         let before = self.shown;
-        while now_ms >= self.next_ms {
+        for _ in 0..MAX_STEPS {
+            if now_ms < self.next_ms {
+                break;
+            }
             let (index, speed) = match self.flicker {
                 Some(f) => f,
                 None => {
@@ -57,6 +61,7 @@ impl Candle {
             self.flicker = Some((index + 1, speed));
             self.next_ms += FLICKER_MS / speed as u64;
         }
+        self.next_ms = self.next_ms.max(now_ms);
         self.shown != before
     }
 }
@@ -98,4 +103,70 @@ mod tests {
         assert!(gaps.iter().any(|&g| g == 64) && gaps.iter().any(|&g| g == 128));
         assert!(gaps.iter().all(|&g| g >= 64), "never faster than a step at speed 2: {gaps:?}");
     }
+
+    #[test]
+    fn the_random_numbers_are_xorshift32() {
+        let mut c = Candle::new(128, 0, 0);
+        assert_eq!([c.random(), c.random(), c.random()], [1056, 2054, 52392]);
+        assert_eq!(c.rng, 0x9DCC_A8C5);
+    }
+
+    #[test]
+    fn a_seed_gives_the_same_flicker_as_the_stock_firmware() {
+        let mut c = Candle::new(128, 0, 0x1234_5678);
+        let mut changes = Vec::new();
+        for t in 0..4500u64 {
+            if c.tick(t, 128) {
+                changes.push((t, c.level()));
+            }
+        }
+        assert_eq!(
+            changes,
+            [
+                (120, 126), (248, 128), (376, 141), (504, 128), (632, 136), (760, 124), (888, 141), (1016, 144),
+                (1144, 128), (1272, 136), (1400, 139), (1528, 141), (1656, 144), (1784, 128), (1912, 141), (2040, 128),
+                (2168, 139), (2296, 128), (2424, 139), (2552, 128), (2680, 136), (2808, 139), (2936, 128), (3064, 141),
+                (3192, 128), (3320, 144), (3448, 128), (3576, 139), (3704, 128), (3832, 141), (3960, 128), (4088, 139),
+                (4216, 128), (4354, 126), (4482, 128)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_late_tick_catches_up_as_if_every_millisecond_had_ticked() {
+        let mut every = Candle::new(128, 0, 0x1234_5678);
+        for t in 0..=3000u64 {
+            every.tick(t, 128);
+        }
+        let mut late = Candle::new(128, 0, 0x1234_5678);
+        late.tick(3000, 128);
+        assert_eq!(late, every);
+    }
+
+    #[test]
+    fn a_tick_an_hour_late_stops_after_max_steps_and_flickers_on_from_then() {
+        let mut c = Candle::new(128, 0, 0x1234_5678);
+        c.tick(3_600_000, 128);
+        assert_eq!(c.next_ms, 3_600_000, "behind after {MAX_STEPS} steps, the next one is due at once");
+        let mut changes = 0;
+        let mut last = c.level();
+        for t in 3_600_000..3_660_000u64 {
+            c.tick(t, 128);
+            if c.level() != last {
+                changes += 1;
+                last = c.level();
+            }
+        }
+        assert!(changes > 100, "it flickers after the gap: {changes} changes in a minute");
+    }
+
+    #[test]
+    fn a_tick_says_whether_the_level_changed() {
+        let mut c = Candle::new(128, 0, 0x1234_5678);
+        assert!(!c.tick(99, 128));
+        assert!(!c.tick(119, 128));
+        assert!(c.tick(120, 128));
+        assert!(!c.tick(121, 128));
+    }
 }
+

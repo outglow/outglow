@@ -13,7 +13,7 @@ pub const DEFAULT_MTU: usize = 23;
 pub const CHUNK_MIN: usize = 16;
 
 pub fn telink_uuid(short: u8) -> uuid::Uuid {
-    uuid::Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_1900 | short as u128)
+    uuid::Uuid::from_u128(0x0001_0203_0405_0607_0809_0a0b_0c0d_1900 + short as u128)
 }
 
 pub fn stock_error(e: u8) -> String {
@@ -177,8 +177,8 @@ impl Status {
         let r = raw;
         let layout = match r.len() {
             9 => Target::Stock,
-            n if n >= 9 => Target::Outglow,
-            _ => Target::Unknown,
+            10.. => Target::Outglow,
+            0..9 => Target::Unknown,
         };
         let stock = layout == Target::Stock;
         Status {
@@ -314,16 +314,16 @@ pub async fn run_ota<T: Transport>(t: &mut T, img: &[u8], o: &OtaOptions, log: &
 
     let mut sent = vec![0u32; total];
     let (mut resends, mut resent_packets) = (0u32, 0u32);
-    let (mut stuck_from, mut stuck_n) = (-1i64, 0u32);
+    let (mut stuck_from, mut stuck_n) = (None, 0u32);
     let mut resend_point = |st: &Status, place: &str, log: &mut dyn FnMut(&str)| -> Result<Option<usize>> {
         if !st.resumable() {
             return Ok(None);
         }
         let nxt = st.next_index().unwrap();
-        if nxt as i64 <= stuck_from {
+        if stuck_from.is_some_and(|s| nxt <= s) {
             stuck_n += 1;
         } else {
-            (stuck_from, stuck_n) = (nxt as i64, 1);
+            (stuck_from, stuck_n) = (Some(nxt), 1);
         }
         if stuck_n > o.max_resends {
             bail!("{place}: {} resends from block {nxt} without progress ({})", o.max_resends, st.describe());
@@ -387,8 +387,18 @@ mod tests {
     const MAC6: [u8; 6] = [0xa4, 0xc1, 0x38, 0x12, 0x34, 0x56];
     const RND8: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
+    fn quiet(_: &str) {}
+
     fn img() -> Vec<u8> {
         (0..1500).map(|i: usize| (i * 31 + 7) as u8).collect()
+    }
+
+    #[test]
+    fn hex_both_ways() {
+        assert_eq!(unhex(" 00ff10 ").unwrap(), [0, 0xff, 0x10]);
+        assert_eq!(unhex("0g").unwrap_err().to_string(), "0g: invalid digit found in string");
+        assert_eq!(unhex("abc").unwrap_err().to_string(), "odd number of hex digits");
+        assert_eq!(hex(&[0, 0xab]), "00ab");
     }
 
     #[test]
@@ -484,7 +494,10 @@ mod tests {
         drop: Vec<usize>,
         trace: Vec<String>,
         buf: Vec<u8>,
-        fail_reads: bool,
+        reads: u32,
+        refuse_after: u32,
+        end_status: Option<Vec<u8>>,
+        pair: Vec<u8>,
     }
 
     impl FakeStock {
@@ -497,12 +510,15 @@ mod tests {
                 last_rx: 0xFFFF,
                 error: 0,
                 errors: 0,
-                erasing: 0,
+                erasing: 2,
                 damage: damage.to_vec(),
                 drop: drop.to_vec(),
                 trace: vec![],
                 buf: vec![],
-                fail_reads: false,
+                reads: 0,
+                refuse_after: u32::MAX,
+                end_status: None,
+                pair: vec![0x0d, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18],
             }
         }
 
@@ -513,13 +529,16 @@ mod tests {
 
     impl Transport for FakeStock {
         async fn write(&mut self, ch: u8, p: &[u8]) -> Result<()> {
+            if ch == PAIR {
+                self.trace.push(format!("pair {}", hex(p)));
+                return Ok(());
+            }
             assert_eq!(ch, OTA);
             self.trace.push(format!("w {}", hex(p)));
             if self.state == 0 {
                 assert_eq!(p.len(), self.d + 4);
                 assert_eq!(p[2] as usize, self.img.len() / 4096 + 2);
                 self.state = 1;
-                self.erasing = 2;
                 return Ok(());
             }
             if p.len() == 4 {
@@ -561,13 +580,19 @@ mod tests {
             Ok(())
         }
 
-        async fn read(&mut self, _ch: u8) -> Result<Vec<u8>> {
+        async fn read(&mut self, ch: u8) -> Result<Vec<u8>> {
+            if ch == PAIR {
+                self.trace.push("pair r".into());
+                return Ok(self.pair.clone());
+            }
+            assert!(self.trace.len() < 100_000, "the bulb was read without end");
             self.trace.push("r".into());
-            if self.fail_reads {
+            self.reads += 1;
+            if self.reads > self.refuse_after {
                 return Ok(vec![0, 4, 0, 0, 0, 0, 0, 0, 0]);
             }
             if self.state == 1 {
-                self.erasing -= 1;
+                self.erasing = self.erasing.saturating_sub(1);
                 if self.erasing == 0 {
                     self.state = 2;
                 }
@@ -575,7 +600,8 @@ mod tests {
             if self.state == 4 {
                 let ok = self.last_ok as usize == packet_count(self.img.len(), self.d) - 1
                     && self.buf[..self.img.len()] == self.img[..];
-                return Ok(vec![4, if ok { 0 } else { 1 }, 0, 0, 0, 0, 0, 100, 0]);
+                let st = vec![4, if ok { 0 } else { 1 }, 0, 0, 0, 0, 0, 100, 0];
+                return Ok(self.end_status.clone().unwrap_or(st));
             }
             let mut r = vec![self.state, self.error];
             r.extend_from_slice(&self.last_ok.to_le_bytes());
@@ -605,6 +631,11 @@ mod tests {
         assert_eq!(r.unwrap(), [4, 0, 0, 0, 0, 0, 0, 100, 0]);
         assert_eq!(f.buf.len(), 94 * 16);
         assert!(!logs.iter().any(|l| l.contains("resend")));
+        assert_eq!(logs[..3], ["erasing: 2 4K sectors", "block 16 B, packet 20 B (ATT_MTU 23), 94 packets", "erase finished after ~8 s"]);
+        assert_eq!(logs[3], "packet 0/94");
+        assert_eq!(logs[4..], ["OTA finished successfully (status 0)"]);
+        assert_eq!(f.trace[..5], ["w 0000020000000000000000000000000000000000", "s 5000", "r", "s 3000", "r"]);
+        assert_eq!(f.trace.iter().filter(|t| *t == "r").count(), 2 + 94 / 8 + 1);
     }
 
     #[tokio::test]
@@ -641,67 +672,159 @@ mod tests {
         let img = img();
         let mut f = FakeStock::new(&img, 16, &[37; 20], &[]);
         let o = OtaOptions { max_resends: 3, ..Default::default() };
-        let e = run_ota(&mut f, &img, &o, &mut |_| {}).await.unwrap_err().to_string();
-        assert!(e.contains("3 resends from block 37 without progress"), "{e}");
+        let e = run_ota(&mut f, &img, &o, &mut quiet).await.unwrap_err().to_string();
+        assert_eq!(e, "after block 44: 3 resends from block 37 without progress (state 3, CRC error, last written block 36, last received 37, consecutive errors 4)");
     }
 
     #[tokio::test]
     async fn a_refusing_bulb_aborts() {
         let img = img();
         let mut f = FakeStock::new(&img, 16, &[], &[]);
-        f.fail_reads = false;
-        let o = OtaOptions::default();
-        struct Refuse(FakeStock, u32);
-        impl Transport for Refuse {
-            async fn write(&mut self, ch: u8, p: &[u8]) -> Result<()> {
-                self.0.write(ch, p).await
-            }
-            async fn read(&mut self, ch: u8) -> Result<Vec<u8>> {
-                self.1 += 1;
-                self.0.fail_reads = self.1 > 2;
-                self.0.read(ch).await
-            }
-            async fn sleep(&mut self, _ms: u64) {}
-        }
-        let mut t = Refuse(f, 0);
-        let e = run_ota(&mut t, &img, &o, &mut |_| {}).await.unwrap_err().to_string();
-        assert!(e.starts_with("bulb aborted OTA at packet 7"), "{e}");
+        f.refuse_after = 2;
+        let e = run_ota(&mut f, &img, &OtaOptions::default(), &mut quiet).await.unwrap_err().to_string();
+        assert_eq!(e, "bulb aborted OTA at packet 7: 000400000000000000 (state 0, packet in the wrong state, last written block 0, last received 0, consecutive errors 0)");
     }
 
     #[tokio::test]
     async fn erase_timeout() {
-        struct Never;
-        impl Transport for Never {
-            async fn write(&mut self, _: u8, _: &[u8]) -> Result<()> {
-                Ok(())
-            }
-            async fn read(&mut self, _: u8) -> Result<Vec<u8>> {
-                Ok(vec![1, 0, 0xff, 0xff, 0xff, 0xff, 0, 0, 0])
-            }
-            async fn sleep(&mut self, _ms: u64) {}
+        let img = img();
+        let mut f = FakeStock::new(&img, 16, &[], &[]);
+        f.erasing = u8::MAX;
+        let e = run_ota(&mut f, &img, &OtaOptions::default(), &mut quiet).await.unwrap_err();
+        assert_eq!(e.to_string(), "erase did not finish: 0100ffffffff000000");
+        assert_eq!(f.reads, 30);
+        assert_eq!(f.trace.iter().filter(|t| *t == "s 3000").count(), 29);
+    }
+
+    #[test]
+    fn why_a_block_size() {
+        assert_eq!(pick_chunk(247, Target::Unknown, None).unwrap(), (16, "unknown handler limit 16 B".to_string()));
+        assert_eq!(pick_chunk(10, Target::Stock, None).unwrap(), (16, "original firmware handler limit 240 B".to_string()));
+        assert_eq!(pick_chunk(64, Target::Stock, None).unwrap(), (57, "ATT_MTU 64 - 7".to_string()));
+        assert_eq!(pick_chunk(64, Target::Outglow, None).unwrap(), (57, "ATT_MTU 64 - 7".to_string()));
+        assert_eq!(pick_chunk(247, Target::Outglow, Some(16)).unwrap(), (16, "requested".to_string()));
+        assert_eq!(pick_chunk(247, Target::Stock, Some(240)).unwrap().0, 240);
+        assert_eq!(pick_chunk(247, Target::Stock, Some(241)).unwrap_err().to_string(), "chunk 241 B outside 16..240 (ATT_MTU 247 - 7)");
+        assert_eq!(pick_chunk(5, Target::Stock, Some(16)).unwrap_err().to_string(), "chunk 16 B outside 16..0 (ATT_MTU 5 - 7)");
+        assert_eq!(
+            pick_chunk(247, Target::Outglow, Some(58)).unwrap_err().to_string(),
+            "chunk 58 B is more than the Outglow OTA handler takes (57 B)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_erase_is_waited_for_as_long_as_asked() {
+        let img = img();
+        for (limit, reads) in [(7, 2), (8, 3), (11, 4)] {
+            let mut f = FakeStock::new(&img, 16, &[], &[]);
+            f.erasing = u8::MAX;
+            let o = OtaOptions { erase_timeout_s: limit, ..Default::default() };
+            let e = run_ota(&mut f, &img, &o, &mut quiet).await.unwrap_err();
+            assert_eq!((e.to_string().as_str(), f.reads), ("erase did not finish: 0100ffffffff000000", reads), "{limit}");
         }
-        let e = run_ota(&mut Never, &img(), &OtaOptions::default(), &mut |_| {}).await.unwrap_err();
-        assert!(e.to_string().starts_with("erase did not finish"));
     }
 
     #[tokio::test]
     async fn login_over_a_transport() {
-        struct Pair(Vec<Vec<u8>>);
-        impl Transport for Pair {
-            async fn write(&mut self, ch: u8, p: &[u8]) -> Result<()> {
-                assert_eq!(ch, PAIR);
-                self.0.push(p.to_vec());
-                Ok(())
-            }
-            async fn read(&mut self, _: u8) -> Result<Vec<u8>> {
-                Ok([0x0d, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18].to_vec())
-            }
-            async fn sleep(&mut self, _ms: u64) {}
-        }
         let pw = secure_password(&MAC6);
-        let mut t = Pair(vec![]);
-        let k = login(&mut t, b"unpaired", &pw, &RND8, &mut |_| {}).await.unwrap();
-        assert_eq!(hex(&t.0[0]), "0c010203040506070819e277313fa22e08");
+        let mut t = FakeStock::new(&img(), 16, &[], &[]);
+        let mut log = vec![];
+        let k = login(&mut t, b"unpaired", &pw, &RND8, &mut |l| log.push(l.to_string())).await.unwrap();
+        assert_eq!(t.trace, ["pair 0c010203040506070819e277313fa22e08", "pair r"]);
         assert_eq!(hex(&k), "50d0bf84818716cc0527cf88c2c12c71");
+        assert_eq!(log, ["logged in (response 0d1112131415161718)"]);
+    }
+
+    #[tokio::test]
+    async fn a_login_the_bulb_refuses() {
+        let mut t = FakeStock::new(&img(), 16, &[], &[]);
+        t.pair = vec![0x0d; 9];
+        assert!(login(&mut t, b"n", b"p", &RND8, &mut quiet).await.is_ok());
+        t.pair.pop();
+        let e = login(&mut t, b"n", b"p", &RND8, &mut quiet).await.unwrap_err();
+        assert_eq!(e.to_string(), "login refused: 0d0d0d0d0d0d0d0d");
+        t.pair = vec![0x0e; 9];
+        let e = login(&mut t, b"n", b"p", &RND8, &mut quiet).await.unwrap_err();
+        assert_eq!(e.to_string(), "login refused: 0e0e0e0e0e0e0e0e0e");
+    }
+
+    #[test]
+    fn the_original_firmwares_errors() {
+        let all: Vec<String> = (0..=6).map(stock_error).collect();
+        assert_eq!(
+            all,
+            ["ok", "CRC error", "sequence error", "index beyond the buffer", "packet in the wrong state", "flash read-back differs", "error 6"]
+        );
+        assert_eq!(stock_error(255), "error 255");
+    }
+
+    #[test]
+    fn status_descriptions() {
+        assert_eq!(
+            Status::parse(&[3, 2, 0xff, 0xff, 9, 0, 4, 0, 0]).describe(),
+            "state 3, sequence error, last written block none, last received 9, consecutive errors 4"
+        );
+        assert_eq!(Status::parse(&[1]).describe(), "state 1, result None, blocks received None");
+        assert_eq!(Status::parse(&[]).describe(), "state None, result None, blocks received None");
+        assert_eq!(Status::parse(&[3, 0, 7, 0, 0, 0, 0, 0, 0, 0]).describe(), "state 3, result 0, blocks received 7");
+        assert_eq!(Status::parse(&[1, 2, 3]).layout, Target::Unknown);
+        assert_eq!(Status::parse(&[3, 0, 7, 0]).describe(), "state 3, result 0, blocks received 7");
+        assert_eq!(Status::parse(&[3, 0, 7]).describe(), "state 3, result 0, blocks received None");
+        assert_eq!(Status::parse(&[0; 10]).layout, Target::Outglow);
+        assert_eq!(Status::parse(&[0; 8]).layout, Target::Unknown);
+        let s = Status::parse(&[3, 2, 4, 0, 5, 0, 1, 0, 0]);
+        assert!(s.resumable() && !s.failed());
+        assert_eq!((s.last_ok, s.last_rx, s.errors, s.next_index()), (Some(4), Some(5), Some(1), Some(5)));
+        for (state, error, resumable, failed) in [(3, 0, false, false), (2, 1, false, false), (3, 3, false, true), (3, 5, false, true), (3, 6, false, false), (0, 0, false, true)] {
+            let s = Status::parse(&[state, error, 0, 0, 0, 0, 0, 0, 0]);
+            assert_eq!((s.resumable(), s.failed()), (resumable, failed), "{state} {error}");
+        }
+        let o = Status::parse(&[3, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(!o.resumable() && !o.failed() && o.next_index().is_none());
+        assert_eq!(Status::parse(&[0xff, 0, 0xff, 0xff, 0, 0, 0, 0, 0]).next_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn resends_that_make_progress_are_not_counted_against_it() {
+        let img = img();
+        let o = OtaOptions { max_resends: 2, ..Default::default() };
+        let mut f = FakeStock::new(&img, 16, &[3, 10, 20, 30], &[]);
+        let mut logs = vec![];
+        run_ota(&mut f, &img, &o, &mut |l| logs.push(l.to_string())).await.unwrap();
+        assert_eq!(logs.iter().filter(|l| l.starts_with("bulb reports CRC error")).count(), 4);
+        let mut f = FakeStock::new(&img, 16, &[0, 0, 1, 1], &[]);
+        run_ota(&mut f, &img, &o, &mut quiet).await.unwrap();
+        let mut f = FakeStock::new(&img, 16, &[0, 0, 0], &[]);
+        let e = run_ota(&mut f, &img, &o, &mut quiet).await.unwrap_err().to_string();
+        assert!(e.contains(": 2 resends from block 0 without progress"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_final_status_of_two_bytes_is_enough() {
+        let mut f = FakeStock::new(&img(), 16, &[], &[]);
+        f.end_status = Some(vec![4, 0]);
+        assert_eq!(run_ota(&mut f, &img(), &OtaOptions::default(), &mut quiet).await.unwrap(), [4, 0]);
+    }
+
+    #[tokio::test]
+    async fn blocks_below_16_bytes_are_refused() {
+        let mut f = FakeStock::new(&img(), 16, &[], &[]);
+        let o = OtaOptions { chunk: 15, ..Default::default() };
+        let e = run_ota(&mut f, &img(), &o, &mut quiet).await.unwrap_err();
+        assert_eq!(e.to_string(), "block 15 B is less than 16 B");
+        assert!(f.trace.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_bad_final_status_fails() {
+        let mut other = img();
+        other[100] ^= 1;
+        let mut f = FakeStock::new(&other, 16, &[], &[]);
+        let e = run_ota(&mut f, &img(), &OtaOptions::default(), &mut quiet).await.unwrap_err();
+        assert_eq!(e.to_string(), "OTA end: status 040100000000006400");
+        let mut f = FakeStock::new(&img(), 16, &[], &[]);
+        f.end_status = Some(vec![2]);
+        let e = run_ota(&mut f, &img(), &OtaOptions::default(), &mut quiet).await.unwrap_err();
+        assert_eq!(e.to_string(), "OTA end: status 02");
     }
 }

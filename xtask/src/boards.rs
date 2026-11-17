@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
@@ -27,16 +27,7 @@ const PWM_MUX: [(&str, u32, u32, u32, &str); 25] = [
     ("PD5", 0x5af, 2, 2, "PWM0_N"),
 ];
 
-fn gpio_func(port: char) -> Option<u32> {
-    Some(match port {
-        'A' => 0x586,
-        'B' => 0x58e,
-        'C' => 0x596,
-        'D' => 0x59e,
-        'E' => 0x5a6,
-        _ => return None,
-    })
-}
+const GPIO_FUNC: [u32; 4] = [0x586, 0x58e, 0x596, 0x59e];
 
 const IMAGE_TYPES: [(&str, u16); 21] = [
     ("ESMLFzm_w6_Dimm-4.63", 0x0390),
@@ -92,12 +83,10 @@ fn out_of(name: &str, pwm: u32, pins: &[(String, String)]) -> Result<Out> {
     let func = format!("PWM{pwm}");
     let pin = pins.iter().find(|(_, f)| *f == func).map(|(p, _)| p.clone())
         .ok_or_else(|| anyhow!("{name}: no pin carries {func}"))?;
-    let &(_, mux, shift, value, _) = PWM_MUX.iter().find(|e| e.0 == pin && e.4 == func)
+    let &(p, mux, shift, value, _) = PWM_MUX.iter().find(|e| e.0 == pin && e.4 == func)
         .ok_or_else(|| anyhow!("{name}: {pin} cannot carry {func}"))?;
-    let mut c = pin.chars().skip(1);
-    let port = c.next().unwrap_or('?');
-    let n = c.next().and_then(|d| d.to_digit(10)).ok_or_else(|| anyhow!("{name}: pin {pin}"))?;
-    Ok(Out { pwm, gpio: gpio_func(port).ok_or_else(|| anyhow!("{name}: port of {pin}"))?, bit: 1 << n, mux, shift, value })
+    let b = p.as_bytes();
+    Ok(Out { pwm, gpio: GPIO_FUNC[usize::from(b[1] - b'A')], bit: 1 << (b[2] - b'0'), mux, shift, value })
 }
 
 fn pwm(row: &Value, c: u32) -> f64 {
@@ -236,10 +225,7 @@ fn tsv(boards: &[Board]) -> String {
 }
 
 fn tools_table(boards: &[Board]) -> String {
-    let mut s = String::from(
-        "",
-    );
-    let _ = writeln!(s, "pub const BOARDS: [Known; {}] = [", boards.len());
+    let mut s = format!("pub const BOARDS: [Known; {}] = [\n", boards.len());
     for b in boards {
         let _ = writeln!(s, "    Known {{ name: \"{}\", model: \"{}\", hw_revision: \"{}\", ble_product: {:#06x}, kind: \"{}\", image_type: {:#06x} }},",
                          b.name, b.model, b.hw_revision, b.product, b.kind, b.image_type);
@@ -257,11 +243,14 @@ fn site_json(boards: &[Board]) -> String {
 }
 
 pub fn run(a: Args) -> Result<()> {
-    let root = crate::root();
+    run_in(&crate::root(), a)
+}
+
+pub fn run_in(root: &Path, a: Args) -> Result<()> {
     let dir = a.profiles.unwrap_or_else(|| root.join("analysis/profiles"));
     let mut boards = Vec::new();
     for (name, image_type) in IMAGE_TYPES {
-        let (model, hw) = name.rsplit_once('-').unwrap();
+        let (model, hw) = name.rsplit_once('-').unwrap_or_default();
         let path = dir.join(format!("{model}__{hw}.json"));
         let p: Value = serde_json::from_slice(&std::fs::read(&path).with_context(|| format!("no profile for {name}: {}", path.display()))?)?;
         if p.get("joined").and_then(Value::as_bool) != Some(true) {
@@ -278,7 +267,7 @@ pub fn run(a: Args) -> Result<()> {
     if a.check {
         let stale: Vec<String> = targets.iter()
             .filter(|(p, t)| std::fs::read_to_string(p).ok().as_deref() != Some(t.as_str()))
-            .map(|(p, _)| p.strip_prefix(&root).unwrap_or(p).display().to_string()).collect();
+            .map(|(p, _)| p.strip_prefix(root).unwrap_or(p).display().to_string()).collect();
         if !stale.is_empty() {
             bail!("out of date (run `cargo xtask boards`): {}", stale.join(", "));
         }
@@ -287,7 +276,10 @@ pub fn run(a: Args) -> Result<()> {
     }
     for (p, t) in &targets {
         std::fs::write(p, t)?;
-        println!("written {}", p.strip_prefix(&root).unwrap_or(p).display());
+        println!("written {}", p.strip_prefix(root).unwrap_or(p).display());
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

@@ -25,14 +25,14 @@ const DIAG_ROOM: u32 = 6_000 * reg::TICKS_PER_US;
 #[cfg(feature = "ble")]
 static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 });
 
-const IDENTITY: Identity = Identity {
+pub(crate) const IDENTITY: Identity = Identity {
     manufacturer: "Outglow",
     model: BOARD.kind,
-    sw_build: "outglow",
+    sw_build: VERSION,
     manufacturer_code: 0x1141,
     app_version: 1,
     hw_version: BOARD.hw_version,
-    color_temperature: BOARD.cold.is_some() || BOARD.rgb.is_some(),
+    color_temperature: BOARD.tunable(),
     ct_min: BOARD.ct_min,
     ct_max: BOARD.ct_max,
     color: BOARD.rgb.is_some(),
@@ -62,13 +62,18 @@ const fn parse_key(s: &str) -> [u8; 16] {
             c @ b'A'..=b'F' => c - b'A' + 10,
             _ => panic!("TOUCHLINK_MASTER_KEY: not a hexadecimal digit"),
         };
-        key[i / 2] = key[i / 2] << 4 | d;
+        key[i / 2] = key[i / 2] * 16 + d;
         i += 1;
     }
     key
 }
 
 pub const IMAGE_TYPE: u16 = BOARD.image_type;
+
+pub const VERSION: &str = match option_env!("BULB_VERSION") {
+    Some(v) => v,
+    None => "1.0.0",
+};
 
 pub const FILE_VERSION: u32 = match option_env!("BULB_FILE_VERSION") {
     Some(s) => parse_hex(s),
@@ -86,7 +91,7 @@ const fn parse_hex(s: &str) -> u32 {
             c @ b'A'..=b'F' => c - b'A' + 10,
             _ => panic!("BULB_FILE_VERSION is not hexadecimal"),
         };
-        v = v << 4 | d as u32;
+        v = v * 16 + d as u32;
         i += 1;
     }
     v
@@ -106,7 +111,7 @@ const BLE_ORDER_OUIS: [[u8; 3]; 7] = [
 
 const TICKS_PER_MS: u32 = 16_000;
 
-static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
+pub(crate) static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
 
 #[allow(unsafe_code)]
 #[cfg_attr(target_os = "none", link_section = ".noinit")]
@@ -198,7 +203,7 @@ impl Hal for Tc32Hal {
     }
 
     fn transmit(&mut self, mpdu: &[u8]) -> TxStatus {
-        radio::transmit(mpdu, || self.random())
+        radio::transmit(mpdu, &mut || self.random())
     }
 
     fn transmit_at(&mut self, mpdu: &[u8], at_us: u32) {
@@ -268,9 +273,7 @@ impl Hal for Tc32Hal {
     #[cfg(feature = "trace")]
     fn trace(&mut self, mut ev: zigbee::hal::Trace) {
         if ev.kind == zigbee::hal::trace::TX && ev.detail <= zigbee::hal::trace::TX_BUSY {
-            let [attempts, busy, t0] = radio::LAST_TX.get();
-            let us = reg::tick().wrapping_sub(t0) / reg::TICKS_PER_US;
-            ev.aux = attempts.min(255) | busy.min(255) << 8 | us.min(0xffff) << 16;
+            ev.aux = crate::trace::tx_aux(radio::LAST_TX.get());
         }
         crate::trace::record(ev);
     }
@@ -391,7 +394,7 @@ pub struct Link {
     debug: DebugLink,
 }
 
-static LINK: TakeOnce<Link> = TakeOnce::new();
+pub(crate) static LINK: TakeOnce<Link> = TakeOnce::new();
 
 impl Link {
     #[inline(never)]
@@ -421,56 +424,51 @@ impl Link {
         radio::init();
         Stack::new_in(&mut self.stack, Tc32Hal::new(), IDENTITY);
     }
+}
 
-    #[cfg(feature = "ble")]
-    #[inline(never)]
-    #[cold]
-    fn start_ble(&mut self) {
-        let ble = self.ble.insert(ble::Ble::new(crate::ble::BleHal::new(), crate::ble::IDENTITY));
-        if let Some(light) = &self.last_light {
-            ble.set_light(light);
-        }
-        if let Some(stack) = self.stack.as_mut() {
-            self.diag.start(ble, stack);
-        }
+#[cfg(feature = "ble")]
+#[inline(never)]
+#[cold]
+fn start_ble(stack: &mut Stack<Tc32Hal>, slot: &mut Option<ble::Ble<crate::ble::BleHal>>, diag: &mut crate::diag::Glue, light: &Option<StateReport>) {
+    let ble = slot.insert(ble::Ble::new(crate::ble::BleHal::new(), crate::ble::IDENTITY));
+    if let Some(light) = light {
+        ble.set_light(light);
     }
+    diag.start(ble, stack);
+}
 
-    #[cfg(feature = "ble")]
-    fn ble_wanted(&mut self) -> bool {
-        let Some(stack) = self.stack.as_mut() else {
-            return false;
-        };
-        match stack.ble_mode() {
-            BleMode::On => true,
-            BleMode::Off => false,
-            BleMode::Window => {
-                if !self.window_over {
-                    let window_ms = stack.ble_window_minutes() as u32 * 60_000;
-                    self.window_over = stack.hal.now_ms() >= window_ms;
-                }
-                !self.window_over
+#[cfg(feature = "ble")]
+fn ble_wanted(stack: &mut Stack<Tc32Hal>, window_over: &mut bool) -> bool {
+    match stack.ble_mode() {
+        BleMode::On => true,
+        BleMode::Off => false,
+        BleMode::Window => {
+            if !*window_over {
+                let window_ms = stack.ble_window_minutes() as u32 * 60_000;
+                *window_over = stack.hal.now_ms() >= window_ms;
             }
+            !*window_over
         }
     }
+}
 
-    #[cfg(feature = "ble")]
-    fn ble_switch(&mut self) {
-        let wanted = self.ble_wanted();
-        let window = self.stack.as_ref().is_some_and(|s| s.ble_mode() == BleMode::Window);
-        match self.ble.as_mut() {
-            None if wanted => self.start_ble(),
-            Some(ble) if !wanted && !ble.ota_busy() && !(window && ble.link_state() == ble::LinkState::Connected) => {
-                use ble::Hal as _;
-                ble.hal().connection_reset();
-                self.ble = None;
-                staging::release(Owner::Ble);
-            }
-            _ => {}
+#[cfg(feature = "ble")]
+fn ble_switch(link: &mut Link) -> Option<()> {
+    let stack = link.stack.as_mut()?;
+    let wanted = ble_wanted(stack, &mut link.window_over);
+    let window = stack.ble_mode() == BleMode::Window;
+    match link.ble.as_mut() {
+        None if wanted => start_ble(stack, &mut link.ble, &mut link.diag, &link.last_light),
+        Some(ble) if !wanted && !ble.ota_busy() && !(window && ble.link_state() == ble::LinkState::Connected) => {
+            use ble::Hal as _;
+            ble.hal().connection_reset();
+            link.ble = None;
+            staging::release(Owner::Ble);
         }
-        if let Some(stack) = self.stack.as_mut() {
-            stack.set_ble_active(self.ble.is_some());
-        }
+        _ => {}
     }
+    stack.set_ble_active(link.ble.is_some());
+    Some(())
 }
 
 impl Radio for &mut Link {
@@ -491,10 +489,8 @@ impl Radio for Link {
         if self.stack.is_none() {
             self.start();
         }
-        #[cfg(feature = "ble")]
-        self.ble_switch();
-        let stack = self.stack.as_mut()?;
         if let Some(light) = self.light.take() {
+            let stack = self.stack.as_mut()?;
             stack.set_light(&light);
             #[cfg(feature = "ble")]
             {
@@ -504,6 +500,9 @@ impl Radio for Link {
                 self.last_light = Some(light);
             }
         }
+        #[cfg(feature = "ble")]
+        ble_switch(self);
+        let stack = self.stack.as_mut()?;
         #[cfg(feature = "ble")]
         if self.ble.is_none() {
             BLE_NEXT.set(None);

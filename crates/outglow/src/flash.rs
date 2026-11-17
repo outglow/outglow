@@ -4,6 +4,7 @@ use anyhow::{bail, Result};
 use outglow_image::{board, telink};
 
 pub mod ble;
+pub mod bt;
 pub mod protocol;
 pub mod vectors;
 
@@ -59,50 +60,53 @@ pub enum Ble {
     #[doc = " reported by the original firmware the blocks are sent again from the one"]
     #[doc = " after its last written block."]
     #[command(verbatim_doc_comment)]
-    Push {
-        #[doc = " the Bluetooth address (a UUID on macOS) or the MAC from `ble scan`"]
-        target: String,
-        #[doc = " the Bluetooth image (…-ota.bin, not a Zigbee .ota file)"]
-        image: PathBuf,
-        #[doc = " write; without it nothing is written"]
-        #[arg(long)]
-        confirm_write: bool,
-        #[doc = " allow an Outglow image (by default only the original firmware is sent)"]
-        #[arg(long, visible_alias = "allow-nonstock")]
-        allow_outglow: bool,
-        #[doc = " send although the bulb's hardware revision differs from the image's"]
-        #[arg(long)]
-        any_revision: bool,
-        #[doc = " expected product in the advertisement (default: the image's, e.g. 0x20a7 for ESMLFzm_w6_Dimm)"]
-        #[arg(long, value_parser = parse_int)]
-        product: Option<u16>,
-        #[doc = " ATT_MTU; 23 (default) = classic 16 B blocks"]
-        #[arg(long, default_value_t = protocol::DEFAULT_MTU)]
-        mtu: usize,
-        #[doc = " block size in bytes (16..MTU-7, within the handler's limit); default from the MTU"]
-        #[arg(long)]
-        chunk: Option<usize>,
-        #[doc = " resends after a CRC/sequence error, in a row without progress"]
-        #[arg(long, default_value_t = 10)]
-        max_resends: u32,
-        #[doc = " pause after each write, in milliseconds"]
-        #[arg(long, default_value_t = 0.0)]
-        delay_ms: f64,
-        #[doc = " mesh login on ...1914 before the update (the OTA channel needs none)"]
-        #[arg(long)]
-        login: bool,
-        #[arg(long, default_value = "unpaired")]
-        mesh_name: String,
-        #[doc = " 16 bytes in hex; default the secure password SHA-256(MAC || secret)"]
-        #[arg(long)]
-        mesh_password: Option<String>,
-        #[doc = " how long to look for the bulb's advertisement"]
-        #[arg(long, default_value_t = 15.0)]
-        seconds: f64,
-    },
+    Push(PushArgs),
     #[doc = " Reference values for site/test/awox-ota.test.ts, as JSON"]
     #[command(hide = true)]
     Vectors { image: Option<PathBuf> },
+}
+
+#[derive(clap::Args)]
+pub struct PushArgs {
+    #[doc = " the Bluetooth address (a UUID on macOS) or the MAC from `ble scan`"]
+    pub target: String,
+    #[doc = " the Bluetooth image (…-ota.bin, not a Zigbee .ota file)"]
+    pub image: PathBuf,
+    #[doc = " write; without it nothing is written"]
+    #[arg(long)]
+    pub confirm_write: bool,
+    #[doc = " allow an Outglow image (by default only the original firmware is sent)"]
+    #[arg(long, visible_alias = "allow-nonstock")]
+    pub allow_outglow: bool,
+    #[doc = " send although the bulb's hardware revision differs from the image's"]
+    #[arg(long)]
+    pub any_revision: bool,
+    #[doc = " expected product in the advertisement (default: the image's, e.g. 0x20a7 for ESMLFzm_w6_Dimm)"]
+    #[arg(long, value_parser = parse_int)]
+    pub product: Option<u16>,
+    #[doc = " ATT_MTU; 23 (default) = classic 16 B blocks"]
+    #[arg(long, default_value_t = protocol::DEFAULT_MTU)]
+    pub mtu: usize,
+    #[doc = " block size in bytes (16..MTU-7, within the handler's limit); default from the MTU"]
+    #[arg(long)]
+    pub chunk: Option<usize>,
+    #[doc = " resends after a CRC/sequence error, in a row without progress"]
+    #[arg(long, default_value_t = 10)]
+    pub max_resends: u32,
+    #[doc = " pause after each write, in milliseconds"]
+    #[arg(long, default_value_t = 0.0)]
+    pub delay_ms: f64,
+    #[doc = " mesh login on ...1914 before the update (the OTA channel needs none)"]
+    #[arg(long)]
+    pub login: bool,
+    #[arg(long, default_value = "unpaired")]
+    pub mesh_name: String,
+    #[doc = " 16 bytes in hex; default the secure password SHA-256(MAC || secret)"]
+    #[arg(long)]
+    pub mesh_password: Option<String>,
+    #[doc = " how long to look for the bulb's advertisement"]
+    #[arg(long, default_value_t = 15.0)]
+    pub seconds: f64,
 }
 
 fn parse_int(s: &str) -> Result<u16, String> {
@@ -111,26 +115,6 @@ fn parse_int(s: &str) -> Result<u16, String> {
         None => s.parse(),
     };
     r.map_err(|e| format!("{s}: {e}"))
-}
-
-pub fn run(c: Ble) -> Result<()> {
-    if let Ble::Vectors { image } = &c {
-        let img = match image {
-            Some(p) => std::fs::read(p)?,
-            None => vectors::synthetic(),
-        };
-        print!("{}", vectors::json(&img));
-        return Ok(());
-    }
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async move {
-        match c {
-            Ble::Scan { seconds } => ble::scan(seconds).await,
-            Ble::Probe { target, seconds } => ble::probe(&target, seconds).await,
-            p @ Ble::Push { .. } => ble::push(p).await,
-            Ble::Vectors { .. } => unreachable!(),
-        }
-    })
 }
 
 pub fn parse_adv(md: &[u8]) -> Option<(u16, [u8; 6])> {
@@ -225,9 +209,29 @@ mod tests {
     }
 
     #[test]
+    fn an_image_too_big_for_the_staging_area_is_refused() {
+        let mut body = vec![0u8; telink::STAGING_SIZE];
+        body[8..12].copy_from_slice(b"KNLT");
+        let img = telink::finalize(&body);
+        let e = check_image(&img, true).unwrap_err().to_string();
+        assert_eq!(e, "image 409604 B does not fit in the OTA staging area (409600 B)");
+        let mut full = vec![0u8; telink::STAGING_SIZE - 4];
+        full[8..12].copy_from_slice(b"KNLT");
+        full[telink::CRC_MARKER_AT..telink::CRC_MARKER_AT + 2].copy_from_slice(&telink::CRC_MARKER);
+        full[telink::SIZE_AT..telink::SIZE_AT + 4].copy_from_slice(&(telink::STAGING_SIZE as u32).to_le_bytes());
+        let crc = telink::image_crc(&full);
+        full.extend_from_slice(&crc.to_le_bytes());
+        assert_eq!((full.len(), telink::check(&full)), (telink::STAGING_SIZE, Ok(())));
+        let e = check_image(&full, true).unwrap_err().to_string();
+        assert!(e.starts_with("cannot tell the board"), "{e}");
+    }
+
+    #[test]
     fn product_numbers() {
         assert_eq!(parse_int("0x20a7"), Ok(0x20a7));
         assert_eq!(parse_int("8359"), Ok(8359));
+        assert_eq!(parse_int("0X20A6"), Ok(0x20a6));
+        assert_eq!(parse_int("0x10000"), Err("0x10000: number too large to fit in target type".into()));
         assert!(parse_int("zz").is_err());
     }
 }

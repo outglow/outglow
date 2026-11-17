@@ -10,6 +10,7 @@ fn the_cold_start_follows_the_vendor_cpu_wakeup_sequence() {
         c.set_analog(0x3c, 0x0f);
         c.set_analog(0xcb, 0x5a);
         c.set_analog(0x88, 0x13);
+        c.set_analog(0x87, 0xff);
     });
     init();
     let w: Vec<Op> = sim::with(|c| c.writes())
@@ -66,8 +67,8 @@ fn the_cold_start_follows_the_vendor_cpu_wakeup_sequence() {
             (0xc7, 0x0e),
             (0x86, 0xbb),
             (0x82, 0x64),
-            (0x87, 0x02),
-            (0x87, 0x06),
+            (0x87, 0xfe),
+            (0x87, 0xfe),
             (0x87, 0x9e),
             (0x82, 0xe4),
             (0x87, 0x9c),
@@ -109,6 +110,10 @@ fn the_reset_cause_comes_from_the_retained_analog_bit_and_the_watchdog_flag() {
     assert_eq!(sim::with(|c| c.analog(RETAINED)), RETAINED_ALIVE);
     assert!(warm_reset());
     assert_eq!(reset_cause(), ResetCause::Software);
+    assert_eq!(sim::with(|c| c.analog(RETAINED)), RETAINED_ALIVE);
+    sim::with(|c| c.set_analog(RETAINED, 0xf0));
+    assert!(!warm_reset());
+    assert_eq!(sim::with(|c| c.analog(RETAINED)), 0xf1);
     sim::with(|c| c.poke8(WD_STATUS, 0x01));
     assert!(warm_reset());
     assert_eq!(reset_cause(), ResetCause::Watchdog);
@@ -207,4 +212,157 @@ fn the_light_settings_survive_a_store_and_load() {
     s.store_colour(&[0; bulb_core::colour::RECORD_LEN]);
     FlashStore::erase();
     assert_eq!(FlashStore::new().load(&mut buf), None);
+}
+
+fn outputs(b: &Board) -> Vec<Out> {
+    let mut v = vec![b.warm];
+    v.extend(b.cold);
+    v.extend(b.rgb.iter().flatten().copied());
+    v
+}
+
+#[test]
+fn every_board_starts_each_of_its_pwm_outputs_on_its_pin() {
+    for b in crate::boards::BOARDS.iter() {
+        let _s = sim::session();
+        let mut regs = std::collections::HashMap::new();
+        for o in outputs(b) {
+            regs.insert(o.mux, 0xa5u8);
+            regs.insert(o.gpio, 0xa5u8);
+        }
+        regs.insert(reg::PWM_ENABLE, 0x00);
+        regs.insert(reg::PWM0_ENABLE, 0x00);
+        sim::with(|c| regs.iter().for_each(|(a, v)| c.poke8(*a, *v)));
+        start_outputs(b);
+        let mut expected = vec![Op::W8(reg::PWM_CLK_DIV, 0)];
+        for o in outputs(b) {
+            expected.push(Op::W16(0x796 + 4 * o.pwm as usize, b.period));
+            expected.push(Op::W16(0x794 + 4 * o.pwm as usize, 0));
+            let m = regs[&o.mux] & !(3 << o.shift) | o.value << o.shift;
+            regs.insert(o.mux, m);
+            expected.push(Op::W8(o.mux, m));
+            let g = regs[&o.gpio] & !o.bit;
+            regs.insert(o.gpio, g);
+            expected.push(Op::W8(o.gpio, g));
+            let (en, bit) = if o.pwm == 0 { (reg::PWM0_ENABLE, 0x01) } else { (reg::PWM_ENABLE, 1 << o.pwm) };
+            let e = regs[&en] | bit;
+            regs.insert(en, e);
+            expected.push(Op::W8(en, e));
+        }
+        assert_eq!(sim::with(|c| c.writes()), expected, "{}", b.name);
+    }
+}
+
+#[test]
+fn every_board_drives_its_channels_and_tells_its_light_kind() {
+    for b in crate::boards::BOARDS.iter() {
+        let _s = sim::session();
+        set_warm(b, b.period + 1);
+        set_warm(b, b.period - 1);
+        set_cold(b, b.period + 7);
+        set_cold(b, 3);
+        set_colour(b, 10, 20, 30);
+        let mut expected = vec![Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period), Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period - 1)];
+        if let Some(c) = b.cold {
+            expected.extend([Op::W16(0x794 + 4 * c.pwm as usize, b.period), Op::W16(0x794 + 4 * c.pwm as usize, 3)]);
+        }
+        if let Some([r, g, bl]) = b.rgb {
+            expected.extend([Op::W16(0x794 + 4 * r.pwm as usize, 10), Op::W16(0x794 + 4 * g.pwm as usize, 20), Op::W16(0x794 + 4 * bl.pwm as usize, 30)]);
+        }
+        assert_eq!(sim::with(|c| c.writes()), expected, "{}", b.name);
+        assert_eq!(b.tunable(), b.cold.is_some() || b.rgb.is_some());
+    }
+    let kinds: Vec<(bool, bool, bool)> = crate::boards::BOARDS.iter().map(|b| (b.cold.is_some(), b.rgb.is_some(), b.tunable())).collect();
+    assert!(kinds.contains(&(false, false, false)) && kinds.contains(&(true, false, true)) && kinds.contains(&(false, true, true)));
+    assert!(crate::boards::BOARDS.iter().any(|b| b.rgb_beside_white) && crate::boards::BOARDS.iter().any(|b| b.colour_default != (170, 254)));
+}
+
+#[test]
+fn a_colour_bulb_keeps_its_colour_record_and_rewrites_it_only_when_it_changes() {
+    let _s = sim::session();
+    let rgb = crate::boards::BOARDS.iter().find(|b| b.rgb.is_some()).expect("a colour board");
+    let mut s = FlashStore::on(rgb);
+    let mut buf = [0u8; bulb_core::colour::RECORD_LEN];
+    assert_eq!(s.load_colour(&mut buf), None);
+    let record = bulb_core::colour::ColourRecord { mode: bulb_core::command::ColorMode::Temperature, xy: false, hue: 10, sat: 20, x: 1, y: 2 }.encode();
+    let stores = crate::flash::STORES.get();
+    s.store_colour(&record);
+    assert_eq!(crate::flash::STORES.get(), stores.wrapping_add(1));
+    assert_eq!(FlashStore::on(rgb).load_colour(&mut buf), Some(record.len()));
+    assert_eq!(buf, record);
+    let programs = sim::with(|c| c.flash_ops.len());
+    s.store_colour(&record);
+    assert_eq!(sim::with(|c| c.flash_ops.len()), programs);
+    assert_eq!(crate::flash::STORES.get(), stores.wrapping_add(1));
+    let other = bulb_core::colour::ColourRecord { mode: bulb_core::command::ColorMode::Temperature, xy: false, hue: 10, sat: 21, x: 1, y: 2 }.encode();
+    s.store_colour(&other);
+    assert_eq!(crate::flash::STORES.get(), stores.wrapping_add(2));
+    assert!(is_colour(&record));
+    assert!(!is_colour(&[0xff; bulb_core::colour::RECORD_LEN]));
+    s.erase_all();
+    assert_eq!(FlashStore::on(rgb).load_colour(&mut buf), None);
+    assert!(sim::with(|c| c.flash_ops.contains(&(0x20, COLOUR_SECTORS[0])) || c.flash_ops.contains(&(0x20, COLOUR_SECTORS[1]))));
+}
+
+#[test]
+fn a_board_name_that_is_not_in_the_table_stops_the_build() {
+    let _s = sim::session();
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let e = std::panic::catch_unwind(|| board_named("no such board")).err();
+    std::panic::set_hook(hook);
+    assert_eq!(e.and_then(|e| e.downcast_ref::<&str>().copied()), Some("BULB_BOARD names no board of boards.rs"));
+    for b in crate::boards::BOARDS.iter() {
+        assert!(str_eq(board_named(b.name).name, b.name));
+        assert!(str_eq(board_named(b.name).tag, b.tag));
+    }
+    assert!(!str_eq("ab", "ba"));
+    assert!(str_eq("", ""));
+}
+
+#[test]
+fn the_crystal_runs_once_its_tick_has_moved_more_than_20_us() {
+    let _s = sim::session();
+    init();
+    assert_eq!(sim::with(|c| c.ticks_read()).len(), 22);
+    drop(_s);
+    let _s = sim::session();
+    sim::with(|c| c.tick_step = 0);
+    assert!(sim::reboots(init));
+    assert_eq!(sim::with(|c| c.ticks_read()).len(), 10 * 2001);
+}
+
+#[test]
+fn the_wakeup_flag_of_a_deep_sleep_is_cleared_only_when_it_is_set() {
+    for (a7f, a3c, cleared) in [(0x01u8, 0x0f, Some(0x0d)), (0x01, 0x0d, None), (0xfe, 0x0f, None), (0x00, 0x02, None)] {
+        let _s = sim::session();
+        sim::with(|c| {
+            c.set_analog(0x7f, a7f);
+            c.set_analog(0x3c, a3c);
+        });
+        init();
+        let w: Vec<u8> = sim::with(|c| c.analog_writes()).iter().filter(|(a, _)| *a == 0x3c).map(|(_, v)| *v).collect();
+        assert_eq!(w, cleared.into_iter().collect::<Vec<_>>(), "{a7f:#x} {a3c:#x}");
+        let read_3c = sim::with(|c| c.log.iter().any(|o| *o == Op::AnaR(0x3c, a3c)));
+        assert_eq!(read_3c, a7f & 1 != 0);
+    }
+}
+
+#[test]
+fn the_24_mhz_rc_calibration_waits_for_its_done_bit() {
+    let _s = sim::session();
+    let mut polls = 0;
+    sim::with(|c| {
+        c.set_analog(0xcf, 0x7f);
+        c.on(move |c, op| {
+            if op == Op::W8(reg::ANA_CTRL, 0x40) && c.peek8(reg::ANA_ADDR) == 0xcf {
+                polls += 1;
+                if polls == 3 {
+                    c.set_analog(0xcf, 0x80);
+                }
+            }
+        })
+    });
+    init();
+    assert_eq!(sim::with(|c| c.log.iter().filter(|o| matches!(o, Op::AnaR(0xcf, _))).count()), 4);
 }

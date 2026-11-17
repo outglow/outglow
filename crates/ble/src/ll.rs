@@ -208,12 +208,7 @@ impl<H: Hal> Ble<H> {
                 expected.wrapping_sub(l.widening(expected) + LEAD)
             }
         };
-        let left = next.wrapping_sub(now);
-        if left as i32 > 0 {
-            left
-        } else {
-            0
-        }
+        (next.wrapping_sub(now) as i32).max(0) as u32
     }
 
     fn advertising_data(&self, out: &mut [u8; 31]) -> usize {
@@ -297,11 +292,9 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn terminate(&mut self) {
-        if self.link.state == LinkState::Connected && self.link.closing.is_none() {
-            self.hal.tx_push(pdu::LLID_CONTROL, &[LL_TERMINATE_IND, ERR_REMOTE_USER_TERMINATED]);
-            let timeout = self.link.p.timeout as u32 * 10 * TICKS_PER_MS;
-            self.link.closing = Some(self.hal.now().wrapping_add(timeout));
-        }
+        self.hal.tx_push(pdu::LLID_CONTROL, &[LL_TERMINATE_IND, ERR_REMOTE_USER_TERMINATED]);
+        let timeout = self.link.p.timeout as u32 * 10 * TICKS_PER_MS;
+        self.link.closing = Some(self.hal.now().wrapping_add(timeout));
     }
 
     fn connection_events(&mut self) {
@@ -388,11 +381,6 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn link_idle(&mut self) {
-        self.link_receive();
-        if self.link.terminated {
-            self.disconnected();
-            return;
-        }
         let now = self.hal.now();
         if let Some(at) = self.link.param_request_at {
             if reached(now, at) && self.hal.tx_free() >= TX_RESERVE {

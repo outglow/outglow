@@ -29,9 +29,10 @@ From the repository root (aliases in `.cargo/config.toml`):
 ```sh
 cargo spec                       # Zigbee conformance suite on the Rust image
 cargo ble-spec                   # BLE conformance suite on the Rust image
-cargo sims                       # integration scenarios (but the weekly ones)
+cargo sims                       # integration scenarios, every bulb on the Rust firmware
 cargo sims-quick                 # a few scenarios for every change
-cargo sims-weekly                # the measurements of the original firmware (weekly in CI)
+cargo sims-stock                 # the comparisons with the original firmware (nightly in CI)
+cargo sims-weekly                # the address conflict measurements (weekly in CI)
 cargo stress                     # the house mesh under loss, noise and power cuts
 ```
 
@@ -118,14 +119,34 @@ cargo sims -- rust_fw -v                         # every line as it happens
 cargo sims -- --exact rust_fw ota_rust           # these, by their whole name
 cargo sims -- --weekly                           # only the weekly ones
 cargo sims -- addr_conflict_house                # a weekly one, by its whole name
+cargo sims -- --with-stock                       # only those with the original firmware
+cargo sims -- --firmware stock mixed_            # the original firmware where the scenario has it
 ```
+
+Every bulb runs the Rust firmware by default, also where a scenario was
+written for the original firmware (the mixed networks, the address conflict
+measurements): a role whose default image is `stock/…` takes the Rust image
+of the same board (`target/tc32/`, `target/tc32-tw/`, `target/tc32-<board>/`).
+`--firmware stock` (or `SIMS_FIRMWARE=stock`) puts the original firmware
+there, `--firmware c` the C firmware of the laboratory (`firmware/build/`,
+`firmware/build-tw/`; `SCENARIOS_IMAGE_DIRS=<lab>`); roles of the Rust
+firmware stay Rust, and `--image ROLE=path` still sets one role. Each
+scenario prints which firmware each role ran (`firmware: …`).
+
+The scenarios that compare with the original firmware or act on it
+(`WITH_STOCK` in `scenarios/src/sims/mod.rs`: `rust_radio`, `rust_gp`,
+`rust_touchlink`, `interop`, `app_colour`, `migrate`, `back_to_stock_ota`,
+`back_to_stock_ble`, `mixed_parent_stock`, `mixed_ota_relay`) run only with
+`--with-stock` (only them), `--firmware stock` (them and the rest) or by their
+whole name, and then always with the original firmware.
 
 The weekly ones (`WEEKLY` in `scenarios/src/sims/mod.rs`: `addr_conflict`,
 `_child`, `_victim`, `_channel`, `_echo`, `_multihop`, `_house`,
-`enddev_wallswitch`, `_edinit`) measure the original firmware for the
-address conflict study, so CI runs them once a week, not every night. What
-Outglow does in child, victim and channel the host tests of
-`crates/zigbee/tests/conflicts.rs` check.
+`enddev_wallswitch`, `_edinit`) measured the original firmware for the
+address conflict study, so CI runs them once a week, not every night: on the
+Rust firmware, and with `--firmware stock` as measured. What Outglow does in
+child, victim and channel the host tests of `crates/zigbee/tests/conflicts.rs`
+check too.
 
 Among them: joining, light and OTA of the Rust firmware (`rust_fw`,
 `ota_rust`, `power_cut`), Zigbee and BLE together (`rust_ble`,
@@ -162,9 +183,9 @@ flash as it was at that moment.
 | `enddev_wallswitch`, `_edinit` | a sleepy end device whose parent bulb is switched off and on: lost presses, rejoin, stale child entries |
 
 Images: `--image bulb=…` (and `--image tw=…` for the tunable white bulbs);
-the original firmware by default, but for `addr_conflict_btt`, which runs
-the Rust firmware. The checks of child, victim and channel hold what was
-measured on the original firmware and, on an Outglow image, what Outglow does.
+the Rust firmware by default, the original with `--firmware stock`. The checks
+of child, victim and channel hold what was measured on the original firmware
+and, on an Outglow image, what Outglow does.
 Original bulbs need a valid factory MAC record at 0xFF000 in the image
 (BLE MAC little endian, OUI a4:c1:38 last); anything else is replaced by a
 "random" one that is the same in every emulated bulb.
@@ -182,7 +203,10 @@ next to the specified one and holds both.
 Images: `--image rust=...` (default `target/tc32/bulb-tc32.bin`) and `--image
 stock=...` (default `stock/stock-dimm.bin`); for the tunable white pair
 `--image rust=target/tc32-tw/bulb-tc32.bin --image stock=stock/stock-tw.bin`.
-`cargo sims-stock` runs the quick ones.
+`cargo sims-stock` runs those that need the original firmware; the mixed
+networks (`mixed_parent_rust`, `_mesh`, `_chain`, `_rejoin`, `_group`,
+`_conflict`) run all their bulbs on the Rust firmware by default and as
+described here with `--firmware stock`.
 
 | Scenario | What | Wall time |
 |---|---|---|

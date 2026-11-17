@@ -4,7 +4,6 @@ use crate::{reached, Ble};
 
 const SECTOR: u32 = 0x1000;
 const BOOT_MARK: u32 = 8;
-const BLOCK_MAX: usize = 60;
 const ERASE_STEP: u32 = 10 * TICKS_PER_MS;
 const RESTART_AFTER: u32 = 1000 * TICKS_PER_MS;
 
@@ -131,8 +130,7 @@ impl<H: Hal> Ble<H> {
     }
 
     pub fn ota_busy(&self) -> bool {
-        self.ota.active()
-            || (self.ota.state == State::Done && !self.ota.failed)
+        (self.ota.state == State::Done && !self.ota.failed)
             || (self.link.state == crate::LinkState::Connected && self.ota_this_link)
     }
 
@@ -209,11 +207,11 @@ impl<H: Hal> Ble<H> {
         }
         let offset = index as u32 * self.ota.block as u32;
         let end = offset + block.len() as u32;
-        if index != self.ota.next || block.len() > self.ota.block as usize || block.len() > BLOCK_MAX || end > self.hal.ota_capacity() {
+        if index != self.ota.next || block.len() > self.ota.block as usize || end > self.hal.ota_capacity() {
             self.ota.fail();
             return;
         }
-        let mut buf = [0u8; BLOCK_MAX];
+        let mut buf = [0u8; crate::att::MTU_MAX];
         let buf = &mut buf[..block.len()];
         buf.copy_from_slice(block);
         let good = self.ota.account(offset, buf);

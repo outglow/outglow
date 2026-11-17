@@ -322,7 +322,7 @@ impl Radio154 {
             }
             let first = r4.b().sched.front().map(|e| e.t);
             if let Some(t) = first {
-                let mut c = ((t - m.ms()) * m.cpu_hz as f64 / 1000.0) as i64;
+                let mut c = m.cycles_until_ms(t);
                 if c < 0 {
                     c = 0;
                 }

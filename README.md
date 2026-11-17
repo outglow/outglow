@@ -86,12 +86,13 @@ Output in `target/tc32*/`: `bulb-tc32-ota.bin` (BLE update image) and
 
 ```sh
 cargo test --workspace     # the stack and the light on the host
-cargo sims                 # whole bulbs in the emulator
+cargo sims                 # whole bulbs in the emulator, all on Outglow
 cargo spec                 # conformance tests with expectations from the specifications
 ```
 
-Several scenarios compare Outglow with the original firmware. That firmware
-is not in this repository: `tools/extract-stock-images.sh` takes it from the
+Several scenarios compare Outglow with the original firmware (`cargo
+sims-stock`, or `cargo sims -- --firmware stock` for the mixed networks too;
+by default every bulb runs Outglow). That firmware is not in this repository: `tools/extract-stock-images.sh` takes it from the
 vendor's Android app on your machine (into `stock/`, which git ignores).
 Scenarios whose image is missing are skipped and say where to get it.
 
@@ -121,15 +122,19 @@ with `--update`).
 
 `crates/bulb-tc32` (its own workspace) is measured too: on the host its
 register accesses go to a simulated chip (`src/sim.rs`: a logged register
-file with the timer, analog bus, MSPI flash, AES engine and RF status the
-drivers wait for), and its tests (`src/tests/`) check the drivers' register
-writes, their order and values against the vendor's traced write lists. On
-the chip the same `reg.rs` primitives are volatile MMIO; the image is byte
-for byte the same. What only the emulator reaches: `boot/start.S` (the
-assembly start-up before `main`), `main`'s endless loop, the linker's
-memory layout (`.ram_code` placement, `.noinit`, the stack measured by
-`stack.rs`) and timing in microseconds (interrupt latency, the ACK
-turnaround on real time, the BLE event windows).
+file with the timer, analog bus, MSPI flash, AES engine, RF status and the
+BLE TX fifo the drivers wait for; a test can hook every access to play the
+other side, and a test that runs 10 s is stopped), and its tests
+(`src/tests/`) check the drivers' register writes, their order and values
+against the vendor's traced write lists, their timing to the tick, and the
+whole bulb: the main loop, and a BLE central on the simulated radio that
+connects, reads the device page and logs in like the app. On the chip the
+same `reg.rs` primitives are volatile MMIO. What only the emulator reaches:
+`boot/start.S` (the assembly start-up before `main`), the linker's memory
+layout (`.ram_code` placement, `.noinit`, the stack measured by
+`stack.rs`) and real time (interrupt latency, what the radio does on air).
+Its mutants run with every feature (`all_features` in its
+`.cargo/mutants.toml`), so the trace code is mutated too.
 
 ```sh
 cargo test --manifest-path crates/bulb-tc32/Cargo.toml      # the drivers on the simulated chip
@@ -154,7 +159,10 @@ weekly in 16 parts, with the table per crate in the summary of the job
 break behaviour the specifications describe (a counter not counted, a frame
 not relayed, a timeout of the wrong length) across whole statements and
 constants, which cargo-mutants' operator and return-value mutants do not
-reach. The test infrastructure (bulb-sim, memcap) is not mutated, and
+reach. The test infrastructure (bulb-sim, memcap) is not mutated, nor is
+the outglow command's glue to the Bluetooth adapter and the MQTT broker
+(`flash/bt.rs`, `diag/mqtt.rs`, left out of the coverage too: it needs a
+bulb or a broker; the logic behind it runs on fakes in the tests), and
 bulb-core's mutants run bulb-sim's tests too:
 
 ```sh
@@ -164,7 +172,8 @@ cargo mutants -p bulb-core --test-package bulb-core,bulb-sim --timeout 120 -j 2
 Every host test binary runs on memcap's capped allocator (4 GiB,
 `OUTGLOW_TEST_MEM_LIMIT_MB`): a mutant that makes a test allocate without
 end stops there; bulb-tc32's tests (another workspace, which cargo-mutants
-copies without memcap) stop at 10 million register accesses in one test.
+copies without memcap) stop at a million register accesses in one test, or
+after 10 s.
 Locally, keep `-j` at 2 on a laptop.
 
 ## Flashing

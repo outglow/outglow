@@ -13,7 +13,7 @@ mod ring {
 
     pub const ENTRIES: usize = 512;
 
-    const LEN: usize = 8 + ENTRIES * 16;
+    const LEN: usize = 8_200;
     const MAGIC: u32 = 0x5452_4345;
 
     const fn ring() -> [u8; LEN] {
@@ -36,29 +36,29 @@ mod ring {
         let head = ZB_TRACE.read32(4);
         let at = 8 + (head as usize % ENTRIES) * 16;
         ZB_TRACE.write32(at, reg::tick());
-        ZB_TRACE.write32(at + 4, ev.kind as u32 | (ev.detail as u32) << 8 | (ev.seq as u32) << 16);
-        ZB_TRACE.write32(at + 8, ev.src as u32 | (ev.peer as u32) << 16);
+        ZB_TRACE.write32(at + 4, u32::from_le_bytes([ev.kind, ev.detail, ev.seq, 0]));
+        let ([s0, s1], [p0, p1]) = (ev.src.to_le_bytes(), ev.peer.to_le_bytes());
+        ZB_TRACE.write32(at + 8, u32::from_le_bytes([s0, s1, p0, p1]));
         ZB_TRACE.write32(at + 12, ev.aux);
         ZB_TRACE.write32(4, head.wrapping_add(1));
         reg::irq_restore(s);
     }
 }
 
-#[inline(always)]
-pub fn record(_ev: zigbee::hal::Trace) {
-    #[cfg(feature = "trace")]
-    ring::record(_ev);
+#[cfg(feature = "trace")]
+pub fn tx_aux([attempts, busy, t0]: [u32; 3]) -> u32 {
+    let [u0, u1, ..] = (crate::reg::tick().wrapping_sub(t0) / crate::reg::TICKS_PER_US).min(0xffff).to_le_bytes();
+    u32::from_le_bytes([attempts.min(255) as u8, busy.min(255) as u8, u0, u1])
 }
 
-#[inline(always)]
-pub fn span(_kind: u8, _detail: u8, _peer: u16, _t0: u32) {
-    #[cfg(feature = "trace")]
-    ring::record(zigbee::hal::Trace {
-        kind: _kind,
-        detail: _detail,
-        seq: 0,
-        src: 0,
-        peer: _peer,
-        aux: crate::reg::tick().wrapping_sub(_t0),
-    });
+#[cfg(feature = "trace")]
+pub use ring::record;
+
+#[cfg(feature = "trace")]
+pub fn span(kind: u8, detail: u8, peer: u16, t0: u32) {
+    record(zigbee::hal::Trace { kind, detail, seq: 0, src: 0, peer, aux: crate::reg::tick().wrapping_sub(t0) });
 }
+
+#[cfg(all(test, feature = "trace"))]
+#[path = "tests/trace.rs"]
+pub(crate) mod tests;

@@ -42,7 +42,7 @@ impl Mt {
     fn next_u32(&mut self) -> u32 {
         if self.i >= 624 {
             for k in 0..624 {
-                let y = (self.s[k] & 0x8000_0000) | (self.s[(k + 1) % 624] & 0x7FFF_FFFF);
+                let y = (self.s[k] & 0x8000_0000) + (self.s[(k + 1) % 624] & 0x7FFF_FFFF);
                 self.s[k] = self.s[(k + 397) % 624] ^ (y >> 1) ^ if y & 1 != 0 { 0x9908_B0DF } else { 0 };
             }
             self.i = 0;
@@ -60,6 +60,15 @@ impl Mt {
     }
 }
 
+pub fn run(image: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+    let img = match image {
+        Some(p) => std::fs::read(p)?,
+        None => synthetic(),
+    };
+    print!("{}", json(&img));
+    Ok(())
+}
+
 pub fn synthetic() -> Vec<u8> {
     let mut mt = Mt::new(1);
     let mut body: Vec<u8> = (0..5000).map(|_| mt.byte()).collect();
@@ -73,7 +82,7 @@ fn base64(data: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for c in data.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        let n = ((c[0] as u32) << 16) + ((*c.get(1).unwrap_or(&0) as u32) << 8) + *c.get(2).unwrap_or(&0) as u32;
         for k in 0..4 {
             if k <= c.len() {
                 out.push(A[(n >> (18 - 6 * k)) as usize & 63] as char);

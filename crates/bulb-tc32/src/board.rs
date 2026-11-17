@@ -40,6 +40,12 @@ pub struct Board {
     pub image_type: u16,
 }
 
+impl Board {
+    pub const fn tunable(&self) -> bool {
+        self.cold.is_some() || self.rgb.is_some()
+    }
+}
+
 pub const BOARD: Board = board_named(match option_env!("BULB_BOARD") {
     Some(name) => name,
     None => "ESMLFzm_w6_Dimm-4.63",
@@ -87,7 +93,7 @@ pub fn init() {
     reg::write8(reg::CLK_SEL, 0x06);
     analog_write(0x82, 0x64);
     analog_write(0x34, 0x80);
-    analog_write(0x0b, (analog_read(0x0b) & 0x80) | 0x38);
+    reg::analog_modify(0x0b, 0x80, 0x38);
     analog_write(0x8c, 0x02);
     analog_write(0x02, 0xa2);
     for addr in 0x27..=0x2a {
@@ -115,23 +121,18 @@ pub fn init() {
 }
 
 fn wait_for_crystal() {
-    for _ in 0..10 {
+    let ticking = |_| {
         let t0 = reg::tick();
-        let mut spins = 0u32;
-        while spins < 2000 {
-            if reg::tick().wrapping_sub(t0) > 320 {
-                return;
-            }
-            spins += 1;
-        }
+        (0..2000).any(|_| reg::tick().wrapping_sub(t0) > 320)
+    };
+    if !(0..10).any(ticking) {
+        reboot()
     }
-    reg::write8(reg::PWDN_CTRL, 0x20);
-    loop {}
 }
 
 fn calibrate_rc_24m() {
     analog_write(0xc8, 0x80);
-    analog_write(0x30, analog_read(0x30) | 0x80);
+    reg::analog_modify(0x30, 0xff, 0x80);
     analog_write(0xc7, 0x0e);
     analog_write(0xc7, 0x0f);
     while analog_read(0xcf) & 0x80 == 0 {}
@@ -143,10 +144,10 @@ fn calibrate_rc_24m() {
 fn calibrate_doubler() {
     analog_write(0x86, 0xbb);
     analog_write(0x82, analog_read(0x82) & 0x7f);
-    analog_write(0x87, (analog_read(0x87) & !0x03) | 0x02);
-    analog_write(0x87, analog_read(0x87) | 0x04);
-    analog_write(0x87, ((analog_read(0x88) & 0x1f) << 3) | (analog_read(0x87) & 0x07));
-    analog_write(0x82, analog_read(0x82) | 0x80);
+    reg::analog_modify(0x87, !0x03, 0x02);
+    reg::analog_modify(0x87, 0xff, 0x04);
+    reg::analog_modify(0x87, 0x07, (analog_read(0x88) & 0x1f) << 3);
+    reg::analog_modify(0x82, 0xff, 0x80);
     analog_write(0x87, analog_read(0x87) & 0xfd);
     analog_write(0x86, 0xfb);
 }
@@ -154,6 +155,7 @@ fn calibrate_doubler() {
 const RETAINED: u8 = 0x3a;
 const RETAINED_ALIVE: u8 = 0x01;
 const WD_STATUS: usize = 0x72;
+const WATCHDOG_ENABLE: u32 = 0x0080_0040;
 
 static CAUSE: Shared<ResetCause> = Shared::new(ResetCause::PowerOn);
 
@@ -182,8 +184,7 @@ pub fn reset_cause() -> ResetCause {
 pub fn watchdog_start(ms: u32) {
     let capture = (ms * 48_000) >> 18;
     reg::write32(reg::TIMER2_TICK, 0);
-    let ctrl = reg::read32(reg::TIMER_CTRL) & 0x00ff_ffff & !(0x3fff << 9);
-    reg::write32(reg::TIMER_CTRL, ctrl | (capture & 0x3fff) << 9 | 1 << 6 | 1 << 23);
+    reg::modify32(reg::TIMER_CTRL, 0x0080_01ff, ((capture & 0x3fff) << 9) + WATCHDOG_ENABLE);
     watchdog_feed();
 }
 
@@ -193,8 +194,9 @@ pub fn watchdog_feed() {
 }
 
 pub fn reboot() -> ! {
-    reg::write8(reg::PWDN_CTRL, 0x20);
-    loop {}
+    loop {
+        reg::write8(reg::PWDN_CTRL, 0x20);
+    }
 }
 
 pub struct FlashWords;
@@ -231,29 +233,53 @@ pub struct LedPwm;
 
 impl LedPwm {
     pub fn new() -> Self {
-        reg::write8(reg::PWM_CLK_DIV, 0);
-        start(BOARD.warm);
-        if let Some(cold) = BOARD.cold {
-            start(cold);
-        }
-        if let Some(rgb) = BOARD.rgb {
-            for o in rgb {
-                start(o);
-            }
-        }
+        start_outputs(&BOARD);
         LedPwm
     }
 }
 
-fn start(o: Out) {
-    reg::write16(reg::pwm_max(o.pwm), BOARD.period);
+fn start_outputs(b: &Board) {
+    reg::write8(reg::PWM_CLK_DIV, 0);
+    start(b, b.warm);
+    if let Some(cold) = b.cold {
+        start(b, cold);
+    }
+    if let Some(rgb) = b.rgb {
+        for o in rgb {
+            start(b, o);
+        }
+    }
+}
+
+fn start(b: &Board, o: Out) {
+    reg::write16(reg::pwm_max(o.pwm), b.period);
     reg::write16(reg::pwm_cmp(o.pwm), 0);
-    let mux = reg::read8(o.mux);
-    reg::write8(o.mux, (mux & !(3 << o.shift)) | o.value << o.shift);
+    reg::modify8(o.mux, !(3 << o.shift), o.value << o.shift);
     reg::clear8(o.gpio, o.bit);
     match o.pwm {
         0 => reg::set8(reg::PWM0_ENABLE, 0x01),
         n => reg::set8(reg::PWM_ENABLE, 1 << n),
+    }
+}
+
+#[inline(always)]
+fn set_warm(b: &Board, duty: u16) {
+    reg::write16(reg::pwm_cmp(b.warm.pwm), duty.min(b.period));
+}
+
+#[inline(always)]
+fn set_cold(b: &Board, duty: u16) {
+    if let Some(cold) = b.cold {
+        reg::write16(reg::pwm_cmp(cold.pwm), duty.min(b.period));
+    }
+}
+
+#[inline(always)]
+fn set_colour(b: &Board, r: u16, g: u16, bl: u16) {
+    if let Some([or, og, ob]) = b.rgb {
+        reg::write16(reg::pwm_cmp(or.pwm), r);
+        reg::write16(reg::pwm_cmp(og.pwm), g);
+        reg::write16(reg::pwm_cmp(ob.pwm), bl);
     }
 }
 
@@ -263,7 +289,7 @@ impl Pwm for LedPwm {
     }
 
     fn set_duty(&mut self, duty: u16) {
-        reg::write16(reg::pwm_cmp(BOARD.warm.pwm), duty.min(BOARD.period));
+        set_warm(&BOARD, duty);
     }
 
     fn has_cold_channel(&self) -> bool {
@@ -271,9 +297,7 @@ impl Pwm for LedPwm {
     }
 
     fn set_cold_duty(&mut self, duty: u16) {
-        if let Some(cold) = BOARD.cold {
-            reg::write16(reg::pwm_cmp(cold.pwm), duty.min(BOARD.period));
-        }
+        set_cold(&BOARD, duty);
     }
 
     fn ct_range(&self) -> (u16, u16) {
@@ -285,15 +309,11 @@ impl Pwm for LedPwm {
     }
 
     fn set_rgb(&mut self, r: u16, g: u16, b: u16) {
-        if let Some([or, og, ob]) = BOARD.rgb {
-            reg::write16(reg::pwm_cmp(or.pwm), r);
-            reg::write16(reg::pwm_cmp(og.pwm), g);
-            reg::write16(reg::pwm_cmp(ob.pwm), b);
-        }
+        set_colour(&BOARD, r, g, b);
     }
 
     fn white_tw_curve(&self) -> bool {
-        BOARD.cold.is_some() || BOARD.rgb.is_some()
+        BOARD.tunable()
     }
 
     fn rgb_beside_white(&self) -> bool {
@@ -355,15 +375,22 @@ impl bulb_core::store::Flash for BoardFlash {
 
 impl FlashStore {
     pub fn erase() {
-        let mut s = Self::new();
-        s.0.erase();
-        if let Some(c) = s.1.as_mut() {
+        Self::new().erase_all();
+    }
+
+    fn erase_all(&mut self) {
+        self.0.erase();
+        if let Some(c) = self.1.as_mut() {
             c.erase();
         }
     }
 
     pub fn new() -> Self {
-        let colour = BOARD.rgb.map(|_| LightLog::of_records(BoardFlash, COLOUR_SECTORS, SECTOR_SIZE, is_colour));
+        Self::on(&BOARD)
+    }
+
+    fn on(b: &Board) -> Self {
+        let colour = b.rgb.map(|_| LightLog::of_records(BoardFlash, COLOUR_SECTORS, SECTOR_SIZE, is_colour));
         FlashStore(LightLog::new(BoardFlash, CONFIG_SECTORS, SECTOR_SIZE), colour)
     }
 }

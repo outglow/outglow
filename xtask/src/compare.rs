@@ -5,6 +5,9 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
 
+use crate::build::Ctx;
+use crate::sh;
+
 #[derive(clap::Args)]
 pub struct Args {
     #[doc = " where to write the data (default site/public/compare.json)"]
@@ -89,22 +92,15 @@ fn area(module: &str, id: &str) -> &'static str {
     }
 }
 
-fn stock_dir() -> Result<PathBuf> {
-    let d = std::env::var_os("OUTGLOW_STOCK_DIR")
+fn stock_dir(c: &Ctx) -> Result<PathBuf> {
+    let d = (c.env)("OUTGLOW_STOCK_DIR")
         .context("OUTGLOW_STOCK_DIR: the directory of the original firmware images (a checkout of outglow/original-firmware)")?;
     Ok(PathBuf::from(d))
 }
 
-fn git(root: &Path, args: &[&str]) -> String {
-    Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default()
+fn git(c: &mut Ctx, args: &[&str]) -> String {
+    let root = c.root.clone();
+    sh::output(c.sh, Command::new("git").arg("-C").arg(root).args(args)).map(|o| o.trim().to_string()).unwrap_or_default()
 }
 
 fn stock_images(dir: &Path, manifest: &Value, board: &str) -> Vec<(Value, PathBuf)> {
@@ -122,10 +118,10 @@ fn stock_images(dir: &Path, manifest: &Value, board: &str) -> Vec<(Value, PathBu
         .unwrap_or_default()
 }
 
-fn run_suite(root: &Path, bin: &str, stock: &Path, outglow: &Path, a: &Args, tmp: &Path) -> Result<(Value, Value)> {
+fn run_suite(c: &mut Ctx, bin: &str, stock: &Path, outglow: &Path, a: &Args, tmp: &Path) -> Result<(Value, Value)> {
     let (res, meta) = (tmp.join(format!("{bin}-results.json")), tmp.join(format!("{bin}-tests.json")));
-    let mut cmd = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
-    cmd.current_dir(root)
+    let mut cmd = Command::new((c.env)("CARGO").unwrap_or_else(|| "cargo".into()));
+    cmd.current_dir(&c.root)
         .args(["test", "--manifest-path", "emulator/rs/Cargo.toml", "-p", "scenarios", "--test", bin, "--", "--matrix", "--json"])
         .arg(&res)
         .arg("--meta-json")
@@ -139,7 +135,7 @@ fn run_suite(root: &Path, bin: &str, stock: &Path, outglow: &Path, a: &Args, tmp
         cmd.args(["--jobs", &j.to_string()]);
     }
     println!("== {bin} tests: {} and {}", stock.display(), outglow.display());
-    let st = cmd.status().with_context(|| format!("{cmd:?}"))?;
+    let st = c.sh.status(&mut cmd).with_context(|| format!("{cmd:?}"))?;
     if !st.success() {
         bail!("the {bin} tests did not run through ({st}): an image did not start, or the emulator stopped");
     }
@@ -147,9 +143,9 @@ fn run_suite(root: &Path, bin: &str, stock: &Path, outglow: &Path, a: &Args, tmp
     Ok((read(&res)?, read(&meta)?))
 }
 
-fn note(obs: &str, root: &Path) -> String {
+fn note(obs: &str, root: &Path, home: Option<std::ffi::OsString>) -> String {
     let mut s = obs.replace(&root.display().to_string(), "outglow");
-    if let Some(h) = std::env::var_os("HOME") {
+    if let Some(h) = home {
         s = s.replace(&PathBuf::from(h).display().to_string(), "~");
     }
     if s.chars().count() > 400 {
@@ -159,9 +155,13 @@ fn note(obs: &str, root: &Path) -> String {
 }
 
 pub fn run(a: Args) -> Result<()> {
-    let root = crate::root();
+    crate::build::with_real(|c| run_in(c, &a))
+}
+
+pub fn run_in(c: &mut Ctx, a: &Args) -> Result<()> {
+    let root = c.root.clone();
     let out = a.out.clone().unwrap_or_else(|| root.join("site/public/compare.json"));
-    let stock_dir = stock_dir()?;
+    let stock_dir = stock_dir(c)?;
     let tmp = root.join("target/compare");
     std::fs::create_dir_all(&tmp)?;
 
@@ -178,9 +178,9 @@ pub fn run(a: Args) -> Result<()> {
             println!("== {board}: no original image in {}, left out", stock_dir.display());
             continue;
         }
-        let dir = if a.no_build { crate::build::default_dir(&root, board) } else { crate::build::board_default(board)? };
+        let dir = if a.no_build { crate::build::default_dir(&root, board) } else { crate::build::board_default(c, board)? };
         let outglow = dir.join("bulb-tc32.bin");
-        let known = outglow_image::board::known(board).with_context(|| format!("board {board}"))?;
+        let image_type = outglow_image::board::known(board).map(|k| k.image_type).unwrap_or_default();
         let several = stocks.len() > 1;
         for (entry, stock) in &stocks {
             let version = entry["firmware_version"].as_str().unwrap_or("unknown").to_string();
@@ -198,7 +198,7 @@ pub fn run(a: Args) -> Result<()> {
                     "app_version": manifest["source"]["version"],
                 },
                 "outglow": {
-                    "image_type": format!("{:#06x}", known.image_type),
+                    "image_type": format!("{image_type:#06x}"),
                     "sha256": crate::index::hex::<Sha256>(&std::fs::read(&outglow)?),
                 },
             }));
@@ -206,7 +206,7 @@ pub fn run(a: Args) -> Result<()> {
             for (sid, bin, _) in SUITES {
                 let work = tmp.join(&tid);
                 std::fs::create_dir_all(&work)?;
-                let (res, meta) = run_suite(&root, bin, stock, &outglow, &a, &work)?;
+                let (res, meta) = run_suite(c, bin, stock, &outglow, a, &work)?;
                 for t in meta.as_array().context("test list")? {
                     let id = t["id"].as_str().unwrap_or_default().to_string();
                     if !tests.iter().any(|(i, _, _)| *i == id) {
@@ -245,7 +245,7 @@ pub fn run(a: Args) -> Result<()> {
                 e.insert(label.into(), json!(verdict));
                 let obs = v["obs"].as_str().unwrap_or_default();
                 if verdict != "PASS" && !obs.is_empty() {
-                    e.insert(format!("{label}_note"), json!(note(obs, &root)));
+                    e.insert(format!("{label}_note"), json!(note(obs, &root, (c.env)("HOME"))));
                 }
             }
             per_board.insert(bid.to_string(), Value::Object(e));
@@ -266,8 +266,8 @@ pub fn run(a: Args) -> Result<()> {
         }));
     }
 
-    let commit = git(&root, &["rev-parse", "--short=7", "HEAD"]);
-    let dirty = !git(&root, &["status", "--porcelain", "--", "crates", "emulator", "Cargo.lock"]).is_empty();
+    let commit = git(c, &["rev-parse", "--short=7", "HEAD"]);
+    let dirty = !git(c, &["status", "--porcelain", "--", "crates", "emulator", "Cargo.lock"]).is_empty();
     let commit = if dirty { format!("{commit}+changes") } else { commit };
     let data = json!({
         "schema": 1,
@@ -276,8 +276,8 @@ pub fn run(a: Args) -> Result<()> {
         "source": "emulator",
         "outglow": {
             "commit": commit,
-            "commit_date": git(&root, &["log", "-1", "--format=%cs"]),
-            "describe": git(&root, &["describe", "--tags", "--match", "v*", "--always"]),
+            "commit_date": git(c, &["log", "-1", "--format=%cs"]),
+            "describe": git(c, &["describe", "--tags", "--match", "v*", "--always"]),
             "url": format!("https://github.com/outglow/outglow/commit/{}", commit.trim_end_matches("+changes")),
         },
         "cpi": a.cpi,
@@ -304,3 +304,6 @@ pub fn run(a: Args) -> Result<()> {
     println!("== {}: {n} tests on {} original images", out.display(), data["targets"].as_array().map(|v| v.len()).unwrap_or(0));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

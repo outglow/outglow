@@ -247,8 +247,4 @@ where
     pub fn pwm(&self) -> &P {
         &self.pwm
     }
-
-    pub fn into_parts(self) -> (P, C, S, R) {
-        (self.pwm, self.clock, self.store, self.radio)
-    }
 }
