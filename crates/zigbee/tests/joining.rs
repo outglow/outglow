@@ -87,3 +87,25 @@ fn after_joining_the_bulb_opens_the_network_once_and_only_after_announcing_itsel
     assert_eq!(opens.len(), 1, "one Mgmt_Permit_Joining_req, sent again only as a broadcast is: {zdo:?}");
     assert!(zdo.iter().filter(|e| e.1 == 0x0036).all(|e| e.0 > announce));
 }
+
+#[test]
+fn a_node_descriptor_response_after_the_key_exchange_changes_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.run(10_000);
+    let id = net.nodes[n].id;
+    let t = net.now();
+    let mut rsp = vec![0x44, 0x00, 0x00, 0x00, 0x00, 0x40, 0x8F, 0x41, 0x11, 0x50, 0xA0, 0x00];
+    rsp.extend_from_slice(&(0x0001u16 | 20 << 9).to_le_bytes());
+    rsp.extend_from_slice(&[0xA0, 0x00, 0x00]);
+    let aps = net.coord.aps_frame(0x00, 0, 0x8002, 0x0000, 0, &rsp);
+    net.coord.nwk_data(short, &aps);
+    net.run(2_000);
+    let opens = net
+        .nwk_sent_by(id, t)
+        .into_iter()
+        .filter(|(_, h, p)| h.frame_type == zigbee::nwk::FRAME_DATA && p.len() > 6 && p[2..4] == [0x36, 0x00])
+        .count();
+    assert_eq!(opens, 0, "the network is not opened again");
+}

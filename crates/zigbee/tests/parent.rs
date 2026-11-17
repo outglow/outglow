@@ -1537,3 +1537,38 @@ fn mgmt_lqi_lists_the_router_neighbours_and_then_the_end_device_children() {
     assert_eq!(rsp[..5], [seq, 0x00, 2, 1, 1]);
     assert_eq!(rsp[5 + 16..5 + 18], zed.short.to_le_bytes());
 }
+
+#[test]
+fn mgmt_leave_for_a_child_passes_rejoin_and_remove_children_on_in_the_leave() {
+    for (flags, options) in [(0x80u8, 0x60u8), (0x40, 0xC0), (0x00, 0x40)] {
+        let (mut net, a, mut zed) = with_sleepy_child();
+        let sa = net.nodes[a].short();
+        let mut p = zed.ext.to_le_bytes().to_vec();
+        p.push(flags);
+        let seq = net.coord.zdo(sa, 0x0034, &p);
+        net.run(300);
+        assert_eq!(net.coord.last_zdo(sa, 0x8034).unwrap(), vec![seq, 0x00]);
+        zed.rx.clear();
+        zed.poll(&mut net, 20);
+        assert!(zed.rx.iter().any(|(_, p)| p[..] == [nwk::CMD_LEAVE, options]), "flags {flags:#04x}: {:02x?}", zed.rx);
+    }
+}
+
+#[test]
+fn a_failed_parent_annce_rsp_takes_no_child_away() {
+    let (mut net, a, zed) = with_sleepy_child();
+    net.power_cycle(a);
+    net.run(500);
+    let mut rsp = vec![0x55, 0x8A, 1];
+    rsp.extend_from_slice(&zed.ext.to_le_bytes());
+    let sa = net.nodes[a].short();
+    let aps = net.coord.aps_frame(0x00, 0, 0x801F, 0x0000, 0, &rsp);
+    net.coord.nwk_data(sa, &aps);
+    net.run(300);
+    assert_eq!(net.nodes[a].stack.child_count(), 1);
+    rsp[1] = 0x00;
+    let aps = net.coord.aps_frame(0x00, 0, 0x801F, 0x0000, 0, &rsp);
+    net.coord.nwk_data(sa, &aps);
+    net.run(300);
+    assert_eq!(net.nodes[a].stack.child_count(), 0, "a successful one does");
+}
