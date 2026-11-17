@@ -2834,3 +2834,74 @@ fn a_frame_for_a_neighbor_is_not_handed_back_to_the_router_it_came_from() {
     assert_eq!(bounced, 0, "b passes a's frames for the coordinator on to it, not back to a");
     assert_eq!(net.coord.last_zcl(sa, ON_OFF, 0x0B), Some(vec![0x18, seq, 0x0B, 0x00, 0x00]), "the answer came up through b");
 }
+
+fn many_to_one_through(concentrator: &mut Zed, relay: &mut Zed, id: u8) {
+    let h = concentrator.header(nwk::FRAME_CMD, 0xFFFC);
+    relay.mac_send(0xFFFF, h, &[nwk::CMD_ROUTE_REQUEST, 0x08, id, 0xFC, 0xFF, 0]);
+}
+
+fn source_routed_through(concentrator: &mut Zed, relay: &mut Zed, me: u16) {
+    let mut h = concentrator.header(nwk::FRAME_DATA, relay.short);
+    let mut list = [0u16; nwk::MAX_RELAYS];
+    list[0] = me;
+    h.relays = Some((1, 0, list));
+    relay.mac_send(me, h, &[0x00, 0x01]);
+}
+
+fn relayed_for(net: &Net, n: usize, dst: u16, since: u32) -> Vec<u16> {
+    net.nwk_sent_by(net.nodes[n].id, since)
+        .into_iter()
+        .filter(|(_, h, _)| h.frame_type == nwk::FRAME_DATA && h.dst == dst)
+        .map(|(m, _, _)| if let zigbee::mac::Addr::Short(d) = m.dst { d } else { 0xFFFF })
+        .collect()
+}
+
+#[test]
+fn a_frame_for_a_concentrator_next_door_goes_straight_to_it_and_asks_for_a_route_record() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let mut x = neighbor(&mut net, n, 0x2B02);
+    let mut c = neighbor(&mut net, n, 0x3C03);
+    many_to_one_through(&mut c, &mut x, 0x41);
+    net.run(500);
+    assert!(routes(&mut net, n).contains(&(c.short, 0x30, x.short)));
+    source_routed_through(&mut c, &mut x, me);
+    net.run(500);
+    assert!(routes(&mut net, n).contains(&(c.short, 0x10, x.short)), "the concentrator has the path");
+    let t = net.now();
+    let h = x.header(nwk::FRAME_DATA, c.short);
+    x.mac_send(me, h, &[0x00, 0x02]);
+    net.run(500);
+    assert_eq!(relayed_for(&net, n, c.short, t), vec![c.short], "straight to the concentrator, not back to x");
+    assert!(routes(&mut net, n).contains(&(c.short, 0x30, c.short)), "the path changed, so a route record is due");
+}
+
+#[test]
+fn a_frame_for_a_concentrator_that_is_no_fresh_neighbor_goes_where_the_route_says() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let mut x = neighbor(&mut net, n, 0x2B02);
+    let mut c = Zed::router(&net.air, 0x3C03, me);
+    net.link(0, c.id, 0);
+    many_to_one_through(&mut c, &mut x, 0x41);
+    net.run(500);
+    let t = net.now();
+    let h = x.header(nwk::FRAME_DATA, c.short);
+    x.mac_send(me, h, &[0x00, 0x02]);
+    net.run(500);
+    assert_eq!(relayed_for(&net, n, c.short, t), vec![x.short], "not a neighbor: the route is kept");
+    assert!(routes(&mut net, n).contains(&(c.short, 0x30, x.short)));
+    c.link_status(&[(me, 1)]);
+    for _ in 0..8 {
+        x.link_status(&[(me, 1)]);
+        net.run(10_000);
+    }
+    let t = net.now();
+    let h = x.header(nwk::FRAME_DATA, c.short);
+    x.mac_send(me, h, &[0x00, 0x03]);
+    net.run(500);
+    assert_eq!(relayed_for(&net, n, c.short, t), vec![x.short], "a neighbor not heard for long: the route is kept");
+    assert!(routes(&mut net, n).contains(&(c.short, 0x30, x.short)));
+}
