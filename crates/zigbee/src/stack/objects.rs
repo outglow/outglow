@@ -240,7 +240,7 @@ impl<H: Hal> Stack<H> {
                     let (a, b) = (f32::from_bits(value), f32::from_bits(r.last));
                     let d = if a > b { a - b } else { b - a };
                     let step = f32::from_bits(r.change);
-                    a != b && d >= if step > 0.0 { step } else { 0.0 }
+                    a != b && d >= step.max(0.0)
                 }
                 T_BOOL | T_BITMAP8 | diag::T_ENUM8 => value != r.last,
                 _ => value != r.last && value.wrapping_sub(r.last).min(r.last.wrapping_sub(value)) >= r.change.max(1),

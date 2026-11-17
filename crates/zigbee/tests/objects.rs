@@ -194,3 +194,26 @@ fn hue_and_x_are_reported_once_configured_and_no_sooner_than_the_minimum_interva
     net.run(3_000);
     assert_eq!(reports(&net, 0x00).last(), Some(&vec![0x00, 0x00, 0x20, 100]));
 }
+
+#[test]
+fn a_present_value_is_reported_only_for_a_change_of_at_least_the_reportable_change() {
+    for (step, reported) in [(5.0f32, false), (0.5, true)] {
+        let mut net = Net::new();
+        let a = net.join_node();
+        let sa = net.nodes[a].short();
+        bind(&mut net, a, 6, ANALOG_INPUT);
+        let mut cfg = vec![0x00, 0x55, 0x00, 0x39, 1, 0, 0x10, 0x0E];
+        cfg.extend_from_slice(&step.to_le_bytes());
+        net.coord.zcl_ep(sa, 6, ANALOG_INPUT, 0x00, 0x06, &cfg);
+        net.run(100);
+        net.coord.permit(120);
+        net.run(600);
+        let n0 = net.coord.zcl_rx.len();
+        let mut zed = Zed::new(&net.air, true);
+        net.link(0, zed.id, 0);
+        assert!(zed.join(&mut net, sa));
+        net.run(3_000);
+        let got = net.coord.zcl_rx[n0..].iter().any(|e| e.0 == sa && e.1 == ANALOG_INPUT && e.2[2] == 0x0A);
+        assert_eq!(got, reported, "a change of 1 against {step}");
+    }
+}
