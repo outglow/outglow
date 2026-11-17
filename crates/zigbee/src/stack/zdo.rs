@@ -496,9 +496,9 @@ impl<H: Hal> Stack<H> {
         let count_at = p.len();
         p.u8(0);
         let mut count = 0;
-        let mut i = self.parent_annce_from;
+        let from = self.parent_annce_from;
         self.parent_annce_from = 0;
-        while i < self.children.len() {
+        for i in from..self.children.len() {
             let c = self.children[i];
             if c.used && c.capability & super::parent::CAP_FFD == 0 && !self.child_alive(i) {
                 if count == PARENT_ANNCE_CHILDREN {
@@ -511,7 +511,6 @@ impl<H: Hal> Stack<H> {
                 p.u64(c.ext);
                 count += 1;
             }
-            i += 1;
         }
         if count == 0 {
             return;

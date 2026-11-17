@@ -79,3 +79,14 @@ fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
     s.hal.random = [0xFFFF + 0xFFF7].to_vec();
     assert!(s.new_address() < 0xFFF7);
 }
+
+#[test]
+fn after_eight_taken_draws_the_lowest_free_address_is_given() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new() }, IDENTITY);
+    s.nib.short = 0x0001;
+    s.children[0].used = true;
+    s.children[0].short = 0x0002;
+    s.hal.random = [0x0001, 0x0002, 0x0001, 0x0002, 0x0001, 0x0002, 0x0001, 0x0002, 0x0909].to_vec();
+    assert_eq!(s.new_address(), 0x0003);
+    assert_eq!(s.hal.random, [0x0909].to_vec(), "eight draws and no more");
+}

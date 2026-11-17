@@ -7,6 +7,7 @@ use crate::util::{due, pack, Buf};
 pub(crate) const CAP_FFD: u8 = 0x02;
 pub(crate) const CAP_RX_ON: u8 = 0x08;
 const CAP_ROUTER: u8 = 0x0A;
+const ADDRESS_DRAWS: usize = 8;
 
 const INDIRECT_MS: u32 = 7_680;
 const DEFAULT_TIMEOUT: u8 = 8;
@@ -133,18 +134,22 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn new_address(&mut self) -> u16 {
-        loop {
+        for _ in 0..ADDRESS_DRAWS {
             let a = (self.hal.random() % 0xFFF7) as u16;
-            let taken = a == 0
-                || a == self.nib.short
-                || self.child_index(a).is_some()
-                || self.neighbor_index(a).is_some()
-                || self.route_index(a).is_some()
-                || self.addr_map.iter().any(|e| e.1 == a && e.0 != 0);
-            if !taken {
+            if !self.address_taken(a) {
                 return a;
             }
         }
+        (1..0xFFF7).find(|&a| !self.address_taken(a)).unwrap_or(0)
+    }
+
+    fn address_taken(&self, a: u16) -> bool {
+        a == 0
+            || a == self.nib.short
+            || self.child_index(a).is_some()
+            || self.neighbor_index(a).is_some()
+            || self.route_index(a).is_some()
+            || self.addr_map.iter().any(|e| e.1 == a && e.0 != 0)
     }
 
     pub(crate) fn on_association_request(&mut self, ext: u64, capability: u8) {
