@@ -76,8 +76,8 @@ cargo xtask build --no-sense                   # without motion sensing (target/
 ```
 
 Other tasks: `cargo xtask boards` (the board table from the stock profiles),
-`cargo xtask index` (the Zigbee2MQTT OTA index), `cargo xtask mutants`
-(mutation tests).
+`cargo xtask index` (the Zigbee2MQTT OTA index), `cargo xtask coverage`
+and `cargo xtask mutants` (coverage and mutation tests, under Testing).
 
 Output in `target/tc32*/`: `bulb-tc32-ota.bin` (BLE update image) and
 `bulb-tc32.ota` (Zigbee OTA file).
@@ -94,6 +94,51 @@ Several scenarios compare Outglow with the original firmware. That firmware
 is not in this repository: `tools/extract-stock-images.sh` takes it from the
 vendor's Android app on your machine (into `stock/`, which git ignores).
 Scenarios whose image is missing are skipped and say where to get it.
+
+### Coverage and mutation testing
+
+Line and region coverage of the host tests (`cargo test --workspace`, and
+with `--emulator` the emulator's unit tests) comes from
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) in a shell of
+its own, `nix develop .#coverage`: the official Rust binaries of the same
+version, whose llvm-tools read the profiles their compiler writes (nixpkgs'
+rustc writes profiles its own LLVM cannot read, and its instrumented tests
+crash on macOS). That shell is only for coverage; images are built in
+`nix develop`.
+
+```sh
+nix develop .#coverage --command cargo xtask coverage             # table per crate, worst files, HTML
+nix develop .#coverage --command cargo xtask coverage --check     # and fail below xtask/coverage.tsv
+nix develop .#coverage --command cargo xtask coverage --update    # raise the baseline after adding tests
+```
+
+The HTML report is in `target/coverage/host/html/index.html`. CI runs
+`--emulator --check` on every push and pull request: the table goes to the
+job summary, the HTML report is the artifact `coverage-html`, and a crate
+whose line or region coverage falls below its baseline in
+`xtask/coverage.tsv` fails the job (a ratchet: the baseline only moves up,
+with `--update`). `crates/bulb-tc32` is not in the host workspace and has no
+host coverage: its code runs only in the emulator.
+
+Mutation testing: [cargo-mutants](https://mutants.rs) (in `nix develop`;
+config in `.cargo/mutants.toml`) changes the code one small step at a time
+and checks that the tests of the crate notice.
+
+```sh
+cargo mutants -p sense -j 4                       # every mutant of a crate; results in mutants.out/
+cargo mutants --in-diff <(git diff main) -j 4     # only the lines a change touches
+cargo xtask mutants-report mutants.out            # the table per crate, the missed mutants
+cargo xtask mutants                               # the hand-written mutations of xtask/src/mutants/
+```
+
+On a pull request CI runs the mutants of the changed lines (workflow
+`mutants.yml`; a missed one fails it). Every mutant of the workspace runs
+weekly in 16 parts, with the table per crate in the summary of the job
+`report`. The hand-written mutations of `cargo xtask mutants` stay: they
+break behaviour the specifications describe (a counter not counted, a frame
+not relayed, a timeout of the wrong length) across whole statements and
+constants, which cargo-mutants' operator and return-value mutants do not
+reach.
 
 ## Flashing
 
