@@ -206,3 +206,46 @@ fn a_search_for_the_network_passes_over_beacons_of_another_network() {
     net.run_until(400_000, "back up", |net| net.nodes[n].stack.state() == State::Up);
     assert_eq!((net.nodes[n].stack.channel(), net.nodes[n].stack.pan_id()), (11, PAN), "not on the other network's channel");
 }
+
+#[test]
+fn a_search_after_silence_that_finds_the_network_on_its_channel_does_not_rejoin() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let port = net.nodes[n].id;
+    net.link(0, port, 0);
+    net.run_until(400_000, "searching", |net| net.nodes[n].stack.state() == State::Scan);
+    let other = Zed::new(&net.air, false);
+    net.link(port, other.id, 200);
+    let mut beacon = zigbee::util::Buf::new();
+    zigbee::mac::Beacon {
+        pan: PAN,
+        short: 0x7777,
+        permit_join: true,
+        pan_coordinator: false,
+        stack_profile: 2,
+        protocol_version: 2,
+        router_capacity: true,
+        end_device_capacity: true,
+        depth: 1,
+        ext_pan: EXT_PAN,
+        update_id: 0,
+    }
+    .write(1, &mut beacon);
+    let t = net.now();
+    for _ in 0..400 {
+        if net.nodes[n].stack.state() != State::Scan {
+            break;
+        }
+        let channel = net.air.borrow().ports[port].channel;
+        if channel == 11 {
+            net.air.borrow_mut().ports[other.id].channel = channel;
+            net.air.borrow_mut().ports[other.id].powered = true;
+            net.air.borrow_mut().transmit(other.id, beacon.as_slice());
+        }
+        net.run(20);
+    }
+    net.run_until(60_000, "up again", |net| net.nodes[n].stack.state() == State::Up);
+    net.run(2_000);
+    let to_router = net.sent_by(port, t).iter().filter(|f| f[0] & 7 == 1 && f[5..7] == [0x77, 0x77]).count();
+    assert_eq!(to_router, 0, "no rejoin request");
+}
