@@ -8,20 +8,21 @@ fn xor_block(x: &mut [u8; 16], data: &[u8]) {
     }
 }
 
+const B0_FLAGS: u8 = 0x09;
+const B0_FLAGS_ADATA: u8 = 0x49;
+
 fn ccm_tag(aes: &Aes128, nonce: &[u8; 13], aad: &[u8], msg: &[u8]) -> [u8; 16] {
     let mut x = [0u8; 16];
-    x[0] = (if aad.is_empty() { 0 } else { 0x40 }) | (((MIC_LEN as u8 - 2) / 2) << 3) | 1;
+    x[0] = if aad.is_empty() { B0_FLAGS } else { B0_FLAGS_ADATA };
     x[1..14].copy_from_slice(nonce);
-    x[14] = (msg.len() >> 8) as u8;
-    x[15] = msg.len() as u8;
+    x[14..].copy_from_slice(&(msg.len() as u16).to_be_bytes());
     aes.encrypt(&mut x);
     if !aad.is_empty() {
         let first = aad.len().min(14);
-        x[0] ^= (aad.len() >> 8) as u8;
-        x[1] ^= aad.len() as u8;
-        for i in 0..first {
-            x[2 + i] ^= aad[i];
-        }
+        let mut b1 = [0u8; 16];
+        b1[..2].copy_from_slice(&(aad.len() as u16).to_be_bytes());
+        b1[2..2 + first].copy_from_slice(&aad[..first]);
+        xor_block(&mut x, &b1);
         aes.encrypt(&mut x);
         for chunk in aad[first..].chunks(16) {
             xor_block(&mut x, chunk);
@@ -39,8 +40,7 @@ fn ccm_ctr(aes: &Aes128, nonce: &[u8; 13], counter: u16) -> [u8; 16] {
     let mut a = [0u8; 16];
     a[0] = 1;
     a[1..14].copy_from_slice(nonce);
-    a[14] = (counter >> 8) as u8;
-    a[15] = counter as u8;
+    a[14..].copy_from_slice(&counter.to_be_bytes());
     aes.encrypt(&mut a);
     a
 }
