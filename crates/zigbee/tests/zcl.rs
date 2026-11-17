@@ -255,6 +255,7 @@ fn a_discover_command_cut_short_is_malformed() {
 fn a_default_response_is_not_answered_and_an_unknown_global_command_is_unsupported() {
     let (mut net, _, short) = bulb_with(IDENTITY);
     net.coord.zcl_rx.clear();
+    net.coord.zcl_rx_ep.clear();
     net.coord.zcl(short, ON_OFF, 0x00, 0x0B, &[0x01, 0x00]);
     net.run(100);
     assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
@@ -273,6 +274,7 @@ fn a_zcl_frame_cut_short_is_dropped() {
         net.coord.nwk_data(short, &aps);
     }
     net.coord.zcl_rx.clear();
+    net.coord.zcl_rx_ep.clear();
     net.run(200);
     assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
 }
@@ -297,6 +299,7 @@ fn a_cluster_command_for_the_diagnostics_other_than_clear_and_one_for_an_object_
 
 fn global(net: &mut Net, short: u16, cluster: u16, cmd: u8, payload: &[u8]) -> Option<Vec<u8>> {
     net.coord.zcl_rx.clear();
+    net.coord.zcl_rx_ep.clear();
     let seq = net.coord.zcl(short, cluster, 0x00, cmd, payload);
     net.run(100);
     let rsp = net.coord.zcl_rx.iter().rev().find(|(s, c, f)| *s == short && *c == cluster && f[1] == seq)?.2.clone();
@@ -473,4 +476,120 @@ fn the_identify_time_counts_down_to_zero_and_stays_there() {
     assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 0, 0])]);
     net.run(60_000);
     assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 0, 0])]);
+}
+
+fn light_clusters(net: &mut Net, short: u16) -> Vec<u16> {
+    let s = short.to_le_bytes();
+    net.coord.zdo(short, 0x0004, &[s[0], s[1], 1]);
+    net.run(100);
+    let d = net.coord.last_zdo(short, 0x8004).unwrap();
+    let n = d[11] as usize;
+    d[12..12 + 2 * n].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+}
+
+#[test]
+fn the_light_endpoint_serves_the_clusters_of_its_variant() {
+    const OCC: u16 = 0x0406;
+    const SENSE: u16 = 0xFC5E;
+    let base = [BASIC, IDENTIFY, GROUPS, SCENES, ON_OFF, LEVEL];
+    for (tw, ble, sense) in [(true, true, false), (true, false, true), (false, true, true), (true, true, true)] {
+        let (mut net, _, short) = bulb_with(Identity { color_temperature: tw, ble, sense, ..IDENTITY });
+        let mut want = base.to_vec();
+        if tw {
+            want.push(COLOR);
+        }
+        want.extend_from_slice(&[DIAG, TOUCHLINK]);
+        if ble {
+            want.push(SETTINGS);
+        }
+        if sense {
+            want.extend_from_slice(&[OCC, SENSE]);
+        }
+        assert_eq!(light_clusters(&mut net, short), want, "tw {tw} ble {ble} sense {sense}");
+    }
+}
+
+#[test]
+fn writing_the_identify_time_starts_identifying() {
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    assert_eq!(global(&mut net, short, IDENTIFY, 0x02, &[0x00, 0x00, 0x21, 5, 0]), Some(vec![0x04, 0x00]));
+    assert_eq!(net.nodes[n].commands.last(), Some(&bulb_core::command::Command::Identify { times: 5 }));
+    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 4, 0])]);
+}
+
+fn discover(net: &mut Net, short: u16, ep: u8, cluster: u16, mfr: bool, start: u16, max: u8) -> Vec<u8> {
+    let p = [&start.to_le_bytes()[..], &[max]].concat();
+    net.coord.zcl_rx.clear();
+    net.coord.zcl_rx_ep.clear();
+    let seq = if mfr { net.coord.zcl_mfr(short, cluster, 0x00, MFR, 0x15, &p) } else { net.coord.zcl_ep(short, ep, cluster, 0x00, 0x15, &p) };
+    net.run(100);
+    let rsp = net.coord.zcl_rx.iter().rev().find(|(s, c, f)| *s == short && *c == cluster && f.contains(&seq)).unwrap().2.clone();
+    let at = if mfr { 5 } else { 3 };
+    assert_eq!(rsp[at - 1], 0x16);
+    rsp[at..].to_vec()
+}
+
+#[test]
+fn the_attributes_of_an_object_and_of_the_sense_clusters_can_be_discovered() {
+    let (mut net, _, short) = bulb_with(Identity { sense: true, ..IDENTITY });
+    assert_eq!(
+        discover(&mut net, short, 7, 0x0010, false, 0, 20),
+        vec![1, 0x1C, 0x00, 0x42, 0x01, 0x51, 0x00, 0x10, 0x01, 0x55, 0x00, 0x10, 0x07, 0x6F, 0x00, 0x18, 0x05, 0xFD, 0xFF, 0x21, 0x01]
+    );
+    assert_eq!(discover(&mut net, short, 7, 0x0010, false, 0x52, 1), vec![0, 0x55, 0x00, 0x10, 0x07]);
+    assert_eq!(
+        discover(&mut net, short, 1, 0x0406, false, 0, 3),
+        vec![0, 0x00, 0x00, 0x18, 0x05, 0x01, 0x00, 0x30, 0x01, 0x02, 0x00, 0x18, 0x01]
+    );
+    assert_eq!(discover(&mut net, short, 1, 0x0406, false, 0x0010, 9), vec![1, 0x10, 0x00, 0x21, 0x03, 0xFD, 0xFF, 0x21, 0x01]);
+}
+
+#[test]
+fn writes_to_the_diagnostics_and_to_objects_answer_what_is_wrong() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    assert_eq!(global(&mut net, short, DIAG, 0x02, &[0x00, 0x00, 0x21, 1, 0]), Some(vec![0x04, 0x88, 0x00, 0x00]));
+    assert_eq!(global(&mut net, short, DIAG, 0x02, &[0x00, 0x00, 0x20, 1]), Some(vec![0x04, 0x8D, 0x00, 0x00]));
+    assert_eq!(global(&mut net, short, DIAG, 0x02, &[0x99, 0x00, 0x20, 1]), Some(vec![0x04, 0x86, 0x99, 0x00]));
+    let seq = net.coord.zcl_ep(short, 7, 0x0010, 0x00, 0x02, &[0x99, 0x00, 0x10, 1]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl_ep(short, 7, 0x0010, 0x04).unwrap(), vec![0x18, seq, 0x04, 0x86, 0x99, 0x00]);
+}
+
+#[test]
+fn the_object_reports_fill_a_table_of_eleven() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    let mut statuses = vec![];
+    for ep in 2..=6u8 {
+        for attr in [0x0055u16, 0x006F] {
+            let a = attr.to_le_bytes();
+            let ty = if attr == 0x0055 { 0x39 } else { 0x18 };
+            let mut p = vec![0x00, a[0], a[1], ty, 1, 0, 0x10, 0x0E];
+            if ty == 0x39 {
+                p.extend_from_slice(&1.0f32.to_le_bytes());
+            }
+            let seq = net.coord.zcl_ep(short, ep, 0x000C, 0x00, 0x06, &p);
+            net.run(60);
+            statuses.push(net.coord.last_zcl_ep(short, ep, 0x000C, 0x07).unwrap()[1..].to_vec() == vec![seq, 0x07, 0x00]);
+        }
+    }
+    assert!(statuses.iter().all(|s| *s), "ten fit");
+    let seq = net.coord.zcl_ep(short, 7, 0x0010, 0x00, 0x06, &[0x00, 0x55, 0x00, 0x10, 1, 0, 0x10, 0x0E]);
+    net.run(60);
+    assert_eq!(net.coord.last_zcl_ep(short, 7, 0x0010, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00], "the eleventh");
+    let seq = net.coord.zcl_ep(short, 7, 0x0010, 0x00, 0x06, &[0x00, 0x6F, 0x00, 0x18, 1, 0, 0x10, 0x0E]);
+    net.run(60);
+    assert_eq!(net.coord.last_zcl_ep(short, 7, 0x0010, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x89, 0x00, 0x6F, 0x00], "no room for a twelfth");
+}
+
+#[test]
+fn a_scene_extension_for_a_cluster_without_scenes_is_skipped() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, 1, 0, 0, 0, 0x05, 0x0B, 2, 9, 9, 0x08, 0x00, 1, 33]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x00, 0x34, 0x12, 1]);
+    net.coord.zcl(short, SCENES, 0x01, 0x01, &[0x34, 0x12, 1]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x01).unwrap()[10..], [0x08, 0x00, 1, 33], "only the level");
 }

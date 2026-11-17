@@ -496,8 +496,7 @@ impl<H: Hal> Stack<H> {
             (COLOR, 0x4010) => out.u16(self.light.startup_color_temp),
             (SETTINGS, 0x0000) => out.u8(self.ble_mode.to_u8()),
             (SETTINGS, 0x0001) => out.u16(self.ble_window),
-            (SETTINGS, 0x0002) => out.u8(self.ble_active as u8),
-            _ => {}
+            _ => out.u8(self.ble_active as u8),
         }
     }
 
@@ -569,11 +568,10 @@ impl<H: Hal> Stack<H> {
                 self.ble_mode = BleMode::from_u8(v as u8).unwrap_or(BleMode::On);
                 self.store_settings();
             }
-            (SETTINGS, 0x0001) => {
+            _ => {
                 self.ble_window = v;
                 self.store_settings();
             }
-            _ => {}
         }
     }
 
@@ -646,11 +644,9 @@ impl<H: Hal> Stack<H> {
             }
             return;
         }
-        if c.mfr.is_none() || cluster == SETTINGS {
-            for x in ATTRIBUTES.iter().filter(|x| x.0 == cluster && x.1 >= start && self.has_attribute(x.0, x.1)) {
-                if !each(x.1, x.2) {
-                    return;
-                }
+        for x in ATTRIBUTES.iter().filter(|x| x.0 == cluster && x.1 >= start && self.has_attribute(x.0, x.1)) {
+            if !each(x.1, x.2) {
+                return;
             }
         }
     }
@@ -708,8 +704,7 @@ impl<H: Hal> Stack<H> {
                 }
                 objects::A_ENGINEERING_UNITS => out.u16(o.units.unwrap_or(0)),
                 objects::A_APPLICATION_TYPE => out.u32(o.app_type.unwrap_or(0)),
-                CLUSTER_REVISION => out.u16(1),
-                _ => {}
+                _ => out.u16(1),
             }
             return;
         }
