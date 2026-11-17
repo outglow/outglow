@@ -3,12 +3,21 @@ description: >
   Nix, and the shell of flake.nix (`nix develop`) for every later step of the
   job: the pinned rustc and cargo (nixpkgs of flake.lock), whose LLVM makes
   the firmware image byte for byte the one `nix develop` builds anywhere else,
-  and RUST_LIB_SRC, python3, node 22, pkg-config, dbus.
+  and RUST_LIB_SRC, python3, node 22, pkg-config, dbus, cargo-mutants.
+  With `shell: coverage`, `nix develop .#coverage` instead: the official Rust
+  binaries of the same version with llvm-tools, and cargo-llvm-cov.
+inputs:
+  shell:
+    description: the devShell of flake.nix (default, coverage)
+    required: false
+    default: default
 runs:
   using: composite
   steps:
     - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
     - uses: nicknovitski/nix-develop@9be7cfb4b10451d3390a75dc18ad0465bed4932a # v1.2.1
+      with:
+        arguments: .#${{ inputs.shell }}
     - name: Which rustc
       shell: bash
       run: command -v rustc cargo && rustc -vV
