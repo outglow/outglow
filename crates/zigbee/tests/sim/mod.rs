@@ -577,6 +577,7 @@ pub struct Coord {
     seq: u8,
     pub permit_join: bool,
     pub stack_revision: u16,
+    pub node_desc_status: u8,
     pub link_key_transport_id: u8,
     pub send_key_in_the_clear: bool,
     pub restart_link_key_counter: bool,
@@ -654,6 +655,7 @@ impl Coord {
             seq: 0x40,
             permit_join: true,
             stack_revision: 22,
+            node_desc_status: 0x00,
             link_key_transport_id: 3,
             send_key_in_the_clear: false,
             restart_link_key_counter: false,
@@ -1577,7 +1579,7 @@ impl Coord {
                 }
             }
             0x0002 => {
-                let mut rsp = vec![p[0], 0x00, 0x00, 0x00, 0x00, 0x40, 0x8F, 0x41, 0x11, 0x50, 0xA0, 0x00];
+                let mut rsp = vec![p[0], self.node_desc_status, 0x00, 0x00, 0x00, 0x40, 0x8F, 0x41, 0x11, 0x50, 0xA0, 0x00];
                 rsp.extend_from_slice(&(0x0001 | self.stack_revision << 9).to_le_bytes());
                 rsp.extend_from_slice(&[0xA0, 0x00, 0x00]);
                 let aps = self.aps_frame(0x00, 0, 0x8002, 0x0000, 0, &rsp);

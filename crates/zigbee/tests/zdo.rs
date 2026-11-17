@@ -434,3 +434,15 @@ fn a_parent_announce_response_naming_a_child_heard_lately_keeps_it() {
     net.run(200);
     assert_eq!(net.nodes[a].stack.child_count(), 1);
 }
+
+#[test]
+fn a_node_descriptor_request_that_fails_does_not_finish_the_key_exchange() {
+    let mut net = Net::new();
+    net.coord.node_desc_status = 0x80;
+    let n = net.add_node();
+    net.run_until(20_000, "up", |net| net.nodes[n].stack.state() == zigbee::stack::State::Up);
+    net.run(5_000);
+    let item = zigbee::hal::NvItem::Network as u8;
+    let id = net.nodes[n].id;
+    assert_ne!(net.air.borrow().ports[id].nv[&item].last(), Some(&3), "not done while the descriptor fails");
+}
