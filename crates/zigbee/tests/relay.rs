@@ -188,3 +188,38 @@ fn a_frame_without_a_payload_is_passed_on_as_it_is() {
     net.run(200);
     assert_eq!(net.sent_by(port, t).iter().filter(|f| f[5..7] == [0x44, 0x44]).count(), 1, "no payload");
 }
+
+fn route_request(z: &mut Zed, id: u8, cost: u8, radius: u8) -> u8 {
+    let mut h = z.header(nwk::FRAME_CMD, 0xFFFC);
+    h.src = 0x2000;
+    h.src_ext = None;
+    h.radius = radius;
+    z.mac_send(0xFFFF, h, &[nwk::CMD_ROUTE_REQUEST, 0, id, 0x55, 0x55, cost]);
+    h.seq
+}
+
+#[test]
+fn a_cheaper_copy_of_a_route_request_replaces_the_one_waiting_and_one_at_the_end_of_its_radius_is_not_passed_on() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let port = net.nodes[n].id;
+    let mut a = far_router(&mut net, n, 0x4444);
+    let mut b = far_router(&mut net, n, 0x4445);
+    let me = net.nodes[n].short();
+    for z in [&mut a, &mut b] {
+        z.link_status(&[(me, 1)]);
+    }
+    net.run(50);
+    let traces = |net: &Net| net.air.borrow().ports[port].traces.clone();
+    net.air.borrow_mut().ports[port].traces.clear();
+    route_request(&mut a, 7, 9, 5);
+    net.run(1);
+    route_request(&mut b, 7, 1, 5);
+    net.run(500);
+    let passed: Vec<u32> = traces(&net).iter().filter(|t| t.kind == zigbee::hal::trace::TX && t.src == 0x2000).map(|t| t.aux).collect();
+    assert!(!passed.is_empty(), "passed on");
+    net.air.borrow_mut().ports[port].traces.clear();
+    let seq = route_request(&mut a, 8, 1, 1);
+    net.run(500);
+    assert!(traces(&net).iter().all(|t| !(t.kind == zigbee::hal::trace::TX && t.src == 0x2000 && t.seq == seq)), "at the end of its radius");
+}

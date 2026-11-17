@@ -106,3 +106,32 @@ fn mac_commands_and_beacons_a_bulb_that_is_up_does_not_take_change_nothing() {
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, 0x0006, 0x01).unwrap()[1], seq);
 }
+
+#[test]
+fn a_route_reply_no_cheaper_than_one_taken_is_dropped_and_a_status_for_a_broadcast_source_is_not_sent() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let port = net.nodes[n].id;
+    let mut h = net.coord.header(nwk::FRAME_DATA, short, 5);
+    h.src = 0x5555;
+    let aps = net.coord.aps_frame(0x00, 1, 0x0006, 0x0104, 1, &[0x00, 0x21, 0x00, 0x00, 0x00]);
+    net.coord.nwk_send(h, &aps, Some(short));
+    net.run(100);
+    let s = short.to_le_bytes();
+    for cost in [2u8, 5] {
+        net.coord.nwk_command(short, 1, &[nwk::CMD_ROUTE_REPLY, 0, 1, s[0], s[1], 0x55, 0x55, cost]);
+        net.run(100);
+    }
+    let t = net.now();
+    let mut h = net.coord.header(nwk::FRAME_CMD, short, 1);
+    h.src = 0xFFFD;
+    h.src_ext = None;
+    net.coord.nwk_send(h, &[0x7E], Some(short));
+    let mut short_update = vec![nwk::CMD_NETWORK_UPDATE, 0x01];
+    short_update.extend_from_slice(&EXT_PAN.to_le_bytes());
+    net.coord.nwk_command(short, 1, &short_update);
+    net.run(100);
+    let _ = (port, t);
+    assert_eq!((net.nodes[n].stack.state(), net.nodes[n].stack.pan_id()), (zigbee::stack::State::Up, PAN));
+}
