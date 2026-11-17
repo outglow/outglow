@@ -19,8 +19,10 @@ exclude_re = [
   "^src/flash\\.rs:.*(replace read with |in read$)",
   "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
   # equivalent on the board the tests are built for (the dimmable filament bulb, no cold or colour
-  # channel): these do nothing there; their bodies, set_cold and set_colour, are tested on every board
+  # channel): the setters do nothing there and the questions answer false; the setters' bodies,
+  # set_cold and set_colour, and Board::tunable are tested on every board
   "^src/board\\.rs:\\d+:\\d+: replace <impl Pwm for LedPwm>::(set_cold_duty|set_rgb) with \\(\\)$",
+  "^src/board\\.rs:\\d+:\\d+: replace <impl Pwm for LedPwm>::(has_cold_channel|has_rgb|white_tw_curve|rgb_beside_white) -> bool with false$",
 ]
 
 minimum_test_timeout = 60
