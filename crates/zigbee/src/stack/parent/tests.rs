@@ -62,3 +62,20 @@ fn a_full_pool_without_late_frames_gives_up_the_oldest_frame_of_whoever_holds_mo
     }
     assert_eq!(s.indirect_slot(Owner::Other(false, 0x0D00)), Some(9));
 }
+
+#[test]
+fn a_poll_that_leaves_frames_waiting_does_not_count_as_the_childs_poll_interval() {
+    let mut s = stack();
+    child(&mut s, 0, 0x0A00, 0, 0);
+    put(&mut s, 0, 0x0A00, 1_000 + INDIRECT_MS);
+    put(&mut s, 1, 0x0A00, 1_000 + INDIRECT_MS + 1);
+    s.on_data_request(crate::mac::Addr::Short(0x0A00));
+    assert!(s.children[0].more, "another frame waits");
+    s.hal.now = 1_050;
+    s.on_data_request(crate::mac::Addr::Short(0x0A00));
+    assert!(!s.children[0].more);
+    assert_eq!(s.children[0].poll_ms, 0, "50 ms after a poll that had more is no interval");
+    s.hal.now = 8_050;
+    s.on_data_request(crate::mac::Addr::Short(0x0A00));
+    assert_eq!(s.children[0].poll_ms, 7_000);
+}
