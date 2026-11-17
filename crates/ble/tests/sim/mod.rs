@@ -303,6 +303,7 @@ pub struct World {
     pub mesh_listens: u32,
     pub listened: Vec<(u64, u64, u8)>,
     pub event_starts: Vec<u64>,
+    pub event_ends: Vec<(u64, u64)>,
     pub flash_fault: bool,
     pub zigbee_busy: Vec<(u64, u64, bool)>,
     pub advertised_at: Vec<u64>,
@@ -477,6 +478,7 @@ impl Hal for SimHal {
         let start = w.now + ev.start.wrapping_sub(w.now as u32) as i32 as i64 as u64;
         assert!(start + ev.window as u64 >= w.now, "event that is already over");
         w.event_starts.push(start);
+        w.event_ends.push((start + ev.window as u64, start + ev.deadline.wrapping_sub(ev.start) as u64));
         let room = ev.deadline.wrapping_sub(ev.start.wrapping_add(ev.window));
         assert!((16_000..=64_000).contains(&room), "1 to 4 ms for the event after its window: {room}");
         w.now = w.now.max(start);
@@ -764,6 +766,7 @@ impl Rig {
             mesh_listens: 0,
             listened: vec![],
             event_starts: vec![],
+            event_ends: vec![],
             capture: vec![],
             rng: 0x1234_5678 ^ u32::from_le_bytes([address[0], address[1], address[2], address[3]]),
         }))

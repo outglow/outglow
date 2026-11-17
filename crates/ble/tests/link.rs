@@ -516,3 +516,26 @@ fn the_idle_time_ends_when_the_radio_is_next_needed() {
     rig.stall(5000);
     assert_eq!(rig.ble.borrow_mut().idle_time(), 0, "an event that is overdue");
 }
+
+#[test]
+fn an_event_may_run_4_ms_past_its_window_and_ends_2_ms_before_the_next_can_start() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.run(500);
+    let w = rig.world.borrow();
+    assert!(w.event_ends.iter().skip(1).all(|&(window_end, deadline)| deadline - window_end == 4 * MS));
+    drop(w);
+    for win_size in [3u8, 4] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.central().params = Params { interval: 6, win_size, ..Params::default() };
+        rig.connect();
+        let w = rig.world.borrow();
+        let (window_end, deadline) = w.event_ends[0];
+        let gap = w.event_starts[1] as i64 - deadline as i64;
+        if win_size == 3 {
+            assert!((2 * MS as i64..2 * MS as i64 + 2000).contains(&gap), "{gap} ticks to the next event");
+        } else {
+            assert_eq!(deadline - window_end, MS, "never less than 1 ms");
+        }
+    }
+}
