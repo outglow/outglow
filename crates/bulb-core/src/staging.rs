@@ -55,8 +55,8 @@ pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bo
     }
     let body = size as usize - 4;
     let mut crc = 0xffff_ffffu32;
+    let mut chunk = [0u8; CHUNK];
     for at in (0..body).step_by(CHUNK) {
-        let mut chunk = [0u8; CHUNK];
         let n = (body - at).min(CHUNK);
         flash.read(base + at, &mut chunk[..n]);
         if at == 0 {

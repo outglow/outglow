@@ -113,8 +113,8 @@ impl<F: Flash> LightLog<F> {
     }
 
     fn blank(&self, base: usize) -> bool {
+        let mut chunk = [0u8; 32];
         (0..self.size).step_by(32).all(|off| {
-            let mut chunk = [0u8; 32];
             self.flash.read(base + off, &mut chunk);
             chunk.iter().all(|&b| b == 0xFF)
         })

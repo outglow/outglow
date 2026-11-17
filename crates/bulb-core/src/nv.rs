@@ -60,8 +60,8 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
     }
 
     fn blank(&self, sector: usize) -> bool {
+        let mut chunk = [0u8; CHUNK];
         (0..self.size).step_by(CHUNK).all(|off| {
-            let mut chunk = [0u8; CHUNK];
             self.flash.read(sector + off, &mut chunk);
             chunk.iter().all(|&b| b == 0xff)
         })
@@ -103,8 +103,8 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
 
     fn erased_from(&self, off: usize) -> bool {
         let base = self.sectors[self.active];
+        let mut chunk = [0u8; CHUNK];
         (off..self.size).step_by(CHUNK).all(|at| {
-            let mut chunk = [0u8; CHUNK];
             let n = (at + CHUNK).min(self.size) - at;
             self.flash.read(base + at, &mut chunk[..n]);
             chunk[..n].iter().all(|&b| b == 0xff)
