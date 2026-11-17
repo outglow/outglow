@@ -393,3 +393,7 @@ impl ConfigStore for FlashStore {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/board.rs"]
+mod tests;

@@ -60,3 +60,7 @@ pub fn encrypt(key: &[u8; 16], data: &mut [u8; 16]) -> bool {
     STATE.set(2);
     false
 }
+
+#[cfg(test)]
+#[path = "tests/aes.rs"]
+mod tests;

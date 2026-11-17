@@ -726,3 +726,14 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
 #[cfg(test)]
 #[path = "tests/radio.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "ble"))]
+pub mod tests_support {
+    pub fn forget_rx() {
+        super::LAST_RX.set(0);
+    }
+
+    pub fn heard_now() {
+        super::LAST_RX.set(crate::reg::tick());
+    }
+}

@@ -695,3 +695,7 @@ pub fn lent() -> (u32, u32) {
 pub fn lent_max_us() -> u32 {
     LENT_MAX_US.get()
 }
+
+#[cfg(test)]
+#[path = "tests/ble_radio.rs"]
+mod tests;
