@@ -59,6 +59,7 @@ impl Bus for Fake {
     }
 
     fn sleep(&mut self, d: Duration) {
+        assert!(self.slept.len() < 1000, "the watch went on without end");
         self.slept.push(d);
         self.clock += d;
     }
@@ -301,6 +302,15 @@ fn a_box_without_page_0_is_an_error() {
     assert_eq!(b.sets.len(), 1);
     let mut b = Fake::new(vec![Step::Quiet, Step::Fail("lost")]);
     assert_eq!(fetch_box(&mut b, 30.0).err().unwrap().to_string(), "lost");
+}
+
+#[test]
+fn a_silent_bulb_is_read_until_the_timeout_and_no_longer() {
+    let mut b = Fake::new(vec![]);
+    let e = fetch_box(&mut b, 1.0).err().unwrap().to_string();
+    assert!(e.starts_with("no page 0 of the black box"), "{e}");
+    assert_eq!(b.clock, Duration::from_secs(1));
+    assert_eq!(b.waits.len(), 11);
 }
 
 #[test]
