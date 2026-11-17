@@ -10,6 +10,7 @@ fn the_cold_start_follows_the_vendor_cpu_wakeup_sequence() {
         c.set_analog(0x3c, 0x0f);
         c.set_analog(0xcb, 0x5a);
         c.set_analog(0x88, 0x13);
+        c.set_analog(0x87, 0xff);
     });
     init();
     let w: Vec<Op> = sim::with(|c| c.writes())
@@ -66,8 +67,8 @@ fn the_cold_start_follows_the_vendor_cpu_wakeup_sequence() {
             (0xc7, 0x0e),
             (0x86, 0xbb),
             (0x82, 0x64),
-            (0x87, 0x02),
-            (0x87, 0x06),
+            (0x87, 0xfe),
+            (0x87, 0xfe),
             (0x87, 0x9e),
             (0x82, 0xe4),
             (0x87, 0x9c),
@@ -311,7 +312,11 @@ fn a_colour_bulb_keeps_its_colour_record_and_rewrites_it_only_when_it_changes() 
 #[test]
 fn a_board_name_that_is_not_in_the_table_stops_the_build() {
     let _s = sim::session();
-    assert!(std::panic::catch_unwind(|| board_named("no such board")).is_err());
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let e = std::panic::catch_unwind(|| board_named("no such board")).err();
+    std::panic::set_hook(hook);
+    assert_eq!(e.and_then(|e| e.downcast_ref::<&str>().copied()), Some("BULB_BOARD names no board of boards.rs"));
     for b in crate::boards::BOARDS.iter() {
         assert!(str_eq(board_named(b.name).name, b.name));
         assert!(str_eq(board_named(b.name).tag, b.tag));
@@ -330,4 +335,39 @@ fn the_crystal_runs_once_its_tick_has_moved_more_than_20_us() {
     sim::with(|c| c.tick_step = 0);
     assert!(sim::reboots(init));
     assert_eq!(sim::with(|c| c.ticks_read()).len(), 10 * 2001);
+}
+
+#[test]
+fn the_wakeup_flag_of_a_deep_sleep_is_cleared_only_when_it_is_set() {
+    for (a7f, a3c, cleared) in [(0x01u8, 0x0f, Some(0x0d)), (0x01, 0x0d, None), (0xfe, 0x0f, None), (0x00, 0x02, None)] {
+        let _s = sim::session();
+        sim::with(|c| {
+            c.set_analog(0x7f, a7f);
+            c.set_analog(0x3c, a3c);
+        });
+        init();
+        let w: Vec<u8> = sim::with(|c| c.analog_writes()).iter().filter(|(a, _)| *a == 0x3c).map(|(_, v)| *v).collect();
+        assert_eq!(w, cleared.into_iter().collect::<Vec<_>>(), "{a7f:#x} {a3c:#x}");
+        let read_3c = sim::with(|c| c.log.iter().any(|o| *o == Op::AnaR(0x3c, a3c)));
+        assert_eq!(read_3c, a7f & 1 != 0);
+    }
+}
+
+#[test]
+fn the_24_mhz_rc_calibration_waits_for_its_done_bit() {
+    let _s = sim::session();
+    let mut polls = 0;
+    sim::with(|c| {
+        c.set_analog(0xcf, 0x7f);
+        c.on(move |c, op| {
+            if op == Op::W8(reg::ANA_CTRL, 0x40) && c.peek8(reg::ANA_ADDR) == 0xcf {
+                polls += 1;
+                if polls == 3 {
+                    c.set_analog(0xcf, 0x80);
+                }
+            }
+        })
+    });
+    init();
+    assert_eq!(sim::with(|c| c.log.iter().filter(|o| matches!(o, Op::AnaR(0xcf, _))).count()), 4);
 }

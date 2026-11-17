@@ -314,15 +314,6 @@ pub fn energy_detect(channel: u8, ms: u32) -> i32 {
     peak
 }
 
-#[inline(always)]
-fn bounded(n: u8, max: usize) -> usize {
-    if n as usize > max {
-        max
-    } else {
-        n as usize
-    }
-}
-
 pub fn set_filter(pan: u16, short: u16, ext: u64) {
     let s = reg::irq_disable();
     PAN.set(pan);
@@ -491,14 +482,14 @@ fn on_frame() {
             if src_len != 0 && src + src_len < mac + len && at(src + src_len) == 0x04 {
                 if src_len == 2 {
                     let poller = u16::from_le_bytes([at(src), at(src + 1)]);
-                    let n = bounded(N_PENDING_SHORT.get(), PENDING_SHORT_SLOTS);
+                    let n = N_PENDING_SHORT.get() as usize;
                     let mut i = 0;
                     while i < n && !pending {
                         pending = PENDING_SHORT.at(i) == Some(poller);
                         i += 1;
                     }
                     if !pending {
-                        let n = bounded(N_CHILDREN.get(), CHILD_SLOTS);
+                        let n = N_CHILDREN.get() as usize;
                         let mut known = false;
                         i = 0;
                         while i < n && !known {
@@ -508,7 +499,7 @@ fn on_frame() {
                         pending = !known;
                     }
                 } else {
-                    let n = bounded(N_PENDING_EXT.get(), PENDING_EXT_SLOTS);
+                    let n = N_PENDING_EXT.get() as usize;
                     let mut slot = 0;
                     while slot < n && !pending {
                         let mut i = 0;

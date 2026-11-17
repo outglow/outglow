@@ -57,3 +57,28 @@ fn reports_and_network_state_are_published() {
     publish_reset_step(4);
     assert_eq!(BULB_NET.read(NET_RESET_STEP), 4);
 }
+
+#[test]
+fn the_hang_command_stops_the_loop_without_feeding_the_watchdog() {
+    let _lock = crate::sim::session();
+    BULB_STATE.write(STATE_DONE, 0);
+    command(7, &[OP_HANG, 0, 0, 0, 0, 0, 0]);
+    let mut reads = 0;
+    crate::sim::with(|c| {
+        c.on(move |_, op| {
+            if let crate::sim::Op::R32(crate::reg::SYSTEM_TICK, _) = op {
+                reads += 1;
+                if reads == 100 {
+                    panic!("hung");
+                }
+            }
+        })
+    });
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| DebugLink.poll()));
+    std::panic::set_hook(hook);
+    assert_eq!(r.err().and_then(|e| e.downcast_ref::<&str>().copied()), Some("hung"));
+    assert_eq!(BULB_STATE.read(STATE_DONE), 7);
+    assert!(crate::sim::with(|c| c.writes()).is_empty());
+}

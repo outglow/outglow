@@ -189,3 +189,7 @@ pub const PWM_ENABLE: usize = 0x780;
 pub const TIMER_CTRL: usize = 0x620;
 pub const TIMER_STATUS: usize = 0x623;
 pub const TIMER2_TICK: usize = 0x638;
+
+#[cfg(test)]
+#[path = "tests/reg.rs"]
+mod tests;

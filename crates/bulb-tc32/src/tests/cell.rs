@@ -47,7 +47,9 @@ fn a_shared_buffer_reads_and_writes_aligned_words_that_fit() {
 
 #[test]
 fn a_take_once_gives_its_value_only_the_first_time() {
+    let once: &'static TakeOnce<u32> = Box::leak(Box::new(TakeOnce::new()));
     static ONCE: TakeOnce<u32> = TakeOnce::new();
+    assert_eq!(once.take_with(|| 1).copied(), Some(1));
     let v = ONCE.take_with(|| 5).expect("the first take");
     *v += 1;
     assert!(ONCE.take_with(|| 9).is_none());

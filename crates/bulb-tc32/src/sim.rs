@@ -56,6 +56,9 @@ pub struct Chip {
     erased: bool,
     pub hook: Option<Hook>,
     pub flash_busy_polls: u8,
+    pub aes_takes: usize,
+    pub aes_corrupt: u8,
+    aes_words: usize,
     busy_left: u8,
     mspi_busy: bool,
 }
@@ -86,6 +89,9 @@ impl Chip {
             erased: false,
             hook: None,
             flash_busy_polls: 1,
+            aes_takes: 4,
+            aes_corrupt: 0,
+            aes_words: 0,
             busy_left: 0,
             mspi_busy: false,
         }
@@ -169,7 +175,7 @@ impl Chip {
         }
         if off == AES_CTRL {
             let mut c = self.peek8(AES_CTRL) & !0x06;
-            if self.aes_in.len() < 16 {
+            if self.aes_words < self.aes_takes {
                 c |= 0x02;
             }
             if self.aes_ready && self.aes_out.len() == 16 {
@@ -235,6 +241,7 @@ impl Chip {
         if off == AES_CTRL && bytes[0] & 0x01 == 0 {
             self.aes_in.clear();
             self.aes_out.clear();
+            self.aes_words = 0;
         }
     }
 
@@ -317,13 +324,16 @@ impl Chip {
     }
 
     fn aes_feed(&mut self, bytes: [u8; 4]) {
+        self.aes_words += 1;
         if self.aes_in.len() >= 16 {
             return;
         }
         self.aes_in.extend_from_slice(&bytes);
-        if self.aes_in.len() == 16 {
-            let mut block: [u8; 16] = self.aes_in[..].try_into().unwrap_or([0; 16]);
+        if self.aes_in.len() == 16 || self.aes_words == self.aes_takes {
+            let mut block = [0u8; 16];
+            block[..self.aes_in.len()].copy_from_slice(&self.aes_in);
             zigbee::aes::Aes128::new(&self.aes_key).encrypt(&mut block);
+            block[15] ^= self.aes_corrupt;
             self.aes_out = block.to_vec();
         }
     }

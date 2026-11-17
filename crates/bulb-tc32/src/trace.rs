@@ -51,23 +51,12 @@ pub fn tx_aux([attempts, busy, t0]: [u32; 3]) -> u32 {
     u32::from_le_bytes([attempts.min(255) as u8, busy.min(255) as u8, u0, u1])
 }
 
-#[inline(always)]
-pub fn record(_ev: zigbee::hal::Trace) {
-    #[cfg(feature = "trace")]
-    ring::record(_ev);
-}
+#[cfg(feature = "trace")]
+pub use ring::record;
 
-#[inline(always)]
-pub fn span(_kind: u8, _detail: u8, _peer: u16, _t0: u32) {
-    #[cfg(feature = "trace")]
-    ring::record(zigbee::hal::Trace {
-        kind: _kind,
-        detail: _detail,
-        seq: 0,
-        src: 0,
-        peer: _peer,
-        aux: crate::reg::tick().wrapping_sub(_t0),
-    });
+#[cfg(feature = "trace")]
+pub fn span(kind: u8, detail: u8, peer: u16, t0: u32) {
+    record(zigbee::hal::Trace { kind, detail, seq: 0, src: 0, peer, aux: crate::reg::tick().wrapping_sub(t0) });
 }
 
 #[cfg(all(test, feature = "trace"))]

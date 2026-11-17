@@ -1512,7 +1512,7 @@ pub(crate) struct CentralState {
 
 pub(crate) type Central = std::rc::Rc<std::cell::RefCell<CentralState>>;
 
-const CONNECT_INTERVAL: u16 = 24;
+const CONNECT_INTERVAL: u16 = 16;
 const CONNECT_TIMEOUT: u16 = 500;
 
 fn connect_payload(adv_a: [u8; 6]) -> Vec<u8> {
@@ -1577,7 +1577,7 @@ pub(crate) fn central_link() -> Central {
                             c.poke8(TX_FIFO_RPTR, (r + 1) & 0x0f);
                         }
                     }
-                    if s.sent >= 4 {
+                    if s.sent >= 8 {
                         c.raise16(RF_IRQ_STATUS, 0x0020);
                         s.armed = false;
                         return;

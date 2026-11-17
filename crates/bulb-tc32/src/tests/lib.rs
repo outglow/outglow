@@ -10,6 +10,7 @@ pub fn reset_statics() {
     staging::release(staging::Owner::Zigbee);
     staging::release(staging::Owner::Ble);
     zb::BLE_NEXT.set(None);
+    zb::LOOP_MAX_US.set(0);
 }
 
 pub fn crc32(data: &[u8]) -> u32 {
@@ -162,7 +163,9 @@ fn a_cold_start_counts_the_power_cycle_starts_the_watchdog_and_runs_the_bulb() {
         }
     }
     assert!(idles > 0);
-    assert!(zb::LOOP_MAX_US.get() >= longest);
+    let span = sim::with(|c| c.ticks_read());
+    let total = span.last().copied().unwrap_or(0).wrapping_sub(span[0]) / reg::TICKS_PER_US;
+    assert!(longest > 16 && longest <= zb::LOOP_MAX_US.get() && zb::LOOP_MAX_US.get() <= total, "{longest} {} {total}", zb::LOOP_MAX_US.get());
 }
 
 #[test]

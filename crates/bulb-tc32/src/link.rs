@@ -66,7 +66,9 @@ impl Radio for DebugLink {
         BULB_CMD.copy_to(CMD_PAYLOAD, &mut payload);
         BULB_STATE.write(STATE_DONE, seq);
         if payload[0] == OP_HANG {
-            loop {}
+            loop {
+                crate::reg::tick();
+            }
         }
         let decoded = Command::decode(&payload);
         if decoded.is_none() {
