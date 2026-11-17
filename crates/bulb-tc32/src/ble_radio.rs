@@ -183,7 +183,7 @@ fn command(cmd: u8, at: u32, tx: usize) {
 }
 
 #[allow(unsafe_code)]
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 #[inline(never)]
 extern "C" fn set_channel(chn: u8) {
     write8(RF_CHANNEL, chn);
@@ -285,7 +285,7 @@ fn wait_for_quiet(latest: u32) {
 }
 
 #[allow(unsafe_code)]
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 #[inline(never)]
 extern "C" fn adv_channel(chn: u8, answer_window: u32) -> u8 {
     let p = rx_buffer(RX_CURRENT.get());
@@ -402,7 +402,7 @@ struct Brx {
 }
 
 #[allow(unsafe_code)]
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 #[inline(never)]
 extern "C" fn brx(e: &Brx) {
     let mut current = RX_CURRENT.get();

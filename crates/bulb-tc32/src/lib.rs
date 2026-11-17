@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(target_os = "none", no_std)]
 #![deny(unsafe_code)]
 
 mod aes;
@@ -19,6 +19,8 @@ mod nv;
 mod radio;
 #[allow(unsafe_code)]
 mod reg;
+#[cfg(not(target_os = "none"))]
+pub mod sim;
 #[allow(unsafe_code)]
 mod stack;
 mod staging;
@@ -36,7 +38,7 @@ const IDLE_MIN: u32 = 50 * reg::TICKS_PER_US;
 
 #[allow(unsafe_code)]
 
-#[no_mangle]
+#[cfg_attr(target_os = "none", no_mangle)]
 pub extern "C" fn main() -> ! {
     board::init();
     let warm = board::warm_reset();
@@ -90,6 +92,7 @@ pub(crate) fn factory_reset() {
     ble::erase_settings();
 }
 
+#[cfg(target_os = "none")]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     board::reboot()

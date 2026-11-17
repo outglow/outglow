@@ -2,29 +2,64 @@
 
 const BASE: usize = 0x80_0000;
 
+#[cfg(target_os = "none")]
 #[inline(always)]
 pub fn read8(off: usize) -> u8 {
     unsafe { ((BASE + off) as *const u8).read_volatile() }
 }
 
+#[cfg(not(target_os = "none"))]
+#[inline(always)]
+pub fn read8(off: usize) -> u8 {
+    crate::sim::read(off, 1) as u8
+}
+
+#[cfg(target_os = "none")]
 #[inline(always)]
 pub fn write8(off: usize, v: u8) {
     unsafe { ((BASE + off) as *mut u8).write_volatile(v) }
 }
 
+#[cfg(not(target_os = "none"))]
+#[inline(always)]
+pub fn write8(off: usize, v: u8) {
+    crate::sim::write(off, 1, v as u32)
+}
+
+#[cfg(target_os = "none")]
 #[inline(always)]
 pub fn write16(off: usize, v: u16) {
     unsafe { ((BASE + off) as *mut u16).write_volatile(v) }
 }
 
+#[cfg(not(target_os = "none"))]
+#[inline(always)]
+pub fn write16(off: usize, v: u16) {
+    crate::sim::write(off, 2, v as u32)
+}
+
+#[cfg(target_os = "none")]
 #[inline(always)]
 pub fn read16(off: usize) -> u16 {
     unsafe { ((BASE + off) as *const u16).read_volatile() }
 }
 
+#[cfg(not(target_os = "none"))]
+#[inline(always)]
+pub fn read16(off: usize) -> u16 {
+    crate::sim::read(off, 2) as u16
+}
+
+#[cfg(target_os = "none")]
 #[inline(always)]
 pub fn write32(off: usize, v: u32) {
     unsafe { ((BASE + off) as *mut u32).write_volatile(v) }
+}
+
+#[cfg(not(target_os = "none"))]
+#[inline(always)]
+pub fn write32(off: usize, v: u32) {
+    crate::sim::write(off, 4, v as u32)
 }
 
 #[inline(always)]
@@ -83,9 +118,16 @@ pub fn analog_read(addr: u8) -> u8 {
     v
 }
 
+#[cfg(target_os = "none")]
 #[inline(always)]
 pub fn read32(off: usize) -> u32 {
     unsafe { ((BASE + off) as *const u32).read_volatile() }
+}
+
+#[cfg(not(target_os = "none"))]
+#[inline(always)]
+pub fn read32(off: usize) -> u32 {
+    crate::sim::read(off, 4)
 }
 
 pub const MSPI_DATA: usize = 0x0c;

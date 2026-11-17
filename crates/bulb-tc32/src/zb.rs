@@ -114,7 +114,7 @@ const TICKS_PER_MS: u32 = 16_000;
 static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
 
 #[allow(unsafe_code)]
-#[link_section = ".noinit"]
+#[cfg_attr(target_os = "none", link_section = ".noinit")]
 static RETAINED: SharedBuf<{ 12 + zigbee::stack::RETAIN_MAX }> = SharedBuf::new([0; 12 + zigbee::stack::RETAIN_MAX]);
 const RETAINED_MAGIC: u32 = 0x4449_4147;
 
