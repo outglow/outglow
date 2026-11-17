@@ -1133,3 +1133,14 @@ fn a_busy_channel_is_a_channel_access_failure() {
     assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x01).unwrap()[1], seq, "answered once the channel is free");
     assert_eq!(mfr1(&mut net, short, 0x500D), before + 2);
 }
+
+#[test]
+fn without_a_black_box_its_pages_are_empty() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].no_black_box = true;
+    let r = mfr(&mut net, short, &[0x6000]);
+    assert_eq!(r[&0x6000], (0x41, vec![0]));
+}
