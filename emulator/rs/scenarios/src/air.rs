@@ -61,7 +61,42 @@ pub enum Ev {
 }
 
 pub fn r6(x: f64) -> f64 {
+    r6_exact(x).unwrap_or_else(|| r6_text(x))
+}
+
+fn r6_text(x: f64) -> f64 {
     format!("{x:.6}").parse().unwrap()
+}
+
+fn r6_exact(x: f64) -> Option<f64> {
+    if !x.is_finite() {
+        return None;
+    }
+    let bits = x.abs().to_bits();
+    let (exp, frac) = ((bits >> 52) as i32, bits & ((1 << 52) - 1));
+    let (m, e) = if exp == 0 { (frac, -1074) } else { (frac | 1 << 52, exp - 1075) };
+    let num = m as u128 * 1_000_000;
+    let q = if e >= 0 {
+        if e > 20 {
+            return None;
+        }
+        num << e
+    } else if -e >= 127 {
+        0
+    } else {
+        let s = -e as u32;
+        let (q, r, half) = (num >> s, num & ((1u128 << s) - 1), 1u128 << (s - 1));
+        if r > half || (r == half && q & 1 == 1) {
+            q + 1
+        } else {
+            q
+        }
+    };
+    if q >= 1 << 53 {
+        return None;
+    }
+    let v = q as f64 / 1e6;
+    Some(if x.is_sign_negative() { -v } else { v })
 }
 
 pub type Log = Rc<dyn Fn(&str)>;
@@ -928,6 +963,40 @@ impl Drop for World {
                 use std::io::Write as _;
                 let _ = writeln!(f, "{} {} {h:016x}", self.air.dut_name, self.air.frames.len());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{r6, r6_text};
+
+    #[test]
+    fn r6_as_the_text_round_trip() {
+        let mut seed = 0x9E3779B97F4A7C15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut xs = vec![0.0, -0.0, 0.0078125, 0.0234375, -0.0078125, 2.5e-6, 5e-7, 1e-300, 4.9e-324, 1e15, 9.007e9, 123456.7890125];
+        for k in 0..300_000u64 {
+            let r = next();
+            xs.push(match k % 5 {
+                0 => (r >> 11) as f64 / (1u64 << 53) as f64 * 1e6,
+                1 => (r % 1_000_000_000_000) as f64 / 1e6 + (r >> 60) as f64 * 1e-7,
+                2 => (r >> 40) as f64 / 128.0,
+                3 => f64::from_bits(r),
+                _ => -((r >> 20) as f64 / 1e7),
+            });
+        }
+        for x in xs {
+            if !x.is_finite() {
+                continue;
+            }
+            let (a, b) = (r6(x), r6_text(x));
+            assert!(a.to_bits() == b.to_bits(), "{x:e}: {a:e} {b:e}");
         }
     }
 }
