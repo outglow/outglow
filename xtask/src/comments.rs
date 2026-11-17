@@ -78,13 +78,15 @@ fn is_comment(kind: TokenKind) -> bool {
     matches!(kind, TokenKind::LineComment { .. } | TokenKind::BlockComment { .. })
 }
 
+pub const MUTANTS_MARKER: &str = "/* ~ changed by cargo-mutants ~ */";
+
 pub fn find(src: &str) -> Vec<Comment> {
     let mut out = Vec::new();
     let mut pos = 0usize;
     let mut line = 1usize;
     for t in tokenize(src, FrontmatterAllowed::No) {
         let text = &src[pos..pos + t.len as usize];
-        if is_comment(t.kind) {
+        if is_comment(t.kind) && text != MUTANTS_MARKER {
             out.push(Comment { line, text: text.to_string() });
         }
         line += text.matches('\n').count();
@@ -163,6 +165,12 @@ pub fn strip(src: &str, docs_as_attributes: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_marker_cargo_mutants_puts_in_its_scratch_copies_is_not_a_comment() {
+        assert!(find(&format!("fn f() -> u8 {{ 1 + {MUTANTS_MARKER} 2 }}")).is_empty());
+        assert_eq!(find("fn f() {} /* other */").len(), 1);
+    }
 
     #[test]
     fn line_block_and_doc_comments_are_found_but_not_slashes_in_strings() {
