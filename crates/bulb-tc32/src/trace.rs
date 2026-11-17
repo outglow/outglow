@@ -13,7 +13,7 @@ mod ring {
 
     pub const ENTRIES: usize = 512;
 
-    const LEN: usize = 8 + ENTRIES * 16;
+    const LEN: usize = 8_200;
     const MAGIC: u32 = 0x5452_4345;
 
     const fn ring() -> [u8; LEN] {

@@ -59,3 +59,8 @@ fn a_flash_program_and_erase_are_traced_with_their_sector() {
 pub(crate) fn rewind() {
     ring::ZB_TRACE.write32(4, 0);
 }
+
+#[test]
+fn the_ring_holds_a_header_and_512_entries_of_16_octets() {
+    assert_eq!(core::mem::size_of_val(&ring::ZB_TRACE), 8 + ring::ENTRIES * 16);
+}
