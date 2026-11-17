@@ -529,7 +529,7 @@ impl<H: Hal> Stack<H> {
             }
             let (fc_next, fc_seq) = neighbor.map_or((0, 0), |n| (self.neighbors[n].fc_next, self.neighbors[n].fc_seq));
             self.children[i] =
-                Child { used: true, ext, short, capability, joined: secured, timeout: DEFAULT_TIMEOUT, fc_next, fc_seq, heard: now, ..Child::EMPTY };
+                Child { used: true, ext, short, capability, joined: secured, fc_next, fc_seq, heard: now, ..Child::EMPTY };
         } else if secured {
             let c = &mut self.children[i];
             (c.short, c.capability, c.joined, c.timeout, c.heard) = (short, capability, true, DEFAULT_TIMEOUT, now);
