@@ -577,7 +577,7 @@ fn channel_clear() -> bool {
     sum / count <= CCA_THRESHOLD_DBM
 }
 
-fn csma_transmit(random: &mut impl FnMut() -> u32) -> bool {
+fn csma_transmit(random: &mut dyn FnMut() -> u32) -> bool {
     let mut be = MIN_BE;
     for _attempt in 0..MAX_CCA_ATTEMPTS {
         #[cfg(feature = "trace")]
@@ -633,7 +633,7 @@ pub fn transmit_at(mpdu: &[u8], at: u32) {
     reg::irq_restore(s);
 }
 
-pub fn transmit(mpdu: &[u8], random: impl FnMut() -> u32) -> TxStatus {
+pub fn transmit(mpdu: &[u8], random: &mut dyn FnMut() -> u32) -> TxStatus {
     let status = transmit_frame(mpdu, random);
     #[cfg(feature = "trace")]
     {
@@ -651,7 +651,7 @@ pub fn transmit(mpdu: &[u8], random: impl FnMut() -> u32) -> TxStatus {
 }
 
 #[inline(always)]
-fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
+fn transmit_frame(mpdu: &[u8], random: &mut dyn FnMut() -> u32) -> TxStatus {
     let len = mpdu.len();
     if !(3..=125).contains(&len) {
         return TxStatus::Ok;
@@ -667,7 +667,7 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
     let mut busy = false;
     for _ in 0..=MAX_FRAME_RETRIES {
         ACK_WANTED.set(wants_ack as u8);
-        busy = !csma_transmit(&mut random);
+        busy = !csma_transmit(random);
         #[cfg(feature = "trace")]
         LAST_TX.update(|[a, b, t]| [a + 1, b + busy as u32, t]);
         if busy {

@@ -182,7 +182,7 @@ fn a_frame_without_ack_request_is_sent_once_in_transmit_mode() {
     let _s = sim::session();
     reset_radio_state();
     let mpdu = [0x03, 0x08, 0x46, 0xff, 0xff, 0xff, 0xff, 0x07];
-    assert_eq!(transmit(&mpdu, || 0), TxStatus::Ok);
+    assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::Ok);
     let writes = sim::with(|c| c.writes());
     assert_eq!(kick_ops(&writes), 1);
     let kick = writes.iter().position(|o| matches!(o, Op::W8(0xc43, 0x04))).unwrap_or(0);
@@ -198,7 +198,7 @@ fn an_unacknowledged_frame_is_sent_four_times() {
     let _s = sim::session();
     reset_radio_state();
     let mpdu = [0x61, 0x88, 0x10, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00];
-    assert_eq!(transmit(&mpdu, || 0), TxStatus::NoAck);
+    assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::NoAck);
     assert_eq!(sim::with(|c| c.tx_kicks), 4);
     assert_eq!(ACK_WANTED.get(), 0);
 }
@@ -208,7 +208,7 @@ fn a_busy_channel_ends_in_channel_busy_without_sending() {
     let _s = sim::session();
     reset_radio_state();
     sim::with(|c| c.poke8(RF_RSSI, 0x40));
-    assert_eq!(transmit(&[0x41, 0x88, 0x01, 0x62, 0x1a, 0xff, 0xff, 0x00, 0x00], || 7), TxStatus::ChannelBusy);
+    assert_eq!(transmit(&[0x41, 0x88, 0x01, 0x62, 0x1a, 0xff, 0xff, 0x00, 0x00], &mut || 7), TxStatus::ChannelBusy);
     assert_eq!(sim::with(|c| c.tx_kicks), 0);
     assert_eq!(CCA_BUSY.get(), 4 * MAX_CCA_ATTEMPTS);
     assert!(receiving());
@@ -218,10 +218,10 @@ fn a_busy_channel_ends_in_channel_busy_without_sending() {
 fn frames_too_short_or_too_long_are_not_sent() {
     let _s = sim::session();
     reset_radio_state();
-    assert_eq!(transmit(&[1, 2], no_backoff), TxStatus::Ok);
-    assert_eq!(transmit(&[0; 126], no_backoff), TxStatus::Ok);
+    assert_eq!(transmit(&[1, 2], &mut no_backoff), TxStatus::Ok);
+    assert_eq!(transmit(&[0; 126], &mut no_backoff), TxStatus::Ok);
     assert_eq!(sim::with(|c| c.tx_kicks), 0);
-    assert_eq!(transmit(&[0x01, 0x08, 0x01], no_backoff), TxStatus::Ok);
+    assert_eq!(transmit(&[0x01, 0x08, 0x01], &mut no_backoff), TxStatus::Ok);
     assert_eq!(sim::with(|c| c.tx_kicks), 1);
 }
 
@@ -982,7 +982,7 @@ fn ack_after(wait: u32) -> TxStatus {
             _ => {}
         })
     });
-    let r = transmit(&[0x61, 0x88, 0x33, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], || 0);
+    let r = transmit(&[0x61, 0x88, 0x33, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], &mut || 0);
     sim::with(|c| c.hook = None);
     r
 }
@@ -1004,17 +1004,17 @@ fn the_frame_and_its_ack_request_are_set_up_once_before_the_attempts() {
     ACK_WANTED.set(0);
     let mut seen = vec![];
     let mpdu = [0x61, 0x88, 0x5a, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00];
-    assert_eq!(transmit(&mpdu, || 0), TxStatus::NoAck);
+    assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::NoAck);
     seen.push(ACK_SEQ.get());
     assert_eq!(seen, vec![0x5a]);
     assert_eq!(counters().3, 4);
-    assert_eq!(transmit(&[0x41, 0x88, 0x5b, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], || 0), TxStatus::Ok);
+    assert_eq!(transmit(&[0x41, 0x88, 0x5b, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], &mut || 0), TxStatus::Ok);
     assert_eq!(counters().3, 1);
     for (len, sent) in [(2usize, false), (3, true), (125, true), (126, false)] {
         let kicks = sim::with(|c| c.tx_kicks);
         let mut f = vec![0x41u8; len];
         f[0] = 0x01;
-        assert_eq!(transmit(&f, || 0), TxStatus::Ok);
+        assert_eq!(transmit(&f, &mut || 0), TxStatus::Ok);
         assert_eq!(sim::with(|c| c.tx_kicks) - kicks, sent as usize, "{len}");
         if sent {
             assert_eq!((TX_BUF.read32(0), TX_BUF.read(4), TX_BUF.read(4 + len)), (len as u32 + 1, len as u8 + 2, 0x41));
@@ -1036,7 +1036,7 @@ fn a_frame_busy_on_its_last_attempt_ends_busy_and_one_sent_at_last_without_ack_e
                 }
             })
         });
-        let r = transmit(&[0x61, 0x88, 0x33, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], || 0);
+        let r = transmit(&[0x61, 0x88, 0x33, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], &mut || 0);
         sim::with(|c| c.hook = None);
         assert_eq!(r, status, "{busy_from}");
     }

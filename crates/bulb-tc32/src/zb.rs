@@ -203,7 +203,7 @@ impl Hal for Tc32Hal {
     }
 
     fn transmit(&mut self, mpdu: &[u8]) -> TxStatus {
-        radio::transmit(mpdu, || self.random())
+        radio::transmit(mpdu, &mut || self.random())
     }
 
     fn transmit_at(&mut self, mpdu: &[u8], at_us: u32) {
