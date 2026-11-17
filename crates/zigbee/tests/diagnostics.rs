@@ -1188,3 +1188,28 @@ fn a_frame_passed_on_for_another_device_is_marked_relayed_in_the_black_box() {
     assert!(relayed.iter().any(|e| u16::from_le_bytes([e[6], e[7]]) == sb), "the read passed on to the second bulb");
     assert!(relayed.iter().all(|e| u16::from_le_bytes([e[8], e[9]]) != sa));
 }
+
+#[test]
+fn the_black_box_keeps_each_unicasts_attempts_and_outcome_oldest_first() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let short = net.nodes[a].short();
+    let id = net.nodes[a].id;
+    net.run(16_000);
+    net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(200);
+    net.air.borrow_mut().loss[id][0] = 100;
+    net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(30);
+    net.air.borrow_mut().loss[id][0] = 0;
+    let b = black_box(&mut net, short);
+    let (neighbors, link_entry, ring_len, ring_entry) = (b[1] as usize, b[2] as usize, b[4] as usize, b[5] as usize);
+    let coord = b[24..24 + neighbors * link_entry].chunks(link_entry).find(|e| e[..2] == [0, 0]).unwrap();
+    let len = coord[2] as usize;
+    let frames: Vec<u8> = (0..len).map(|i| (coord[4 + i / 2] >> (4 * (i % 2))) & 0x0F).collect();
+    assert!(frames.windows(5).any(|w| w == [9, 4, 4, 4, 4]), "delivered at once, then four tries of four attempts each lost, in that order: {frames:?}");
+    let ring_at = 24 + neighbors * link_entry;
+    let ring: Vec<&[u8]> = b[ring_at..ring_at + ring_len * ring_entry].chunks(ring_entry).filter(|e| e[4..6] == [0, 0] && e[10] & 0x60 == 0x40).collect();
+    assert!(ring.iter().any(|e| e[14] == 4 | 1 << 4), "four attempts, no acknowledgement");
+    assert!(ring.iter().any(|e| e[14] == 1), "one attempt, delivered");
+}
