@@ -1,7 +1,4 @@
-use memcap as _;
-mod sim;
-
-use sim::*;
+use crate::sim::*;
 use zigbee::aes::Aes128;
 use zigbee::nwk;
 

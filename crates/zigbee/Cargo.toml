@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Portable Zigbee PRO router stack (no_std, no allocation): 802.15.4 MAC framing, NWK with security and mesh routing, APS, ZDO and the ZCL light clusters"
+autotests = false
 
 [features]
 # Motion sensing from the RSSI of frames between bulbs (docs/rf-sensing.md):
@@ -22,6 +23,15 @@ sense = { path = "../sense", optional = true }
 [dev-dependencies]
 memcap = { path = "../memcap" }
 zigbee = { path = ".", features = ["sense"] }
+
+# One test binary for every file of tests/ (autotests is off): the stack is
+# generic over its HAL, so each binary compiles all of it again for the
+# simulated one; one binary instead of fifteen makes a rebuild after a change
+# (and each cargo-mutants mutant) several times cheaper. tests/main.rs checks
+# that it declares every file.
+[[test]]
+name = "stack"
+path = "tests/main.rs"
 
 [lints.rust]
 unsafe_code = "forbid"

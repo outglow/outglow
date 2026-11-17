@@ -1,8 +1,5 @@
-use memcap as _;
-mod sim;
-
 use bulb_core::command::Command;
-use sim::*;
+use crate::sim::*;
 use zigbee::aes::Aes128;
 use zigbee::mac::{self, Addr};
 use zigbee::nwk;

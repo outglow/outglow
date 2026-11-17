@@ -1,8 +1,5 @@
-use memcap as _;
-mod sim;
-
 use bulb_core::command::Command;
-use sim::*;
+use crate::sim::*;
 use zigbee::hal::TxStatus;
 use zigbee::nwk;
 use zigbee::stack::{State, CHILDREN, INDIRECT, INDIRECT_PER_CHILD};

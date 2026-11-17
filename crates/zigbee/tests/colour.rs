@@ -1,8 +1,5 @@
-use memcap as _;
-mod sim;
-
 use bulb_core::command::{Command, HueDirection};
-use sim::*;
+use crate::sim::*;
 
 const COLOR: u16 = 0x0300;
 const SCENES: u16 = 0x0005;

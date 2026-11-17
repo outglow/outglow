@@ -1,7 +1,4 @@
-use memcap as _;
-mod sim;
-
-use sim::*;
+use crate::sim::*;
 use zigbee::stack::Identity;
 
 const BASIC: u16 = 0x0000;

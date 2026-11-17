@@ -1,7 +1,4 @@
-use memcap as _;
-mod sim;
-
-use sim::*;
+use crate::sim::*;
 use zigbee::stack::BleMode;
 
 const SETTINGS: u16 = 0xFC5F;

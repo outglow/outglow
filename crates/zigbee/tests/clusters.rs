@@ -1,8 +1,5 @@
-use memcap as _;
-mod sim;
-
 use bulb_core::command::Command;
-use sim::*;
+use crate::sim::*;
 
 const IDENTIFY: u16 = 0x0003;
 const GROUPS: u16 = 0x0004;

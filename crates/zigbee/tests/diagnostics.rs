@@ -1,9 +1,6 @@
-use memcap as _;
-mod sim;
-
 use std::collections::HashMap;
 
-use sim::*;
+use crate::sim::*;
 use zigbee::hal::{ResetCause, TxStatus};
 use zigbee::nwk;
 
@@ -24,7 +21,6 @@ const MAC_TX_UCAST_FAIL: u16 = 0x0105;
 const APS_RX_UCAST: u16 = 0x0108;
 const APS_TX_UCAST_SUCCESS: u16 = 0x0109;
 const ROUTE_DISC: u16 = 0x010C;
-const NEIGHBOR_ADDED: u16 = 0x010D;
 const NWK_FC_FAILURE: u16 = 0x0112;
 const BUFFER_FAILURES: u16 = 0x0117;
 const RELAYED_UCAST: u16 = 0x0118;

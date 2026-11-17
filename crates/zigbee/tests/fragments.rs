@@ -1,7 +1,4 @@
-use memcap as _;
-mod sim;
-
-use sim::*;
+use crate::sim::*;
 
 const BASIC: u16 = 0x0000;
 

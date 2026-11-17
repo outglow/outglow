@@ -1,7 +1,4 @@
-use memcap as _;
-mod sim;
-
-use sim::*;
+use crate::sim::*;
 use zigbee::nwk;
 
 const NWK_ADDR_REQ: u16 = 0x0000;

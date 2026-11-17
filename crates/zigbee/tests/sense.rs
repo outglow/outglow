@@ -1,6 +1,3 @@
-use memcap as _;
-mod sim;
-
 #[path = "../../sense/tests/model/mod.rs"]
 mod model;
 
@@ -9,7 +6,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use model::{Channel, Crossing, Rng};
-use sim::*;
+use crate::sim::*;
 use zigbee::mac;
 use zigbee::stack::Identity;
 use zigbee::stack::{SENSE_DEFAULT_OFF_S, SENSE_DEFAULT_S, SENSE_ON_RATE};
