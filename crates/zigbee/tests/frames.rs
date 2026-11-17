@@ -197,3 +197,13 @@ fn every_flag_of_the_mac_frame_control_is_written_where_the_standard_puts_it() {
         assert_eq!(b.as_slice()[0], byte);
     }
 }
+
+#[test]
+fn a_nwk_header_of_another_protocol_version_is_not_read() {
+    let mut b = Buf::new();
+    nwk::Header::new(nwk::FRAME_DATA, 0x0001, 0x0000, 5, 1).write(&mut b);
+    let mut f = b.as_slice().to_vec();
+    assert!(nwk::Header::parse(&f).is_some());
+    f[0] = (f[0] & !0x3C) | 1 << 2;
+    assert!(nwk::Header::parse(&f).is_none());
+}
