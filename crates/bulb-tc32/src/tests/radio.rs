@@ -1292,3 +1292,23 @@ fn init_keeps_the_other_interrupt_mask_bits() {
     assert!(w.contains(&Op::W16(RF_IRQ_MASK, 0xe001)));
     assert!(w.contains(&Op::W32(reg::IRQ_MASK, 0x0010_2001)));
 }
+
+#[test]
+fn only_an_ack_of_five_octets_with_our_sequence_number_while_we_wait_counts() {
+    let ack = |phr: u8, seq: u8| {
+        let mut v = vec![phr + 9, 0, 0, 0, phr, 0x02, 0x00, seq];
+        v.resize(phr as usize + 5, 0);
+        v.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x46, 0x10]);
+        v
+    };
+    for (wanted, phr, seq, seen) in [(1u8, 5u8, 0x33u8, 1u8), (0, 5, 0x33, 0), (1, 6, 0x33, 0), (1, 5, 0x34, 0)] {
+        let _s = sim::session();
+        reset_radio_state();
+        ACK_WANTED.set(wanted);
+        ACK_SEQ.set(0x33);
+        ACK_SEEN.set(0);
+        deliver(&ack(phr, seq));
+        assert_eq!(ACK_SEEN.get(), seen, "{wanted} {phr} {seq:#x}");
+        assert!(!has_frame());
+    }
+}
