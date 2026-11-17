@@ -606,3 +606,44 @@ fn a_block_response_nobody_asked_for_is_ignored() {
     net.run(500);
     assert_eq!((net.nodes[n].stack.ota_state(), net.coord.ota_blocks), (OtaState::Idle, 0));
 }
+
+#[test]
+fn a_query_waits_ten_seconds_for_its_answer() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut h = net.coord.header(nwk::FRAME_DATA, short, 30);
+    h.src = 0x4444;
+    let aps = net.coord.aps_frame(0x00, 1, 0x0019, 0x0104, 1, &[0x19, 0x71, 0x00, 0x00, 100]);
+    net.coord.nwk_send(h, &aps, None);
+    net.run(5_000);
+    net.coord.zdo(short, 0x8006, &[0x00, 0x00, 0x00, 1, 1]);
+    net.run(4_000);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Querying);
+    net.run(2_000);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Idle, "a server found while none was looked for changes nothing");
+}
+
+#[test]
+fn answers_nobody_asked_for_change_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(500, 1);
+    offer(&mut net, &image, NEW);
+    net.coord.zdo(short, 0x8006, &[0x00, 0x00, 0x00, 1, 1]);
+    net.run(500);
+    assert_eq!((net.coord.ota_queries, net.nodes[n].stack.ota_state()), (0, OtaState::Idle), "a server found when none is looked for");
+    let mut zcl = vec![0x19, 0x72, 0x02, 0x00];
+    zcl.extend_from_slice(&MFG.to_le_bytes());
+    zcl.extend_from_slice(&TYPE.to_le_bytes());
+    zcl.extend_from_slice(&NEW.to_le_bytes());
+    zcl.extend_from_slice(&500u32.to_le_bytes());
+    let aps = net.coord.aps_frame(0x00, 1, 0x0019, 0x0104, 1, &zcl);
+    net.coord.nwk_data(short, &aps);
+    net.run(500);
+    assert_eq!((net.coord.ota_block_requests, net.nodes[n].stack.ota_state()), (0, OtaState::Idle), "an image offered unasked");
+    net.coord.ota_upgrade_end_response(short, MFG, TYPE, NEW, 0);
+    net.run(1_000);
+    assert!(!activated(&net, n), "an upgrade end nobody asked for");
+}

@@ -27,10 +27,11 @@ const RETRIES: u8 = 8;
 const DISCOVERY_MS: u32 = 5_000;
 const END_WAIT_MS: u32 = 20_000;
 const END_RETRIES: u8 = 3;
-const HELD_PERIOD_MS: u32 = 3600 * 1000;
-const MAX_WAIT_S: u32 = 20 * 24 * 3600;
+const HELD_PERIOD_MS: u32 = 3_600_000;
+const MAX_WAIT_S: u32 = 1_728_000;
 const FIRST_QUERY_MS: u32 = 30_000;
-const QUERY_PERIOD_MS: u32 = 24 * 3600 * 1000;
+const QUERY_PERIOD_MS: u32 = 86_400_000;
+const _: () = assert!(HELD_PERIOD_MS == 3600 * 1000 && MAX_WAIT_S == 20 * 24 * 3600 && QUERY_PERIOD_MS == 24 * 3600 * 1000, "an hour, twenty days, a day");
 const CHECKPOINT: u32 = 0x1000;
 const PROGRESS_VERSION: u8 = 1;
 
@@ -197,7 +198,6 @@ impl<H: Hal> Stack<H> {
                     self.ota_discover(nwk::BROADCAST_RX_ON);
                     self.ota.at = now.wrapping_add(DISCOVERY_MS);
                 }
-                2 => self.ota_idle(now),
                 _ => {
                     self.ota.server = None;
                     self.ota_idle(now);
