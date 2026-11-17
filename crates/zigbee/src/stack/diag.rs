@@ -110,7 +110,6 @@ pub(crate) enum Src {
     LastStatusTx,
     Channel,
     Pan,
-    ExtPan,
     UpdateId,
     KeySeq,
     FrameCounter,
@@ -122,9 +121,36 @@ pub(crate) enum Src {
     BleLendMax,
     FlashBusyMax,
     Ble(u8),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Octets {
+    ExtPan,
     NeighborPage(u8),
     BoxPage(u16),
     EventPage(u8),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Attr {
+    Number(u8, Src),
+    Octets(Octets),
+}
+
+impl Attr {
+    pub(crate) fn ty(self) -> u8 {
+        match self {
+            Attr::Number(ty, _) => ty,
+            Attr::Octets(_) => T_OCTETS,
+        }
+    }
+
+    pub(crate) fn number(self) -> Option<(u8, Src)> {
+        match self {
+            Attr::Number(ty, src) => Some((ty, src)),
+            Attr::Octets(_) => None,
+        }
+    }
 }
 
 pub(crate) const RSSI_EDGES: [i8; 4] = [-90, -80, -70, -60];
@@ -213,105 +239,105 @@ pub(crate) const T_I8: u8 = 0x28;
 pub(crate) const T_ENUM8: u8 = 0x30;
 pub(crate) const T_OCTETS: u8 = 0x41;
 
-pub(crate) const STANDARD: [(u16, u8, Src); 32] = [
-    (0x0000, T_U16, Src::Resets),
-    (0x0001, T_U16, Src::Counter(k::PERSISTENT_WRITES)),
-    (0x0100, T_U32, Src::Counter(k::MAC_RX_BCAST)),
-    (0x0101, T_U32, Src::Counter(k::MAC_TX_BCAST)),
-    (0x0102, T_U32, Src::Counter(k::MAC_RX_UCAST)),
-    (0x0103, T_U32, Src::Counter(k::MAC_TX_UCAST)),
-    (0x0104, T_U16, Src::Counter(k::MAC_TX_UCAST_RETRY)),
-    (0x0105, T_U16, Src::Counter(k::MAC_TX_UCAST_FAIL)),
-    (0x0106, T_U16, Src::Counter(k::APS_RX_BCAST)),
-    (0x0107, T_U16, Src::Counter(k::APS_TX_BCAST)),
-    (0x0108, T_U16, Src::Counter(k::APS_RX_UCAST)),
-    (0x0109, T_U16, Src::Counter(k::APS_TX_UCAST_SUCCESS)),
-    (0x010A, T_U16, Src::Counter(k::APS_TX_UCAST_RETRY)),
-    (0x010B, T_U16, Src::Counter(k::APS_TX_UCAST_FAIL)),
-    (0x010C, T_U16, Src::Counter(k::ROUTE_DISC_INITIATED)),
-    (0x010D, T_U16, Src::Counter(k::NEIGHBOR_ADDED)),
-    (0x010E, T_U16, Src::Counter(k::NEIGHBOR_REMOVED)),
-    (0x010F, T_U16, Src::Counter(k::NEIGHBOR_STALE)),
-    (0x0110, T_U16, Src::Counter(k::JOIN_INDICATION)),
-    (0x0111, T_U16, Src::Counter(k::CHILD_MOVED)),
-    (0x0112, T_U16, Src::Counter(k::NWK_FC_FAILURE)),
-    (0x0113, T_U16, Src::Counter(k::APS_FC_FAILURE)),
-    (0x0114, T_U16, Src::Counter(k::APS_UNAUTHORIZED_KEY)),
-    (0x0115, T_U16, Src::Counter(k::NWK_DECRYPT_FAILURES)),
-    (0x0116, T_U16, Src::Counter(k::APS_DECRYPT_FAILURES)),
-    (0x0117, T_U16, Src::Counter(k::BUFFER_ALLOCATE_FAILURES)),
-    (0x0118, T_U16, Src::Counter(k::RELAYED_UCAST)),
-    (0x0119, T_U16, Src::Counter(k::PHY_TO_MAC_QUEUE_LIMIT)),
-    (0x011A, T_U16, Src::Counter(k::PACKET_VALIDATE_DROPS)),
-    (0x011B, T_U16, Src::AverageRetries),
-    (0x011C, T_U8, Src::Lqi),
-    (0x011D, T_I8, Src::Rssi),
+pub(crate) const STANDARD: [(u16, Attr); 32] = [
+    (0x0000, Attr::Number(T_U16, Src::Resets)),
+    (0x0001, Attr::Number(T_U16, Src::Counter(k::PERSISTENT_WRITES))),
+    (0x0100, Attr::Number(T_U32, Src::Counter(k::MAC_RX_BCAST))),
+    (0x0101, Attr::Number(T_U32, Src::Counter(k::MAC_TX_BCAST))),
+    (0x0102, Attr::Number(T_U32, Src::Counter(k::MAC_RX_UCAST))),
+    (0x0103, Attr::Number(T_U32, Src::Counter(k::MAC_TX_UCAST))),
+    (0x0104, Attr::Number(T_U16, Src::Counter(k::MAC_TX_UCAST_RETRY))),
+    (0x0105, Attr::Number(T_U16, Src::Counter(k::MAC_TX_UCAST_FAIL))),
+    (0x0106, Attr::Number(T_U16, Src::Counter(k::APS_RX_BCAST))),
+    (0x0107, Attr::Number(T_U16, Src::Counter(k::APS_TX_BCAST))),
+    (0x0108, Attr::Number(T_U16, Src::Counter(k::APS_RX_UCAST))),
+    (0x0109, Attr::Number(T_U16, Src::Counter(k::APS_TX_UCAST_SUCCESS))),
+    (0x010A, Attr::Number(T_U16, Src::Counter(k::APS_TX_UCAST_RETRY))),
+    (0x010B, Attr::Number(T_U16, Src::Counter(k::APS_TX_UCAST_FAIL))),
+    (0x010C, Attr::Number(T_U16, Src::Counter(k::ROUTE_DISC_INITIATED))),
+    (0x010D, Attr::Number(T_U16, Src::Counter(k::NEIGHBOR_ADDED))),
+    (0x010E, Attr::Number(T_U16, Src::Counter(k::NEIGHBOR_REMOVED))),
+    (0x010F, Attr::Number(T_U16, Src::Counter(k::NEIGHBOR_STALE))),
+    (0x0110, Attr::Number(T_U16, Src::Counter(k::JOIN_INDICATION))),
+    (0x0111, Attr::Number(T_U16, Src::Counter(k::CHILD_MOVED))),
+    (0x0112, Attr::Number(T_U16, Src::Counter(k::NWK_FC_FAILURE))),
+    (0x0113, Attr::Number(T_U16, Src::Counter(k::APS_FC_FAILURE))),
+    (0x0114, Attr::Number(T_U16, Src::Counter(k::APS_UNAUTHORIZED_KEY))),
+    (0x0115, Attr::Number(T_U16, Src::Counter(k::NWK_DECRYPT_FAILURES))),
+    (0x0116, Attr::Number(T_U16, Src::Counter(k::APS_DECRYPT_FAILURES))),
+    (0x0117, Attr::Number(T_U16, Src::Counter(k::BUFFER_ALLOCATE_FAILURES))),
+    (0x0118, Attr::Number(T_U16, Src::Counter(k::RELAYED_UCAST))),
+    (0x0119, Attr::Number(T_U16, Src::Counter(k::PHY_TO_MAC_QUEUE_LIMIT))),
+    (0x011A, Attr::Number(T_U16, Src::Counter(k::PACKET_VALIDATE_DROPS))),
+    (0x011B, Attr::Number(T_U16, Src::AverageRetries)),
+    (0x011C, Attr::Number(T_U8, Src::Lqi)),
+    (0x011D, Attr::Number(T_I8, Src::Rssi)),
 ];
 
-pub(crate) const MANUFACTURER: [(u16, u8, Src); 63] = [
-    (0x5000, T_U32, Src::Uptime),
-    (0x5001, T_ENUM8, Src::Cause),
-    (0x5002, T_U16, Src::WatchdogResets),
-    (0x5003, T_U8, Src::Neighbors),
-    (0x5004, T_U8, Src::Children),
-    (0x5005, T_U16, Src::Counter(k::RELAY_DROP_QUEUE_FULL)),
-    (0x5006, T_U16, Src::Counter(k::RELAY_DROP_NO_ROUTE)),
-    (0x5007, T_U16, Src::Counter(k::RELAY_DROP_MAC_FAIL)),
-    (0x5008, T_U16, Src::Counter(k::RELAY_DROP_DUPLICATE)),
-    (0x5009, T_U16, Src::Counter(k::NWK_STATUS_SENT)),
-    (0x500A, T_U16, Src::Counter(k::BCAST_DROP_TABLE_FULL)),
-    (0x500B, T_U16, Src::Counter(k::BCAST_QUEUE_FULL)),
-    (0x500C, T_U32, Src::Counter(k::CCA_BUSY)),
-    (0x500D, T_U16, Src::Counter(k::CHANNEL_ACCESS_FAILURES)),
-    (0x500E, T_U8, Src::Counter(k::RX_QUEUE_PEAK)),
-    (0x500F, T_U8, Src::Counter(k::INDIRECT_PEAK)),
-    (0x5010, T_U16, Src::Counter(k::INDIRECT_DROPPED)),
-    (0x5011, T_U16, Src::Counter(k::INDIRECT_EXPIRED)),
-    (0x5012, T_U32, Src::Counter(k::BLE_LENDS)),
-    (0x5013, T_U32, Src::Counter(k::BLE_MS)),
-    (0x5014, T_U16, Src::Counter(k::FLASH_ERASES)),
-    (0x5015, T_U32, Src::RssiBucket(0)),
-    (0x5016, T_U32, Src::RssiBucket(1)),
-    (0x5017, T_U32, Src::RssiBucket(2)),
-    (0x5018, T_U32, Src::RssiBucket(3)),
-    (0x5019, T_U32, Src::RssiBucket(4)),
-    (0x501A, T_I8, Src::NoiseNow),
-    (0x501B, T_I8, Src::NoiseMax),
-    (0x5020, T_U16, Src::CoordNextHop),
-    (0x5021, T_U8, Src::CoordCost),
-    (0x5022, T_U8, Src::CoordManyToOne),
-    (0x5023, T_U8, Src::RoutesUsed),
-    (0x5024, T_U16, Src::NwkStatusRx),
-    (0x5025, T_U8, Src::LastStatusRx),
-    (0x5026, T_U8, Src::LastStatusTx),
-    (0x5030, T_U8, Src::Channel),
-    (0x5031, T_U16, Src::Pan),
-    (0x5032, T_OCTETS, Src::ExtPan),
-    (0x5033, T_U8, Src::UpdateId),
-    (0x5034, T_U8, Src::KeySeq),
-    (0x5035, T_U32, Src::FrameCounter),
-    (0x5036, T_U8, Src::Depth),
-    (0x5037, T_U16, Src::Parent),
-    (0x5040, T_U32, Src::LoopMax),
-    (0x5041, T_U32, Src::BleLendMax),
-    (0x5042, T_U32, Src::FlashBusyMax),
-    (0x5043, T_U32, Src::StackFree),
-    (0x5044, T_U16, Src::IrqStackFree),
-    (0x5048, T_U32, Src::Ble(0)),
-    (0x5049, T_U32, Src::Ble(1)),
-    (0x504A, T_U32, Src::Ble(2)),
-    (0x504B, T_U32, Src::Ble(3)),
-    (0x504C, T_U32, Src::Ble(4)),
-    (0x5050, T_OCTETS, Src::NeighborPage(0)),
-    (0x5051, T_OCTETS, Src::NeighborPage(1)),
-    (0x5052, T_OCTETS, Src::NeighborPage(2)),
-    (0x5053, T_OCTETS, Src::NeighborPage(3)),
-    (0x5058, T_OCTETS, Src::EventPage(0)),
-    (0x5059, T_OCTETS, Src::EventPage(1)),
-    (0x505A, T_OCTETS, Src::EventPage(2)),
-    (0x505B, T_OCTETS, Src::EventPage(3)),
-    (0x505C, T_OCTETS, Src::EventPage(4)),
-    (0x505D, T_OCTETS, Src::EventPage(5)),
+pub(crate) const MANUFACTURER: [(u16, Attr); 63] = [
+    (0x5000, Attr::Number(T_U32, Src::Uptime)),
+    (0x5001, Attr::Number(T_ENUM8, Src::Cause)),
+    (0x5002, Attr::Number(T_U16, Src::WatchdogResets)),
+    (0x5003, Attr::Number(T_U8, Src::Neighbors)),
+    (0x5004, Attr::Number(T_U8, Src::Children)),
+    (0x5005, Attr::Number(T_U16, Src::Counter(k::RELAY_DROP_QUEUE_FULL))),
+    (0x5006, Attr::Number(T_U16, Src::Counter(k::RELAY_DROP_NO_ROUTE))),
+    (0x5007, Attr::Number(T_U16, Src::Counter(k::RELAY_DROP_MAC_FAIL))),
+    (0x5008, Attr::Number(T_U16, Src::Counter(k::RELAY_DROP_DUPLICATE))),
+    (0x5009, Attr::Number(T_U16, Src::Counter(k::NWK_STATUS_SENT))),
+    (0x500A, Attr::Number(T_U16, Src::Counter(k::BCAST_DROP_TABLE_FULL))),
+    (0x500B, Attr::Number(T_U16, Src::Counter(k::BCAST_QUEUE_FULL))),
+    (0x500C, Attr::Number(T_U32, Src::Counter(k::CCA_BUSY))),
+    (0x500D, Attr::Number(T_U16, Src::Counter(k::CHANNEL_ACCESS_FAILURES))),
+    (0x500E, Attr::Number(T_U8, Src::Counter(k::RX_QUEUE_PEAK))),
+    (0x500F, Attr::Number(T_U8, Src::Counter(k::INDIRECT_PEAK))),
+    (0x5010, Attr::Number(T_U16, Src::Counter(k::INDIRECT_DROPPED))),
+    (0x5011, Attr::Number(T_U16, Src::Counter(k::INDIRECT_EXPIRED))),
+    (0x5012, Attr::Number(T_U32, Src::Counter(k::BLE_LENDS))),
+    (0x5013, Attr::Number(T_U32, Src::Counter(k::BLE_MS))),
+    (0x5014, Attr::Number(T_U16, Src::Counter(k::FLASH_ERASES))),
+    (0x5015, Attr::Number(T_U32, Src::RssiBucket(0))),
+    (0x5016, Attr::Number(T_U32, Src::RssiBucket(1))),
+    (0x5017, Attr::Number(T_U32, Src::RssiBucket(2))),
+    (0x5018, Attr::Number(T_U32, Src::RssiBucket(3))),
+    (0x5019, Attr::Number(T_U32, Src::RssiBucket(4))),
+    (0x501A, Attr::Number(T_I8, Src::NoiseNow)),
+    (0x501B, Attr::Number(T_I8, Src::NoiseMax)),
+    (0x5020, Attr::Number(T_U16, Src::CoordNextHop)),
+    (0x5021, Attr::Number(T_U8, Src::CoordCost)),
+    (0x5022, Attr::Number(T_U8, Src::CoordManyToOne)),
+    (0x5023, Attr::Number(T_U8, Src::RoutesUsed)),
+    (0x5024, Attr::Number(T_U16, Src::NwkStatusRx)),
+    (0x5025, Attr::Number(T_U8, Src::LastStatusRx)),
+    (0x5026, Attr::Number(T_U8, Src::LastStatusTx)),
+    (0x5030, Attr::Number(T_U8, Src::Channel)),
+    (0x5031, Attr::Number(T_U16, Src::Pan)),
+    (0x5032, Attr::Octets(Octets::ExtPan)),
+    (0x5033, Attr::Number(T_U8, Src::UpdateId)),
+    (0x5034, Attr::Number(T_U8, Src::KeySeq)),
+    (0x5035, Attr::Number(T_U32, Src::FrameCounter)),
+    (0x5036, Attr::Number(T_U8, Src::Depth)),
+    (0x5037, Attr::Number(T_U16, Src::Parent)),
+    (0x5040, Attr::Number(T_U32, Src::LoopMax)),
+    (0x5041, Attr::Number(T_U32, Src::BleLendMax)),
+    (0x5042, Attr::Number(T_U32, Src::FlashBusyMax)),
+    (0x5043, Attr::Number(T_U32, Src::StackFree)),
+    (0x5044, Attr::Number(T_U16, Src::IrqStackFree)),
+    (0x5048, Attr::Number(T_U32, Src::Ble(0))),
+    (0x5049, Attr::Number(T_U32, Src::Ble(1))),
+    (0x504A, Attr::Number(T_U32, Src::Ble(2))),
+    (0x504B, Attr::Number(T_U32, Src::Ble(3))),
+    (0x504C, Attr::Number(T_U32, Src::Ble(4))),
+    (0x5050, Attr::Octets(Octets::NeighborPage(0))),
+    (0x5051, Attr::Octets(Octets::NeighborPage(1))),
+    (0x5052, Attr::Octets(Octets::NeighborPage(2))),
+    (0x5053, Attr::Octets(Octets::NeighborPage(3))),
+    (0x5058, Attr::Octets(Octets::EventPage(0))),
+    (0x5059, Attr::Octets(Octets::EventPage(1))),
+    (0x505A, Attr::Octets(Octets::EventPage(2))),
+    (0x505B, Attr::Octets(Octets::EventPage(3))),
+    (0x505C, Attr::Octets(Octets::EventPage(4))),
+    (0x505D, Attr::Octets(Octets::EventPage(5))),
 ];
 const _: () = assert!(NEIGHBOR_PAGES == 4 && EVENT_PAGES == 6, "the attribute table lists every page");
 
@@ -323,8 +349,17 @@ const fn width(ty: u8) -> usize {
     match ty {
         T_U8 | T_I8 | T_ENUM8 => 1,
         T_U16 => 2,
-        T_U32 => 4,
-        _ => 0,
+        _ => 4,
+    }
+}
+
+const fn counter_width(a: Attr) -> usize {
+    match a {
+        Attr::Number(ty, _) => {
+            assert!(matches!(ty, T_U8 | T_I8 | T_ENUM8 | T_U16 | T_U32), "a number");
+            width(ty)
+        }
+        Attr::Octets(_) => panic!("a number"),
     }
 }
 
@@ -332,28 +367,26 @@ pub const DIAG_COUNTERS_MAX: usize = {
     let mut n = 1;
     let mut i = 0;
     while i < STANDARD.len() {
-        assert!(width(STANDARD[i].1) > 0, "a number");
-        n += 3 + width(STANDARD[i].1);
+        n += 3 + counter_width(STANDARD[i].1);
         i += 1;
     }
     let mut i = 0;
     while i < COUNTERS_MFR {
-        assert!(width(MANUFACTURER[i].1) > 0, "a number");
-        n += 3 + width(MANUFACTURER[i].1);
+        n += 3 + counter_width(MANUFACTURER[i].1);
         i += 1;
     }
     n
 };
 
-pub(crate) fn attribute(manufacturer: bool, id: u16) -> Option<(u8, Src)> {
-    let table: &[(u16, u8, Src)] = if manufacturer { &MANUFACTURER } else { &STANDARD };
+pub(crate) fn attribute(manufacturer: bool, id: u16) -> Option<Attr> {
+    let table: &[(u16, Attr)] = if manufacturer { &MANUFACTURER } else { &STANDARD };
     if manufacturer && id.wrapping_sub(blackbox::BOX_FIRST) < blackbox::BOX_PAGES as u16 {
-        return Some((T_OCTETS, Src::BoxPage(id - blackbox::BOX_FIRST)));
+        return Some(Attr::Octets(Octets::BoxPage(id - blackbox::BOX_FIRST)));
     }
-    table.iter().find(|a| a.0 == id).map(|a| (a.1, a.2))
+    table.iter().find(|a| a.0 == id).map(|a| a.1)
 }
 
-pub(crate) fn attributes(manufacturer: bool) -> &'static [(u16, u8, Src)] {
+pub(crate) fn attributes(manufacturer: bool) -> &'static [(u16, Attr)] {
     if manufacturer {
         &MANUFACTURER
     } else {
@@ -761,13 +794,13 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    pub(crate) fn diag_bytes(&mut self, src: Src, out: &mut [u8; 64]) -> usize {
+    pub(crate) fn diag_bytes(&mut self, src: Octets, out: &mut [u8; 64]) -> usize {
         match src {
-            Src::ExtPan => {
+            Octets::ExtPan => {
                 out[..8].copy_from_slice(&self.nib.ext_pan.to_le_bytes());
                 8
             }
-            Src::BoxPage(p) => {
+            Octets::BoxPage(p) => {
                 let mut shorts = [0xFFFFu16; super::NEIGHBORS];
                 for (s, n) in shorts.iter_mut().zip(self.neighbors.iter()) {
                     if n.used {
@@ -780,7 +813,7 @@ impl<H: Hal> Stack<H> {
                     None => 0,
                 }
             }
-            Src::NeighborPage(p) => {
+            Octets::NeighborPage(p) => {
                 let mut n = 0;
                 let from = p as usize * NEIGHBORS_PER_PAGE;
                 for nb in self.neighbors[from..from + NEIGHBORS_PER_PAGE].iter() {
@@ -810,7 +843,7 @@ impl<H: Hal> Stack<H> {
                 }
                 n
             }
-            Src::EventPage(p) => {
+            Octets::EventPage(p) => {
                 let mut n = 0;
                 for i in 0..EVENTS_PER_PAGE {
                     let Some(e) = self.diag.event_newest(p as usize * EVENTS_PER_PAGE + i) else { break };
@@ -819,7 +852,6 @@ impl<H: Hal> Stack<H> {
                 }
                 n
             }
-            _ => 0,
         }
     }
 
@@ -931,7 +963,7 @@ impl<H: Hal> Stack<H> {
         self.diag_sync();
         out[0] = COUNTERS_VERSION;
         let mut at = 1;
-        for &(id, ty, src) in STANDARD.iter().chain(MANUFACTURER[..COUNTERS_MFR].iter()) {
+        for (id, ty, src) in STANDARD.iter().chain(MANUFACTURER[..COUNTERS_MFR].iter()).filter_map(|&(id, a)| a.number().map(|(ty, src)| (id, ty, src))) {
             let w = width(ty);
             let v = self.diag_value_synced(src).to_le_bytes();
             out[at..at + 2].copy_from_slice(&id.to_le_bytes());
@@ -981,7 +1013,9 @@ impl<H: Hal> Stack<H> {
                 let c = &self.diag.hal_seen;
                 [c.ble_connections, c.ble_disconnects, c.ble_links_lost, c.ble_events, c.ble_events_skipped][i as usize]
             }
-            Src::ExtPan | Src::NeighborPage(_) | Src::EventPage(_) | Src::BoxPage(_) => 0,
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

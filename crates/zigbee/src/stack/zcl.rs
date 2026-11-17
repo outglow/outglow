@@ -597,7 +597,7 @@ impl<H: Hal> Stack<H> {
             if !mfr && id == CLUSTER_REVISION {
                 return Some(T_U16);
             }
-            return diag::attribute(mfr, id).map(|a| a.0);
+            return diag::attribute(mfr, id).map(diag::Attr::ty);
         }
         #[cfg(feature = "sense")]
         if self.sense_cluster(c.ep, cluster) {
@@ -627,7 +627,7 @@ impl<H: Hal> Stack<H> {
         }
         if cluster == DIAGNOSTICS {
             for x in diag::attributes(c.mfr.is_some()).iter().filter(|x| x.0 >= start) {
-                if !each(x.0, x.1) {
+                if !each(x.0, x.1.ty()) {
                     return;
                 }
             }
@@ -710,15 +710,18 @@ impl<H: Hal> Stack<H> {
             return;
         }
         if cluster == DIAGNOSTICS && !(c.mfr.is_none() && id == CLUSTER_REVISION) {
-            if let Some((ty, src)) = diag::attribute(c.mfr.is_some(), id) {
-                if ty == diag::T_OCTETS {
-                    let mut b = [0u8; 64];
-                    let n = self.diag_bytes(src, &mut b);
-                    out.u8(n as u8);
-                    out.bytes(&b[..n]);
-                } else {
-                    let v = self.diag_value(src);
-                    put_number(out, ty, v);
+            if let Some(attr) = diag::attribute(c.mfr.is_some(), id) {
+                match attr {
+                    diag::Attr::Octets(src) => {
+                        let mut b = [0u8; 64];
+                        let n = self.diag_bytes(src, &mut b);
+                        out.u8(n as u8);
+                        out.bytes(&b[..n]);
+                    }
+                    diag::Attr::Number(ty, src) => {
+                        let v = self.diag_value(src);
+                        put_number(out, ty, v);
+                    }
                 }
             }
             return;

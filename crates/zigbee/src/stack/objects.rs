@@ -145,7 +145,7 @@ const _: () = assert!(1 + XREPORTS * XREPORT_LEN <= 160, "the reporting configur
 
 pub(crate) fn reportable(ep: u8, cluster: u16, attr: u16, mfr: bool) -> bool {
     if cluster == super::zcl::DIAGNOSTICS && ep == super::aps::ENDPOINT {
-        return diag::attribute(mfr, attr).is_some_and(|a| a.0 != diag::T_OCTETS);
+        return diag::attribute(mfr, attr).is_some_and(|a| a.number().is_some());
     }
     !mfr && object(ep).is_some_and(|o| o.cluster == cluster) && matches!(attr, A_PRESENT_VALUE | A_STATUS_FLAGS)
 }
@@ -189,7 +189,7 @@ impl<H: Hal> Stack<H> {
             return Some(((self.sense_lines_on() != 0) as u32, T_BITMAP8));
         }
         if r.cluster == super::zcl::DIAGNOSTICS {
-            let (ty, src) = diag::attribute(r.mfr, r.attr)?;
+            let (ty, src) = diag::attribute(r.mfr, r.attr)?.number()?;
             return Some((self.diag_value(src), ty));
         }
         let o = object(r.ep)?;
