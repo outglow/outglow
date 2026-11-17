@@ -1,5 +1,5 @@
 use crate::hal::{Hal, LL_PAYLOAD_MAX};
-use crate::ll::{LinkState, TX_RESERVE};
+use crate::ll::TX_RESERVE;
 use crate::pdu;
 use crate::Ble;
 
@@ -48,14 +48,17 @@ const fn telink(short: u8) -> [u8; 16] {
     [short, 0x19, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00]
 }
 
-const fn declaration(properties: u8, value_handle: u8, short: u8) -> [u8; 19] {
-    let u = telink(short);
+const fn diag_uuid(short: u8) -> [u8; 16] {
+    [0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, short, 0x00, 0x10, 0xe6]
+}
+
+const fn declaration(properties: u8, value_handle: u8, uuid: [u8; 16]) -> [u8; 19] {
     let mut d = [0u8; 19];
     d[0] = properties;
     d[1] = value_handle;
     let mut i = 0;
     while i < 16 {
-        d[3 + i] = u[i];
+        d[3 + i] = uuid[i];
         i += 1;
     }
     d
@@ -67,23 +70,6 @@ const UUID_COMMAND: [u8; 16] = telink(0x12);
 const UUID_OTA_CLASSIC: [u8; 16] = telink(0x13);
 const UUID_PAIR: [u8; 16] = telink(0x14);
 const UUID_OTA: [u8; 16] = telink(0x15);
-
-const fn diag_uuid(short: u8) -> [u8; 16] {
-    [0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, short, 0x00, 0x10, 0xe6]
-}
-
-const fn diag_declaration(properties: u8, value_handle: u8, short: u8) -> [u8; 19] {
-    let u = diag_uuid(short);
-    let mut d = [0u8; 19];
-    d[0] = properties;
-    d[1] = value_handle;
-    let mut i = 0;
-    while i < 16 {
-        d[3 + i] = u[i];
-        i += 1;
-    }
-    d
-}
 
 const UUID_DIAG: [u8; 16] = diag_uuid(0x00);
 const UUID_DIAG_INFO: [u8; 16] = diag_uuid(0x01);
@@ -104,18 +90,18 @@ const fn cccd_bits(properties: u8) -> u8 {
     (if properties & NOTIFY != 0 { 0x01 } else { 0 }) | (if properties & INDICATE != 0 { 0x02 } else { 0 })
 }
 
-const DECL_STATUS: [u8; 19] = declaration(READ | WRITE | NOTIFY, HANDLE_STATUS as u8, 0x11);
-const DECL_COMMAND: [u8; 19] = declaration(READ | WRITE | WRITE_NO_RSP, HANDLE_COMMAND as u8, 0x12);
-const DECL_OTA_CLASSIC: [u8; 19] = declaration(READ | WRITE, HANDLE_OTA_CLASSIC as u8, 0x13);
-const DECL_OTA: [u8; 19] = declaration(READ | WRITE_NO_RSP, HANDLE_OTA as u8, 0x15);
-const DECL_PAIR: [u8; 19] = declaration(READ | WRITE, HANDLE_PAIR as u8, 0x14);
-const DECL_DIAG_INFO: [u8; 19] = diag_declaration(READ, 0x22, 0x01);
-const DECL_DIAG_STATE: [u8; 19] = diag_declaration(READ, 0x24, 0x02);
-const DECL_DIAG_LOG: [u8; 19] = diag_declaration(READ, 0x26, 0x03);
-const DECL_DIAG_CMD: [u8; 19] = diag_declaration(WRITE, 0x28, 0x04);
-const DECL_DIAG_FRAMES: [u8; 19] = diag_declaration(READ, 0x2a, 0x05);
-const DECL_DIAG_CONFIG: [u8; 19] = diag_declaration(READ, 0x2c, 0x06);
-const DECL_DIAG_COUNTERS: [u8; 19] = diag_declaration(READ, 0x2e, 0x07);
+const DECL_STATUS: [u8; 19] = declaration(READ | WRITE | NOTIFY, HANDLE_STATUS as u8, UUID_STATUS);
+const DECL_COMMAND: [u8; 19] = declaration(READ | WRITE | WRITE_NO_RSP, HANDLE_COMMAND as u8, UUID_COMMAND);
+const DECL_OTA_CLASSIC: [u8; 19] = declaration(READ | WRITE, HANDLE_OTA_CLASSIC as u8, UUID_OTA_CLASSIC);
+const DECL_OTA: [u8; 19] = declaration(READ | WRITE_NO_RSP, HANDLE_OTA as u8, UUID_OTA);
+const DECL_PAIR: [u8; 19] = declaration(READ | WRITE, HANDLE_PAIR as u8, UUID_PAIR);
+const DECL_DIAG_INFO: [u8; 19] = declaration(READ, 0x22, UUID_DIAG_INFO);
+const DECL_DIAG_STATE: [u8; 19] = declaration(READ, 0x24, UUID_DIAG_STATE);
+const DECL_DIAG_LOG: [u8; 19] = declaration(READ, 0x26, UUID_DIAG_LOG);
+const DECL_DIAG_CMD: [u8; 19] = declaration(WRITE, 0x28, UUID_DIAG_CMD);
+const DECL_DIAG_FRAMES: [u8; 19] = declaration(READ, 0x2a, UUID_DIAG_FRAMES);
+const DECL_DIAG_CONFIG: [u8; 19] = declaration(READ, 0x2c, UUID_DIAG_CONFIG);
+const DECL_DIAG_COUNTERS: [u8; 19] = declaration(READ, 0x2e, UUID_DIAG_COUNTERS);
 
 pub(crate) const HANDLE_STATUS: u16 = 0x12;
 pub(crate) const HANDLE_COMMAND: u16 = 0x15;
@@ -185,79 +171,58 @@ enum Value {
 
 const SCRATCH: usize = crate::diag::STATE_LEN;
 
-struct Attribute {
-    uuid: Uuid,
-    value: Value,
-    writable: bool,
-}
+struct Attribute(Uuid, Value);
 
-const fn fixed(uuid: u16, value: &'static [u8]) -> Attribute {
-    Attribute { uuid: Uuid::Short(uuid), value: Value::Fixed(value), writable: false }
-}
-
-const fn read_only(uuid: u16, value: Value) -> Attribute {
-    Attribute { uuid: Uuid::Short(uuid), value, writable: false }
-}
-
-const fn mesh_value(uuid: &'static [u8; 16], value: Value) -> Attribute {
-    Attribute { uuid: Uuid::Long(uuid), value, writable: true }
-}
-
-const fn diag_value(uuid: &'static [u8; 16], value: Value) -> Attribute {
-    Attribute { uuid: Uuid::Long(uuid), value, writable: matches!(value, Value::DiagCommand) }
-}
-
-const fn fixed_long(value: &'static [u8; 16]) -> Attribute {
-    Attribute { uuid: Uuid::Short(PRIMARY_SERVICE), value: Value::Fixed(value), writable: false }
-}
+use Uuid::{Long, Short};
+use Value::*;
 
 static TABLE: [Attribute; 46] = [
-    fixed(PRIMARY_SERVICE, &[0x00, 0x18]),
-    fixed(CHARACTERISTIC, &[READ, 0x03, 0x00, 0x00, 0x2a]),
-    read_only(0x2a00, Value::Name),
-    fixed(USER_DESCRIPTION, b"name"),
-    fixed(CHARACTERISTIC, &[READ, 0x06, 0x00, 0x01, 0x2a]),
-    fixed(0x2a01, &[0x00, 0x00]),
-    fixed(PRIMARY_SERVICE, &[0x0a, 0x18]),
-    fixed(CHARACTERISTIC, &[READ, 0x09, 0x00, 0x26, 0x2a]),
-    read_only(0x2a26, Value::FirmwareRevision),
-    fixed(CHARACTERISTIC, &[READ, 0x0b, 0x00, 0x29, 0x2a]),
-    fixed(0x2a29, b"AwoX"),
-    fixed(CHARACTERISTIC, &[READ, 0x0d, 0x00, 0x24, 0x2a]),
-    read_only(0x2a24, Value::Model),
-    fixed(CHARACTERISTIC, &[READ, 0x0f, 0x00, 0x27, 0x2a]),
-    read_only(0x2a27, Value::HardwareRevision),
-    fixed(PRIMARY_SERVICE, &UUID_MESH),
-    fixed(CHARACTERISTIC, &DECL_STATUS),
-    mesh_value(&UUID_STATUS, Value::Status),
-    Attribute { uuid: Uuid::Short(CLIENT_CONFIGURATION), value: Value::StatusConfiguration, writable: true },
-    fixed(CHARACTERISTIC, &DECL_COMMAND),
-    mesh_value(&UUID_COMMAND, Value::Command),
-    fixed(USER_DESCRIPTION, b"cmd"),
-    fixed(CHARACTERISTIC, &DECL_OTA_CLASSIC),
-    mesh_value(&UUID_OTA_CLASSIC, Value::Ota),
-    fixed(USER_DESCRIPTION, b"OTA"),
-    fixed(CHARACTERISTIC, &DECL_OTA),
-    mesh_value(&UUID_OTA, Value::Ota),
-    fixed(USER_DESCRIPTION, b"OTA2"),
-    fixed(CHARACTERISTIC, &DECL_PAIR),
-    mesh_value(&UUID_PAIR, Value::Pair),
-    fixed(USER_DESCRIPTION, b"pair"),
-    fixed_long(&UUID_DIAG),
-    fixed(CHARACTERISTIC, &DECL_DIAG_INFO),
-    diag_value(&UUID_DIAG_INFO, Value::DiagInfo),
-    fixed(CHARACTERISTIC, &DECL_DIAG_STATE),
-    diag_value(&UUID_DIAG_STATE, Value::DiagState),
-    fixed(CHARACTERISTIC, &DECL_DIAG_LOG),
-    diag_value(&UUID_DIAG_LOG, Value::DiagLog),
-    fixed(CHARACTERISTIC, &DECL_DIAG_CMD),
-    diag_value(&UUID_DIAG_CMD, Value::DiagCommand),
-    fixed(CHARACTERISTIC, &DECL_DIAG_FRAMES),
-    diag_value(&UUID_DIAG_FRAMES, Value::DiagFrames),
-    fixed(CHARACTERISTIC, &DECL_DIAG_CONFIG),
-    diag_value(&UUID_DIAG_CONFIG, Value::DiagConfig),
-    fixed(CHARACTERISTIC, &DECL_DIAG_COUNTERS),
-    diag_value(&UUID_DIAG_COUNTERS, Value::DiagCounters),
+    Attribute(Short(PRIMARY_SERVICE), Fixed(&[0x00, 0x18])),
+    Attribute(Short(CHARACTERISTIC), Fixed(&[READ, 0x03, 0x00, 0x00, 0x2a])),
+    Attribute(Short(0x2a00), Name),
+    Attribute(Short(USER_DESCRIPTION), Fixed(b"name")),
+    Attribute(Short(CHARACTERISTIC), Fixed(&[READ, 0x06, 0x00, 0x01, 0x2a])),
+    Attribute(Short(0x2a01), Fixed(&[0x00, 0x00])),
+    Attribute(Short(PRIMARY_SERVICE), Fixed(&[0x0a, 0x18])),
+    Attribute(Short(CHARACTERISTIC), Fixed(&[READ, 0x09, 0x00, 0x26, 0x2a])),
+    Attribute(Short(0x2a26), FirmwareRevision),
+    Attribute(Short(CHARACTERISTIC), Fixed(&[READ, 0x0b, 0x00, 0x29, 0x2a])),
+    Attribute(Short(0x2a29), Fixed(b"AwoX")),
+    Attribute(Short(CHARACTERISTIC), Fixed(&[READ, 0x0d, 0x00, 0x24, 0x2a])),
+    Attribute(Short(0x2a24), Model),
+    Attribute(Short(CHARACTERISTIC), Fixed(&[READ, 0x0f, 0x00, 0x27, 0x2a])),
+    Attribute(Short(0x2a27), HardwareRevision),
+    Attribute(Short(PRIMARY_SERVICE), Fixed(&UUID_MESH)),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_STATUS)),
+    Attribute(Long(&UUID_STATUS), Status),
+    Attribute(Short(CLIENT_CONFIGURATION), StatusConfiguration),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_COMMAND)),
+    Attribute(Long(&UUID_COMMAND), Command),
+    Attribute(Short(USER_DESCRIPTION), Fixed(b"cmd")),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_OTA_CLASSIC)),
+    Attribute(Long(&UUID_OTA_CLASSIC), Ota),
+    Attribute(Short(USER_DESCRIPTION), Fixed(b"OTA")),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_OTA)),
+    Attribute(Long(&UUID_OTA), Ota),
+    Attribute(Short(USER_DESCRIPTION), Fixed(b"OTA2")),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_PAIR)),
+    Attribute(Long(&UUID_PAIR), Pair),
+    Attribute(Short(USER_DESCRIPTION), Fixed(b"pair")),
+    Attribute(Short(PRIMARY_SERVICE), Fixed(&UUID_DIAG)),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_INFO)),
+    Attribute(Long(&UUID_DIAG_INFO), DiagInfo),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_STATE)),
+    Attribute(Long(&UUID_DIAG_STATE), DiagState),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_LOG)),
+    Attribute(Long(&UUID_DIAG_LOG), DiagLog),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_CMD)),
+    Attribute(Long(&UUID_DIAG_CMD), DiagCommand),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_FRAMES)),
+    Attribute(Long(&UUID_DIAG_FRAMES), DiagFrames),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_CONFIG)),
+    Attribute(Long(&UUID_DIAG_CONFIG), DiagConfig),
+    Attribute(Short(CHARACTERISTIC), Fixed(&DECL_DIAG_COUNTERS)),
+    Attribute(Long(&UUID_DIAG_COUNTERS), DiagCounters),
 ];
 
 const LAST_HANDLE: u16 = TABLE.len() as u16;
@@ -266,14 +231,8 @@ fn attribute(handle: u16) -> Option<&'static Attribute> {
     TABLE.get((handle as usize).checked_sub(1)?)
 }
 
-impl Attribute {
-    fn readable(&self) -> bool {
-        !matches!(self.value, Value::DiagCommand)
-    }
-}
-
 fn is_service(handle: u16) -> bool {
-    attribute(handle).is_some_and(|a| a.uuid == Uuid::Short(PRIMARY_SERVICE))
+    attribute(handle).is_some_and(|a| a.0 == Short(PRIMARY_SERVICE))
 }
 
 fn group_end(handle: u16) -> u16 {
@@ -338,20 +297,15 @@ impl<H: Hal> Ble<H> {
         self.link_idle();
     }
 
-    pub(crate) fn send_l2cap(&mut self, cid: u16, data: &[u8]) -> bool {
+    pub(crate) fn send_l2cap(&mut self, cid: u16, data: &[u8]) {
         let mut frame = [0u8; FRAME_MAX];
         let n = data.len().min(MTU_MAX);
         frame[..2].copy_from_slice(&(n as u16).to_le_bytes());
         frame[2..4].copy_from_slice(&cid.to_le_bytes());
         frame[4..4 + n].copy_from_slice(&data[..n]);
-        let frame = &frame[..4 + n];
-        if self.link.state != LinkState::Connected || self.hal.tx_free() < frame.len().div_ceil(LL_PAYLOAD_MAX) {
-            return false;
-        }
-        for (i, fragment) in frame.chunks(LL_PAYLOAD_MAX).enumerate() {
+        for (i, fragment) in frame[..4 + n].chunks(LL_PAYLOAD_MAX).enumerate() {
             self.hal.tx_push(if i == 0 { pdu::LLID_START } else { pdu::LLID_CONTINUE }, fragment);
         }
-        true
     }
 
     pub(crate) fn notify_status(&mut self, value: &[u8; 20]) -> bool {
@@ -362,7 +316,8 @@ impl<H: Hal> Ble<H> {
         pdu[0] = NOTIFICATION;
         pdu[1..3].copy_from_slice(&HANDLE_STATUS.to_le_bytes());
         pdu[3..].copy_from_slice(value);
-        self.send_l2cap(CID_ATT, &pdu)
+        self.send_l2cap(CID_ATT, &pdu);
+        true
     }
 
     pub(crate) fn on_l2cap_fragment(&mut self, start: bool, data: &[u8]) {
@@ -423,11 +378,10 @@ impl<H: Hal> Ble<H> {
         }
     }
 
-    fn att_value<'a>(&'a self, handle: u16, scratch: &'a mut [u8; SCRATCH]) -> &'a [u8] {
-        let Some(a) = attribute(handle) else { return &[] };
-        match a.value {
-            Value::Fixed(v) => v,
-            Value::Name => {
+    fn att_value<'a>(&'a self, a: &Attribute, scratch: &'a mut [u8; SCRATCH]) -> Option<&'a [u8]> {
+        Some(match a.1 {
+            Fixed(v) => v,
+            Name => {
                 let name = self.mesh.name();
                 if name.is_empty() {
                     &[0]
@@ -435,38 +389,34 @@ impl<H: Hal> Ble<H> {
                     name
                 }
             }
-            Value::Model => self.identity.model.as_bytes(),
-            Value::FirmwareRevision => self.identity.firmware_revision.as_bytes(),
-            Value::HardwareRevision => self.identity.hardware_revision.as_bytes(),
-            Value::Status => &self.mesh.att_status,
-            Value::StatusConfiguration => &self.host.configuration,
-            Value::Command => &self.mesh.att_command,
-            Value::Pair => &self.mesh.att_pair,
-            Value::Ota => {
+            Model => self.identity.model.as_bytes(),
+            FirmwareRevision => self.identity.firmware_revision.as_bytes(),
+            HardwareRevision => self.identity.hardware_revision.as_bytes(),
+            Status => &self.mesh.att_status,
+            StatusConfiguration => &self.host.configuration,
+            Command => &self.mesh.att_command,
+            Pair => &self.mesh.att_pair,
+            Ota => {
                 scratch[..20].copy_from_slice(&self.ota_status());
                 &scratch[..20]
             }
-            Value::DiagInfo => self.diag_info(),
-            Value::DiagState => {
+            DiagInfo => self.diag_info(),
+            DiagState => {
                 let n = self.diag_state(scratch);
                 &scratch[..n]
             }
-            Value::DiagLog => self.diag_log(),
-            Value::DiagFrames => self.diag_frames(),
-            Value::DiagConfig => self.diag_config(),
-            Value::DiagCounters => self.diag_counters(),
-            Value::DiagCommand => &[],
-        }
+            DiagLog => self.diag_log(),
+            DiagFrames => self.diag_frames(),
+            DiagConfig => self.diag_config(),
+            DiagCounters => self.diag_counters(),
+            DiagCommand => return None,
+        })
     }
 
     fn att_write(&mut self, handle: u16, value: &[u8]) -> Result<(), u8> {
-        let a = attribute(handle).ok_or(ERR_INVALID_HANDLE)?;
-        if !a.writable {
-            return Err(ERR_WRITE_NOT_PERMITTED);
-        }
-        match a.value {
-            Value::Status => self.mesh_status_write(value),
-            Value::StatusConfiguration => {
+        match attribute(handle).ok_or(ERR_INVALID_HANDLE)?.1 {
+            Status => self.mesh_status_write(value),
+            StatusConfiguration => {
                 if value.len() != 2 {
                     return Err(ERR_INVALID_LENGTH);
                 }
@@ -474,11 +424,11 @@ impl<H: Hal> Ble<H> {
                 self.host.configuration = [value[0] & cccd_bits(DECL_STATUS[0]), 0];
                 self.mesh_status_switched(was);
             }
-            Value::Command => self.mesh_command_write(value),
-            Value::Ota => self.ota_write(value),
-            Value::Pair => self.mesh_pair_write(value),
-            Value::DiagCommand => self.diag_write(value),
-            _ => {}
+            Command => self.mesh_command_write(value),
+            Ota => self.ota_write(value),
+            Pair => self.mesh_pair_write(value),
+            DiagCommand => self.diag_write(value),
+            _ => return Err(ERR_WRITE_NOT_PERMITTED),
         }
         Ok(())
     }
@@ -526,9 +476,9 @@ impl<H: Hal> Ble<H> {
                 let mut format = 0;
                 for handle in start..=end {
                     let Some(a) = attribute(handle) else { break };
-                    let (this, len) = match a.uuid {
-                        Uuid::Short(_) => (1, 2),
-                        Uuid::Long(_) => (2, 16),
+                    let (this, len) = match a.0 {
+                        Short(_) => (1, 2),
+                        Long(_) => (2, 16),
                     };
                     if format == 0 {
                         format = this;
@@ -538,9 +488,9 @@ impl<H: Hal> Ble<H> {
                         break;
                     }
                     out.put(&handle.to_le_bytes());
-                    match a.uuid {
-                        Uuid::Short(u) => out.put(&u.to_le_bytes()),
-                        Uuid::Long(u) => out.put(u),
+                    match a.0 {
+                        Short(u) => out.put(&u.to_le_bytes()),
+                        Long(u) => out.put(u),
                     }
                 }
                 if format == 0 {
@@ -555,11 +505,8 @@ impl<H: Hal> Ble<H> {
                 out.put(&[FIND_BY_TYPE_VALUE_RSP]);
                 for handle in start..=end {
                     let Some(a) = attribute(handle) else { break };
-                    if !a.uuid.matches(&kind) || self.att_value(handle, &mut scratch) != wanted {
+                    if !a.0.matches(&kind) || self.att_value(a, &mut scratch) != Some(wanted) {
                         continue;
-                    }
-                    if out.room() < 4 {
-                        break;
                     }
                     let last = if is_service(handle) { group_end(handle) } else { handle };
                     out.put(&handle.to_le_bytes());
@@ -574,23 +521,17 @@ impl<H: Hal> Ble<H> {
                 let kind = Wanted::parse(&p[5..]).ok_or((0, ERR_INVALID_PDU))?;
                 let (start, end) = range(p)?;
                 let grouped = opcode == READ_BY_GROUP_TYPE_REQ;
-                if grouped && !Uuid::Short(PRIMARY_SERVICE).matches(&kind) {
+                if grouped && !Short(PRIMARY_SERVICE).matches(&kind) {
                     return Err((start, ERR_UNSUPPORTED_GROUP_TYPE));
                 }
                 let head = if grouped { 4 } else { 2 };
                 let mut each = 0;
                 for handle in start..=end {
                     let Some(a) = attribute(handle) else { break };
-                    if !a.uuid.matches(&kind) {
+                    if !a.0.matches(&kind) {
                         continue;
                     }
-                    if !a.readable() {
-                        if each == 0 {
-                            return Err((handle, ERR_READ_NOT_PERMITTED));
-                        }
-                        break;
-                    }
-                    let value = self.att_value(handle, &mut scratch);
+                    let value = self.att_value(a, &mut scratch).ok_or((handle, ERR_READ_NOT_PERMITTED))?;
                     let n = value.len();
                     if each == 0 {
                         each = n.min(out.limit - 2 - head);
@@ -613,10 +554,7 @@ impl<H: Hal> Ble<H> {
                 exact(if blob { 5 } else { 3 })?;
                 let handle = u16_at(p, 1);
                 let a = attribute(handle).ok_or((handle, ERR_INVALID_HANDLE))?;
-                if !a.readable() {
-                    return Err((handle, ERR_READ_NOT_PERMITTED));
-                }
-                let value = self.att_value(handle, &mut scratch);
+                let value = self.att_value(a, &mut scratch).ok_or((handle, ERR_READ_NOT_PERMITTED))?;
                 let n = value.len();
                 let offset = if blob { u16_at(p, 3) as usize } else { 0 };
                 if offset > n {
@@ -637,5 +575,20 @@ impl<H: Hal> Ble<H> {
             _ => return Err((0, ERR_REQUEST_NOT_SUPPORTED)),
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_declaration_holds_the_properties_the_value_handle_and_the_128_bit_uuid() {
+        let status = declaration(READ | WRITE | NOTIFY, 0x12, telink(0x11));
+        assert_eq!(status, [0x1a, 0x12, 0x00, 0x11, 0x19, 0x0d, 0x0c, 0x0b, 0x0a, 0x09, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00]);
+        assert_eq!(status, DECL_STATUS);
+        let command = declaration(WRITE, 0x28, diag_uuid(0x04));
+        assert_eq!(command, [0x08, 0x28, 0x00, 0x6f, 0x5e, 0x4d, 0x3c, 0x2b, 0x1a, 0x2f, 0x8e, 0x3d, 0x4c, 0x4b, 0x5a, 0x04, 0x00, 0x10, 0xe6]);
+        assert_eq!(command, DECL_DIAG_CMD);
     }
 }

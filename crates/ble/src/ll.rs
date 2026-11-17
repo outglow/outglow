@@ -388,11 +388,6 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn link_idle(&mut self) {
-        self.link_receive();
-        if self.link.terminated {
-            self.disconnected();
-            return;
-        }
         let now = self.hal.now();
         if let Some(at) = self.link.param_request_at {
             if reached(now, at) && self.hal.tx_free() >= TX_RESERVE {

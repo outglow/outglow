@@ -331,15 +331,6 @@ impl<H: Hal> Ble<H> {
         self.mesh_notify([sn[0], sn[1], sn[2]], address, &p)
     }
 
-    fn mesh_status_or_keep(&mut self, op: u8) {
-        if !self.mesh_send_status(op) {
-            let packet = self.mesh.att_status;
-            if let Some(slot) = self.mesh.unsent.iter_mut().find(|s| s.is_none()) {
-                *slot = Some(packet);
-            }
-        }
-    }
-
     pub(crate) fn mesh_timers(&mut self, now: u32) {
         if let Some(at) = self.mesh.disconnect_at {
             if reached(now, at) {
@@ -435,7 +426,9 @@ impl<H: Hal> Ble<H> {
                 let mireds = lo + ((hi - lo) as u32 * v.min(127) as u32 / 127) as u16;
                 self.push_command(Command::MoveToColorTemperature { mireds, transition_ms: 0 });
             }
-            (OP_STATUS_REQUEST, _) if !from_air => self.mesh_status_or_keep(OP_STATUS_RESPONSE),
+            (OP_STATUS_REQUEST, _) if !from_air => {
+                self.mesh_send_status(OP_STATUS_RESPONSE);
+            }
             (OP_ADDRESS, _) if p.len() >= 2 => {
                 self.mesh.address = u16::from_le_bytes([p[0], p[1]]);
                 self.mesh_save();
@@ -547,11 +540,7 @@ impl<H: Hal> Ble<H> {
                 let mut v = [0u8; 20];
                 v[0] = 0x83;
                 v[1..17].copy_from_slice(&tl_aes_encrypt(key, &[0u8; 16]));
-                if !self.notify_status(&v) {
-                    if let Some(slot) = self.mesh.unsent.iter_mut().find(|s| s.is_none()) {
-                        *slot = Some(v);
-                    }
-                }
+                self.notify_status(&v);
             }
             2 => {}
             _ => return false,
