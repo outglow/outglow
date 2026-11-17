@@ -60,16 +60,11 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
     }
 
     fn blank(&self, sector: usize) -> bool {
-        let mut chunk = [0u8; 32];
-        let mut off = 0;
-        while off < self.size {
+        (0..self.size).step_by(CHUNK).all(|off| {
+            let mut chunk = [0u8; CHUNK];
             self.flash.read(sector + off, &mut chunk);
-            if chunk.iter().any(|&b| b != 0xff) {
-                return false;
-            }
-            off += chunk.len();
-        }
-        true
+            chunk.iter().all(|&b| b == 0xff)
+        })
     }
 
     fn write(&mut self, addr: usize, data: &[u8]) {
@@ -204,8 +199,7 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
             }
         });
         let mut off = HEADER;
-        let mut other = 1;
-        while other < N {
+        for other in 1..N {
             if other != id as usize {
                 if let Some((at, len)) = latest[other] {
                     let mut item = [0u8; MAX_ITEM];
@@ -214,7 +208,6 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
                 }
             }
             (self.feed)();
-            other += 1;
         }
         off = self.append(self.sectors[target], off, id, data);
         let next = old_valid.map_or(0, |g| g.wrapping_add(1));

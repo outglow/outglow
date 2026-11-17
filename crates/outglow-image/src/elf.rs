@@ -128,6 +128,22 @@ pub fn image_of(elf: &[u8]) -> Result<(Vec<u8>, usize), Refused> {
 mod tests {
     use super::*;
 
+    fn bounded<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(f()));
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("the ELF reader did not return within 5 s: an endless loop")
+    }
+
+    fn named_core(elf: &[u8]) -> Option<String> {
+        let elf = elf.to_vec();
+        bounded(move || cpu_name(&elf))
+    }
+
+    fn image(elf: &[u8]) -> Result<(Vec<u8>, usize), Refused> {
+        let elf = elf.to_vec();
+        bounded(move || image_of(&elf))
+    }
+
     const PT_NOTE: u32 = 4;
     const CLANG_TC32_ATTRIBUTES: &[u8] = &[
         0x41, 0x1d, 0x00, 0x00, 0x00, 0x61, 0x65, 0x61, 0x62, 0x69, 0x00, 0x01, 0x13, 0x00, 0x00, 0x00, 0x05, 0x74,
@@ -211,14 +227,14 @@ mod tests {
     }
 
     fn cpu_of(attrs: &[u8]) -> Option<String> {
-        cpu_name(&build(attrs, 1, 2, &[]))
+        named_core(&build(attrs, 1, 2, &[]))
     }
 
     #[test]
     fn segments_at_their_load_address_gaps_erased() {
         let e = elf("tc32", &[(0, &[1, 2, 3]), (8, &[9, 9])]);
-        assert_eq!(cpu_name(&e).as_deref(), Some("tc32"));
-        let (img, n) = image_of(&e).unwrap();
+        assert_eq!(named_core(&e).as_deref(), Some("tc32"));
+        let (img, n) = image(&e).unwrap();
         assert_eq!(n, 2);
         assert_eq!(img, vec![1, 2, 3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 9, 9]);
     }
@@ -226,49 +242,49 @@ mod tests {
     #[test]
     fn a_segment_below_the_end_so_far_overwrites_in_place() {
         let e = elf("tc32", &[(0, &[1, 2, 3, 4]), (1, &[7, 7]), (4, &[5])]);
-        assert_eq!(image_of(&e).unwrap(), (vec![1, 7, 7, 4, 5], 3));
+        assert_eq!(image(&e).unwrap(), (vec![1, 7, 7, 4, 5], 3));
     }
 
     #[test]
     fn only_loadable_segments_with_file_bytes_are_placed() {
         let attrs = attributes(&[aeabi_cpu("tc32")]);
         let e = build(&attrs, 1, 2, &[(PT_NOTE, 0, &[9, 9]), (PT_LOAD, 2, &[1]), (PT_LOAD, 64, &[])]);
-        assert_eq!(image_of(&e).unwrap(), (vec![0xFF, 0xFF, 1], 1));
+        assert_eq!(image(&e).unwrap(), (vec![0xFF, 0xFF, 1], 1));
         let e = build(&attrs, 1, 2, &[(PT_NOTE, 0, &[9, 9]), (PT_LOAD, 64, &[])]);
-        assert_eq!(image_of(&e), Err(Refused("no loadable segment with bytes in the file".into())));
+        assert_eq!(image(&e), Err(Refused("no loadable segment with bytes in the file".into())));
     }
 
     #[test]
     fn a_segment_past_the_end_of_the_file_is_refused() {
         let mut e = elf("tc32", &[(0, &[1, 2])]);
         e[0x34 + 16..0x34 + 20].copy_from_slice(&0x1000u32.to_le_bytes());
-        assert_eq!(image_of(&e), Err(Refused("segment beyond the end of the file".into())));
+        assert_eq!(image(&e), Err(Refused("segment beyond the end of the file".into())));
     }
 
     #[test]
     fn a_thumb_elf_is_refused() {
         let e = elf("ARM7TDMI", &[(0, &[1])]);
         assert_eq!(
-            image_of(&e),
+            image(&e),
             Err(Refused("the build attributes name the core Some(\"ARM7TDMI\"), not \"tc32\" (build with -mcpu=tc32)".into()))
         );
-        assert!(image_of(&elf("TC32", &[(0, &[1])])).is_ok());
+        assert!(image(&elf("TC32", &[(0, &[1])])).is_ok());
     }
 
     #[test]
     fn only_a_32_bit_little_endian_elf_is_read() {
         let good = elf("tc32", &[(0, &[1])]);
         let refused = Err(Refused("not a 32-bit little-endian ELF".into()));
-        assert_eq!(image_of(&good[..0x33]), refused);
-        assert_eq!(image_of(b"\x7fELF\x01\x01\0\0"), refused);
+        assert_eq!(image(&good[..0x33]), refused);
+        assert_eq!(image(b"\x7fELF\x01\x01\0\0"), refused);
         for (at, value) in [(0, b'E'), (3, b'G'), (4, 2), (5, 2)] {
             let mut e = good.clone();
             e[at] = value;
-            assert_eq!(image_of(&e), refused, "byte {at} = {value}");
+            assert_eq!(image(&e), refused, "byte {at} = {value}");
         }
         let mut header_only = good[..0x34].to_vec();
         header_only[0x30..0x32].copy_from_slice(&0u16.to_le_bytes());
-        assert_eq!(image_of(&header_only), Err(Refused("the build attributes name the core None, not \"tc32\" (build with -mcpu=tc32)".into())));
+        assert_eq!(image(&header_only), Err(Refused("the build attributes name the core None, not \"tc32\" (build with -mcpu=tc32)".into())));
     }
 
     #[test]
@@ -280,23 +296,23 @@ mod tests {
     fn the_attributes_section_is_found_at_any_index() {
         let attrs = attributes(&[aeabi_cpu("tc32")]);
         for (at, of) in [(0, 1), (0, 3), (2, 3), (7, 9)] {
-            assert_eq!(cpu_name(&build(&attrs, at, of, &[])).as_deref(), Some("tc32"), "section {at} of {of}");
+            assert_eq!(named_core(&build(&attrs, at, of, &[])).as_deref(), Some("tc32"), "section {at} of {of}");
         }
         let mut none = build(&attrs, 1, 2, &[]);
         let shoff = u32::from_le_bytes(none[0x20..0x24].try_into().unwrap()) as usize;
         none[shoff + 44..shoff + 48].copy_from_slice(&1u32.to_le_bytes());
-        assert_eq!(cpu_name(&none), None);
+        assert_eq!(named_core(&none), None);
     }
 
     #[test]
     fn truncated_section_headers_or_attributes_name_no_core() {
         let e = elf("tc32", &[]);
         let shoff = u32::from_le_bytes(e[0x20..0x24].try_into().unwrap()) as usize;
-        assert_eq!(cpu_name(&e[..0x2F]), None);
-        assert_eq!(cpu_name(&e[..shoff + 40 + 20]), None);
+        assert_eq!(named_core(&e[..0x2F]), None);
+        assert_eq!(named_core(&e[..shoff + 40 + 20]), None);
         let mut short = e.clone();
         short[shoff + 60..shoff + 64].copy_from_slice(&0x1000u32.to_le_bytes());
-        assert_eq!(cpu_name(&short), None);
+        assert_eq!(named_core(&short), None);
     }
 
     #[test]

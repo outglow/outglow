@@ -109,28 +109,15 @@ impl<F: Flash> LightLog<F> {
 
     fn legacy(&self) -> Option<usize> {
         let base = self.sectors[0];
-        let mut last = None;
-        let mut off = 0;
-        while off + BLOCK_LEN <= self.size {
-            if (self.check)(&self.read8(base + off)) {
-                last = Some(base + off);
-            }
-            off += BLOCK_LEN;
-        }
-        last
+        (0..self.size / BLOCK_LEN).map(|k| base + k * BLOCK_LEN).filter(|&at| (self.check)(&self.read8(at))).last()
     }
 
     fn blank(&self, base: usize) -> bool {
-        let mut chunk = [0u8; 32];
-        let mut off = 0;
-        while off < self.size {
+        (0..self.size).step_by(32).all(|off| {
+            let mut chunk = [0u8; 32];
             self.flash.read(base + off, &mut chunk);
-            if chunk.iter().any(|&b| b != 0xFF) {
-                return false;
-            }
-            off += chunk.len();
-        }
-        true
+            chunk.iter().all(|&b| b == 0xFF)
+        })
     }
 
     pub fn store(&mut self, data: &[u8; BLOCK_LEN]) {
