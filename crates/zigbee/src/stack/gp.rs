@@ -519,7 +519,7 @@ impl<H: Hal> Stack<H> {
         self.store_proxy(i);
         self.gp_remember(f.gpd, f.counter, now);
 
-        let mut z = Buf::new();
+        let mut z: Buffer<96> = Buffer::new();
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         z.bytes(&[0x11, self.zcl_seq, GP_NOTIFICATION]);
         let rx_after_tx = f.rx_after_tx && !matches!(cmd, GPD_COMMISSIONING | GPD_DECOMMISSIONING);

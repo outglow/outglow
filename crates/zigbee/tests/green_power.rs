@@ -1665,3 +1665,22 @@ fn a_proxy_entry_that_is_fixed_and_in_range_stays_so_over_a_restart() {
     let options = u16::from_le_bytes([entries[3], entries[4]]);
     assert_eq!(options & (1 << 10 | 1 << 11), 1 << 10 | 1 << 11, "in range and fixed: {options:#06x}");
 }
+
+#[test]
+fn a_command_too_long_to_tunnel_is_dropped_and_the_bulb_keeps_running() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 3));
+    net.run(200);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    gpd.send(0xA0, &[0x5A; 79]);
+    net.run(200);
+    assert_eq!(gp_frames(&net, 0x00).len(), 0, "a notification of 97 bytes does not fit one");
+    gpd.send(0xA0, &[0x5A; 78]);
+    net.run(200);
+    let got = gp_frames(&net, 0x00);
+    assert_eq!(got.len(), 1, "96 bytes do");
+    assert_eq!(got[0].0, short);
+    assert_eq!(&got[0].1[10..12], &[0xA0, 78]);
+}
