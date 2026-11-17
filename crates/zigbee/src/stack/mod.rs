@@ -48,7 +48,8 @@ pub(crate) const CMDS: usize = 6;
 pub const CHILDREN: usize = 32;
 pub const INDIRECT: usize = 24;
 pub const INDIRECT_PER_CHILD: usize = 4;
-pub const PENDING_SHORTS: usize = CHILDREN + INDIRECT;
+pub const PENDING_SHORTS: usize = 56;
+const _: () = assert!(PENDING_SHORTS == CHILDREN + INDIRECT, "a short address for every child and every frame kept");
 pub const RETAIN_MAX: usize = diag::SNAPSHOT_LEN + diag::EVENTS_LEN;
 pub(crate) const MAX_NWK_PAYLOAD: usize = 90;
 
