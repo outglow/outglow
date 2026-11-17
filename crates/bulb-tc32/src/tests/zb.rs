@@ -546,10 +546,31 @@ mod over_ble {
         v
     }
 
+    fn link_status_from(src: u16, src_ext: u64, seq: u8, us: u16) -> Vec<u8> {
+        use zigbee::{aes::Aes128, nwk, util::Buf};
+        let mut f = Buf::new();
+        f.bytes(&[0x41, 0x88, seq, 0x62, 0x1a, 0xff, 0xff]);
+        f.bytes(&src.to_le_bytes());
+        let at = f.len();
+        let mut h = nwk::Header::new(nwk::FRAME_CMD, 0xfffc, src, 1, seq);
+        h.src_ext = Some(src_ext);
+        h.write(&mut f);
+        let mut p = vec![nwk::CMD_LINK_STATUS, 0x61];
+        p.extend_from_slice(&us.to_le_bytes());
+        p.push(0x11);
+        nwk::secure(&Aes128::new(&[0x11; 16]), 0, src_ext, seq as u32 + 100, &mut f, at, &p);
+        f.as_slice().to_vec()
+    }
+
     #[test]
     fn the_device_page_shows_the_network_the_link_and_the_resets_of_a_joined_bulb() {
         let _s = sim::session();
         nv::open().store(NvItem::Network as u8, &network_record());
+        let mut child = vec![1u8];
+        child.extend_from_slice(&0x00cd_0000_0000_2222u64.to_le_bytes());
+        child.extend_from_slice(&0x2222u16.to_le_bytes());
+        child.extend_from_slice(&[0x80, 8]);
+        nv::open().store(NvItem::Children as u8, &child);
         sim::with(|c| {
             c.set_analog(0x3a, 0x01);
             c.poke8(0x72, 0x01);
@@ -569,6 +590,9 @@ mod over_ble {
             }
             if i == 20 {
                 crate::radio::tests::queue(&poll, 70, 0);
+            }
+            if i % 20 == 5 {
+                crate::radio::tests::queue(&link_status_from(0x1111, 0x00ab_0000_0000_1111, i as u8, 0x2b3c), 90, 0);
             }
             sim::with(|c| c.tick = c.tick.wrapping_add(50 * 16_000));
             for _ in 0..5 {
@@ -602,6 +626,7 @@ mod over_ble {
         assert_eq!(state[27..31], m.tx_ucast.to_le_bytes());
         assert_eq!(state[31..33], (m.tx_ucast_retries as u16).to_le_bytes());
         assert_eq!(state[33..35], (m.tx_ucast_failures as u16).to_le_bytes());
+        assert!(n.routers > 0 && n.end_devices > 0, "{n:?}");
         assert!(wd > 0 && lqi > 0 && rssi != 0 && m.rx_ucast > 0 && m.tx_ucast > 0 && m.tx_ucast_retries > 0 && m.tx_ucast_failures > 0);
     }
 
