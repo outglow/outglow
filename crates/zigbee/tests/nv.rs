@@ -171,3 +171,25 @@ fn the_previous_key_flags_come_back_from_the_stored_network_as_they_were() {
         assert_eq!((network[14], network[35]), (5, alt), "stored again with the update, {alt}");
     }
 }
+
+#[test]
+fn a_child_that_listens_comes_back_as_one_and_gets_its_frames_at_once() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, false);
+    net.link(0, zed.id, 0);
+    let sa = net.nodes[a].short();
+    assert!(zed.join(&mut net, sa));
+    net.run(2_000);
+    reboot(&mut net, a);
+    assert_eq!(net.nodes[a].stack.child_count(), 1);
+    zed.rx.clear();
+    net.coord.zcl(zed.short, 0x0006, 0x11, 0x01, &[]);
+    net.run(300);
+    zed.drain();
+    let id = net.nodes[a].id;
+    assert!(net.air.borrow().ports[id].pending.0.is_empty(), "not kept for a poll");
+    assert!(zed.rx.iter().any(|(h, _)| h.dst == zed.short && h.src == 0x0000));
+}

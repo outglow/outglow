@@ -329,7 +329,7 @@ impl<H: Hal> Stack<H> {
                 let (Some(ext), Some(short), Some(capability), Some(timeout)) = (r.u64(), r.u16(), r.u8(), r.u8()) else {
                     break;
                 };
-                *slot = Child { used: true, ext, short, capability, joined: true, timeout, fc_next: 0, fc_seq: 0, heard: now, ..Child::EMPTY };
+                *slot = Child { used: true, ext, short, capability, joined: true, timeout, heard: now, ..Child::EMPTY };
             }
         }
     }
