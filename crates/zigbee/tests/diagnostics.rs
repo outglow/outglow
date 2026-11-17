@@ -1395,6 +1395,6 @@ fn the_black_box_tells_the_cluster_of_a_groupcast_and_of_an_ack_with_its_fields_
     let kind_id = |e: &[u8]| (e[10], u16::from_le_bytes([e[11], e[12]]));
     assert!(ring.iter().any(|e| kind_id(e) == (0x00 | 0x04 | 0x08 | 0x40, 0x0008)), "the level report to the group: {:02x?}", ring.iter().map(|e| kind_id(e)).collect::<Vec<_>>());
     let relayed: Vec<(u8, u16)> = ring.iter().filter(|e| e[10] & 0x10 != 0 && u16::from_le_bytes([e[6], e[7]]) == sb).map(|e| kind_id(e)).collect();
-    assert!(relayed.contains(&(0x00 | 0x04 | 0x10 | 0x60, 0x0006)), "an acknowledgement with its cluster: {relayed:02x?}");
+    assert_eq!(relayed.iter().filter(|r| **r == (0x00 | 0x04 | 0x10 | 0x60, 0x0006)).count(), 1, "one acknowledgement with its cluster: {relayed:02x?}");
     assert!(relayed.contains(&(0x00 | 0x04 | 0x10, 0)), "and one without fields: {relayed:02x?}");
 }

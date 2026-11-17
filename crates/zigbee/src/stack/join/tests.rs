@@ -341,3 +341,18 @@ fn an_association_through_a_router_makes_it_the_neighbour_and_a_request_for_anot
     mac_cmd(&mut s, Addr::Short(0x0042), 0x1A62, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ, 0x8E]);
     assert!(s.children[0].used, "its own address and PAN");
 }
+
+#[test]
+fn a_resumed_bulb_announces_its_children_only_when_it_has_end_devices() {
+    let mut s = stack();
+    s.resume(1_000);
+    assert_eq!(s.parent_annce_at, None);
+    s.children[3].used = true;
+    s.children[3].capability = 0x8E;
+    s.resume(1_000);
+    assert_eq!(s.parent_annce_at, None, "a router child");
+    s.children[4].used = true;
+    s.children[4].capability = 0x80;
+    s.resume(1_000);
+    assert!(s.parent_annce_at.is_some());
+}
