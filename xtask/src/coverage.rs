@@ -22,7 +22,7 @@ pub struct Args {
 
 const TOLERANCE: f64 = 0.05;
 
-const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval\\.rs$";
+const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval\\.rs$|crates/memcap/";
 
 struct Workspace {
     name: &'static str,
@@ -235,7 +235,7 @@ pub fn parse_baseline(s: &str) -> Result<BTreeMap<String, Floor>> {
 }
 
 pub fn format_baseline(b: &BTreeMap<String, Floor>) -> String {
-    let mut s = String::from("# cargo xtask coverage --check: no crate's line or region coverage (percent) may fall below these.\n# CI's numbers (Linux); raise them with `cargo xtask coverage --update` when tests are added.\ncrate\tlines\tregions\n");
+    let mut s = String::from("# cargo xtask coverage --check: no crate's line or region coverage (percent) may fall below these.\n# Checked in CI (Linux); raise them with `cargo xtask coverage --update` when tests are added.\ncrate\tlines\tregions\n");
     for (name, f) in b {
         let _ = writeln!(s, "{name}\t{:.2}\t{:.2}", f.lines, f.regions);
     }
@@ -265,11 +265,19 @@ fn delta(now: f64, base: Option<f64>) -> String {
     }
 }
 
-fn render(crates: &BTreeMap<String, Summary>, files: &[(String, Summary)], baseline: &BTreeMap<String, Floor>, worst: usize) -> String {
-    let mut s = String::from("## Coverage of the host tests\n\n");
+fn is_emulator(name: &str) -> bool {
+    name.starts_with("emulator/")
+}
+
+fn table(s: &mut String, title: &str, crates: &BTreeMap<String, Summary>, baseline: &BTreeMap<String, Floor>, emulator: bool) {
+    let rows: Vec<(&String, &Summary)> = crates.iter().filter(|(n, _)| is_emulator(n) == emulator).collect();
+    if rows.is_empty() {
+        return;
+    }
+    let _ = writeln!(s, "{title}\n");
     s.push_str("| crate | lines | line % | Δ | regions | region % | Δ | functions % |\n|---|--:|--:|--:|--:|--:|--:|--:|\n");
     let mut total = Summary::default();
-    for (name, c) in crates {
+    for (name, c) in rows {
         total.add(*c);
         let b = baseline.get(name);
         let _ = writeln!(
@@ -297,8 +305,15 @@ fn render(crates: &BTreeMap<String, Summary>, files: &[(String, Summary)], basel
         total.regions.percent(),
         total.functions.percent()
     );
+}
+
+fn render(crates: &BTreeMap<String, Summary>, files: &[(String, Summary)], baseline: &BTreeMap<String, Floor>, worst: usize) -> String {
+    let mut s = String::new();
+    table(&mut s, "## Coverage of the host tests", crates, baseline, false);
+    table(&mut s, "### The emulator's unit tests (its scenarios run whole firmware images, measured apart)", crates, baseline, true);
     s.push_str("Δ: percentage points against the baseline in `xtask/coverage.tsv`.\n\n");
-    let mut by_missed: Vec<&(String, Summary)> = files.iter().filter(|(_, f)| f.lines.missed() > 0).collect();
+    let mut by_missed: Vec<&(String, Summary)> =
+        files.iter().filter(|(n, f)| f.lines.missed() > 0 && !n.starts_with("emulator/")).collect();
     by_missed.sort_by(|a, b| b.1.lines.missed().cmp(&a.1.lines.missed()).then(a.0.cmp(&b.0)));
     if worst > 0 && !by_missed.is_empty() {
         let _ = writeln!(s, "### The {} files with the most uncovered lines\n", worst.min(by_missed.len()));
@@ -362,6 +377,19 @@ mod tests {
         base.insert("x".to_string(), Floor { lines: floor2(s.lines.percent()), regions: floor2(s.regions.percent()) });
         assert!(drops(&now, &base).is_empty());
         assert!(base["x"].lines <= s.lines.percent());
+    }
+
+    #[test]
+    fn the_emulator_has_a_table_of_its_own_and_no_worst_files() {
+        let mut crates = BTreeMap::new();
+        crates.insert("a".to_string(), summary((10, 5), (10, 5)));
+        crates.insert("emulator/e".to_string(), summary((100, 0), (100, 0)));
+        let files = vec![("emulator/rs/e/src/x.rs".to_string(), summary((100, 0), (100, 0)))];
+        let r = render(&crates, &files, &BTreeMap::new(), 5);
+        assert!(r.contains("| **total** | 5/10 | 50.00 |"));
+        assert!(r.contains("| **total** | 0/100 | 0.00 |"));
+        assert!(!r.contains("x.rs"));
+        assert!(r.find("| a |").unwrap() < r.find("| emulator/e |").unwrap());
     }
 
     #[test]

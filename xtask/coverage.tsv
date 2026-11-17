@@ -1,0 +1,15 @@
+# cargo xtask coverage --check: no crate's line or region coverage (percent) may fall below these.
+# CI's numbers (Linux); raise them with `cargo xtask coverage --update` when tests are added.
+crate	lines	regions
+ble	92.48	93.09
+bulb-core	94.55	93.70
+bulb-sim	96.80	97.99
+emulator/ble	71.31	71.49
+emulator/scenarios	2.64	2.24
+emulator/tc32emu	72.23	71.86
+emulator/zbnode	13.69	13.40
+outglow	65.46	63.23
+outglow-image	91.54	90.12
+sense	96.41	94.52
+xtask	22.62	21.13
+zigbee	90.47	88.81
