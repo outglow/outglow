@@ -1354,3 +1354,25 @@ fn a_frame_from_an_ieee_device_with_no_address_is_not_taken() {
     net.run(500);
     assert_eq!(gp_frames(&net, 0x04).len(), 1, "one with an address is");
 }
+
+#[test]
+fn an_entry_keeps_its_group_when_its_sink_goes_and_shows_that_it_is_fixed() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut group = Pairing::new(SWITCH, 2);
+    group.group = 0x4321;
+    group.fixed = true;
+    net.coord.gp_pair(&group);
+    let mut sink = Pairing::new(SWITCH, 3);
+    sink.sink = (COORD_EXT, 0x0000);
+    net.coord.gp_pair(&sink);
+    net.run(100);
+    sink.add_sink = false;
+    net.coord.gp_pair(&sink);
+    net.run(100);
+    let (status, entries) = proxy_entries(&mut net, short);
+    assert_eq!((status, entries[0], entries[2]), (0x00, 1, 1), "the entry is still there");
+    let options = u16::from_le_bytes([entries[3], entries[4]]);
+    assert_eq!(options & (1 << 6 | 1 << 8 | 1 << 11), 1 << 8 | 1 << 11, "no sink, a group, fixed: {options:#06x}");
+}
