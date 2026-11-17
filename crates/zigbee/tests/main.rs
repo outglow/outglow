@@ -16,6 +16,7 @@ mod keys;
 mod mac_rx;
 mod network;
 mod nv;
+mod nwk_commands;
 mod objects;
 mod ota;
 mod parent;
