@@ -19,7 +19,7 @@ mod zdo;
 
 use bulb_core::command::{Command, StateReport};
 
-pub use diag::{ev, LoggedEvent, MacCounters, NeighborCounts, DIAG_COUNTERS_MAX};
+pub use diag::{ev, LoggedEvent, MacCounters, NeighborCounts, DIAG_COUNTERS_MAX, EVENTS_LEN as DIAG_EVENTS_LEN};
 pub use ota::OtaState;
 pub use zcl::LightSettings;
 #[cfg(feature = "sense")]

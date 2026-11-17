@@ -1017,3 +1017,105 @@ fn a_black_box_read_only_in_part_records_again_once_the_hold_is_over() {
     let rows_at = ring_at + ring_cap * ring_entry;
     assert!(b[rows_at + rows_len * b[10] as usize..].iter().all(|x| *x == 0), "and so are the rows not written yet");
 }
+
+fn crash_with(net: &mut Net, n: usize, damage: impl Fn(&mut Vec<u8>)) {
+    let id = net.nodes[n].id;
+    net.nodes[n].stack.keep_for_restart();
+    let mut kept = net.air.borrow().ports[id].retained.clone().unwrap();
+    damage(&mut kept);
+    let mut air = net.air.borrow_mut();
+    air.ports[id].retained = Some(kept);
+    air.ports[id].reset_cause = ResetCause::Watchdog;
+    drop(air);
+    net.power_cycle(n);
+    net.run(3_000);
+}
+
+#[test]
+fn counters_kept_over_a_restart_of_another_version_or_cut_short_are_not_taken() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.run(130_000);
+    for damage in [0usize, 1] {
+        for _ in 0..20 {
+            net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+            net.run(50);
+        }
+        let rx = diag1(&mut net, short, MAC_RX_UCAST);
+        crash_with(&mut net, n, |k| if damage == 0 { k[0] ^= 0x55 } else { k.truncate(10) });
+        assert!(diag1(&mut net, short, MAC_RX_UCAST) < rx, "damage {damage}: the stored counters, not the kept ones");
+    }
+}
+
+#[test]
+fn a_kept_event_log_that_does_not_add_up_is_dropped_but_the_counters_are_taken() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    for _ in 0..20 {
+        net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+        net.run(50);
+    }
+    let rx = diag1(&mut net, short, MAC_RX_UCAST);
+    let events = net.nodes[n].stack.event_seq();
+    assert!(events > 0);
+    let snapshot = zigbee::stack::RETAIN_MAX - zigbee::stack::DIAG_EVENTS_LEN;
+    crash_with(&mut net, n, |k| k[snapshot] = 0xFF);
+    assert!(diag1(&mut net, short, MAC_RX_UCAST) > rx);
+    assert!((0..4).filter_map(|i| net.nodes[n].stack.event(i)).all(|e| e.this_start), "only this start's events");
+}
+
+#[test]
+fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let id = net.nodes[n].id;
+    let seq = net.nodes[n].stack.event_seq();
+    net.air.borrow_mut().ports[id].hal_counters.ble_disconnects = 1;
+    net.nodes[n].stack.sync_hardware_counters();
+    assert_eq!(net.nodes[n].stack.event_seq(), seq.wrapping_add(1));
+    let e = net.nodes[n].stack.event(0).unwrap();
+    net.air.borrow_mut().ports[id].hal_counters.ble_disconnects = 2;
+    net.air.borrow_mut().ports[id].hal_counters.ble_links_lost = 1;
+    net.nodes[n].stack.sync_hardware_counters();
+    let lost = net.nodes[n].stack.event(0).unwrap();
+    assert_ne!(e.kind, lost.kind, "a lost link is its own event");
+    assert_eq!((e.a, lost.a), (1, 1));
+    assert_eq!(net.nodes[n].stack.event_seq(), seq.wrapping_add(2), "one event for the lost link, not two");
+}
+
+#[test]
+fn without_aps_messages_sent_the_average_of_retries_is_zero() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let seq = net.coord.zcl_mfr(short, DIAG, 0x01, MFR, 0x00, &[]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl_mfr(short, DIAG, 0x0B).unwrap()[3], seq);
+    assert_eq!(diag1(&mut net, short, AVERAGE_RETRIES), 0);
+    let ai = read_ep(&mut net, short, 3, ANALOG_INPUT, &[0x0055]);
+    assert_eq!(single(&ai[&0x0055].1), 0.0);
+}
+
+#[test]
+fn the_counters_need_room_for_all_of_them() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let mut small = [0u8; 16];
+    assert_eq!(net.nodes[n].stack.diag_counters(&mut small), 0);
+    assert_eq!(small, [0; 16]);
+}
+
+#[test]
+fn the_network_status_figures_follow_the_statuses_heard() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let before = mfr(&mut net, short, &[0x5024, 0x5025, 0x5026]);
+    assert_eq!([0x5024, 0x5025, 0x5026].map(|a| number(&before[&a].1)), [0, 0, 0]);
+    net.coord.nwk_command(short, 1, &[nwk::CMD_NETWORK_STATUS, 0x09, 0x34, 0x12]);
+    net.run(100);
+    let after = mfr(&mut net, short, &[0x5024, 0x5025]);
+    assert_eq!([0x5024, 0x5025].map(|a| number(&after[&a].1)), [1, 0x09]);
+}

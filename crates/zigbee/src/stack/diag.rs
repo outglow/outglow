@@ -137,7 +137,7 @@ pub(crate) const EVENTS: usize = 30;
 pub(crate) const EVENTS_PER_PAGE: usize = 5;
 pub(crate) const EVENT_ENTRY: usize = 12;
 pub(crate) const EVENT_PAGES: usize = EVENTS / EVENTS_PER_PAGE;
-pub(crate) const EVENTS_LEN: usize = 2 + EVENTS * EVENT_ENTRY;
+pub const EVENTS_LEN: usize = 2 + EVENTS * EVENT_ENTRY;
 
 pub mod ev {
     pub const START: u8 = 1;
