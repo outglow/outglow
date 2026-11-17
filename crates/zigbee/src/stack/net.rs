@@ -1286,13 +1286,10 @@ impl<H: Hal> Stack<H> {
                 self.neighbors[slot] =
                     Neighbor {
                         used: true,
-                        short,
-                        ext,
                         lqi,
                         out_cost,
                         age,
                         confirmed: out_cost != 0,
-                        fc_seq: key_seq,
                         rssi_avg: rssi,
                         rssi_min: rssi,
                         ..Neighbor::EMPTY
@@ -1486,3 +1483,6 @@ impl<H: Hal> Stack<H> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
