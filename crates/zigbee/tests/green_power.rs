@@ -1132,3 +1132,49 @@ fn a_proxy_table_too_long_for_a_frame_is_read_entry_by_entry_and_in_order() {
     assert_eq!(from_bulb(&net), before + 1);
     let _ = n;
 }
+
+fn gp_keys(net: &mut Net, short: u16) -> Vec<u8> {
+    let seq = net.coord.gp_unicast(short, 0x08, 0x00, &[0x20, 0x00, 0x21, 0x00, 0x22, 0x00]);
+    net.run(100);
+    let rsp = net.coord.last_zcl(short, GP, 0x01).unwrap();
+    assert_eq!(rsp[..2], [0x10, seq]);
+    rsp[3..].to_vec()
+}
+
+#[test]
+fn proxy_attribute_writes_are_checked_and_undivided_ones_write_all_or_nothing() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let before = gp_keys(&mut net, short);
+    let write = |net: &mut Net, cmd: u8, p: &[u8]| -> Option<Vec<u8>> {
+        net.coord.zcl_rx.clear();
+        let seq = net.coord.gp_unicast(short, 0x08, cmd, p);
+        net.run(100);
+        let r = net.coord.last_zcl(short, GP, 0x04)?;
+        assert_eq!(r[1], seq);
+        Some(r[3..].to_vec())
+    };
+    assert_eq!(write(&mut net, 0x02, &[0x20, 0x00, 0x18, 4, 0x20, 0x00, 0x18, 3]), Some(vec![0x87, 0x20, 0x00]), "an invalid value, then the next record");
+    assert_eq!(gp_keys(&mut net, short)[4], 3);
+    assert_eq!(write(&mut net, 0x02, &[0x21, 0x00, 0x20, 1, 0x20, 0x00, 0x18, 1]), Some(vec![0x8D, 0x21, 0x00]), "a wrong type stops the records");
+    assert_eq!(gp_keys(&mut net, short)[4], 3);
+    assert_eq!(write(&mut net, 0x02, &[0x99, 0x00, 0x20, 1]), Some(vec![0x86, 0x99, 0x00]));
+    assert_eq!(write(&mut net, 0x02, &[0x22, 0x00, 0xF1, 1, 2, 3]), Some(vec![0x8D, 0x22, 0x00]), "a key cut short ends the records");
+    assert_eq!(write(&mut net, 0x02, &[0x20, 0x00, 0x18]), Some(vec![0x8D, 0x20, 0x00]), "so does a key type cut short");
+    assert_eq!(write(&mut net, 0x03, &[0x20, 0x00, 0x18, 1, 0x10, 0x00, 0x20, 1]), Some(vec![0x88, 0x10, 0x00]));
+    assert_eq!(gp_keys(&mut net, short)[4], 3, "undivided: nothing written");
+    let mut link = vec![0x22, 0x00, 0xF1];
+    link.extend_from_slice(&[0x77; 16]);
+    assert_eq!(write(&mut net, 0x05, &link), None, "no response");
+    let after = gp_keys(&mut net, short);
+    assert_eq!(after[after.len() - 16..], [0x77; 16]);
+    assert_ne!(after, before);
+    net.coord.zcl_rx.clear();
+    net.coord.gp_unicast(short, 0x08, 0x0B, &[0x00, 0x00]);
+    net.run(100);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short), "a default response is not answered");
+    let seq = net.coord.gp_unicast(short, 0x08, 0x7F, &[]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x10, seq, 0x0B, 0x7F, 0x81]);
+}

@@ -1109,7 +1109,8 @@ impl<H: Hal> Stack<H> {
                                 keys.shared_type = v;
                                 SUCCESS
                             }
-                            _ => INVALID_VALUE,
+                            Some(_) => INVALID_VALUE,
+                            None => INVALID_DATA_TYPE,
                         },
                         (ATTR_SHARED_KEY | ATTR_LINK_KEY, T_KEY) => match r.key() {
                             Some(key) => {
@@ -1120,7 +1121,7 @@ impl<H: Hal> Stack<H> {
                                 }
                                 SUCCESS
                             }
-                            None => INVALID_VALUE,
+                            None => INVALID_DATA_TYPE,
                         },
                         (ATTR_SHARED_KEY_TYPE | ATTR_SHARED_KEY | ATTR_LINK_KEY, _) => INVALID_DATA_TYPE,
                         (
