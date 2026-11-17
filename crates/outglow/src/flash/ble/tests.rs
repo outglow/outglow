@@ -402,6 +402,15 @@ async fn a_push_with_a_login_and_a_pause_after_each_write() {
 }
 
 #[tokio::test]
+async fn a_push_with_larger_blocks() {
+    let b = Bulb { idle: vec![0; 20], ..Bulb::dimm() };
+    let (r, log) = pushed(&b, &["--confirm-write", "--mtu", "64"]).await;
+    r.unwrap();
+    assert!(log.contains(&"block 57 B, packet 61 B (ATT_MTU 64), 19 packets".to_string()), "{log:?}");
+    assert_eq!(b.trace()[1], format!("w 15 000002{}", "00".repeat(58)));
+}
+
+#[tokio::test]
 async fn a_push_gives_up_after_the_resends_asked_for() {
     for (extra, n) in [(&["--confirm-write"][..], 10), (&["--confirm-write", "--max-resends", "2"][..], 2)] {
         let b = Bulb { stuck: true, ..Bulb::dimm() };

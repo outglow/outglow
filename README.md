@@ -159,7 +159,10 @@ weekly in 16 parts, with the table per crate in the summary of the job
 break behaviour the specifications describe (a counter not counted, a frame
 not relayed, a timeout of the wrong length) across whole statements and
 constants, which cargo-mutants' operator and return-value mutants do not
-reach. The test infrastructure (bulb-sim, memcap) is not mutated, and
+reach. The test infrastructure (bulb-sim, memcap) is not mutated, nor is
+the outglow command's glue to the Bluetooth adapter and the MQTT broker
+(`flash/bt.rs`, `diag/mqtt.rs`, left out of the coverage too: it needs a
+bulb or a broker; the logic behind it runs on fakes in the tests), and
 bulb-core's mutants run bulb-sim's tests too:
 
 ```sh

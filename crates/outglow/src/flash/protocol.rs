@@ -314,16 +314,16 @@ pub async fn run_ota<T: Transport>(t: &mut T, img: &[u8], o: &OtaOptions, log: &
 
     let mut sent = vec![0u32; total];
     let (mut resends, mut resent_packets) = (0u32, 0u32);
-    let (mut stuck_from, mut stuck_n) = (-1i64, 0u32);
+    let (mut stuck_from, mut stuck_n) = (None, 0u32);
     let mut resend_point = |st: &Status, place: &str, log: &mut dyn FnMut(&str)| -> Result<Option<usize>> {
         if !st.resumable() {
             return Ok(None);
         }
         let nxt = st.next_index().unwrap();
-        if nxt as i64 <= stuck_from {
+        if stuck_from.is_some_and(|s| nxt <= s) {
             stuck_n += 1;
         } else {
-            (stuck_from, stuck_n) = (nxt as i64, 1);
+            (stuck_from, stuck_n) = (Some(nxt), 1);
         }
         if stuck_n > o.max_resends {
             bail!("{place}: {} resends from block {nxt} without progress ({})", o.max_resends, st.describe());
@@ -782,6 +782,28 @@ mod tests {
         let o = Status::parse(&[3, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert!(!o.resumable() && !o.failed() && o.next_index().is_none());
         assert_eq!(Status::parse(&[0xff, 0, 0xff, 0xff, 0, 0, 0, 0, 0]).next_index(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn resends_that_make_progress_are_not_counted_against_it() {
+        let img = img();
+        let o = OtaOptions { max_resends: 2, ..Default::default() };
+        let mut f = FakeStock::new(&img, 16, &[3, 10, 20, 30], &[]);
+        let mut logs = vec![];
+        run_ota(&mut f, &img, &o, &mut |l| logs.push(l.to_string())).await.unwrap();
+        assert_eq!(logs.iter().filter(|l| l.starts_with("bulb reports CRC error")).count(), 4);
+        let mut f = FakeStock::new(&img, 16, &[0, 0, 1, 1], &[]);
+        run_ota(&mut f, &img, &o, &mut quiet).await.unwrap();
+        let mut f = FakeStock::new(&img, 16, &[0, 0, 0], &[]);
+        let e = run_ota(&mut f, &img, &o, &mut quiet).await.unwrap_err().to_string();
+        assert!(e.contains(": 2 resends from block 0 without progress"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_final_status_of_two_bytes_is_enough() {
+        let mut f = FakeStock::new(&img(), 16, &[], &[]);
+        f.end_status = Some(vec![4, 0]);
+        assert_eq!(run_ota(&mut f, &img(), &OtaOptions::default(), &mut quiet).await.unwrap(), [4, 0]);
     }
 
     #[tokio::test]
