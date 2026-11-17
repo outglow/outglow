@@ -1814,3 +1814,28 @@ fn a_refusal_waiting_for_a_device_that_is_no_child_does_not_count_against_a_chil
     let pending = net.air.borrow().ports[id].pending.0.clone();
     assert!(pending.contains(&zed.short) && pending.contains(&0x5A5A), "{pending:x?}");
 }
+
+#[test]
+fn a_child_asking_to_associate_again_gets_the_answer_when_it_polls_under_its_short_address() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let mut f = zigbee::util::Buf::new();
+    zigbee::mac::Header {
+        frame_type: zigbee::mac::FRAME_CMD,
+        security: false,
+        pending: false,
+        ack_request: true,
+        seq: 0x41,
+        dst_pan: PAN,
+        dst: zigbee::mac::Addr::Short(sa),
+        src_pan: 0xFFFF,
+        src: zigbee::mac::Addr::Ext(zed.ext),
+    }
+    .write(&mut f);
+    f.bytes(&[zigbee::mac::CMD_ASSOC_REQ, zed.capability()]);
+    net.air.borrow_mut().transmit(zed.id, f.as_slice());
+    net.run(100);
+    zed.mac_rx.clear();
+    zed.poll(&mut net, 20);
+    assert!(zed.mac_rx.iter().any(|(_, p)| p.first() == Some(&zigbee::mac::CMD_ASSOC_RSP) && p[1..3] == zed.short.to_le_bytes()), "{:02x?}", zed.mac_rx);
+}
