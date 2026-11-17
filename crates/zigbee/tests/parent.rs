@@ -1790,3 +1790,27 @@ fn an_unknown_device_rejoining_without_a_key_is_admitted_and_a_timeout_request_o
     let traces = net.air.borrow().ports[port].traces.clone();
     assert!(traces.iter().any(|t| t.kind == zigbee::hal::trace::TX && t.peer == 0x7001), "the refusal is sent to the device: {traces:?}");
 }
+
+#[test]
+fn a_refusal_waiting_for_a_device_that_is_no_child_does_not_count_against_a_childs_frames() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let id = net.nodes[a].id;
+    net.coord.zcl_ep(sa, 7, 0x0010, 0x00, 0x02, &[0x55, 0x00, 0x10, 0]);
+    net.run(100);
+    let mut stranger = Zed::new(&net.air, true);
+    net.link(0, stranger.id, 0);
+    stranger.key = zed.key;
+    stranger.short = 0x5A5A;
+    stranger.pan = PAN;
+    net.air.borrow_mut().ports[stranger.id].short = 0x5A5A;
+    net.air.borrow_mut().ports[stranger.id].pan = PAN;
+    let mut h = stranger.header(nwk::FRAME_CMD, sa);
+    h.radius = 1;
+    stranger.nwk_send(h, &[nwk::CMD_REJOIN_REQUEST, stranger.capability()]);
+    net.run(100);
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x01, &[]);
+    net.run(200);
+    let pending = net.air.borrow().ports[id].pending.0.clone();
+    assert!(pending.contains(&zed.short) && pending.contains(&0x5A5A), "{pending:x?}");
+}
