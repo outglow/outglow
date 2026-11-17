@@ -763,3 +763,20 @@ fn a_source_routed_frame_that_fails_is_counted_by_why_and_reported_unless_it_is_
     s.send_to(0x1002, &nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x3000, 5, 1), &[0x00], 2);
     assert_eq!(s.diag.n[k::RELAYED_UCAST], 1);
 }
+
+#[test]
+fn a_network_status_of_a_missing_route_or_a_failed_link_drops_the_route_it_tells_of() {
+    for (status, dropped) in [
+        (nwk::STATUS_NO_ROUTE, true),
+        (nwk::STATUS_TREE_LINK_FAILURE, true),
+        (nwk::STATUS_LINK_FAILURE, true),
+        (nwk::STATUS_MANY_TO_ONE_FAILURE, false),
+    ] {
+        let mut s = relaying();
+        route(&mut s, 0, 0x5000, 0x1001, false, 0);
+        let h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1001, 5, 1);
+        s.on_nwk_command(&h, 0x1001, &[nwk::CMD_NETWORK_STATUS, status, 0x00, 0x50]);
+        assert_eq!(s.routes[0].status == super::ROUTE_FREE, dropped, "{status:02X}");
+        assert_eq!(s.diag.last_status_rx, status);
+    }
+}
