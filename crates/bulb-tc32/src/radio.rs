@@ -2,7 +2,7 @@ use zigbee::TxStatus;
 
 use crate::cell::{SharedBuf, Shared};
 use crate::flash;
-use crate::reg::{self, read16, read8, set8, clear8, tick, write16, write32, write8};
+use crate::reg::{self, clear8, modify16, modify8, read16, read8, set8, tick, write16, write32, write8};
 
 const RF_MODE_CTRL: usize = 0xf02;
 const RF_RX_CTRL: usize = 0x428;
@@ -19,6 +19,7 @@ const DMA_TX_ADDR: usize = 0xc0c;
 const DMA_CHANNEL_ENABLE: usize = 0xc20;
 const DMA_CHANNEL_RF_RX: u8 = 0x04;
 const DMA_CHANNEL_RF_TX: u8 = 0x08;
+const DMA_CHANNEL_RF: u8 = 0x0c;
 const DMA_IRQ_ENABLE: usize = 0xc21;
 const DMA_TX_READY: usize = 0xc24;
 const DMA_IRQ_STATUS: usize = 0xc26;
@@ -96,7 +97,6 @@ static TAIL: Shared<u8> = Shared::new(0);
 
 static FREQ_OFFSET: Shared<u8> = Shared::new(5);
 static PAN: Shared<u16> = Shared::new(0xffff);
-#[cfg(feature = "sense")]
 static PROBE_PAN: Shared<u16> = Shared::new(0xffff);
 static SHORT: Shared<u16> = Shared::new(0xffff);
 static EXT: Shared<[u8; 8]> = Shared::new([0; 8]);
@@ -135,27 +135,15 @@ static TX_SENT: Shared<u8> = Shared::new(0);
 extern "C" fn set_state(state: u8) {
     write8(RF_MODE_CTRL, 0x45);
     let f = 2400 + FREQ_OFFSET.get() as u16;
-    let band = if f > 2549 {
-        0x00
-    } else if f > 2519 {
-        0x04
-    } else if f > 2494 {
-        0x08
-    } else if f > 2464 {
-        0x0c
-    } else if f > 2434 {
-        0x10
-    } else if f > 2404 {
-        0x14
-    } else if f > 2379 {
-        0x18
-    } else {
-        0x1c
+    let band = match f {
+        ..=2434 => 0x14,
+        2435..=2464 => 0x10,
+        2465.. => 0x0c,
     };
     write8(0x1228, 0x13);
-    write8(0x1244, ((f << 2) as u8) | 0x01);
-    write8(0x1245, (read8(0x1245) & 0xc0) | ((f >> 6) as u8 & 0x3f));
-    write8(0x1229, (read8(0x1229) & 0xc3) | band);
+    write8(0x1244, (f * 4 + 1) as u8);
+    modify8(0x1245, 0xc0, (f >> 6) as u8 & 0x3f);
+    modify8(0x1229, 0xc3, band);
     if state == STATE_TX {
         write8(RF_MODE_CTRL, 0x55);
         clear8(RF_RX_CTRL, 0x01);
@@ -180,17 +168,17 @@ pub fn init() {
     for (addr, value) in INIT_TABLE {
         write8(addr as usize, value);
     }
-    set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF_RX | DMA_CHANNEL_RF_TX);
+    set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF);
     let mut trim = [0u8; 1];
     flash::read(CAP_TRIM_ADDR, &mut trim);
     if trim[0] != 0xff {
-        reg::analog_write(0x8a, (reg::analog_read(0x8a) & 0x40) | (trim[0] & 0x3f));
+        reg::analog_modify(0x8a, 0x40, trim[0] & 0x3f);
     }
 
     set_state(STATE_OFF);
     clear8(0x1225, 0x40);
-    write8(0x1226, (read8(0x1226) & 0x7f) | 0x80);
-    write8(0x1227, (read8(0x1227) & 0xe0) | 0x1f);
+    modify8(0x1226, 0x7f, 0x80);
+    modify8(0x1227, 0xe0, 0x1f);
 
     RX_BUF.write(0, 0);
     RX_BUF.write(4, 0);
@@ -198,9 +186,9 @@ pub fn init() {
     clear8(0xf03, 0x04);
     write8(DMA_RX_SIZE, (RX_BUF_LEN / 16) as u8);
     write8(DMA_RX_MODE, 0x01);
-    clear8(DMA_IRQ_ENABLE, DMA_CHANNEL_RF_RX | DMA_CHANNEL_RF_TX);
-    write16(RF_IRQ_MASK, (read16(RF_IRQ_MASK) & !0x1fff) | RF_IRQ_RX as u16);
-    write32(reg::IRQ_MASK, reg::read32(reg::IRQ_MASK) | reg::IRQ_MASK_RF);
+    clear8(DMA_IRQ_ENABLE, DMA_CHANNEL_RF);
+    modify16(RF_IRQ_MASK, !0x1fff, RF_IRQ_RX as u16);
+    reg::modify32(reg::IRQ_MASK, !0, reg::IRQ_MASK_RF);
     set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF_RX);
     set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF_TX);
     set8(0x430, 0x02);
@@ -257,15 +245,15 @@ pub fn resume(s: u8) {
     }
     set_state(STATE_OFF);
     clear8(0x1225, 0x40);
-    write8(0x1226, (read8(0x1226) & 0x7f) | 0x80);
-    write8(0x1227, (read8(0x1227) & 0xe0) | 0x1f);
+    modify8(0x1226, 0x7f, 0x80);
+    modify8(0x1227, 0xe0, 0x1f);
     write16(DMA_RX_ADDR, RX_BUF.addr() as u16);
     write8(DMA_RX_SIZE, (RX_BUF_LEN / 16) as u8);
     write8(DMA_RX_MODE, 0x01);
-    clear8(DMA_IRQ_ENABLE, DMA_CHANNEL_RF_RX | DMA_CHANNEL_RF_TX);
-    write16(RF_IRQ_MASK, (read16(RF_IRQ_MASK) & !0x1fff) | RF_IRQ_RX as u16);
-    write32(reg::IRQ_MASK, reg::read32(reg::IRQ_MASK) | reg::IRQ_MASK_RF);
-    set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF_RX | DMA_CHANNEL_RF_TX);
+    clear8(DMA_IRQ_ENABLE, DMA_CHANNEL_RF);
+    modify16(RF_IRQ_MASK, !0x1fff, RF_IRQ_RX as u16);
+    reg::modify32(reg::IRQ_MASK, !0, reg::IRQ_MASK_RF);
+    set8(DMA_CHANNEL_ENABLE, DMA_CHANNEL_RF);
     set_state(STATE_RX);
     reg::irq_restore(s);
 }
@@ -424,12 +412,7 @@ fn on_frame() {
         if dst_mode == 0 || len < 7 {
             return;
         }
-        let pan = at(mac + 3) as u16 | (at(mac + 4) as u16) << 8;
-        #[cfg(not(feature = "sense"))]
-        if pan != 0xffff && pan != PAN.get() {
-            return;
-        }
-        #[cfg(feature = "sense")]
+        let pan = u16::from_le_bytes([at(mac + 3), at(mac + 4)]);
         if pan != 0xffff
             && pan != PAN.get()
             && !(pan == PROBE_PAN.get() && dst_mode == 0x08 && at(mac + 5) == 0xff && at(mac + 6) == 0xff)
@@ -437,7 +420,7 @@ fn on_frame() {
             return;
         }
         if dst_mode == 0x08 {
-            let dst = at(mac + 5) as u16 | (at(mac + 6) as u16) << 8;
+            let dst = u16::from_le_bytes([at(mac + 5), at(mac + 6)]);
             if dst != 0xffff {
                 if dst != SHORT.get() {
                     return;
@@ -462,10 +445,7 @@ fn on_frame() {
     }
     acknowledge &= fcf0 & 0x20 != 0;
 
-    let stamp = at(dma_len - 4) as u32
-        | (at(dma_len - 3) as u32) << 8
-        | (at(dma_len - 2) as u32) << 16
-        | (at(dma_len - 1) as u32) << 24;
+    let stamp = u32::from_le_bytes([at(dma_len - 4), at(dma_len - 3), at(dma_len - 2), at(dma_len - 1)]);
     let end = stamp.wrapping_add((phr as u32 + 1) * 32 * reg::TICKS_PER_US);
     if (tick().wrapping_sub(end) as i32) > (ACK_LATEST_US * reg::TICKS_PER_US) as i32 {
         acknowledge = false;
@@ -510,7 +490,7 @@ fn on_frame() {
             };
             if src_len != 0 && src + src_len < mac + len && at(src + src_len) == 0x04 {
                 if src_len == 2 {
-                    let poller = at(src) as u16 | (at(src + 1) as u16) << 8;
+                    let poller = u16::from_le_bytes([at(src), at(src + 1)]);
                     let n = bounded(N_PENDING_SHORT.get(), PENDING_SHORT_SLOTS);
                     let mut i = 0;
                     while i < n && !pending {
@@ -666,8 +646,6 @@ pub fn transmit(mpdu: &[u8], random: impl FnMut() -> u32) -> TxStatus {
     let status = transmit_frame(mpdu, random);
     #[cfg(feature = "trace")]
     {
-        let [attempts, busy, t0] = LAST_TX.get();
-        let us = tick().wrapping_sub(t0) / reg::TICKS_PER_US;
         let dst = if mpdu.len() >= 7 { u16::from_le_bytes([mpdu[5], mpdu[6]]) } else { 0xffff };
         crate::trace::record(zigbee::hal::Trace {
             kind: crate::trace::MAC,
@@ -675,7 +653,7 @@ pub fn transmit(mpdu: &[u8], random: impl FnMut() -> u32) -> TxStatus {
             seq: mpdu.get(2).copied().unwrap_or(0),
             src: mpdu.len() as u16,
             peer: dst,
-            aux: attempts.min(255) | busy.min(255) << 8 | us.min(0xffff) << 16,
+            aux: crate::trace::tx_aux(LAST_TX.get()),
         });
     }
     status
@@ -727,13 +705,43 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
 #[path = "tests/radio.rs"]
 mod tests;
 
-#[cfg(all(test, feature = "ble"))]
+#[cfg(test)]
 pub mod tests_support {
+    pub fn tables() -> (Vec<u16>, Vec<u64>, Vec<u16>) {
+        let ns = super::N_PENDING_SHORT.get() as usize;
+        let ne = super::N_PENDING_EXT.get() as usize;
+        let nc = super::N_CHILDREN.get() as usize;
+        let ext = super::PENDING_EXT.get();
+        (
+            super::PENDING_SHORT.get()[..ns].to_vec(),
+            ext.chunks(8).take(ne).map(|c| u64::from_le_bytes(c.try_into().unwrap_or([0; 8]))).collect(),
+            super::CHILDREN.get()[..nc].to_vec(),
+        )
+    }
+
+    pub fn queue(mpdu: &[u8], rssi: u8, end: u32) {
+        let head = super::HEAD.get() as usize;
+        let slot = head * super::SLOT_LEN;
+        super::QUEUE.write(slot, mpdu.len() as u8);
+        super::QUEUE.write(slot + 1, rssi);
+        super::QUEUE.copy_from(slot + 2, &end.to_le_bytes());
+        super::QUEUE.copy_from(slot + 6, mpdu);
+        super::HEAD.set(((head + 1) % super::SLOTS) as u8);
+    }
+
     pub fn forget_rx() {
         super::LAST_RX.set(0);
     }
 
     pub fn heard_now() {
         super::LAST_RX.set(crate::reg::tick());
+    }
+
+    pub fn heard_at(t: u32) {
+        super::LAST_RX.set(t);
+    }
+
+    pub fn sent_at(t: u32) {
+        super::LAST_AIR.set(t);
     }
 }

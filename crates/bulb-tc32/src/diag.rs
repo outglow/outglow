@@ -146,3 +146,7 @@ impl Glue {
         crate::board::reboot()
     }
 }
+
+#[cfg(test)]
+#[path = "tests/diag.rs"]
+mod tests;

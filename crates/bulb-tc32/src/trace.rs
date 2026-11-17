@@ -36,12 +36,19 @@ mod ring {
         let head = ZB_TRACE.read32(4);
         let at = 8 + (head as usize % ENTRIES) * 16;
         ZB_TRACE.write32(at, reg::tick());
-        ZB_TRACE.write32(at + 4, ev.kind as u32 | (ev.detail as u32) << 8 | (ev.seq as u32) << 16);
-        ZB_TRACE.write32(at + 8, ev.src as u32 | (ev.peer as u32) << 16);
+        ZB_TRACE.write32(at + 4, u32::from_le_bytes([ev.kind, ev.detail, ev.seq, 0]));
+        let ([s0, s1], [p0, p1]) = (ev.src.to_le_bytes(), ev.peer.to_le_bytes());
+        ZB_TRACE.write32(at + 8, u32::from_le_bytes([s0, s1, p0, p1]));
         ZB_TRACE.write32(at + 12, ev.aux);
         ZB_TRACE.write32(4, head.wrapping_add(1));
         reg::irq_restore(s);
     }
+}
+
+#[cfg(feature = "trace")]
+pub fn tx_aux([attempts, busy, t0]: [u32; 3]) -> u32 {
+    let [u0, u1, ..] = (crate::reg::tick().wrapping_sub(t0) / crate::reg::TICKS_PER_US).min(0xffff).to_le_bytes();
+    u32::from_le_bytes([attempts.min(255) as u8, busy.min(255) as u8, u0, u1])
 }
 
 #[inline(always)]
@@ -62,3 +69,7 @@ pub fn span(_kind: u8, _detail: u8, _peer: u16, _t0: u32) {
         aux: crate::reg::tick().wrapping_sub(_t0),
     });
 }
+
+#[cfg(all(test, feature = "trace"))]
+#[path = "tests/trace.rs"]
+mod tests;

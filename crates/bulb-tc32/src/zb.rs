@@ -25,7 +25,7 @@ const DIAG_ROOM: u32 = 6_000 * reg::TICKS_PER_US;
 #[cfg(feature = "ble")]
 static BLE_STATS: Shared<ble::Stats> = Shared::new(ble::Stats { adv_events: 0, connections: 0, events: 0, events_heard: 0, events_skipped: 0, disconnects: 0, links_lost: 0 });
 
-const IDENTITY: Identity = Identity {
+pub(crate) const IDENTITY: Identity = Identity {
     manufacturer: "Outglow",
     model: BOARD.kind,
     sw_build: VERSION,
@@ -273,9 +273,7 @@ impl Hal for Tc32Hal {
     #[cfg(feature = "trace")]
     fn trace(&mut self, mut ev: zigbee::hal::Trace) {
         if ev.kind == zigbee::hal::trace::TX && ev.detail <= zigbee::hal::trace::TX_BUSY {
-            let [attempts, busy, t0] = radio::LAST_TX.get();
-            let us = reg::tick().wrapping_sub(t0) / reg::TICKS_PER_US;
-            ev.aux = attempts.min(255) | busy.min(255) << 8 | us.min(0xffff) << 16;
+            ev.aux = crate::trace::tx_aux(radio::LAST_TX.get());
         }
         crate::trace::record(ev);
     }
@@ -396,7 +394,7 @@ pub struct Link {
     debug: DebugLink,
 }
 
-static LINK: TakeOnce<Link> = TakeOnce::new();
+pub(crate) static LINK: TakeOnce<Link> = TakeOnce::new();
 
 impl Link {
     #[inline(never)]

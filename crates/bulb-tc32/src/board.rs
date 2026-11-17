@@ -87,7 +87,7 @@ pub fn init() {
     reg::write8(reg::CLK_SEL, 0x06);
     analog_write(0x82, 0x64);
     analog_write(0x34, 0x80);
-    analog_write(0x0b, (analog_read(0x0b) & 0x80) | 0x38);
+    reg::analog_modify(0x0b, 0x80, 0x38);
     analog_write(0x8c, 0x02);
     analog_write(0x02, 0xa2);
     for addr in 0x27..=0x2a {
@@ -131,7 +131,7 @@ fn wait_for_crystal() {
 
 fn calibrate_rc_24m() {
     analog_write(0xc8, 0x80);
-    analog_write(0x30, analog_read(0x30) | 0x80);
+    reg::analog_modify(0x30, 0xff, 0x80);
     analog_write(0xc7, 0x0e);
     analog_write(0xc7, 0x0f);
     while analog_read(0xcf) & 0x80 == 0 {}
@@ -143,10 +143,10 @@ fn calibrate_rc_24m() {
 fn calibrate_doubler() {
     analog_write(0x86, 0xbb);
     analog_write(0x82, analog_read(0x82) & 0x7f);
-    analog_write(0x87, (analog_read(0x87) & !0x03) | 0x02);
-    analog_write(0x87, analog_read(0x87) | 0x04);
-    analog_write(0x87, ((analog_read(0x88) & 0x1f) << 3) | (analog_read(0x87) & 0x07));
-    analog_write(0x82, analog_read(0x82) | 0x80);
+    reg::analog_modify(0x87, !0x03, 0x02);
+    reg::analog_modify(0x87, 0xff, 0x04);
+    reg::analog_modify(0x87, 0x07, (analog_read(0x88) & 0x1f) << 3);
+    reg::analog_modify(0x82, 0xff, 0x80);
     analog_write(0x87, analog_read(0x87) & 0xfd);
     analog_write(0x86, 0xfb);
 }
@@ -154,6 +154,7 @@ fn calibrate_doubler() {
 const RETAINED: u8 = 0x3a;
 const RETAINED_ALIVE: u8 = 0x01;
 const WD_STATUS: usize = 0x72;
+const WATCHDOG_ENABLE: u32 = 0x0080_0040;
 
 static CAUSE: Shared<ResetCause> = Shared::new(ResetCause::PowerOn);
 
@@ -182,8 +183,7 @@ pub fn reset_cause() -> ResetCause {
 pub fn watchdog_start(ms: u32) {
     let capture = (ms * 48_000) >> 18;
     reg::write32(reg::TIMER2_TICK, 0);
-    let ctrl = reg::read32(reg::TIMER_CTRL) & 0x00ff_ffff & !(0x3fff << 9);
-    reg::write32(reg::TIMER_CTRL, ctrl | (capture & 0x3fff) << 9 | 1 << 6 | 1 << 23);
+    reg::modify32(reg::TIMER_CTRL, 0x0080_01ff, ((capture & 0x3fff) << 9) + WATCHDOG_ENABLE);
     watchdog_feed();
 }
 
@@ -248,8 +248,7 @@ impl LedPwm {
 fn start(o: Out) {
     reg::write16(reg::pwm_max(o.pwm), BOARD.period);
     reg::write16(reg::pwm_cmp(o.pwm), 0);
-    let mux = reg::read8(o.mux);
-    reg::write8(o.mux, (mux & !(3 << o.shift)) | o.value << o.shift);
+    reg::modify8(o.mux, !(3 << o.shift), o.value << o.shift);
     reg::clear8(o.gpio, o.bit);
     match o.pwm {
         0 => reg::set8(reg::PWM0_ENABLE, 0x01),

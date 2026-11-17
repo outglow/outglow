@@ -2,7 +2,7 @@ use ble::hal::{ConnEvent, EventResult, ADV_PDU_MAX, CONNECT_LEN, LL_PAYLOAD_MAX}
 
 use crate::cell::{Shared, SharedBuf};
 use crate::radio;
-use crate::reg::{self, clear8, read16, read32, read8, set8, tick, write16, write32, write8, TICKS_PER_US};
+use crate::reg::{self, clear8, modify8, read16, read32, read8, set8, tick, write16, write32, write8, TICKS_PER_US};
 
 const RF_CMD: usize = 0xf00;
 const RF_SN_RESET: usize = 0xf01;
@@ -35,6 +35,7 @@ const TX_FIFO_PUSH: usize = 0xc2c;
 
 const STATUS_RX: u16 = 0x0001;
 const STATUS_TX: u16 = 0x0002;
+const STATUS_RX_TX: u16 = 0x0003;
 const STATUS_END: u16 = 0x0474;
 
 const TABLE: [(u16, u8, u32); 20] = [
@@ -199,11 +200,7 @@ extern "C" fn set_channel(chn: u8) {
         39
     };
     let f = 2402 + 2 * idx as u16;
-    let band = if f > 2519 {
-        0x04
-    } else if f > 2494 {
-        0x08
-    } else if f > 2464 {
+    let band = if f > 2464 {
         0x0c
     } else if f > 2434 {
         0x10
@@ -214,8 +211,8 @@ extern "C" fn set_channel(chn: u8) {
     };
     write8(0x1244, 0x20);
     write8(0x1245, 0x26);
-    write8(0x1228, (read8(0x1228) & 0xc0) | idx);
-    write8(0x1229, (read8(0x1229) & 0xc3) | band);
+    modify8(0x1228, 0xc0, idx);
+    modify8(0x1229, 0xc3, band);
 }
 
 fn enter() -> u8 {
@@ -230,7 +227,8 @@ fn enter() -> u8 {
     write8(BASEBAND_RESET, 0x00);
     set8(BASEBAND_RESET, 0x01);
     clear8(BASEBAND_RESET, 0x01);
-    write32(DMA_RX_ADDR, rx_buffer(RX_CURRENT.get()).addr() as u16 as u32 | 0x0104_0000);
+    let [lo, hi] = (rx_buffer(RX_CURRENT.get()).addr() as u16).to_le_bytes();
+    write32(DMA_RX_ADDR, u32::from_le_bytes([lo, hi, 0x04, 0x01]));
     if FIFO_STARTED.get() != 0 {
         write32(DMA_FIFO, FIFO_WORD.get());
     }
@@ -256,17 +254,15 @@ fn enter() -> u8 {
     }
     set8(DMA_CHANNEL_ENABLE, 0x0c);
     set8(0x1225, 0x40);
-    write8(0x1226, (read8(0x1226) & 0x7f) | 0x80);
-    write8(0x1227, (read8(0x1227) & 0xe0) | 0x1f);
+    modify8(0x1226, 0x7f, 0x80);
+    modify8(0x1227, 0xe0, 0x1f);
     s
 }
 
 fn leave(s: u8) {
     let (rest, at, ms) = (LENT_REST.get(), LENT_AT.get(), LENT_MS.get());
     let this = tick().wrapping_sub(at) / TICKS_PER_US;
-    if this > LENT_MAX_US.get() {
-        LENT_MAX_US.set(this);
-    }
+    LENT_MAX_US.update(|m| m.max(this));
     let ticks = rest + tick().wrapping_sub(at);
     LENT_MS.set(ms.wrapping_add(ticks / (1000 * TICKS_PER_US)));
     LENT_REST.set(ticks % (1000 * TICKS_PER_US));
@@ -293,7 +289,7 @@ extern "C" fn adv_channel(chn: u8, answer_window: u32) -> u8 {
     let at = |i: usize| p.read(i);
     stop();
     set_channel(chn);
-    write16(RF_IRQ_STATUS, STATUS_RX | STATUS_TX);
+    write16(RF_IRQ_STATUS, STATUS_RX_TX);
     p.write32(4, 0);
     command(0x87, tick().wrapping_add(100), ADV.addr());
     let t0 = tick();
@@ -312,7 +308,7 @@ extern "C" fn adv_channel(chn: u8, answer_window: u32) -> u8 {
 
     let dma_len = header_len(p);
     let rf_len = at(5) as usize;
-    let mut ours = dma_len == rf_len + 13 && rf_len <= 37 && at(dma_len + 3) & 0x01 == 0 && at(4) & 0x80 == 0;
+    let mut ours = dma_len == rf_len + 13 && at(dma_len + 3) & 0x01 == 0 && at(4) & 0x80 == 0;
     let mut i = 0;
     while ours && i < 6 {
         ours = at(12 + i) == ADV.read(6 + i);
@@ -418,9 +414,9 @@ extern "C" fn brx(e: &Brx) {
     set8(RF_ACCESS_CTRL, 0x80);
     write32(RF_CRC_INIT, e.crc_init);
 
-    write8(RF_LL_CTRL, read8(RF_LL_CTRL) & 0xcf);
-    write8(RF_LL_CTRL, read8(RF_LL_CTRL) | SN_NESN.get());
-    write8(TX_FIFO_RPTR, 0x40 | FIFO_RPTR.get());
+    clear8(RF_LL_CTRL, 0x30);
+    set8(RF_LL_CTRL, SN_NESN.get());
+    write8(TX_FIFO_RPTR, 0x40 + FIFO_RPTR.get());
     let mut waiting = read8(TX_FIFO_WPTR).wrapping_sub(read8(TX_FIFO_RPTR)) & 0x0f;
     let mut handed = TX_HANDED.get();
     let tail = TX_TAIL.get();
@@ -445,7 +441,7 @@ extern "C" fn brx(e: &Brx) {
     write32(RF_FIRST_TIMEOUT, 0x0fff_ffff);
     write16(DMA_RX_ADDR, rx_buffer(current).addr() as u16);
     let now = tick();
-    let open = if e.open.wrapping_sub(now) as i32 > 10 { e.open } else { now.wrapping_add(10) };
+    let open = if e.open.wrapping_sub(now) as i32 <= 10 { now.wrapping_add(10) } else { e.open };
     command(0x82, open, empty);
 
     let mut packets = 0u32;
@@ -488,7 +484,7 @@ extern "C" fn brx(e: &Brx) {
                     }
                     break;
                 }
-                SN_NESN.set(sn | nesn);
+                SN_NESN.set(sn + nesn);
                 FIFO_RPTR.set(read8(TX_FIFO_RPTR) & 0x0f);
                 if first {
                     let stamp = read32(RF_TIMESTAMP);

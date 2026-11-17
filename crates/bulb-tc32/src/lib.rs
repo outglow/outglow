@@ -36,10 +36,14 @@ const IDLE_MAX: u32 = 1_000 * reg::TICKS_PER_US;
 const IDLE_BLE_MARGIN: u32 = 300 * reg::TICKS_PER_US;
 const IDLE_MIN: u32 = 50 * reg::TICKS_PER_US;
 
+#[cfg(not(test))]
 #[allow(unsafe_code)]
-
 #[cfg_attr(target_os = "none", no_mangle)]
 pub extern "C" fn main() -> ! {
+    run()
+}
+
+fn run() -> ! {
     board::init();
     let warm = board::warm_reset();
     let (mut cycles, factory_reset) = if warm {
@@ -66,15 +70,18 @@ pub extern "C" fn main() -> ! {
         link::publish_reset_step(cycles.step());
         let end = reg::tick();
         zb::LOOP_MAX_US.update(|m| m.max(end.wrapping_sub(start) / reg::TICKS_PER_US));
-        let mut wait = IDLE_MAX;
-        if let Some(next) = zb::BLE_NEXT.get() {
-            let left = next.wrapping_sub(end) as i32;
-            wait = wait.min(left.max(0) as u32).saturating_sub(IDLE_BLE_MARGIN);
-        }
-        if wait >= IDLE_MIN {
-            bulb_idle(end.wrapping_add(wait));
+        if let Some(until) = idle_until(end, zb::BLE_NEXT.get()) {
+            bulb_idle(until);
         }
     }
+}
+
+fn idle_until(end: u32, ble_next: Option<u32>) -> Option<u32> {
+    let wait = match ble_next {
+        Some(next) => IDLE_MAX.min((next.wrapping_sub(end) as i32).max(0) as u32).saturating_sub(IDLE_BLE_MARGIN),
+        None => IDLE_MAX,
+    };
+    (wait >= IDLE_MIN).then(|| end.wrapping_add(wait))
 }
 
 #[allow(unsafe_code)]

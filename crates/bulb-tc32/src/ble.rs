@@ -178,3 +178,7 @@ impl Hal for BleHal {
         ble_radio::mesh_send(channels, access_code, pdu)
     }
 }
+
+#[cfg(test)]
+#[path = "tests/ble.rs"]
+mod tests;
