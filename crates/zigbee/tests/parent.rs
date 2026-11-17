@@ -1687,3 +1687,35 @@ fn with_end_devices_not_allowed_a_new_one_cannot_rejoin_but_a_known_one_can() {
     stranger.pan = PAN;
     assert_eq!(secured_rejoin(&mut net, &mut stranger, sa, 0x5A5A).map(|r| r.1), Some(0x01), "at capacity for end devices");
 }
+
+#[test]
+fn a_child_given_up_takes_its_waiting_frames_with_it() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let id = net.nodes[a].id;
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x01, &[]);
+    net.run(200);
+    assert_eq!(net.air.borrow().ports[id].pending.0, vec![zed.short]);
+    let mut annce = vec![0x34, 0x12];
+    annce.extend_from_slice(&zed.ext.to_le_bytes());
+    annce.push(zed.capability());
+    net.coord.zdo(0xFFFD, 0x0013, &annce);
+    net.run(500);
+    assert_eq!(net.nodes[a].stack.child_count(), 0);
+    assert!(net.air.borrow().ports[id].pending.0.is_empty());
+}
+
+#[test]
+fn a_child_timeout_of_fourteen_is_taken_and_fifteen_refused() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    for (timeout, status) in [(14u8, 0x00u8), (15, 0x01)] {
+        let mut h = zed.header(nwk::FRAME_CMD, sa);
+        h.radius = 1;
+        zed.nwk_send(h, &[nwk::CMD_TIMEOUT_REQUEST, timeout, 0x00]);
+        net.run(100);
+        zed.rx.clear();
+        zed.poll(&mut net, 20);
+        let rsp = zed.rx.iter().find(|(_, p)| p[0] == nwk::CMD_TIMEOUT_RESPONSE).expect("a timeout response").1.clone();
+        assert_eq!(rsp[1], status, "timeout {timeout}");
+    }
+}
