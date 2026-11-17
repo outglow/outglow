@@ -951,3 +951,31 @@ fn relayed_data_that_fails_is_reported_to_its_source_and_counted_by_why() {
     let t = try_route(&mut s, nwk::FRAME_DATA, 0x0042, 0, &[0x00], 0);
     assert_eq!((t.to, t.counts, t.held), (std::vec![0x1002, 0xFFFF], [0, 0, 0, 0], true), "the bulb's own waits for a route request");
 }
+
+#[test]
+fn an_unsecured_rejoin_request_is_answered_only_by_a_bulb_that_is_up() {
+    for (state, answered) in [(State::Up, true), (State::WaitKey, false)] {
+        let mut s = up();
+        s.state = state;
+        s.nib.tc_ext = super::super::NO_TRUST_CENTER;
+        let mut h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x7001, 5, 9);
+        h.src_ext = Some(0x00124B00_0000_7777);
+        h.security = false;
+        let mut f = crate::util::Buf::new();
+        h.write(&mut f);
+        f.bytes(&[nwk::CMD_REJOIN_REQUEST, 0x8E]);
+        s.on_nwk(0x7001, f.as_slice(), 200);
+        assert_eq!(!s.hal.sent.is_empty(), answered, "{state:?}");
+    }
+}
+
+#[test]
+fn an_empty_command_from_an_end_device_that_is_no_child_is_no_rejoin_request_whatever_its_mic() {
+    let mut s = up();
+    fill(&mut s);
+    let mut h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1000, 5, 9);
+    h.end_device_initiator = true;
+    let counter = (1..).find(|&c| secured(h, SENDER, c, 0, &[0; 16], &[])[8 + nwk::AUX_LEN] == nwk::CMD_REJOIN_REQUEST).unwrap();
+    heard(&mut s, h, counter, &[]);
+    assert!(s.hal.sent.iter().any(|f| f.len() > 9 && f[5..7] == [0x00, 0x10]), "told to rejoin");
+}
