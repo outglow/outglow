@@ -10,6 +10,7 @@ mod diagnostics;
 mod fragments;
 mod frames;
 mod green_power;
+mod hal_defaults;
 mod network;
 mod ota;
 mod parent;
