@@ -410,7 +410,7 @@ pub fn with<R>(f: impl FnOnce(&mut Chip) -> R) -> R {
 
 pub const REBOOT: &str = "the chip was reset (0x6f = 0x20)";
 
-pub const LOG_MAX: usize = 10_000_000;
+pub const LOG_MAX: usize = 1_000_000;
 
 fn bounded() {
     if with(|c| c.log.len() >= LOG_MAX) {

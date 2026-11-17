@@ -1223,3 +1223,8 @@ pub fn heard_at(t: u32) {
 pub fn sent_at(t: u32) {
     crate::radio::LAST_AIR.set(t);
 }
+
+#[cfg(feature = "sense")]
+pub fn probe_pan() -> u16 {
+    crate::radio::PROBE_PAN.get()
+}

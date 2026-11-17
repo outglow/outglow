@@ -12,6 +12,14 @@ fn lqi_is_a_linear_map_of_rssi_from_minus_99_to_minus_15() {
 
 #[test]
 fn build_time_numbers_are_parsed_as_hexadecimal() {
+    let _s = sim::session();
+    assert_eq!(parse_hex("0x1"), 1);
+    assert_eq!(parse_hex("10"), 0x10);
+    assert_eq!(parse_hex("0"), 0);
+    assert_eq!(parse_hex("ffffffff"), 0xffff_ffff);
+    assert!(std::panic::catch_unwind(|| parse_hex("0x")).is_err());
+    assert!(std::panic::catch_unwind(|| parse_hex("1x2")).is_err());
+    assert_eq!(parse_key("ffffffffffffffffffffffffffffffff"), [0xff; 16]);
     assert_eq!(parse_hex("0x01000001"), 0x0100_0001);
     assert_eq!(parse_hex("0XfF"), 0xff);
     assert_eq!(parse_hex("1aB"), 0x1ab);
@@ -211,7 +219,10 @@ fn the_hal_hands_frames_and_tables_to_the_radio_driver() {
     assert!(sim::with(|c| c.writes()).contains(&Op::W8(0x1244, 0x49)));
     hal.set_filter(0x1a62, 0x0001);
     #[cfg(feature = "sense")]
-    hal.sense_listen(0x5e55);
+    {
+        hal.sense_listen(0x5e55);
+        assert_eq!(crate::radio::tests::probe_pan(), 0x5e55);
+    }
 }
 
 #[test]
@@ -245,9 +256,10 @@ fn energy_and_noise_are_read_in_dbm_and_lqi() {
 #[test]
 fn only_the_first_hal_gets_the_black_box() {
     let _s = sim::session();
+    BLACK_BOX.release();
     let mut a = Tc32Hal::new();
     let mut b = Tc32Hal::new();
-    assert!(a.black_box().is_some() != b.black_box().is_some() || (a.black_box().is_none() && b.black_box().is_none()));
+    assert!(a.black_box().is_some());
     assert!(b.black_box().is_none());
 }
 
@@ -476,6 +488,21 @@ mod over_ble {
         assert!((400..=510).contains(&last.wrapping_sub(t0)), "{}", last.wrapping_sub(t0));
         let mut buf = [0u8; 4];
         assert_eq!(nv::open().load(NvItem::Network as u8, &mut buf), Some(3));
+    }
+
+    #[test]
+    fn a_poll_frees_the_staging_area_no_update_is_using_and_publishes_the_link_figures() {
+        let _s = sim::session();
+        let (mut link, _air) = connected();
+        assert!(staging::claim(Owner::Ble));
+        let _ = link.poll();
+        assert!(!staging::holds(Owner::Ble));
+        assert!(staging::claim(Owner::Zigbee));
+        let _ = link.poll();
+        assert!(!staging::holds(Owner::Zigbee));
+        let c = link.stack.as_mut().map(|s| s.hal.counters()).unwrap_or_default();
+        assert_eq!(c.ble_connections, 1);
+        assert!(c.ble_events > 0);
     }
 
     #[test]

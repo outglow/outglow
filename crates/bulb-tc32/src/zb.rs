@@ -62,7 +62,7 @@ const fn parse_key(s: &str) -> [u8; 16] {
             c @ b'A'..=b'F' => c - b'A' + 10,
             _ => panic!("TOUCHLINK_MASTER_KEY: not a hexadecimal digit"),
         };
-        key[i / 2] = key[i / 2] << 4 | d;
+        key[i / 2] = key[i / 2] * 16 + d;
         i += 1;
     }
     key
@@ -91,7 +91,7 @@ const fn parse_hex(s: &str) -> u32 {
             c @ b'A'..=b'F' => c - b'A' + 10,
             _ => panic!("BULB_FILE_VERSION is not hexadecimal"),
         };
-        v = v << 4 | d as u32;
+        v = v * 16 + d as u32;
         i += 1;
     }
     v
@@ -111,7 +111,7 @@ const BLE_ORDER_OUIS: [[u8; 3]; 7] = [
 
 const TICKS_PER_MS: u32 = 16_000;
 
-static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
+pub(crate) static BLACK_BOX: TakeOnce<zigbee::BlackBox> = TakeOnce::new();
 
 #[allow(unsafe_code)]
 #[cfg_attr(target_os = "none", link_section = ".noinit")]
