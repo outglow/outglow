@@ -227,6 +227,10 @@ fn attribute(handle: u16) -> Option<&'static Attribute> {
     TABLE.get((handle as usize).checked_sub(1)?)
 }
 
+fn attributes(start: u16, end: u16) -> impl Iterator<Item = (u16, &'static Attribute)> {
+    (1..).zip(&TABLE).skip(start as usize - 1).take_while(move |(handle, _)| *handle <= end)
+}
+
 fn is_service(handle: u16) -> bool {
     attribute(handle).is_some_and(|a| a.0 == Short(PRIMARY_SERVICE))
 }
@@ -470,8 +474,7 @@ impl<H: Hal> Ble<H> {
                 exact(5)?;
                 let (start, end) = range(p)?;
                 let mut format = 0;
-                for handle in start..=end {
-                    let Some(a) = attribute(handle) else { break };
+                for (handle, a) in attributes(start, end) {
                     let (this, len) = match a.0 {
                         Short(_) => (1, 2),
                         Long(_) => (2, 16),
@@ -499,8 +502,7 @@ impl<H: Hal> Ble<H> {
                 let kind = Wanted::Short(u16_at(p, 5));
                 let wanted = &p[7..];
                 out.put(&[FIND_BY_TYPE_VALUE_RSP]);
-                for handle in start..=end {
-                    let Some(a) = attribute(handle) else { break };
+                for (handle, a) in attributes(start, end) {
                     if !a.0.matches(&kind) || self.att_value(a, &mut scratch) != Some(wanted) {
                         continue;
                     }
@@ -522,8 +524,7 @@ impl<H: Hal> Ble<H> {
                 }
                 let head = if grouped { 4 } else { 2 };
                 let mut each = 0;
-                for handle in start..=end {
-                    let Some(a) = attribute(handle) else { break };
+                for (handle, a) in attributes(start, end) {
                     if !a.0.matches(&kind) {
                         continue;
                     }
