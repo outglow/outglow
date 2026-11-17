@@ -18,7 +18,7 @@ static CAUGHT: &[Mutation] = &[Mutation { name: "caught: one is two", file: "lib
 
 static RESTORE: &[Mutation] = &[Mutation { name: "locks the sources", file: "lib.rs", old: "fn one", new: "fn LOCK_one" }];
 
-static LISTS_T: &[List] = &[List { krate: "demo", mutations: DEMO }, List { krate: "zigbee", mutations: CAUGHT }];
+static LISTS_T: &[List] = &[List { krate: "demo", mutations: DEMO }, List { krate: "zigbee", mutations: CAUGHT }, List { krate: "ble", mutations: SLOW }];
 
 const SOURCE: &str = "pub fn one() -> u8 { 1 }\npub fn two() -> u8 { 2 }\n";
 
@@ -41,12 +41,13 @@ fn rig(name: &str) -> Rig {
     let t = Tmp::new(name);
     t.put("crates/demo/src/lib.rs", SOURCE);
     t.put("crates/zigbee/src/lib.rs", SOURCE);
+    t.put("crates/ble/src/lib.rs", SOURCE);
     t.put("crates/demo/Cargo.toml", "[package]\nname = \"demo\"\n");
     t.put("crates/demo/target/debug/junk", "x");
     t.put("Cargo.lock", "# lock\n");
     let cargo = t.put("bin/cargo", CARGO);
     std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let sp = Space { root: t.0.clone(), crates: &["crates/demo", "crates/zigbee"], lists: LISTS_T, cargo: cargo.into_os_string() };
+    let sp = Space { root: t.0.clone(), crates: &["crates/demo", "crates/zigbee", "crates/ble"], lists: LISTS_T, cargo: cargo.into_os_string() };
     Rig { t, sp }
 }
 
@@ -77,7 +78,7 @@ fn every_kind_of_verdict() {
     assert_eq!(std::fs::read_to_string(scratch.join("w0/ws/crates/demo/src/lib.rs")).unwrap(), SOURCE);
     assert!(!scratch.join("w0/ws/crates/demo/target").exists());
     let manifest = std::fs::read_to_string(scratch.join("w1/ws/Cargo.toml")).unwrap();
-    assert!(manifest.ends_with("[workspace]\nresolver = \"2\"\nmembers = [\"crates/demo\", \"crates/zigbee\"]\n"), "{manifest}");
+    assert!(manifest.ends_with("[workspace]\nresolver = \"2\"\nmembers = [\"crates/demo\", \"crates/zigbee\", \"crates/ble\"]\n"), "{manifest}");
     assert_eq!(std::fs::read_to_string(scratch.join("w1/ws/Cargo.lock")).unwrap(), "# lock\n");
     assert!(!scratch.join("w1/ws/rust-toolchain.toml").exists());
 }
@@ -150,8 +151,10 @@ fn a_run_of_the_lists() {
     let r = rig("run");
     run_in(&r.sp, &args(&["zigbee", "--timeout", "0"]), None).unwrap();
     run_in(&r.sp, &args(&["--filter", "one is two"]), None).unwrap();
-    run_in(&r.sp, &args(&["ble"]), None).unwrap();
-    let e = run_in(&r.sp, &args(&["-j", "0", "--timeout", "60"]), Some("harmless".into())).err().unwrap().to_string();
+    let t0 = Instant::now();
+    run_in(&r.sp, &args(&["ble", "--timeout", "1"]), None).unwrap();
+    assert!(t0.elapsed() < Duration::from_secs(4));
+    let e = run_in(&r.sp, &args(&["-j", "0", "--timeout", "0"]), Some("harmless".into())).err().unwrap().to_string();
     assert_eq!(e, "mutations missed or stale");
     let e = run_in(&r.sp, &args(&["--filter", "stale"]), None).err().unwrap().to_string();
     assert_eq!(e, "mutations missed or stale");

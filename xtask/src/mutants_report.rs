@@ -246,6 +246,9 @@ mod tests {
         assert_eq!(e, "mutants missed or timed out");
         let clean = t.put("clean.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "CaughtMutant"}]}"#);
         run(args(&[clean.to_str().unwrap(), "--strict"])).unwrap();
+        let missed_only = t.put("missed.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "MissedMutant"}]}"#);
+        assert!(run(args(&[missed_only.to_str().unwrap(), "--strict"])).is_err());
+        run(args(&[missed_only.to_str().unwrap()])).unwrap();
         let timed = t.put("timed.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "Timeout"}]}"#);
         assert!(run(args(&[timed.to_str().unwrap(), "--strict"])).is_err());
         let failed = t.put("failed.json", OUTCOMES.replacen("\"Success\"", "\"Failure\"", 1));

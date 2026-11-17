@@ -567,6 +567,8 @@ mod tests {
         assert_eq!(delta(50.0, Some(49.0)), "+1.00");
         assert_eq!(delta(50.0, Some(51.0)), "-1.00");
         assert_eq!(delta(50.0, None), "new");
+        assert_eq!(delta(0.05, Some(0.0)), "+0.05");
+        assert_eq!(delta(0.0, Some(0.05)), "-0.05");
         assert_eq!(floor2(12.349), 12.34);
     }
 
@@ -616,6 +618,9 @@ mod tests {
         assert!(drops(&now, &base).is_empty());
         let now = BTreeMap::from([("ble".to_string(), summary((10_000, 4_994), (10_000, 4_994)))]);
         assert_eq!(drops(&now, &base).len(), 2);
+        let edge = BTreeMap::from([("ble".to_string(), Floor { lines: 0.05, regions: 0.05 })]);
+        let zero = BTreeMap::from([("ble".to_string(), summary((10, 0), (10, 0)))]);
+        assert!(drops(&zero, &edge).is_empty());
     }
 
     #[test]

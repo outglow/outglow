@@ -49,9 +49,9 @@ fn dates_from_days() {
     assert_eq!(date_of(-1), "1969-12-31");
     assert_eq!(date_of(-719_468), "0000-03-01");
     assert_eq!(date_of(2_932_896), "9999-12-31");
-    let t = today();
-    assert_eq!((t.len(), &t[4..5], &t[7..8]), (10, "-", "-"));
-    assert!(t.as_str() >= "2026-11-17");
+    let date = || String::from_utf8(std::process::Command::new("date").args(["-u", "+%Y-%m-%d"]).output().unwrap().stdout).unwrap();
+    let (before, t, after) = (date(), today(), date());
+    assert!(before.trim() == t || after.trim() == t, "{before} {t} {after}");
 }
 
 #[test]
@@ -143,6 +143,15 @@ fn what_an_index_refuses() {
     std::fs::create_dir_all(&index).unwrap();
     assert!(go(&dimm, &[]).unwrap_err().starts_with("Is a directory"));
     std::fs::remove_dir_all(&index).unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(&index, "[]").unwrap();
+        std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o200)).unwrap();
+        let r = go(&dimm, &[]);
+        std::fs::set_permissions(&index, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(r.unwrap_err().starts_with("Permission denied"));
+        std::fs::remove_file(&index).unwrap();
+    }
     let gone = t.path("gone.ota");
     assert_eq!(go(&gone, &[]), Err(gone.display().to_string()));
     let junk = t.put("junk.ota", "junk");

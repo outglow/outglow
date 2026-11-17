@@ -57,8 +57,14 @@ fn tasks_that_only_read() {
     let o = xtask(&["mutants", "--list", "ble"], &[]);
     assert!(o.status.success());
     assert!(text(&o.stdout).lines().last().unwrap().starts_with("ble: "));
-    let o = xtask(&["toolchain", "--print-path"], &[]);
+    let t = Tmp::new("toolchain");
+    let short = &include_str!("../llvm-tc32.ref").trim()[..7];
+    let bin = t.path(&format!("outglow/llvm-tc32-{short}/bin"));
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join("clang"), "").unwrap();
+    let o = xtask(&["toolchain", "--print-path"], &[("XDG_CACHE_HOME", t.0.to_str().unwrap())]);
     assert!(o.status.success());
+    assert_eq!(text(&o.stdout), format!("{}\n", bin.display()));
     let o = xtask(&["--help"], &[]);
     assert!(text(&o.stdout).contains("mutants-report"));
 }

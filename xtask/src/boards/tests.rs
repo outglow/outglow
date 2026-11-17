@@ -164,7 +164,10 @@ fn colour_profiles_the_firmware_cannot_drive() {
     assert_eq!(err(&q), "C-4.62: no single channel at full for hue 0: [0, 1]");
     let mut q = p.clone();
     q["hue_sweep"][0]["pwm1"] = json!(99.0);
-    assert!(board(&q, 1).is_ok());
+    assert_eq!(board(&q, 1).unwrap().rgb.unwrap()[0].pwm, 0);
+    let mut q = p.clone();
+    q["hue_sweep"][1]["pwm0"] = json!(99.0);
+    assert_eq!(err(&q), "C-4.62: no single channel at full for hue 0: [0, 1]");
     let mut q = p.clone();
     q["color"] = json!({"0x400c": 1});
     assert_eq!(err(&q), "C-4.62: no colour attribute 0x400b");

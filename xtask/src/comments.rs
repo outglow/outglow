@@ -17,10 +17,11 @@ pub struct Comment {
 }
 
 pub fn run(a: &Args) -> Result<()> {
-    run_in(&crate::root(), a)
+    println!("{}", run_in(&crate::root(), a)?);
+    Ok(())
 }
 
-pub fn run_in(root: &Path, a: &Args) -> Result<()> {
+pub fn run_in(root: &Path, a: &Args) -> Result<String> {
     let mut found = 0;
     let mut fixed = 0;
     for path in rust_files(root) {
@@ -41,14 +42,12 @@ pub fn run_in(root: &Path, a: &Args) -> Result<()> {
         found += comments.len();
     }
     if a.fix {
-        println!("comments removed from {fixed} files");
-        return Ok(());
+        return Ok(format!("comments removed from {fixed} files"));
     }
     if found > 0 {
         bail!("{found} comments in Rust sources (cargo xtask comments --fix removes them)");
     }
-    println!("no comments in Rust sources");
-    Ok(())
+    Ok("no comments in Rust sources".into())
 }
 
 pub fn rust_files(root: &Path) -> Vec<PathBuf> {
@@ -214,11 +213,12 @@ mod tests {
         assert_eq!(files, ["a.rs", "clean.rs", "cli.rs", "sub/b.rs"]);
         let e = run_in(&t.0, &Args { fix: false }).unwrap_err().to_string();
         assert_eq!(e, "3 comments in Rust sources (cargo xtask comments --fix removes them)");
-        run_in(&t.0, &Args { fix: true }).unwrap();
+        assert_eq!(run_in(&t.0, &Args { fix: true }).unwrap(), "comments removed from 3 files");
         assert_eq!(std::fs::read_to_string(t.path("a.rs")).unwrap(), "fn a() {}\n");
         assert_eq!(std::fs::read_to_string(t.path("sub/b.rs")).unwrap(), "fn b() {}\n");
         assert_eq!(std::fs::read_to_string(t.path("cli.rs")).unwrap(), "use clap::Parser;\n#[doc = \" help\"]\nstruct A;\n");
-        run_in(&t.0, &Args { fix: false }).unwrap();
+        assert_eq!(run_in(&t.0, &Args { fix: false }).unwrap(), "no comments in Rust sources");
+        assert_eq!(run_in(&t.0, &Args { fix: true }).unwrap(), "comments removed from 0 files");
         t.put("bad.rs", [0xffu8, 0xfe]);
         assert!(run_in(&t.0, &Args { fix: false }).is_err());
     }

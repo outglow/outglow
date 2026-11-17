@@ -478,6 +478,8 @@ fn retarget_replaces_the_cpu_of_the_module_asm() {
     let r = retarget(ll).unwrap();
     assert!(r.starts_with("module asm(target_features: \"+soft-float,+strict-align\", target_cpu: \"tc32\")\n"), "{r}");
     assert!(!r.contains("generic"));
+    let later = "source_filename = \"x\"\nmodule asm(target_cpu: \"generic\")\nattributes #0 = { \"target-cpu\"=\"g\" }";
+    assert!(retarget(later).unwrap().starts_with("source_filename = \"x\"\nmodule asm(target_cpu: \"tc32\")\n"));
     let plain = "module asm\n    \".thumb\"\n\nattributes #0 = { \"target-cpu\"=\"generic\" }";
     assert!(retarget(plain).unwrap().starts_with("module asm\n"));
     let quoted = "x\n  \"target_cpu: \"keep\"\"\nattributes #0 = { \"target-cpu\"=\"g\" }";
