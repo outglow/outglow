@@ -562,3 +562,14 @@ fn the_receive_window_widens_by_both_clocks_accuracy_and_32_us() {
     let windows: Vec<u64> = (i - 1..=i).map(|k| w.event_ends[k].0 - w.event_starts[k]).collect();
     assert!(windows.contains(&(2 * widening(2000))), "two seconds after it: {windows:?}");
 }
+
+#[test]
+fn advertising_events_come_every_300_ms_plus_a_random_delay_below_9_ms() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(20_000);
+    let at = rig.world.borrow().advertised_at.clone();
+    assert_eq!(at[0], 25 * MS, "20 ms after the start");
+    let gaps: Vec<u64> = at.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.iter().all(|g| (300 * MS..309 * MS + MS / 10).contains(g)), "{gaps:?}");
+    assert!(gaps.iter().any(|g| *g < 301 * MS) && gaps.iter().any(|g| *g > 308 * MS), "the delay takes all its values: {gaps:?}");
+}
