@@ -978,3 +978,21 @@ fn a_blob_read_at_the_end_of_the_value_is_empty_and_a_range_from_handle_zero_is_
     assert_eq!(rig.att(&[0x04, 0x05, 0x00, 0x05, 0x00]), [0x05, 0x01, 0x05, 0x00, 0x03, 0x28], "a range of one handle");
     assert_eq!(rig.att(&[0x04, 0x2e, 0x00, 0xff, 0xff]).len(), 2 + 18, "the last handle");
 }
+
+#[test]
+fn the_scan_response_shows_the_mesh_address_the_light_and_a_colour_in_hue_and_saturation() {
+    let mut rig = logged_in(COLOUR);
+    let key = rig.key.unwrap();
+    rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x00, 0x03, 0x06, 84, 200, 0, 0]));
+    rig.run(400);
+    rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x08, 0x00, 0x04, 90, 0, 0]));
+    rig.run(400);
+    rig.command(0xe0, &[0x21, 0x03]);
+    rig.central().terminate();
+    rig.run(300);
+    rig.central().scan = true;
+    rig.run(400);
+    let rsp = rig.central().scan_responses.last().unwrap().clone();
+    assert_eq!(rsp[8 + 13..8 + 24], [0x21, 0x03, 1, 90, 0xff, 84, 200, 0xff, 0x04, 0x3f, 0x20]);
+    assert_eq!(rsp[8 + 4..8 + 6], 0x2096u16.to_le_bytes());
+}
