@@ -96,3 +96,17 @@ fn an_undriven_input_follows_its_pull_up_or_pull_down() {
     m.analog[0x0E] = (m.analog[0x0E] & !(3 << 6)) | (2 << 6);
     assert_eq!(m.reg_read(0x580, 1).unwrap() & 0x08, 0, "pull-down");
 }
+
+#[test]
+fn pull_masks_bit_by_bit() {
+    for pulls in 0..=0xFFFFu32 {
+        let (mut up, mut none) = (0u8, 0u8);
+        for bit in 0..8 {
+            let pull = (pulls >> (2 * bit)) & 3;
+            up |= ((pull & 1) as u8) << bit;
+            none |= ((pull == 0) as u8) << bit;
+        }
+        let (lo, hi) = (pulls & 0x5555, (pulls >> 1) & 0x5555);
+        assert_eq!((crate::machine::even_bits(lo), crate::machine::even_bits(!(lo | hi) & 0x5555)), (up, none), "{pulls:#06x}");
+    }
+}
