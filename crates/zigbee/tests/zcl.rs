@@ -774,3 +774,14 @@ fn a_tunable_white_coupled_to_the_level_does_not_follow_it_to_off() {
     net.run(50);
     assert!(net.nodes[n].commands[before..].iter().all(|c| !matches!(c, Command::MoveToColorTemperature { .. })), "{:?}", &net.nodes[n].commands[before..]);
 }
+
+#[test]
+fn a_scene_group_of_0xfff7_is_a_group_and_0xfff8_is_none() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    for (group, status) in [(0xFFF7u16, 0x85u8), (0xFFF8, 0x87)] {
+        let g = group.to_le_bytes();
+        let seq = net.coord.zcl(short, SCENES, 0x01, 0x01, &[g[0], g[1], 1]);
+        net.run(50);
+        assert_eq!(net.coord.last_zcl(short, SCENES, 0x01).unwrap()[..4], [0x19, seq, 0x01, status], "group {group:#06x}");
+    }
+}
