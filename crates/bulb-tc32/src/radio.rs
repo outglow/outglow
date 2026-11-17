@@ -461,7 +461,7 @@ fn on_frame() {
         i += 1;
     }
     i = 0;
-    while i < len {
+    while i != len {
         QUEUE.write(slot + 6 + i, at(mac + i));
         i += 1;
     }
