@@ -208,12 +208,7 @@ impl<H: Hal> Ble<H> {
                 expected.wrapping_sub(l.widening(expected) + LEAD)
             }
         };
-        let left = next.wrapping_sub(now);
-        if left as i32 > 0 {
-            left
-        } else {
-            0
-        }
+        (next.wrapping_sub(now) as i32).max(0) as u32
     }
 
     fn advertising_data(&self, out: &mut [u8; 31]) -> usize {

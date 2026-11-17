@@ -617,3 +617,29 @@ fn an_unheard_central_is_dropped_when_the_drift_would_reach_half_an_interval_les
     assert_eq!(rig.state(), LinkState::Advertising, "{after_ms} ms after the last event heard");
     assert_eq!(rig.ble.borrow().stats.links_lost, 1);
 }
+
+#[test]
+fn an_advertising_event_waits_out_the_bulbs_own_traffic_for_9_ms_at_most_and_three_at_most_give_way_to_the_neighbours() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.run(400);
+    for (busy, waited) in [(5 * MS, 5 * MS), (30 * MS, 30 * MS), (2 * MS, 2 * MS), (8 * MS, 8 * MS)] {
+        let previous = *rig.world.borrow().advertised_at.last().unwrap();
+        let now = rig.world.borrow().now;
+        let next = now + rig.ble.borrow_mut().idle_time() as u64;
+        rig.world.borrow_mut().zigbee_busy.push((next - MS, next + busy, false));
+        rig.run(400);
+        let late = *rig.world.borrow().advertised_at.iter().find(|t| **t > previous).unwrap();
+        let want = (next + waited).min(previous + 309 * MS).max(next);
+        assert!((want..want + MS / 5).contains(&late), "{busy} ticks of traffic: {} ticks off", late as i64 - want as i64);
+    }
+    assert_eq!(rig.ble.borrow().stats.adv_events as usize, rig.world.borrow().advertised_at.len());
+
+    let t0 = rig.world.borrow().now;
+    rig.world.borrow_mut().zigbee_busy.push((t0, u64::MAX, true));
+    rig.run(6000);
+    let at = advertised_since(&rig, t0);
+    assert!(at.len() >= 4);
+    for w in at.windows(2) {
+        assert!((4 * 300 * MS..4 * 309 * MS + MS).contains(&(w[1] - w[0])), "{} ms between events", (w[1] - w[0]) / MS);
+    }
+}
