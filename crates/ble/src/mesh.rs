@@ -372,7 +372,7 @@ impl<H: Hal> Ble<H> {
             (self.light.targets(), self.mesh.reported.map(|r| r.targets()))
         };
         let news = match was {
-            Some(r) if r.moving && now_l.moving => {
+            Some(r) if now_l.moving => {
                 let turning = |l: Light| Light { hue: 0, shown: bulb_core::command::Shown { hue: 0, ..l.shown }, ..l };
                 turning(now_l) != turning(r)
             }
@@ -509,9 +509,8 @@ impl<H: Hal> Ble<H> {
         let mut whole = [0u8; 19];
         whole[0] = plain[1];
         whole[1..1 + len.min(14)].copy_from_slice(&plain[2..2 + len.min(14)]);
-        if len > 14 {
-            whole[15..1 + len].copy_from_slice(&value[17..17 + len - 14]);
-        }
+        let tail = len.saturating_sub(14);
+        whole[15..15 + tail].copy_from_slice(&value[17..17 + tail]);
         if crc8_6c(&whole[..1 + len]) != plain[0] {
             return false;
         }
