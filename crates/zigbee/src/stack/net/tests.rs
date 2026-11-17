@@ -8,7 +8,7 @@ extern crate std;
 use std::vec::Vec;
 
 fn stack() -> Stack<Scripted> {
-    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new() }, IDENTITY)
+    Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new() }, IDENTITY)
 }
 
 fn fill(s: &mut Stack<Scripted>) {
@@ -538,4 +538,88 @@ fn a_route_reply_to_the_bulbs_own_request_stops_its_rebroadcasts() {
     s.on_route_reply(&h, 0x1000, &[nwk::CMD_ROUTE_REPLY, 0, 7, 0x42, 0x00, 0x55, 0x55, 2]);
     assert_eq!([s.bcast[0].used, s.bcast[1].used, s.bcast[2].used, s.bcast[3].used], [false, true, true, true]);
     assert_eq!((s.routes[0].status, s.routes[0].next, s.discoveries[0].residual_cost), (super::ROUTE_ACTIVE, 0x1000, 2));
+}
+
+fn relaying() -> Stack<Scripted> {
+    let mut s = up();
+    fill(&mut s);
+    for n in s.neighbors.iter_mut() {
+        n.out_cost = 1;
+    }
+    s.children[0].capability = super::super::parent::CAP_RX_ON;
+    s.children[0].joined = true;
+    s
+}
+
+fn relay_status(s: &mut Stack<Scripted>, dst: u16, status: u8) {
+    let h = nwk::Header::new(nwk::FRAME_CMD, dst, 0x3000, 5, 1);
+    s.relay(h, 0x1000, &[nwk::CMD_NETWORK_STATUS, status, 0x00, 0x50]);
+}
+
+fn relay_counts(s: &Stack<Scripted>) -> [u32; 3] {
+    [s.diag.n[k::RELAYED_UCAST], s.diag.n[k::RELAY_DROP_MAC_FAIL], s.diag.n[k::RELAY_DROP_NO_ROUTE]]
+}
+
+#[test]
+fn a_network_status_passed_on_takes_its_route_or_another_router_and_a_link_failure_for_a_child_drops_the_route_it_tells_of() {
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1001, false, 0);
+    relay_status(&mut s, 0x2000, nwk::STATUS_LINK_FAILURE);
+    assert_eq!((relay_counts(&s), s.routes[0].status), ([1, 0, 0], super::ROUTE_FREE));
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1001, false, 0);
+    relay_status(&mut s, 0x2000, nwk::STATUS_NO_ROUTE);
+    assert_eq!(s.routes[0].status, super::ROUTE_ACTIVE, "not a link failure");
+    relay_status(&mut s, 0x1002, nwk::STATUS_LINK_FAILURE);
+    assert_eq!(s.routes[0].status, super::ROUTE_ACTIVE, "not for a child");
+    let mut s = relaying();
+    s.hal.deaf = [0x1002].to_vec();
+    relay_status(&mut s, 0x1002, nwk::STATUS_NO_ROUTE);
+    assert_eq!(relay_counts(&s), [0, 1, 0]);
+    assert_eq!(s.neighbors[2].failures, 1);
+    let mut s = relaying();
+    s.neighbors[2].failures = super::LINK_FAILURES;
+    relay_status(&mut s, 0x1002, nwk::STATUS_NO_ROUTE);
+    assert_eq!((relay_counts(&s), s.hal.sent.len()), ([0, 0, 1], 0), "a failed link is no route");
+    let mut s = relaying();
+    s.hal.random = [0].to_vec();
+    relay_status(&mut s, 0x7777, nwk::STATUS_MANY_TO_ONE_FAILURE);
+    assert_eq!((relay_counts(&s), s.hal.sent.len()), ([1, 0, 0], 1));
+    assert_eq!(s.hal.sent[0][5..7], [0x01, 0x10], "the first live router but the one it came from");
+    let mut s = relaying();
+    s.hal.random = [0].to_vec();
+    s.hal.deaf = [0x1001].to_vec();
+    relay_status(&mut s, 0x7777, nwk::STATUS_MANY_TO_ONE_FAILURE);
+    assert_eq!(relay_counts(&s), [0, 1, 0]);
+    let mut s = relaying();
+    for n in s.neighbors[1..].iter_mut() {
+        n.out_cost = 0;
+    }
+    relay_status(&mut s, 0x7777, nwk::STATUS_MANY_TO_ONE_FAILURE);
+    assert_eq!(relay_counts(&s), [0, 0, 1]);
+    let mut s = relaying();
+    s.hal.deaf = [0x1002].to_vec();
+    for n in s.neighbors[1..].iter_mut() {
+        n.out_cost = 0;
+    }
+    s.neighbors[2].out_cost = 1;
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0x1002, 0x3000, 5, 1);
+    s.relay(h, 0x1000, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_MANY_TO_ONE_FAILURE, 0x00, 0x50]);
+    assert_eq!(relay_counts(&s), [0, 1, 0], "the route failed at the MAC and no other router is live");
+    let mut s = relaying();
+    relay_status(&mut s, 0x7777, nwk::STATUS_NO_ROUTE);
+    assert_eq!(relay_counts(&s), [0, 0, 1]);
+}
+
+#[test]
+fn a_source_routed_frame_is_passed_on_only_by_the_relay_its_index_points_at() {
+    for (count, index, relayed) in [(2u8, 1u8, true), (2, 2, false), (2, 0, false)] {
+        let mut s = relaying();
+        let mut list = [0u16; nwk::MAX_RELAYS];
+        list[..3].copy_from_slice(&[0x1005, 0x0042, 0x0042]);
+        let mut h = nwk::Header::new(nwk::FRAME_DATA, 0x1001, 0x0000, 5, 1);
+        h.relays = Some((count, index, list));
+        s.relay(h, 0x1000, &[0x00]);
+        assert_eq!(!s.hal.sent.is_empty(), relayed, "{count} {index}");
+    }
 }

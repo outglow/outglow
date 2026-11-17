@@ -8,6 +8,7 @@ pub(crate) struct Scripted {
     pub random: Vec<u32>,
     pub now: u32,
     pub sent: Vec<Vec<u8>>,
+    pub deaf: Vec<u16>,
 }
 
 impl Hal for Scripted {
@@ -28,7 +29,10 @@ impl Hal for Scripted {
     fn set_filter(&mut self, _pan: u16, _short: u16) {}
     fn transmit(&mut self, mpdu: &[u8]) -> TxStatus {
         self.sent.push(mpdu.to_vec());
-        TxStatus::Ok
+        match mpdu.get(5..7) {
+            Some(&[lo, hi]) if self.deaf.contains(&u16::from_le_bytes([lo, hi])) => TxStatus::NoAck,
+            _ => TxStatus::Ok,
+        }
     }
     fn receive(&mut self, _buf: &mut [u8; 127]) -> Option<RxMeta> {
         None
@@ -61,7 +65,7 @@ pub(crate) const IDENTITY: Identity = Identity {
 
 #[test]
 fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new() }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new() }, IDENTITY);
     s.nib.short = 0x0101;
     s.children[3].used = true;
     s.children[3].short = 0x0202;
@@ -82,7 +86,7 @@ fn a_new_address_is_none_of_those_in_use_and_never_a_reserved_one() {
 
 #[test]
 fn after_eight_taken_draws_the_lowest_free_address_is_given() {
-    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new() }, IDENTITY);
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new() }, IDENTITY);
     s.nib.short = 0x0001;
     s.children[0].used = true;
     s.children[0].short = 0x0002;
