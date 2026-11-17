@@ -1146,3 +1146,42 @@ fn responses_fill_the_mtu_exactly_and_cut_a_long_value_to_it() {
     assert_eq!((rsp[0], rsp[1], rsp.len()), (0x09, 2 + 22, 26), "the value cut to what the MTU leaves");
     assert_eq!(rsp[2..5], [0x22, 0x00, 0x01]);
 }
+
+fn stored(flags: u8) -> Rig {
+    let rig = Rig::new(DIMMABLE);
+    let mut nv = vec![0xa7];
+    nv.extend_from_slice(b"EgloTest\0\0\0\0\0\0\0\0");
+    nv.extend_from_slice(b"s3cret\0\0\0\0\0\0\0\0\0\0");
+    nv.extend_from_slice(&[0x11; 16]);
+    nv.extend_from_slice(&[0, 0, flags]);
+    rig.world.borrow_mut().nv = Some(nv);
+    rig.restart()
+}
+
+#[test]
+fn the_stored_flags_say_whether_the_network_is_paired_and_provisioned() {
+    for (flags, paired, provisioned) in [(0x00, false, false), (0x01, true, false), (0x02, false, true), (0x03, true, true)] {
+        let mut rig = stored(flags);
+        rig.central().scan = true;
+        rig.run(400);
+        let rsp = rig.central().scan_responses.last().unwrap().clone();
+        assert_eq!(rsp[8 + 22], if provisioned { 0x60 } else { 0x3f }, "flags {flags}");
+        rig.connect();
+        assert_eq!(!rig.login(b"EgloTest", b"1234"), paired, "flags {flags}: a paired network takes its own password only");
+        assert!(rig.login(b"EgloTest", if paired { &b"s3cret"[..] } else { &b"1234"[..] }), "flags {flags}");
+    }
+}
+
+#[test]
+fn an_odd_level_rounds_up_to_the_mesh_brightness_and_a_white_colour_bulb_shows_no_hue() {
+    let mut rig = logged_in(COLOUR);
+    rig.bulb.handle(bulb_core::Command::MoveToLevel { level: 129, transition_ms: 0 });
+    rig.run(400);
+    assert_eq!(rig.statuses().last().unwrap().1[3], 65);
+    rig.central().terminate();
+    rig.run(300);
+    rig.central().scan = true;
+    rig.run(400);
+    let rsp = rig.central().scan_responses.last().unwrap().clone();
+    assert_eq!(rsp[8 + 18..8 + 20], [0xff, 0xff], "in colour temperature mode");
+}
