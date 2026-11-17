@@ -84,3 +84,30 @@ fn reading_the_first_page_holds_the_box_until_the_last_page_is_read() {
     assert_eq!(n, BOX_LEN - (BOX_PAGES - 1) * 64);
     assert_eq!(b.hold_until, None);
 }
+
+#[test]
+fn a_link_history_one_past_full_reads_back_the_last_64_with_the_oldest_kept_intact() {
+    let mut b = BlackBox::EMPTY;
+    for k in 0..65u8 {
+        b.link_frame(0, 0, k % 8, k % 2 == 0);
+    }
+    let all = read(&mut b, 0, &[0; NEIGHBORS]);
+    let e = &all[LINKS_AT..LINKS_AT + LINK_ENTRY];
+    let v = |k: u8| (k % 8).min(7) | ((k % 2 == 0) as u8) << 3;
+    assert_eq!(e[2], 64);
+    assert_eq!(e[4], v(1) | v(2) << 4, "from the second frame");
+    assert_eq!(e[35], v(63) | v(64) << 4);
+}
+
+#[test]
+fn frames_are_read_back_oldest_first() {
+    let mut b = BlackBox::EMPTY;
+    for k in 0..3u8 {
+        b.frame(1_000 + k as u32, 0x1000, 0x2000, 0x0042, k, 1, 0, 1, 0);
+    }
+    let all = read(&mut b, 2_000, &[0; NEIGHBORS]);
+    let ring = &all[super::RING_AT..super::RING_AT + 3 * super::RING_ENTRY];
+    let seqs: Vec<u8> = ring.chunks(super::RING_ENTRY).map(|e| e[13]).collect();
+    assert_eq!(seqs, [0, 1, 2]);
+    assert_eq!(all[4], 3, "three in the ring");
+}

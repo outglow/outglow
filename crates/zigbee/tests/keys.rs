@@ -212,3 +212,57 @@ fn in_a_trust_center_rejoin_a_key_sent_in_the_name_of_another_device_is_refused(
     net.run_until(30_000, "down again", |net| net.nodes[n].stack.state() != zigbee::stack::State::WaitKey);
     assert_ne!(net.nodes[n].stack.state(), zigbee::stack::State::Up);
 }
+
+fn fc_failures(net: &mut Net, short: u16) -> u16 {
+    let seq = net.coord.zcl(short, 0x0B05, 0x00, 0x00, &0x0112u16.to_le_bytes());
+    net.run(60);
+    let rsp = net.coord.last_zcl(short, 0x0B05, 0x01).unwrap();
+    assert_eq!(rsp[1], seq);
+    u16::from_le_bytes([rsp[7], rsp[8]])
+}
+
+#[test]
+fn a_new_network_key_forgets_the_frame_counters_only_of_devices_last_heard_under_its_number() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let mut z = Zed::router(&net.air, 0x4444, short);
+    net.link(0, z.id, 0);
+    z.fc = 100;
+    z.link_status(&[(short, 1)]);
+    net.run(50);
+    net.coord.transport_network_key(short, ext, &[0x5A; 16], 1, true);
+    net.run(100);
+    let before = fc_failures(&mut net, short);
+    z.fc = 50;
+    z.link_status(&[(short, 1)]);
+    net.run(50);
+    assert_eq!(fc_failures(&mut net, short), before + 1, "still a replay under the key it was heard with");
+}
+
+#[test]
+fn a_new_network_key_keeps_a_childs_frame_counter_heard_under_another_number() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, false);
+    net.link(0, zed.id, 0);
+    assert!(zed.join(&mut net, short));
+    net.run(200);
+    zed.fc = 100;
+    let h = zed.header(zigbee::nwk::FRAME_CMD, short);
+    zed.nwk_send(h, &[zigbee::nwk::CMD_TIMEOUT_REQUEST, 3, 0]);
+    net.run(100);
+    net.coord.transport_network_key(short, ext, &[0x5A; 16], 1, true);
+    net.run(100);
+    let before = fc_failures(&mut net, short);
+    zed.fc = 50;
+    let h = zed.header(zigbee::nwk::FRAME_CMD, short);
+    zed.nwk_send(h, &[zigbee::nwk::CMD_TIMEOUT_REQUEST, 3, 0]);
+    net.run(100);
+    assert_eq!(fc_failures(&mut net, short), before + 1);
+}
