@@ -286,3 +286,26 @@ fn a_bulb_that_goes_down_tries_again_after_up_to_two_more_seconds() {
     s.down(1_000);
     assert_eq!((s.state, s.timer), (State::Down, 1_000 + super::RETRY_MS + 1_999));
 }
+
+#[test]
+fn association_answers_requests_and_polls_count_only_in_the_state_they_belong_to() {
+    let mut s = stack();
+    s.state = State::Up;
+    s.nib.short = 0x0042;
+    s.nib.pan = 0x1A62;
+    let me = s.ext;
+    mac_cmd(&mut s, Addr::Ext(me), 0x1A62, Addr::Ext(0x00124B00_0000_0001), &[mac::CMD_ASSOC_RSP, 0x34, 0x12, 0x00]);
+    assert_eq!((s.state, s.nib.short), (State::Up, 0x0042), "an answer nobody waits for");
+    for state in [State::Scan, State::WaitKey] {
+        let mut s = stack();
+        s.state = state;
+        s.nib.short = 0x0042;
+        s.nib.pan = 0x1A62;
+        s.allow_children = true;
+        s.permit_until = Some(100_000);
+        mac_cmd(&mut s, Addr::Short(0x0042), 0x1A62, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ, 0x8E]);
+        mac_cmd(&mut s, Addr::Short(0x0042), 0x1A62, Addr::Short(0x1234), &[mac::CMD_DATA_REQ]);
+        assert!(s.children.iter().all(|c| !c.used), "{state:?}");
+        assert!(s.hal.sent.is_empty(), "{state:?}");
+    }
+}
