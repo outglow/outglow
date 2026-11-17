@@ -421,7 +421,8 @@ pub struct World {
     pool: Option<Pool>,
     pub par_stats: ParStats,
     pub ble_retry: bool,
-    ble_again: HashMap<Vec<u8>, u8>,
+    pub busy_retry: bool,
+    again: HashMap<Vec<u8>, u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -455,12 +456,40 @@ pub struct ParStats {
     pub main_busy: std::time::Duration,
 }
 
+const BLE_FATES: [&str; 3] = ["BLE mode", "off at start: BLE mode", "off at start: switching to or from BLE"];
+const BUSY_FATES: [&str; 8] = [
+    "BLE mode",
+    "off at start: BLE mode",
+    "off at start: switching to or from BLE",
+    "other channel",
+    "off at start: transmitting",
+    "off at start: TX mode",
+    "off at end: transmitting",
+    "off at end: TX mode",
+];
+
+fn retried_fates(ble: bool, busy: bool) -> &'static [&'static str] {
+    match (ble, busy) {
+        (_, true) => &BUSY_FATES,
+        (true, false) => &BLE_FATES,
+        (false, false) => &[],
+    }
+}
+
 impl World {
     pub fn lent_to_ble(&self, t0: f64, len: usize) -> bool {
+        self.dut_missed(t0, len, &BLE_FATES)
+    }
+
+    pub fn dut_missed(&self, t0: f64, len: usize, fates: &[&str]) -> bool {
         let off = self.air.t_off;
         self.air.dut.radio.b().rx_log.as_ref().is_some_and(|log| {
-            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && matches!(e.fate, "BLE mode" | "off at start: BLE mode" | "off at start: switching to or from BLE"))
+            log.iter().any(|e| e.len == len && (e.t0 + off - t0).abs() < 0.01 && fates.contains(&e.fate))
         })
+    }
+
+    fn retry_missed(&self, t0: f64, len: usize) -> bool {
+        self.dut_missed(t0, len, retried_fates(self.ble_retry, self.busy_retry))
     }
 
     pub fn dut_rx_log(&mut self) {
@@ -502,7 +531,8 @@ impl World {
             pool: None,
             par_stats: ParStats::default(),
             ble_retry: false,
-            ble_again: HashMap::new(),
+            busy_retry: false,
+            again: HashMap::new(),
         }
     }
 
@@ -536,13 +566,13 @@ impl World {
         match ev {
             Ev::Deliver { idx, rx, psdu, ch, t0, t1 } => {
                 let dut_rssi = rx.iter().find(|x| x.0 == NodeId::Dut).map(|x| x.1);
-                if self.ble_retry {
+                if self.ble_retry || self.busy_retry {
                     let sender = self.air.frames[idx].who;
                     let scripted = matches!(sender, NodeId::Coord | NodeId::Peer(_) | NodeId::Coord2(_));
                     let broadcast = psdu.len() > 7 && psdu[0] & 0x27 == 0x01 && psdu[5..7] == [0xFF, 0xFF];
                     if let (true, true, Some(rssi)) = (scripted, broadcast, dut_rssi) {
-                        if self.lent_to_ble(t0, psdu.len()) {
-                            let n = self.ble_again.entry((*psdu).clone()).or_insert(0);
+                        if self.retry_missed(t0, psdu.len()) {
+                            let n = self.again.entry((*psdu).clone()).or_insert(0);
                             if *n < 3 {
                                 *n += 1;
                                 let ev = Ev::Again { sender, psdu: psdu.clone(), ch, dur: t1 - t0, rssi };
@@ -1006,7 +1036,7 @@ impl Drop for World {
 
 #[cfg(test)]
 mod tests {
-    use super::{r6, r6_text};
+    use super::*;
 
     #[test]
     fn r6_as_the_text_round_trip() {
@@ -1034,6 +1064,22 @@ mod tests {
             }
             let (a, b) = (r6(x), r6_text(x));
             assert!(a.to_bits() == b.to_bits(), "{x:e}: {a:e} {b:e}");
+        }
+    }
+
+    #[test]
+    fn a_busy_bulb_gets_the_broadcasts_it_could_not_hear_again() {
+        assert!(retried_fates(false, false).is_empty());
+        assert_eq!(retried_fates(true, false), &BLE_FATES[..]);
+        assert_eq!(retried_fates(true, true), &BUSY_FATES[..]);
+        let busy = retried_fates(false, true);
+        assert!(BLE_FATES.iter().all(|f| busy.contains(f)));
+        for f in ["off at start: transmitting", "off at end: transmitting", "off at start: TX mode", "off at end: TX mode", "other channel"] {
+            assert!(busy.contains(&f), "{f}");
+            assert!(!retried_fates(true, false).contains(&f), "{f}");
+        }
+        for f in ["received", "collision", "bad FCS", "RX DMA off", "overwritten", "off at start: RX state off"] {
+            assert!(!busy.contains(&f), "{f}");
         }
     }
 }
