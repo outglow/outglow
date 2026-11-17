@@ -1719,3 +1719,38 @@ fn a_child_timeout_of_fourteen_is_taken_and_fifteen_refused() {
         assert_eq!(rsp[1], status, "timeout {timeout}");
     }
 }
+
+#[test]
+fn a_childs_own_broadcast_is_not_held_for_it() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let id = net.nodes[a].id;
+    let mut h = zed.header(nwk::FRAME_DATA, 0xFFFF);
+    h.radius = 5;
+    let aps = vec![0x08, 1, 0x06, 0x00, 0x04, 0x01, 1, 0x31, 0x01, 0x32, 0x02];
+    zed.nwk_send(h, &aps);
+    net.run(300);
+    assert!(net.air.borrow().ports[id].pending.0.is_empty(), "nothing waits for the child that sent it");
+}
+
+#[test]
+fn a_refused_rejoin_reaches_a_device_that_listens_at_once() {
+    let (mut net, a, _zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    net.coord.zcl_ep(sa, 7, 0x0010, 0x00, 0x02, &[0x55, 0x00, 0x10, 0]);
+    net.run(100);
+    let mut stranger = Zed::new(&net.air, false);
+    net.link(0, stranger.id, 0);
+    stranger.key = Some(NWK_KEY);
+    stranger.short = 0x5B5B;
+    stranger.pan = PAN;
+    net.air.borrow_mut().ports[stranger.id].short = 0x5B5B;
+    net.air.borrow_mut().ports[stranger.id].pan = PAN;
+    stranger.parent = sa;
+    let mut h = stranger.header(nwk::FRAME_CMD, sa);
+    h.radius = 1;
+    let cap = stranger.capability();
+    stranger.nwk_send(h, &[nwk::CMD_REJOIN_REQUEST, cap]);
+    net.run(50);
+    stranger.drain();
+    assert!(stranger.rx.iter().any(|(_, p)| p[0] == nwk::CMD_REJOIN_RESPONSE && p[3] == 0x01), "{:02x?}", stranger.rx);
+}
