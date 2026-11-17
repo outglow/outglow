@@ -732,3 +732,49 @@ fn blocks_larger_than_the_bulb_asked_for_arriving_in_fragments_go_into_the_image
     held[8] = 0xFF;
     assert_eq!(staged(&net, n, image.len()), held);
 }
+
+#[test]
+fn an_upgrade_time_exactly_the_longest_wait_is_waited_for_and_one_second_more_holds() {
+    for (wait, state) in [(20 * 24 * 3600u32, OtaState::Waiting), (20 * 24 * 3600 + 1, OtaState::Held)] {
+        let (mut net, n, short, _) = downloaded(None);
+        net.coord.ota_upgrade_end_response(short, MFG, TYPE, NEW, wait);
+        net.run(100);
+        assert_eq!(net.nodes[n].stack.ota_state(), state, "{wait}");
+    }
+}
+
+#[test]
+fn wildcard_answers_nobody_asked_for_change_nothing_either() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = [&MFG.to_le_bytes()[..], &TYPE.to_le_bytes()[..]].concat();
+    block_response(&mut net, short, &[&[0x00][..], &id, &0u32.to_le_bytes(), &0u32.to_le_bytes(), &[2, 0xAA, 0xBB]].concat());
+    net.run(500);
+    assert_eq!((net.nodes[n].stack.ota_state(), net.coord.ota_block_requests), (OtaState::Idle, 0), "a block for version 0");
+    net.coord.ota_upgrade_end_response(short, 0xFFFF, 0xFFFF, 0xFFFF_FFFF, 0);
+    net.run(1_000);
+    assert!(!activated(&net, n));
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Idle);
+}
+
+#[test]
+fn a_new_image_after_an_abandoned_download_starts_from_the_beginning() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let first = make_image(9500, 30);
+    offer(&mut net, &first, NEW);
+    net.coord.ota_notify(short);
+    net.run_until(60_000, "past a checkpoint", |net| net.coord.ota_blocks >= 6000 / 48);
+    net.coord.ota_drop_blocks = 1000;
+    net.run_until(120_000, "given up", |net| net.nodes[n].stack.ota_state() == OtaState::Idle);
+    net.coord.ota_drop_blocks = 0;
+    let second = make_image(9500, 31);
+    offer(&mut net, &second, NEW + 1);
+    net.coord.ota_notify(short);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    net.run(2_000);
+    assert_eq!(net.coord.ota_end, Some(0x00));
+    assert_eq!(staged(&net, n, second.len()), second);
+}

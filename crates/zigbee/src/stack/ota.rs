@@ -377,7 +377,7 @@ impl<H: Hal> Stack<H> {
             o.element_left = r.u32()?;
             let flags = r.u8()?;
             o.in_image = flags & 1 != 0;
-            o.seen_file_header = flags & 2 != 0;
+            o.seen_file_header = true;
             o.marker_ok = flags & 4 != 0;
             o.head.copy_from_slice(r.take(8)?);
             o.head_len = r.u8()?;
