@@ -916,9 +916,7 @@ impl<H: Hal> Stack<H> {
         let now = self.hal.now_ms();
         self.route_set(dst, 0xFFFF, ROUTE_DISCOVERY, false, false, now);
         self.rreq_id = self.rreq_id.wrapping_add(1);
-        let Some(slot) = self.discovery_slot(now, true) else {
-            return;
-        };
+        let slot = self.discovery_slot(now, true).unwrap_or(0);
         self.discoveries[slot] = Discovery {
             used: true,
             id: self.rreq_id,

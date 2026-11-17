@@ -979,3 +979,82 @@ fn an_empty_command_from_an_end_device_that_is_no_child_is_no_rejoin_request_wha
     heard(&mut s, h, counter, &[]);
     assert!(s.hal.sent.iter().any(|f| f.len() > 9 && f[5..7] == [0x00, 0x10]), "told to rejoin");
 }
+
+#[test]
+fn frames_that_cannot_be_read_are_dropped() {
+    let mut s = relaying();
+    s.on_nwk(0x1000, &[0x08], 200);
+    assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 1, "no header");
+    s.on_nwk(0x1000, &[0x08; 128], 200);
+    assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 1, "longer than any frame");
+    let mut f = crate::util::Buf::new();
+    let mut h = nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x1000, 5, 1);
+    h.security = true;
+    h.write(&mut f);
+    f.bytes(&[0x28, 0x01]);
+    s.on_nwk(0x1000, f.as_slice(), 200);
+    assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 2, "no whole auxiliary header");
+    let h = nwk::Header::new(3, 0x0042, 0x1000, 5, 1);
+    heard(&mut s, h, 1, &[0x01, 0x02]);
+    assert!(s.hal.sent.is_empty(), "a reserved frame type is delivered nowhere");
+}
+
+#[test]
+fn a_frame_too_long_to_send_is_left_unsent() {
+    let mut s = relaying();
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0x1001, 0x0042, 5, 1);
+    assert_eq!(s.transmit_nwk(0x1001, &h, &[0; 120]), crate::hal::TxStatus::Ok);
+    assert!(s.hal.sent.is_empty());
+    assert_eq!(s.transmit_nwk(0x1001, &h, &[0x01]), crate::hal::TxStatus::Ok, "an APS command");
+    assert_eq!(s.hal.sent.len(), 1);
+}
+
+#[test]
+fn relayed_data_that_fails_and_may_discover_waits_for_a_new_route() {
+    let mut s = routed(false, &[0x1002]);
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 1, &[0x00], 0);
+    assert_eq!((t.counts, t.held), ([0, 0, 0, 0], true));
+}
+
+#[test]
+fn route_commands_cut_short_and_route_requests_no_better_than_one_heard_are_dropped() {
+    let mut s = relaying();
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0xFFFC, 0x2000, 5, 2);
+    s.on_route_request(&h, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55], 1_000);
+    assert!(s.discoveries.iter().all(|d| !d.used));
+    s.on_route_request(&h, 0x1000, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3], 1_000);
+    assert_eq!(s.discoveries[0].forward_cost, 3 + s.neighbors[0].link_cost());
+    s.bcast[0].used = false;
+    s.on_route_request(&h, 0x1001, 255, &[nwk::CMD_ROUTE_REQUEST, 0, 7, 0x55, 0x55, 3], 1_000);
+    assert!(s.bcast.iter().all(|e| !e.used), "the same cost again is not passed on");
+    assert!(!s.discoveries[1].used);
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1001, 5, 2);
+    s.discoveries[1] = super::Discovery { used: true, id: 7, src: 0x3000, sender: 0x1002, forward_cost: 3, residual_cost: 0xFF, expires: 9_000 };
+    s.on_route_reply(&h, 0x1001, &[nwk::CMD_ROUTE_REPLY, 0, 7, 0x00, 0x30, 0x55, 0x55]);
+    assert_eq!(s.discoveries[1].residual_cost, 0xFF, "no cost");
+}
+
+#[test]
+fn a_reply_to_the_bulbs_own_request_no_cheaper_than_one_taken_is_dropped_and_one_passed_on_costs_the_way_back() {
+    let mut s = relaying();
+    s.discoveries[0] = super::Discovery { used: true, id: 7, src: 0x0042, sender: 0x0042, forward_cost: 0, residual_cost: 2, expires: 9_000 };
+    route(&mut s, 0, 0x5555, 0x1000, false, 0);
+    s.routes[0].status = super::ROUTE_DISCOVERY;
+    let h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x1001, 5, 2);
+    s.on_route_reply(&h, 0x1001, &[nwk::CMD_ROUTE_REPLY, 0, 7, 0x42, 0x00, 0x55, 0x55, 2]);
+    assert_eq!((s.routes[0].status, s.routes[0].next), (super::ROUTE_DISCOVERY, 0x1000));
+    let mut s = relaying();
+    s.discoveries[0] = super::Discovery { used: true, id: 7, src: 0x3000, sender: 0x7001, forward_cost: 3, residual_cost: 0xFF, expires: 9_000 };
+    s.on_route_reply(&h, 0x1001, &[nwk::CMD_ROUTE_REPLY, 0, 7, 0x00, 0x30, 0x55, 0x55, 2]);
+    assert_eq!(s.hal.sent.len(), 1, "back to the sender, no longer a neighbour");
+    assert_eq!(s.hal.sent[0][5..7], [0x01, 0x70]);
+}
+
+#[test]
+fn a_link_status_from_a_device_that_is_no_neighbour_or_without_options_is_ignored() {
+    let mut s = relaying();
+    s.neighbors[0].age = 2;
+    s.on_link_status(0x7001, &[nwk::CMD_LINK_STATUS, 0x60]);
+    s.on_link_status(0x1000, &[nwk::CMD_LINK_STATUS]);
+    assert_eq!(s.neighbors[0].age, 2);
+}
