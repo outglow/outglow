@@ -46,7 +46,7 @@ fn finish() {
     reg::write8(reg::MSPI_CTRL, reg::MSPI_CS_HIGH);
 }
 
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 #[inline(never)]
 extern "C" fn program(addr: usize, data: &[u8; 32], len: usize) {
     command(CMD_WRITE_ENABLE);
@@ -63,7 +63,7 @@ extern "C" fn program(addr: usize, data: &[u8; 32], len: usize) {
     finish();
 }
 
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 #[inline(never)]
 extern "C" fn erase(addr: usize) {
     command(CMD_WRITE_ENABLE);
@@ -113,9 +113,17 @@ pub fn erase_sector(addr: usize) {
     crate::trace::span(crate::trace::FLASH, 1, (addr >> 12) as u16, t0);
 }
 
+#[cfg(target_os = "none")]
 pub fn read(addr: usize, buf: &mut [u8]) {
     for (i, b) in buf.iter_mut().enumerate() {
         *b = unsafe { ((addr + i) as *const u8).read_volatile() };
+    }
+}
+
+#[cfg(not(target_os = "none"))]
+pub fn read(addr: usize, buf: &mut [u8]) {
+    for (i, b) in buf.iter_mut().enumerate() {
+        *b = crate::sim::flash8(addr + i);
     }
 }
 

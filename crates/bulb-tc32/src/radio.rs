@@ -130,7 +130,7 @@ static CCA_BUSY: Shared<u32> = Shared::new(0);
 static TX_SENT: Shared<u8> = Shared::new(0);
 
 #[allow(unsafe_code)]
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 #[inline(never)]
 extern "C" fn set_state(state: u8) {
     write8(RF_MODE_CTRL, 0x45);
@@ -377,7 +377,7 @@ pub fn set_children(shorts: &[u16]) {
 
 #[allow(unsafe_code)]
 #[no_mangle]
-#[link_section = ".ram_code"]
+#[cfg_attr(target_os = "none", link_section = ".ram_code")]
 pub extern "C" fn irq_handler() {
     if read8(RF_IRQ_STATUS) & RF_IRQ_RX != 0 {
         write8(RF_IRQ_STATUS, RF_IRQ_RX);
@@ -722,3 +722,7 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
         TxStatus::NoAck
     }
 }
+
+#[cfg(test)]
+#[path = "tests/radio.rs"]
+mod tests;
