@@ -24,17 +24,15 @@ fn u32_at(b: &[u8], i: usize) -> Result<u32, Refused> {
     b.get(i..).and_then(<[u8]>::first_chunk).map(|s| u32::from_le_bytes(*s)).ok_or_else(|| Refused("truncated ELF".into()))
 }
 
-fn uleb(b: &[u8], mut i: usize) -> Option<(u32, usize)> {
-    let (mut v, mut shift) = (0u32, 0u32);
-    loop {
-        let byte = *b.get(i)?;
-        i += 1;
-        v |= ((byte & 0x7F) as u32).checked_shl(shift).unwrap_or(0);
-        shift += 7;
+fn uleb(b: &[u8], i: usize) -> Option<(u32, usize)> {
+    let mut v = 0u32;
+    for (n, &byte) in b.get(i..)?.iter().enumerate() {
+        v |= ((byte & 0x7F) as u32).checked_shl(7 * n as u32).unwrap_or(0);
         if byte & 0x80 == 0 {
-            return Some((v, i));
+            return Some((v, i + n + 1));
         }
     }
+    None
 }
 
 fn cstr(b: &[u8], i: usize) -> Option<(String, usize)> {

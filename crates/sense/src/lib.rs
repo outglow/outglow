@@ -142,6 +142,16 @@ impl Line {
         sum
     }
 
+    fn quiet_s(&self, from: u8) -> u8 {
+        (2..=from)
+            .rev()
+            .find(|&s| {
+                let (thr, m) = params(s);
+                (self.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16
+            })
+            .unwrap_or(1)
+    }
+
     fn restart(&mut self) {
         self.nhist = 0;
         self.hpos = 0;
@@ -188,15 +198,14 @@ impl Line {
 }
 
 fn median5(h: &[i8; HIST]) -> i8 {
-    let mut v = [0i8; HIST];
-    for i in 0..HIST {
-        let x = h[i];
-        let mut j = i;
-        while j > 0 && v[j - 1] > x {
-            v[j] = v[j - 1];
-            j -= 1;
+    let mut v = *h;
+    for i in 1..HIST {
+        for j in (1..=i).rev() {
+            if v[j - 1] <= v[j] {
+                break;
+            }
+            v.swap(j - 1, j);
         }
-        v[j] = x;
     }
     v[HIST / 2]
 }
@@ -364,22 +373,10 @@ impl Core {
             if cal {
                 l.cal_n = l.cal_n.wrapping_add(1);
                 l.cal_sum = l.cal_sum.wrapping_add(dev as u32);
-                while l.cal_s > 1 {
-                    let (thr, m) = params(l.cal_s);
-                    if (l.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16 {
-                        break;
-                    }
-                    l.cal_s -= 1;
-                }
+                l.cal_s = l.quiet_s(l.cal_s);
             }
             if auto_cal {
-                while l.hour_cal_s > 1 {
-                    let (thr, m) = params(l.hour_cal_s);
-                    if (l.win_sum(thr) as u16 + CAL_HEADROOM as u16) < m as u16 {
-                        break;
-                    }
-                    l.hour_cal_s -= 1;
-                }
+                l.hour_cal_s = l.quiet_s(l.hour_cal_s);
             }
             if nothing_on && l.flags & F_ON == 0 && l.hour_cnt < 0xFFFF {
                 l.hour_cnt += 1;

@@ -35,17 +35,12 @@ pub fn tag(image: &[u8]) -> Option<String> {
 }
 
 pub fn kind(image: &[u8]) -> Option<&'static str> {
-    for prefix in [&b"outglow-"[..], &b"open-eglo-"[..]] {
-        let mut from = 0;
-        while let Some(i) = find(&image[from..], prefix) {
-            let rest = &image[from + i + prefix.len()..];
-            if let Some(k) = KINDS.iter().find(|k| rest.starts_with(&k.as_bytes()["outglow-".len()..])) {
-                return Some(k);
-            }
-            from += i + 1;
-        }
-    }
-    None
+    [&b"outglow-"[..], &b"open-eglo-"[..]].into_iter().find_map(|prefix| {
+        image.windows(prefix.len()).enumerate().filter(|(_, w)| *w == prefix).find_map(|(i, _)| {
+            let rest = &image[i + prefix.len()..];
+            KINDS.iter().find(|k| rest.starts_with(&k.as_bytes()["outglow-".len()..])).copied()
+        })
+    })
 }
 
 #[derive(Clone, Debug, PartialEq)]
