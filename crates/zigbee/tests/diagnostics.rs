@@ -1067,6 +1067,22 @@ fn a_kept_event_log_that_does_not_add_up_is_dropped_but_the_counters_are_taken()
 }
 
 #[test]
+fn counters_kept_over_a_restart_without_the_event_log_are_taken_and_the_log_starts_anew() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    for _ in 0..20 {
+        net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+        net.run(50);
+    }
+    let rx = diag1(&mut net, short, MAC_RX_UCAST);
+    let snapshot = zigbee::stack::RETAIN_MAX - zigbee::stack::DIAG_EVENTS_LEN;
+    crash_with(&mut net, n, |k| k.truncate(snapshot));
+    assert!(diag1(&mut net, short, MAC_RX_UCAST) > rx);
+    assert!((0..4).filter_map(|i| net.nodes[n].stack.event(i)).all(|e| e.this_start), "only this start's events");
+}
+
+#[test]
 fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
     let mut net = Net::new();
     let n = net.join_node();
