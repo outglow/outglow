@@ -84,3 +84,72 @@ fn a_route_record_passed_on_may_fill_the_largest_payload_and_one_without_room_fo
         }
     }
 }
+
+fn status_via(net: &mut Net, bulb: u16, dst: u16, status: u8) {
+    let mut h = net.coord.header(nwk::FRAME_CMD, dst, 5);
+    h.src_ext = None;
+    net.coord.nwk_send(h, &[nwk::CMD_NETWORK_STATUS, status, 0x00, 0x50], Some(bulb));
+    net.run(200);
+}
+
+#[test]
+fn a_network_status_passed_on_goes_to_its_router_or_another_and_is_dropped_without_one() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let mut far = far_router(&mut net, n, 0x4444);
+    let t = net.now();
+    status_via(&mut net, me, 0x4444, nwk::STATUS_LINK_FAILURE);
+    assert!(net.sent_by(net.nodes[n].id, t).iter().any(|f| f[5..7] == [0x44, 0x44]), "to the router");
+    let port = net.nodes[n].id;
+    net.lossy(port, far.id, 100);
+    let t = net.now();
+    status_via(&mut net, me, 0x4444, nwk::STATUS_LINK_FAILURE);
+    assert!(net.sent_by(net.nodes[n].id, t).iter().filter(|f| f[5..7] == [0x44, 0x44]).count() >= 1, "tried");
+    net.lossy(port, far.id, 0);
+    far.link_status(&[(me, 1)]);
+    net.run(50);
+    let t = net.now();
+    status_via(&mut net, me, 0x7777, nwk::STATUS_MANY_TO_ONE_FAILURE);
+    assert!(net.sent_by(net.nodes[n].id, t).iter().any(|f| f[5..7] == [0x44, 0x44]), "another router for a many-to-one failure");
+    let t = net.now();
+    status_via(&mut net, me, 0x7777, nwk::STATUS_NO_ROUTE);
+    assert!(net.sent_by(net.nodes[n].id, t).iter().all(|f| f[5..7] != [0x44, 0x44]), "no route, not passed on");
+}
+
+#[test]
+fn a_network_status_of_a_link_failure_for_an_end_device_child_drops_the_route_it_tells_of() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, false);
+    net.link(0, zed.id, 0);
+    let sa = net.nodes[a].short();
+    assert!(zed.join(&mut net, sa));
+    net.run(200);
+    zed.rx.clear();
+    let mut h = net.coord.header(nwk::FRAME_CMD, zed.short, 5);
+    h.src_ext = None;
+    net.coord.nwk_send(h, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_LINK_FAILURE, 0x00, 0x50], Some(sa));
+    net.run(200);
+    zed.drain();
+    assert!(zed.rx.iter().any(|(h, p)| h.src == 0x0000 && p.first() == Some(&nwk::CMD_NETWORK_STATUS)));
+}
+
+#[test]
+fn a_source_routed_frame_whose_index_points_at_another_relay_is_dropped() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let me = net.nodes[n].short();
+    let _far = far_router(&mut net, n, 0x4444);
+    let mut list = [0u16; nwk::MAX_RELAYS];
+    list[..2].copy_from_slice(&[0x4444, 0x1234]);
+    let t = net.now();
+    let mut h = net.coord.header(nwk::FRAME_DATA, 0x4444, 5);
+    h.relays = Some((2, 1, list));
+    let aps = net.coord.aps_frame(0x00, 1, 0x0006, 0x0104, 1, &[0x00, 0x09, 0x00, 0x00, 0x00]);
+    net.coord.nwk_send(h, &aps, Some(me));
+    net.run(200);
+    assert!(net.sent_by(net.nodes[n].id, t).iter().all(|f| f[5..7] != [0x44, 0x44]));
+}
