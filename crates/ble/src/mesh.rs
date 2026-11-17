@@ -438,7 +438,7 @@ impl<H: Hal> Ble<H> {
     }
 
     fn zcl_tunnel(&mut self, kind: u8, p: &[u8]) {
-        if p.len() < 5 || p[2] != 0x01 {
+        if p.len() < 6 || p[2] != 0x01 {
             return;
         }
         let address = u16::from_be_bytes([p[0], p[1]]);
@@ -454,7 +454,7 @@ impl<H: Hal> Ble<H> {
         let a = &p[5..];
         let tenths = |i: usize| if a.len() >= i + 2 { u16::from_le_bytes([a[i], a[i + 1]]) as u32 * 100 } else { 0 };
         match cluster {
-            0x0006 if !a.is_empty() => match a[0] {
+            0x0006 => match a[0] {
                 0x00 => self.push_command(Command::Off),
                 0x01 => self.push_command(Command::On),
                 0x02 => self.push_command(Command::Toggle),
@@ -466,7 +466,7 @@ impl<H: Hal> Ble<H> {
                 let mireds = u16::from_le_bytes([a[1], a[2]]);
                 self.push_command(Command::MoveToColorTemperature { mireds, transition_ms: tenths(3) });
             }
-            0x0300 if self.identity.colour && !a.is_empty() => {
+            0x0300 if self.identity.colour => {
                 let hs = |hue: u8, sat: u8, direction: HueDirection, transition_ms: u32| {
                     Command::MoveToHueSaturation { hue: hue.min(254), sat: sat.min(254), direction, transition_ms }
                 };
