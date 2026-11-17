@@ -633,3 +633,34 @@ fn a_train_held_up_by_the_connection_runs_on_a_listening_period_and_a_window_aft
     }
     assert!(tried >= 10, "{tried} gaps of 11 to 13 ms");
 }
+
+#[test]
+fn a_connected_bulb_stops_listening_when_its_next_burst_is_due() {
+    let (ether, mut rigs) = bulbs(&[A]);
+    let from = rigs[0].world.borrow().now;
+    ask_b(&mut rigs[0]);
+    rigs[0].run(1000);
+    let bursts = ether.borrow().bursts_of(0);
+    let gaps: Vec<u64> = bursts.windows(2).map(|w| w[1] - w[0]).collect();
+    let listened = rigs[0].world.borrow().listened.iter().filter(|l| l.0 >= from).count();
+    assert!(listened > 20, "it listened between the events: {listened} windows");
+    let late = gaps.iter().filter(|g| **g > 8 * MS).count();
+    assert!(late <= 1, "{late} bursts waited for a window to end: {gaps:?}");
+}
+
+#[test]
+fn a_bulb_whose_link_holds_the_burst_back_listens_its_whole_window() {
+    let (_ether, mut rigs) = bulbs(&[A]);
+    let rig = &mut rigs[0];
+    ask_b(rig);
+    rig.central().silent = true;
+    rig.bulb.handle(bulb_core::Command::Toggle);
+    rig.run(300);
+    assert!(!rig.world.borrow().txq_empty(), "a notification waits for the central");
+    let from = rig.world.borrow().now;
+    rig.run(300);
+    let w = rig.world.borrow();
+    let windows: Vec<u64> = w.listened.iter().filter(|l| l.0 >= from).map(|l| l.1 - l.0).collect();
+    assert!(windows.len() >= 5);
+    assert!(windows.iter().all(|l| *l == 12 * MS), "{windows:?}");
+}
