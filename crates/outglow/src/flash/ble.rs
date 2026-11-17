@@ -1,58 +1,72 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
-use btleplug::api::{Central, CharPropFlags, Characteristic, Manager as _, Peripheral as _, ScanFilter, WriteType};
-use btleplug::platform::{Adapter, Manager, Peripheral};
+use anyhow::{bail, Context, Result};
 use uuid::Uuid;
 
 use super::protocol::{self as p, hex, Status, Target, Transport};
-use super::{check_image, fmt_mac, parse_adv, product_model, Ble, AWOX_VENDOR};
+use super::{check_image, fmt_mac, parse_adv, product_model, ImageInfo, PushArgs, AWOX_VENDOR};
 
-const DEVINFO: [(u16, &str); 4] = [(0x2a24, "model"), (0x2a26, "firmware"), (0x2a27, "hardware"), (0x2a29, "manufacturer")];
+pub const DEVINFO: [(u16, &str); 4] = [(0x2a24, "model"), (0x2a26, "firmware"), (0x2a27, "hardware"), (0x2a29, "manufacturer")];
 
-fn sig_uuid(short: u16) -> Uuid {
+pub const CODES: [u8; 5] = [p::STATUS, p::COMMAND, p::OTA_OLD, p::PAIR, p::OTA];
+
+pub const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub fn sig_uuid(short: u16) -> Uuid {
     Uuid::from_u128(0x0000_0000_0000_1000_8000_0080_5f9b_34fb | (short as u128) << 96)
 }
 
-async fn adapter() -> Result<Adapter> {
-    let m = Manager::new().await.context("Bluetooth is not available")?;
-    m.adapters().await?.into_iter().next().ok_or_else(|| anyhow!("no Bluetooth adapter"))
+pub fn telink_code(u: Uuid) -> Option<u8> {
+    CODES.into_iter().find(|&c| p::telink_uuid(c) == u)
 }
 
-struct Seen {
-    p: Peripheral,
-    id: String,
-    name: Option<String>,
-    rssi: Option<i16>,
-    awox: Option<(u16, [u8; 6])>,
+pub fn without_response(code: u8, write_without_response: bool) -> bool {
+    code == p::OTA && write_without_response
 }
 
-async fn seen(p: Peripheral) -> Option<Seen> {
-    let props = p.properties().await.ok().flatten()?;
-    let awox = props.manufacturer_data.get(&AWOX_VENDOR).and_then(|md| parse_adv(md));
-    Some(Seen { id: p.id().to_string(), name: props.local_name, rssi: props.rssi, awox, p })
+pub fn revision_text(v: &[u8]) -> String {
+    String::from_utf8_lossy(v).trim_matches(|c| c == '\0' || c == ' ').to_string()
 }
 
-pub async fn scan(seconds: f64) -> Result<()> {
-    let a = adapter().await?;
-    a.start_scan(ScanFilter::default()).await?;
-    tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
-    a.stop_scan().await.ok();
-    let all = a.peripherals().await?;
-    let total = all.len();
-    let mut rows = vec![];
-    for p in all {
-        if let Some(s) = seen(p).await.filter(|s| s.awox.is_some()) {
-            rows.push(s);
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seen {
+    pub id: String,
+    pub address: String,
+    pub name: Option<String>,
+    pub rssi: Option<i16>,
+    pub awox: Option<(u16, [u8; 6])>,
+}
+
+impl Seen {
+    pub fn new(id: String, address: String, name: Option<String>, rssi: Option<i16>, md: &HashMap<u16, Vec<u8>>) -> Seen {
+        Seen { id, address, name, rssi, awox: md.get(&AWOX_VENDOR).and_then(|md| parse_adv(md)) }
+    }
+
+    pub fn is(&self, target: &str) -> bool {
+        let t = target.to_lowercase();
+        let addr = self.address.to_lowercase();
+        let mac = self.awox.map(|(_, m)| fmt_mac(&m));
+        self.id.to_lowercase() == t || (addr == t && addr != "00:00:00:00:00:00") || mac.as_deref() == Some(&t)
+    }
+
+    pub fn device_line(&self) -> String {
+        match self.awox {
+            Some((product, mac)) => {
+                format!("device: {} mesh '{}' product {product:#06x} MAC {}", self.id, self.name.as_deref().unwrap_or(""), fmt_mac(&mac))
+            }
+            None => format!("device: {} (no AwoX data in the advertisement)", self.id),
         }
     }
-    rows.sort_by_key(|s| std::cmp::Reverse(s.rssi.unwrap_or(i16::MIN)));
-    println!("AwoX devices (vendor {AWOX_VENDOR:#06x}): {} of {total} visible", rows.len());
-    for s in rows {
-        let (product, mac) = s.awox.unwrap();
-        println!(
-            "  {}  rssi {:>4}  mesh '{}'  product {product:#06x} ({})  MAC {}",
+}
+
+pub fn scan_report(total: usize, all: Vec<Seen>) -> String {
+    let mut rows: Vec<((u16, [u8; 6]), Seen)> = all.into_iter().filter_map(|s| Some((s.awox?, s))).collect();
+    rows.sort_by_key(|(_, s)| std::cmp::Reverse(s.rssi.unwrap_or(i16::MIN)));
+    let mut out = format!("AwoX devices (vendor {AWOX_VENDOR:#06x}): {} of {total} visible\n", rows.len());
+    for ((product, mac), s) in rows {
+        out += &format!(
+            "  {}  rssi {:>4}  mesh '{}'  product {product:#06x} ({})  MAC {}\n",
             s.id,
             s.rssi.map_or("?".into(), |r| r.to_string()),
             s.name.as_deref().unwrap_or(""),
@@ -60,280 +74,163 @@ pub async fn scan(seconds: f64) -> Result<()> {
             fmt_mac(&mac)
         );
     }
-    Ok(())
+    out
 }
 
-async fn find(a: &Adapter, target: &str, seconds: f64) -> Result<Seen> {
-    let t = target.to_lowercase();
-    a.start_scan(ScanFilter::default()).await?;
-    let end = Instant::now() + Duration::from_secs_f64(seconds);
-    let found = 'scan: loop {
-        for p in a.peripherals().await? {
-            let addr = p.address().to_string().to_lowercase();
-            if let Some(s) = seen(p).await {
-                let mac = s.awox.map(|(_, m)| fmt_mac(&m));
-                if s.id.to_lowercase() == t || (addr == t && addr != "00:00:00:00:00:00") || mac.as_deref() == Some(&t) {
-                    break 'scan Some(s);
-                }
-            }
-        }
-        if Instant::now() >= end {
-            break None;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    };
-    a.stop_scan().await.ok();
-    found.ok_or_else(|| anyhow!("device {target} not seen in BLE advertisements ({seconds} s)"))
+#[allow(async_fn_in_trait)]
+pub trait Device {
+    fn awox(&self) -> Option<(u16, [u8; 6])>;
+    fn has(&self, code: u8) -> bool;
+    async fn read_info(&self, short: u16) -> Result<Option<Vec<u8>>>;
+    async fn read(&self, code: u8) -> Result<Vec<u8>>;
+    async fn write(&self, code: u8, data: &[u8]) -> Result<()>;
+    async fn sleep(&self, d: Duration);
 }
 
-struct Connected {
-    p: Peripheral,
-    chars: HashMap<u8, Characteristic>,
-    all: Vec<Characteristic>,
-    awox: Option<(u16, [u8; 6])>,
+pub struct Counted<'a, D> {
+    pub d: &'a D,
+    pub delay: Duration,
+    pub writes: u64,
+    pub reads: u64,
 }
 
-async fn connect(target: &str, seconds: f64) -> Result<Connected> {
-    let a = adapter().await?;
-    let s = find(&a, target, seconds).await?;
-    match s.awox {
-        Some((product, mac)) => println!(
-            "device: {} mesh '{}' product {product:#06x} MAC {}",
-            s.id,
-            s.name.as_deref().unwrap_or(""),
-            fmt_mac(&mac)
-        ),
-        None => println!("device: {} (no AwoX data in the advertisement)", s.id),
-    }
-    tokio::time::timeout(Duration::from_secs(20), s.p.connect()).await.context("connect: timeout")??;
-    s.p.discover_services().await?;
-    println!("connected");
-    let all: Vec<Characteristic> = s.p.characteristics().into_iter().collect();
-    let mut chars = HashMap::new();
-    for c in &all {
-        for code in [p::STATUS, p::COMMAND, p::OTA_OLD, p::PAIR, p::OTA] {
-            if c.uuid == p::telink_uuid(code) {
-                println!("  ...19{code:02x} props {:?}", c.properties);
-                chars.insert(code, c.clone());
-            }
-        }
-    }
-    Ok(Connected { p: s.p, chars, all, awox: s.awox })
-}
-
-impl Connected {
-    async fn read_uuid(&self, u: Uuid) -> Result<Option<Vec<u8>>> {
-        match self.all.iter().find(|c| c.uuid == u && c.properties.contains(CharPropFlags::READ)) {
-            Some(c) => Ok(Some(self.p.read(c).await?)),
-            None => Ok(None),
-        }
-    }
-
-    async fn revision(&self) -> Result<Option<String>> {
-        Ok(self
-            .read_uuid(sig_uuid(0x2a27))
-            .await?
-            .map(|v| String::from_utf8_lossy(&v).trim_matches(|c| c == '\0' || c == ' ').to_string()))
-    }
-
-    async fn disconnect(&self) {
-        self.p.disconnect().await.ok();
-    }
-}
-
-struct BtTransport<'a> {
-    c: &'a Connected,
-    delay: Duration,
-    writes: u64,
-    reads: u64,
-}
-
-impl<'a> BtTransport<'a> {
-    fn ch(&self, code: u8) -> Result<&'a Characteristic> {
-        let c: &'a Connected = self.c;
-        c.chars.get(&code).ok_or_else(|| anyhow!("no characteristic ...19{code:02x}"))
-    }
-}
-
-impl Transport for BtTransport<'_> {
+impl<D: Device> Transport for Counted<'_, D> {
     async fn write(&mut self, code: u8, data: &[u8]) -> Result<()> {
-        let ch = self.ch(code)?;
-        let kind = if code == p::OTA && ch.properties.contains(CharPropFlags::WRITE_WITHOUT_RESPONSE) {
-            WriteType::WithoutResponse
-        } else {
-            WriteType::WithResponse
-        };
-        tokio::time::timeout(Duration::from_secs(30), self.c.p.write(ch, data, kind)).await.context("write: timeout")??;
+        tokio::time::timeout(IO_TIMEOUT, self.d.write(code, data)).await.context("write: timeout")??;
         self.writes += 1;
         if !self.delay.is_zero() {
-            tokio::time::sleep(self.delay).await;
+            self.d.sleep(self.delay).await;
         }
         Ok(())
     }
 
     async fn read(&mut self, code: u8) -> Result<Vec<u8>> {
-        let ch = self.ch(code)?;
         self.reads += 1;
-        Ok(tokio::time::timeout(Duration::from_secs(30), self.c.p.read(ch)).await.context("read: timeout")??)
+        tokio::time::timeout(IO_TIMEOUT, self.d.read(code)).await.context("read: timeout")?
     }
 
     async fn sleep(&mut self, ms: u64) {
-        tokio::time::sleep(Duration::from_millis(ms)).await;
+        self.d.sleep(Duration::from_millis(ms)).await;
     }
 }
 
-pub async fn probe(target: &str, seconds: f64) -> Result<()> {
-    let c = connect(target, seconds).await?;
-    let r = probe_connected(&c).await;
-    c.disconnect().await;
-    r
-}
-
-async fn probe_connected(c: &Connected) -> Result<()> {
+pub async fn probe<D: Device>(d: &D, log: &mut dyn FnMut(&str)) -> Result<()> {
     for (short, what) in DEVINFO {
-        if let Some(v) = c.read_uuid(sig_uuid(short)).await? {
-            println!("  {what:10} {:?}", String::from_utf8_lossy(&v));
+        if let Some(v) = d.read_info(short).await? {
+            log(&format!("  {what:10} {:?}", String::from_utf8_lossy(&v)));
         }
     }
-    let missing: Vec<String> =
-        [p::PAIR, p::OTA].iter().filter(|k| !c.chars.contains_key(k)).map(|k| format!("...19{k:02x}")).collect();
+    let missing: Vec<String> = [p::PAIR, p::OTA].iter().filter(|&&k| !d.has(k)).map(|k| format!("...19{k:02x}")).collect();
     if !missing.is_empty() {
-        println!("WARNING: missing characteristics {missing:?}: this does not look like the Telink mesh profile");
+        log(&format!("WARNING: missing characteristics {missing:?}: this does not look like the Telink mesh profile"));
     } else {
-        let st = c.p.read(&c.chars[&p::OTA]).await?;
+        let st = d.read(p::OTA).await?;
         let target = Target::detect(&st);
-        println!("  OTA status (...1915): {}  (0000.. = idle; {} B = {} layout)", hex(&st), st.len(), target.name());
-        println!(
+        log(&format!("  OTA status (...1915): {}  (0000.. = idle; {} B = {} layout)", hex(&st), st.len(), target.name()));
+        log(&format!(
             "  its OTA handler takes blocks up to {} B: push --mtu {} would use them, if the OS negotiates that ATT_MTU",
             target.chunk_cap(),
             target.chunk_cap() + 7
-        );
+        ));
     }
-    println!("probe: reads only, nothing written");
+    log("probe: reads only, nothing written");
     Ok(())
 }
 
-pub async fn push(cmd: Ble) -> Result<()> {
-    let Ble::Push {
-        target,
-        image,
-        confirm_write,
-        allow_outglow,
-        any_revision,
-        product,
-        mtu,
-        chunk,
-        max_resends,
-        delay_ms,
-        login,
-        mesh_name,
-        mesh_password,
-        seconds,
-    } = cmd
-    else {
-        unreachable!()
-    };
-    let img = std::fs::read(&image).with_context(|| format!("{}", image.display()))?;
-    let info = check_image(&img, allow_outglow)?;
-    println!(
+pub struct Push {
+    pub a: PushArgs,
+    pub img: Vec<u8>,
+    pub info: ImageInfo,
+    pub expected: u16,
+    pub password: Option<Vec<u8>>,
+}
+
+pub fn prepare(a: PushArgs, log: &mut dyn FnMut(&str)) -> Result<Push> {
+    let img = std::fs::read(&a.image).with_context(|| format!("{}", a.image.display()))?;
+    let info = check_image(&img, a.allow_outglow)?;
+    log(&format!(
         "image: {} {} B, {} hardware revision {} (product {:#06x}), KNLT+CRC ok, {}",
-        image.display(),
+        a.image.display(),
         img.len(),
         info.model,
         info.revision,
         info.product,
         if info.outglow { "OUTGLOW" } else { "ORIGINAL FIRMWARE (canary)" }
-    );
-    let expected = product.unwrap_or(info.product);
-    let password = mesh_password.as_deref().map(p::unhex).transpose()?;
+    ));
+    let expected = a.product.unwrap_or(info.product);
+    let password = a.mesh_password.as_deref().map(p::unhex).transpose()?;
     if password.as_ref().is_some_and(|pw| pw.len() != 16) {
         bail!("--mesh-password must be 16 bytes in hex");
     }
-    let c = connect(&target, seconds).await?;
-    let r = async {
-        let bulb_product = c.awox.map(|(p, _)| p);
-        if bulb_product != Some(expected) {
-            bail!(
-                "device product {} != {expected:#06x} required by the image. --product only deliberately.",
-                bulb_product.map_or("unknown".into(), |p| format!("{p:#06x}"))
-            );
-        }
-        let revision = c.revision().await?;
-        println!("bulb hardware revision {revision:?}, image for {:?}", info.revision);
-        if revision.as_deref() != Some(info.revision.as_str()) && !any_revision {
-            bail!(
-                "the bulb is hardware revision {revision:?}, the image is for {:?}: its LEDs may be on other pins. \
-                 --any-revision only deliberately.",
-                info.revision
-            );
-        }
-        if !c.chars.contains_key(&p::OTA) {
-            bail!("no OTA characteristic ...1915");
-        }
-        if !confirm_write {
-            bail!("refused: no --confirm-write (this writes the bulb's flash and restarts it); all checks passed");
-        }
-        let (mtu, d) = negotiate(&c, mtu, chunk).await?;
-        let mut t = BtTransport { c: &c, delay: Duration::from_secs_f64(delay_ms / 1000.0), writes: 0, reads: 0 };
-        let mut log = |s: &str| println!("{s}");
-        if login {
-            let pw = match &password {
-                Some(pw) => pw.clone(),
-                None => {
-                    let (_, mac) = c.awox.ok_or_else(|| anyhow!("no MAC for the secure password: give --mesh-password"))?;
-                    p::secure_password(&mac).to_vec()
-                }
-            };
-            let mut rnd8 = [0u8; 8];
-            getrandom::getrandom(&mut rnd8).map_err(|e| anyhow!("random: {e}"))?;
-            p::login(&mut t, mesh_name.as_bytes(), &pw, &rnd8, &mut log).await?;
-        }
-        let t0 = Instant::now();
-        let o = p::OtaOptions { chunk: d, mtu, max_resends, ..Default::default() };
-        let st = p::run_ota(&mut t, &img, &o, &mut log).await?;
-        println!(
-            "final status {}; {} writes, {} reads, {:.0} s",
-            hex(&st),
-            t.writes,
-            t.reads,
-            t0.elapsed().as_secs_f64()
-        );
-        println!("the bulb should now restart itself (the AwoX bootloader installs the image).");
-        Ok(())
-    }
-    .await;
-    c.disconnect().await;
-    r
+    Ok(Push { a, img, info, expected, password })
 }
 
-async fn negotiate(c: &Connected, mtu: usize, chunk: Option<usize>) -> Result<(usize, usize)> {
+pub async fn push<D: Device>(
+    d: &D,
+    s: &Push,
+    rnd8: &mut dyn FnMut() -> Result<[u8; 8]>,
+    log: &mut dyn FnMut(&str),
+) -> Result<()> {
+    let a = &s.a;
+    let awox = d.awox();
+    let Some(mac) = awox.filter(|(p, _)| *p == s.expected).map(|(_, m)| m) else {
+        bail!(
+            "device product {} != {:#06x} required by the image. --product only deliberately.",
+            awox.map_or("unknown".into(), |(p, _)| format!("{p:#06x}")),
+            s.expected
+        );
+    };
+    let revision = d.read_info(0x2a27).await?.map(|v| revision_text(&v));
+    log(&format!("bulb hardware revision {revision:?}, image for {:?}", s.info.revision));
+    if revision.as_deref() != Some(s.info.revision.as_str()) && !a.any_revision {
+        bail!(
+            "the bulb is hardware revision {revision:?}, the image is for {:?}: its LEDs may be on other pins. \
+             --any-revision only deliberately.",
+            s.info.revision
+        );
+    }
+    if !d.has(p::OTA) {
+        bail!("no OTA characteristic ...1915");
+    }
+    if !a.confirm_write {
+        bail!("refused: no --confirm-write (this writes the bulb's flash and restarts it); all checks passed");
+    }
+    let (mtu, chunk) = negotiate(d, a.mtu, a.chunk, log).await?;
+    let mut t = Counted { d, delay: Duration::from_secs_f64(a.delay_ms / 1000.0), writes: 0, reads: 0 };
+    if a.login {
+        let pw = s.password.clone().unwrap_or_else(|| p::secure_password(&mac).to_vec());
+        p::login(&mut t, a.mesh_name.as_bytes(), &pw, &rnd8()?, log).await?;
+    }
+    let t0 = Instant::now();
+    let o = p::OtaOptions { chunk, mtu, max_resends: a.max_resends, ..Default::default() };
+    let st = p::run_ota(&mut t, &s.img, &o, log).await?;
+    log(&format!("final status {}; {} writes, {} reads, {:.0} s", hex(&st), t.writes, t.reads, t0.elapsed().as_secs_f64()));
+    log("the bulb should now restart itself (the AwoX bootloader installs the image).");
+    Ok(())
+}
+
+pub async fn negotiate<D: Device>(d: &D, mtu: usize, chunk: Option<usize>, log: &mut dyn FnMut(&str)) -> Result<(usize, usize)> {
     if mtu <= p::DEFAULT_MTU && chunk.is_none() {
-        println!("classic transfer: ATT_MTU {}, 16 B blocks", p::DEFAULT_MTU);
+        log(&format!("classic transfer: ATT_MTU {}, 16 B blocks", p::DEFAULT_MTU));
         return Ok((p::DEFAULT_MTU, p::CHUNK_MIN));
     }
-    let idle = c.p.read(&c.chars[&p::OTA]).await?;
+    let idle = d.read(p::OTA).await?;
     let target = Target::detect(&idle);
-    println!(
+    log(&format!(
         "OTA status before the transfer: {} ({} B -> {} handler, block limit {} B)",
         hex(&idle),
         idle.len(),
         target.name(),
         target.chunk_cap()
-    );
-    let st = Status::parse(&idle);
-    if !matches!(st.state, None | Some(0) | Some(4)) {
-        println!("WARNING: OTA state {} before the transfer (0 = idle)", st.state.unwrap());
+    ));
+    if let Some(state) = Status::parse(&idle).state.filter(|s| ![0, 4].contains(s)) {
+        log(&format!("WARNING: OTA state {state} before the transfer (0 = idle)"));
     }
     let mtu = mtu.max(p::DEFAULT_MTU);
-    let (d, why) = p::pick_chunk(mtu, target, chunk)?;
-    println!("ATT_MTU {mtu} (as given: btleplug does not report the negotiated one); block {d} B ({why})");
-    Ok((mtu, d))
+    let (chunk, why) = p::pick_chunk(mtu, target, chunk)?;
+    log(&format!("ATT_MTU {mtu} (as given: btleplug does not report the negotiated one); block {chunk} B ({why})"));
+    Ok((mtu, chunk))
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn device_information_uuids() {
-        assert_eq!(super::sig_uuid(0x2a27).to_string(), "00002a27-0000-1000-8000-00805f9b34fb");
-    }
-}
+mod tests;

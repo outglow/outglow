@@ -60,6 +60,15 @@ impl Mt {
     }
 }
 
+pub fn run(image: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+    let img = match image {
+        Some(p) => std::fs::read(p)?,
+        None => synthetic(),
+    };
+    print!("{}", json(&img));
+    Ok(())
+}
+
 pub fn synthetic() -> Vec<u8> {
     let mut mt = Mt::new(1);
     let mut body: Vec<u8> = (0..5000).map(|_| mt.byte()).collect();

@@ -103,50 +103,58 @@ pub struct BlackBox {
     pub rows: Vec<Row>,
 }
 
+const NWK_COMMANDS: [&str; 12] = [
+    "route request",
+    "route reply",
+    "network status",
+    "leave",
+    "route record",
+    "rejoin request",
+    "rejoin response",
+    "link status",
+    "network report",
+    "network update",
+    "end device timeout request",
+    "end device timeout response",
+];
+
+const CLUSTERS: [(u16, &str); 21] = [
+    (0x0000, "Basic"),
+    (0x0003, "Identify"),
+    (0x0004, "Groups"),
+    (0x0005, "Scenes"),
+    (0x0006, "On/Off"),
+    (0x0008, "Level"),
+    (0x0019, "OTA"),
+    (0x0300, "Color"),
+    (0x0B05, "Diagnostics"),
+    (0x000C, "Analog Input"),
+    (0x0010, "Binary Output"),
+    (0x000D, "Analog Output"),
+    (0x0013, "ZDO Device_annce"),
+    (0x8031, "ZDO Mgmt_Lqi_rsp"),
+    (0x8032, "ZDO Mgmt_Rtg_rsp"),
+    (0x8000, "ZDO NWK_addr_rsp"),
+    (0x8001, "ZDO IEEE_addr_rsp"),
+    (0x8004, "ZDO Simple_Desc_rsp"),
+    (0x8005, "ZDO Active_EP_rsp"),
+    (0x0021, "Green Power"),
+    (0xFC5F, "BLE settings"),
+];
+
+fn no_name(_: u16) -> Option<&'static str> {
+    None
+}
+
 fn nwk_command(id: u16) -> Option<&'static str> {
-    Some(match id {
-        1 => "route request",
-        2 => "route reply",
-        3 => "network status",
-        4 => "leave",
-        5 => "route record",
-        6 => "rejoin request",
-        7 => "rejoin response",
-        8 => "link status",
-        9 => "network report",
-        10 => "network update",
-        11 => "end device timeout request",
-        12 => "end device timeout response",
-        _ => return None,
-    })
+    NWK_COMMANDS.get(usize::from(id.checked_sub(1)?)).copied()
 }
 
 fn cluster(id: u16) -> Option<&'static str> {
-    Some(match id {
-        0x0000 => "Basic",
-        0x0003 => "Identify",
-        0x0004 => "Groups",
-        0x0005 => "Scenes",
-        0x0006 => "On/Off",
-        0x0008 => "Level",
-        0x0019 => "OTA",
-        0x0300 => "Color",
-        0x0B05 => "Diagnostics",
-        0x000C => "Analog Input",
-        0x0010 => "Binary Output",
-        0x000D => "Analog Output",
-        0x0013 => "ZDO Device_annce",
-        0x8031 => "ZDO Mgmt_Lqi_rsp",
-        0x8032 => "ZDO Mgmt_Rtg_rsp",
-        0x8000 => "ZDO NWK_addr_rsp",
-        0x8001 => "ZDO IEEE_addr_rsp",
-        0x8004 => "ZDO Simple_Desc_rsp",
-        0x8005 => "ZDO Active_EP_rsp",
-        0x0021 => "Green Power",
-        0xFC5F => "BLE settings",
-        _ => return None,
-    })
+    CLUSTERS.iter().find(|(c, _)| *c == id).map(|(_, n)| *n)
 }
+
+const NAMES: [fn(u16) -> Option<&'static str>; 4] = [no_name, nwk_command, cluster, cluster];
 
 const STATUS: [&str; 4] = ["ok", "no ack", "channel busy", "held for child"];
 
@@ -227,11 +235,7 @@ pub fn decode(b: &[u8]) -> Result<BlackBox> {
             relayed: k & kind::RELAYED != 0,
             what: [None, Some("nwk_command"), Some("cluster"), Some("aps_ack")][what as usize],
             id,
-            name: match what {
-                0 => None,
-                1 => nwk_command(id),
-                _ => cluster(id),
-            },
+            name: NAMES[what as usize](id),
             seq: e[13],
             attempts: e[14] & 15,
             status: STATUS.get(st as usize).map_or(Status::Code(st), |s| Status::Name(s)),
@@ -427,6 +431,74 @@ mod tests {
         assert_eq!((f.nwk_type, f.secured, f.broadcast, f.relayed), ("command", true, false, true));
         assert_eq!((f.what, f.name), (Some("nwk_command"), Some("link status")));
         assert_eq!((f.seq, f.attempts, f.status.clone()), (42, 3, Status::Code(5)));
+    }
+
+    #[test]
+    fn names_of_commands_and_clusters() {
+        assert_eq!(nwk_command(0), None);
+        assert_eq!(nwk_command(1), Some("route request"));
+        assert_eq!(nwk_command(12), Some("end device timeout response"));
+        assert_eq!(nwk_command(13), None);
+        assert_eq!(cluster(0x0000), Some("Basic"));
+        assert_eq!(cluster(0xFC5F), Some("BLE settings"));
+        assert_eq!(cluster(0x0007), None);
+        assert_eq!(no_name(1), None);
+    }
+
+    fn ring_of(k: u8, id: u16, status: u8) -> Frame {
+        let mut b = vec![0u8; HEADER + 15];
+        b[3] = 1;
+        b[4] = 1;
+        b[5] = 15;
+        let e = &mut b[HEADER..];
+        e[10] = k;
+        e[11..13].copy_from_slice(&id.to_le_bytes());
+        e[14] = status << 4 | 1;
+        decode(&b).unwrap().ring.remove(0)
+    }
+
+    #[test]
+    fn every_kind_of_frame_and_its_line() {
+        let at = |k: u8| k << kind::ID_COMMAND.trailing_zeros();
+        let f = ring_of(at(0) | 3, 8, 1);
+        assert_eq!((f.what, f.name, f.nwk_type, f.status.clone()), (None, None, "inter-PAN", Status::Name("no ack")));
+        let f = ring_of(at(1) | 2, 13, 2);
+        assert_eq!((f.what, f.name, f.nwk_type, f.status.clone()), (Some("nwk_command"), None, "?", Status::Name("channel busy")));
+        let f = ring_of(at(2) | kind::BROADCAST, 0x0006, 3);
+        assert_eq!((f.what, f.name, f.nwk_type, f.broadcast), (Some("cluster"), Some("On/Off"), "data", true));
+        assert_eq!(f.status, Status::Name("held for child"));
+        let f = ring_of(at(3), 0x0300, 4);
+        assert_eq!((f.what, f.name, f.status.clone()), (Some("aps_ack"), Some("Color"), Status::Code(4)));
+        let f = ring_of(at(2), 0x1234, 0);
+        let bx = BlackBox {
+            header: decode(&[0; HEADER]).unwrap().header,
+            links: vec![],
+            ring: vec![ring_of(at(0), 8, 1), f, ring_of(at(1) | kind::SECURED | kind::RELAYED | kind::BROADCAST, 8, 7)],
+            rows: vec![],
+        };
+        let r = report(&bx, &[]);
+        let lines: Vec<&str> = r.lines().filter(|l| l.starts_with("   -")).collect();
+        assert_eq!(lines[0], "   -     0.0s  to 0x0000  0x0000->0x0000  RBS data    link status                  #0   1 attempts, 7");
+        assert_eq!(lines[1], "   -     0.0s  to 0x0000  0x0000->0x0000  --- data    cluster 0x1234               #0   1 attempts, ok");
+        assert_eq!(lines[2], "   -     0.0s  to 0x0000  0x0000->0x0000  --- data                                 #0   1 attempts, no ack");
+    }
+
+    #[test]
+    fn a_neighbour_with_more_frames_than_its_entry_holds() {
+        let mut b = vec![0u8; HEADER + 5];
+        b[1] = 1;
+        b[2] = 5;
+        let e = &mut b[HEADER..];
+        e[0..2].copy_from_slice(&0x1001u16.to_le_bytes());
+        e[2] = 2;
+        assert_eq!(decode(&b).unwrap().links[0].frames.len(), 2);
+        b[HEADER + 2] = 3;
+        assert_eq!(decode(&b).unwrap_err().to_string(), "neighbour 0x1001: 3 frames do not fit its entry");
+        b[HEADER + 2] = 0;
+        assert!(decode(&b).unwrap().links.is_empty());
+        b[HEADER + 2] = 1;
+        b[HEADER..HEADER + 2].copy_from_slice(&0xFFFFu16.to_le_bytes());
+        assert!(decode(&b).unwrap().links.is_empty());
     }
 
     #[test]

@@ -16,6 +16,10 @@ exclude_globs = [
   "crates/memcap/**",
   # the hand-written mutation lists of `cargo xtask mutants`: data
   "xtask/src/mutants/**",
+  # outglow's glue to the Bluetooth adapter (btleplug) and the MQTT broker (rumqttc):
+  # what it does needs a bulb or a broker; the logic behind it is in flash/ble.rs and diag.rs
+  "crates/outglow/src/flash/bt.rs",
+  "crates/outglow/src/diag/mqtt.rs",
 ]
 
 exclude_re = [

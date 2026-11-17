@@ -101,4 +101,49 @@ mod tests {
         assert!(eq(None, Some(&json!(null))));
         assert_eq!(csv_cell(Some(&json!("a,b"))), "\"a,b\"");
     }
+
+    #[test]
+    fn every_kind_of_value() {
+        assert_eq!(repr(&json!(u64::MAX)), "18446744073709551615");
+        assert_eq!(repr(&json!(i64::MIN)), "-9223372036854775808");
+        assert_eq!(repr(&json!(false)), "False");
+        assert_eq!(repr(&json!("it's a \\")), "'it\\'s a \\\\'");
+        assert_eq!(repr(&json!([])), "[]");
+        assert_eq!(float(1e16), "10000000000000000");
+        assert_eq!(float(-3.0), "-3.0");
+        assert_eq!(float(f64::NAN), "NaN");
+        assert_eq!(float(f64::INFINITY), "inf");
+        assert_eq!(float(0.25), "0.25");
+        for (v, t) in [
+            (json!(null), false),
+            (json!(false), false),
+            (json!(true), true),
+            (json!(0.0), false),
+            (json!(-1), true),
+            (json!(""), false),
+            (json!([]), false),
+            (json!([0]), true),
+            (json!({}), false),
+            (json!({"a": 0}), true),
+        ] {
+            assert_eq!(truthy(Some(&v)), t, "{v}");
+        }
+        assert!(!truthy(None));
+        assert_eq!(num(Some(&json!(2.5))), 2.5);
+        assert_eq!(num(Some(&json!("2"))), 0.0);
+        assert_eq!(num(None), 0.0);
+        assert!(!eq(Some(&json!(8)), Some(&json!(9))));
+        assert!(eq(Some(&json!("a")), Some(&json!("a"))));
+        assert!(!eq(Some(&json!("8")), Some(&json!(8))));
+        assert_eq!(csv_cell(None), "");
+        assert_eq!(csv_cell(Some(&json!(null))), "");
+        assert_eq!(csv_cell(Some(&json!(3))), "3");
+        assert_eq!(csv_quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_quote("a\rb"), "\"a\rb\"");
+        assert_eq!(csv_quote("a\nb"), "\"a\nb\"");
+        assert_eq!(csv_quote("plain"), "plain");
+        assert_eq!(csv_row(&["a".into(), "b".into()]), "a,b\r\n");
+        let m = serde_json::Map::from_iter([("k".to_string(), json!("v"))]);
+        assert_eq!((get(&m, "k"), get(&m, "x")), ("v".to_string(), "None".to_string()));
+    }
 }

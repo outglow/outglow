@@ -29,3 +29,4 @@ getrandom = "0.2"
 
 [dev-dependencies]
 memcap = { path = "../memcap" }
+tokio = { version = "1", features = ["test-util"] }

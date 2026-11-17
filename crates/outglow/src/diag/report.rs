@@ -277,6 +277,37 @@ mod tests {
     }
 
     #[test]
+    fn a_report_of_nothing() {
+        let r = report(&Map::new(), None);
+        assert!(r.contains("== start: uptime None s, resets ?, last cause None, watchdog resets None\n"), "{r}");
+        assert!(r.contains("   MAC unicasts sent ?, retries ? (-), failed ? (-)\n"), "{r}");
+        assert!(r.contains("   RSSI of frames heard: <-90 0.0%  -90..-80 0.0%  -80..-70 0.0%  -70..-60 0.0%  >-60 0.0%\n"), "{r}");
+        assert!(r.contains("skipped ? (-), radio lent None ms\n"), "{r}");
+        assert!(r.ends_with("== events, newest first (#start, seconds since that start)\n"), "{r}");
+        assert_eq!(pct(1.0, 4.0), "25.0%");
+        assert_eq!(pct(1.0, 0.0), "-");
+    }
+
+    #[test]
+    fn growth_of_integers_and_floats_and_odd_neighbours() {
+        let s: Map<String, Value> = serde_json::from_value(serde_json::json!({
+            "number_of_resets": 3, "cca_busy": 10.5, "mac_tx_ucast": 2, "mac_tx_ucast_fail": null,
+            "neighbor_table": [7, {"address": "0x1", "relays": true, "child": 1, "link_cost": 3, "delivery": 90}],
+            "event_log": [{"text": "boot"}, {"text": ""}, "plain"],
+        }))
+        .unwrap();
+        let b: Map<String, Value> = serde_json::from_value(serde_json::json!({"number_of_resets": 1, "cca_busy": 10, "mac_tx_ucast": "x"})).unwrap();
+        let r = report(&s, Some(&b));
+        assert!(r.contains("resets 3 (+2)"), "{r}");
+        assert!(r.contains("CCA busy 10.5 (+0.5)"), "{r}");
+        assert!(r.contains("MAC unicasts sent 2, retries ? (0.0%), failed ? (0.0%)"), "{r}");
+        assert!(r.contains("\n   None    None None None ---   None  None  None/None   None  None None    ?     -\n"), "{r}");
+        assert!(r.contains("\n   0x1     None None None R-C   None  None  None/None   None  None None    3   90%\n"), "{r}");
+        assert!(r.ends_with("   boot\n   {'text': ''}\n   plain\n"), "{r}");
+        assert_eq!(report(&s, Some(&Map::new())), report(&s, None));
+    }
+
+    #[test]
     fn flattens_groups_after_the_keys_that_came() {
         let s = flatten(state(r#"{"z": 1, "radio": {"cca_busy": 4, "z": 2}, "a": 3}"#));
         assert_eq!(s.keys, ["z", "radio", "a", "cca_busy"]);

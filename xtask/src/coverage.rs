@@ -24,6 +24,8 @@ const TOLERANCE: f64 = 0.05;
 
 const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval\\.rs$|crates/memcap/|crates/bulb-tc32/src/(sim\\.rs$|tests/)";
 
+const GLUE: &str = "crates/outglow/src/(flash/bt|diag/mqtt)\\.rs$";
+
 struct Workspace {
     name: &'static str,
     manifest: &'static str,
@@ -132,7 +134,8 @@ pub fn run(a: Args) -> Result<()> {
             }
         }
         let json = dir.join("summary.json");
-        let ignore = ["--ignore-filename-regex", TEST_ONLY];
+        let skip = format!("{TEST_ONLY}|{GLUE}");
+        let ignore = ["--ignore-filename-regex", skip.as_str()];
         llvm_cov(&manifest, &[&["report", "--json", "--summary-only", "--output-path", path_str(&json)?][..], &ignore].concat())?;
         llvm_cov(&manifest, &[&["report", "--html", "--output-dir", path_str(&dir)?][..], &ignore].concat())?;
         html.push(dir.join("html").join("index.html"));
