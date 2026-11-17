@@ -1178,3 +1178,29 @@ fn proxy_attribute_writes_are_checked_and_undivided_ones_write_all_or_nothing() 
     net.run(100);
     assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x10, seq, 0x0B, 0x7F, 0x81]);
 }
+
+#[test]
+fn only_data_frames_with_an_application_id_the_proxy_knows_are_forwarded() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 3));
+    net.run(200);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    let id = SWITCH.to_le_bytes();
+    for nwk in [
+        [&[0x0E][..], &id, &[0x22]].concat(),
+        [&[0x0F][..], &id, &[0x22]].concat(),
+        [&[0x8C, 0x01][..], &id, &[0x22]].concat(),
+        [&[0x8C, 0x02, 1][..], &[0x22]].concat(),
+        [&[0x8C, 0x03][..], &id, &[0x22]].concat(),
+        [&[0x8C, 0x08][..], &id, &[0x22]].concat(),
+        [&[0x8C, 0x80][..], &id, &[0x22]].concat(),
+    ] {
+        gpd.send_raw(&nwk);
+        net.run(100);
+        assert!(gp_frames(&net, 0x00).is_empty(), "{nwk:02x?}");
+    }
+    gpd.send_raw(&[&[0x0C][..], &id, &[0x22]].concat());
+    net.run(100);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1);
+}
