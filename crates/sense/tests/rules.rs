@@ -580,3 +580,16 @@ fn unused_lines_are_skipped_at_the_tick() {
     assert_eq!(c.tick(100), 0);
     assert_eq!(c.line[4].src, NO_SRC);
 }
+
+#[test]
+fn a_line_from_nv_finds_no_room_when_every_line_is_on() {
+    let mut c = Core::new(0, 50, 30);
+    c.start(0);
+    for src in 1..=10u16 {
+        assert!(c.line_restore(0, src, 50, 50, 0));
+        c.line[src as usize - 1].flags = F_ON;
+    }
+    assert!(!c.line_restore(600_000, 11, 50, 50, 0));
+    assert!(!c.line_restore(0, 3, 50, 50, 0), "already there");
+    assert!(!c.line_restore(0, NO_SRC, 50, 50, 0));
+}

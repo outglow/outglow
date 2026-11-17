@@ -388,4 +388,9 @@ mod tests {
         assert_eq!(uleb(&[0x80, 0x80, 0x80, 0x80, 0x80, 0x01], 0), Some((0, 6)));
         assert_eq!(uleb(&[0x80], 0), None);
     }
+
+    #[test]
+    fn a_refusal_reads_as_its_reason() {
+        assert_eq!(Refused("no loadable segment".into()).to_string(), "no loadable segment");
+    }
 }
