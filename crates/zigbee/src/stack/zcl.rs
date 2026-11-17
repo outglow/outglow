@@ -1552,7 +1552,7 @@ impl<H: Hal> Stack<H> {
                     }
                 }
             }
-            0x02 if !enhanced => {
+            0x02 => {
                 let id = r.u8()?;
                 let found = self.scene_index(group, id);
                 rsp.u8(match (known_group, found) {
