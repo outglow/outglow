@@ -1376,3 +1376,25 @@ fn an_entry_keeps_its_group_when_its_sink_goes_and_shows_that_it_is_fixed() {
     let options = u16::from_le_bytes([entries[3], entries[4]]);
     assert_eq!(options & (1 << 6 | 1 << 8 | 1 << 11), 1 << 8 | 1 << 11, "no sink, a group, fixed: {options:#06x}");
 }
+
+#[test]
+fn commissioning_mode_ends_by_itself_after_the_default_window_or_the_one_given() {
+    let mut net = Net::new();
+    net.join_node();
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(179_000);
+    gpd.send(0xE0, &commissioning());
+    net.run(500);
+    assert_eq!(gp_frames(&net, 0x04).len(), 1, "still open after 179 s");
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(181_000);
+    gpd.send(0xE0, &commissioning());
+    net.run(500);
+    assert_eq!(gp_frames(&net, 0x04).len(), 1, "closed after 180 s");
+    net.coord.gp_command(0x02, &[0x01 | 0x02 | 0x20, 10, 0]);
+    net.run(11_000);
+    gpd.send(0xE0, &commissioning());
+    net.run(500);
+    assert_eq!(gp_frames(&net, 0x04).len(), 1, "closed after the 10 s given");
+}
