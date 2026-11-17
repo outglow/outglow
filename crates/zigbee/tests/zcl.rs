@@ -725,3 +725,30 @@ fn the_sense_cluster_has_no_manufacturer_commands_to_discover() {
     net.run(100);
     assert_eq!(net.coord.last_zcl_mfr(short, 0xFC5E, 0x12).unwrap(), vec![0x1C, 0x41, 0x11, seq, 0x12, 1]);
 }
+
+#[test]
+fn remove_all_groups_keeps_the_global_scene() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, 1, 0, 0, 0]);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0x00, 0x00]);
+    net.run(50);
+    assert_eq!(read(&mut net, short, SCENES, &[0x0000]), vec![ok(0, &[0x20, 2])]);
+    net.coord.zcl(short, GROUPS, 0x01, 0x04, &[]);
+    net.run(50);
+    assert_eq!(read(&mut net, short, SCENES, &[0x0000]), vec![ok(0, &[0x20, 1])], "the global scene stays");
+}
+
+#[test]
+fn on_with_recall_global_scene_ends_a_waiting_off_guard_when_there_is_no_on_time() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x42, &[0x00, 0x00, 0x00, 0x1E, 0x00]);
+    net.run(50);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0x00, 0x00]);
+    net.run(50);
+    assert_ne!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0, 0])]);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x41, &[]);
+    net.run(50);
+    assert_eq!(read(&mut net, short, ON_OFF, &[0x4002]), vec![ok(0x4002, &[0x21, 0, 0])]);
+}
