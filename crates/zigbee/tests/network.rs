@@ -2845,7 +2845,7 @@ fn source_routed_through(concentrator: &mut Zed, relay: &mut Zed, me: u16) {
     let mut list = [0u16; nwk::MAX_RELAYS];
     list[0] = me;
     h.relays = Some((1, 0, list));
-    relay.mac_send(me, h, &[0x00, 0x01]);
+    relay.mac_send(me, h, &RELAYED_APS);
 }
 
 fn relayed_for(net: &Net, n: usize, dst: u16, since: u32) -> Vec<u16> {
@@ -2855,6 +2855,8 @@ fn relayed_for(net: &Net, n: usize, dst: u16, since: u32) -> Vec<u16> {
         .map(|(m, _, _)| if let zigbee::mac::Addr::Short(d) = m.dst { d } else { 0xFFFF })
         .collect()
 }
+
+const RELAYED_APS: [u8; 11] = [0x00, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, 0x02, 0x01, 0x00, 0x01];
 
 #[test]
 fn a_frame_for_a_concentrator_next_door_goes_straight_to_it_and_asks_for_a_route_record() {
@@ -2871,7 +2873,7 @@ fn a_frame_for_a_concentrator_next_door_goes_straight_to_it_and_asks_for_a_route
     assert!(routes(&mut net, n).contains(&(c.short, 0x10, x.short)), "the concentrator has the path");
     let t = net.now();
     let h = x.header(nwk::FRAME_DATA, c.short);
-    x.mac_send(me, h, &[0x00, 0x02]);
+    x.mac_send(me, h, &RELAYED_APS);
     net.run(500);
     assert_eq!(relayed_for(&net, n, c.short, t), vec![c.short], "straight to the concentrator, not back to x");
     assert!(routes(&mut net, n).contains(&(c.short, 0x30, c.short)), "the path changed, so a route record is due");
@@ -2889,7 +2891,7 @@ fn a_frame_for_a_concentrator_that_is_no_fresh_neighbor_goes_where_the_route_say
     net.run(500);
     let t = net.now();
     let h = x.header(nwk::FRAME_DATA, c.short);
-    x.mac_send(me, h, &[0x00, 0x02]);
+    x.mac_send(me, h, &RELAYED_APS);
     net.run(500);
     assert_eq!(relayed_for(&net, n, c.short, t), vec![x.short], "not a neighbor: the route is kept");
     assert!(routes(&mut net, n).contains(&(c.short, 0x30, x.short)));
@@ -2900,7 +2902,7 @@ fn a_frame_for_a_concentrator_that_is_no_fresh_neighbor_goes_where_the_route_say
     }
     let t = net.now();
     let h = x.header(nwk::FRAME_DATA, c.short);
-    x.mac_send(me, h, &[0x00, 0x03]);
+    x.mac_send(me, h, &RELAYED_APS);
     net.run(500);
     assert_eq!(relayed_for(&net, n, c.short, t), vec![x.short], "a neighbor not heard for long: the route is kept");
     assert!(routes(&mut net, n).contains(&(c.short, 0x30, x.short)));
