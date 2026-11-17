@@ -2,15 +2,15 @@
 # Checked in CI (Linux); raise them with `cargo xtask coverage --update` when tests are added.
 crate	lines	regions
 ble	100.00	99.81
-bulb-core	94.55	93.83
+bulb-core	93.24	92.76
 bulb-sim	96.80	97.99
 bulb-tc32	100.00	99.79
 emulator/ble	71.31	71.49
 emulator/scenarios	2.64	2.24
 emulator/tc32emu	72.23	71.86
-emulator/zbnode	13.69	13.40
+emulator/zbnode	13.62	13.33
 outglow	65.46	63.23
 outglow-image	91.54	90.12
-sense	96.41	94.52
+sense	94.16	92.59
 xtask	24.13	22.89
-zigbee	90.47	88.81
+zigbee	89.19	88.25
