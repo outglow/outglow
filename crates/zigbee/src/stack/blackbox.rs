@@ -208,7 +208,8 @@ impl BlackBox {
             };
         }
         if off < ROWS_AT {
-            let (i, o) = ((off - RING_AT) / RING_ENTRY, (off - RING_AT) % RING_ENTRY);
+            let rel = off - RING_AT;
+            let (i, o) = (rel / RING_ENTRY, rel % RING_ENTRY);
             if i >= ring_len as usize {
                 return 0;
             }

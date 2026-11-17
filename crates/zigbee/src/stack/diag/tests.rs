@@ -168,6 +168,8 @@ fn a_black_box_row_has_the_coordinators_link_measured_and_the_stale_neighbours()
     s.neighbors[4].confirmed = true;
     s.neighbors[4].age = crate::stack::AGE_LIMIT;
     s.neighbors[5].age = crate::stack::AGE_LIMIT + 1;
+    s.neighbors[1].confirmed = true;
+    s.neighbors[1].age = crate::stack::AGE_LIMIT + 5;
     for now in [1_000, 1_000 + super::blackbox::ROW_MS] {
         s.hal.bx.as_mut().unwrap().row_at = now;
         s.box_timers(now);
@@ -181,7 +183,7 @@ fn a_black_box_row_has_the_coordinators_link_measured_and_the_stale_neighbours()
     let at = super::blackbox::BOX_LEN - super::blackbox::ROWS * super::blackbox::ROW_ENTRY;
     let r = &rows[at..at + super::blackbox::ROW_ENTRY];
     assert!(s.neighbors[0].measured());
-    assert_eq!((r[8] & 0x18, r[9], r[10]), (0x08 | 0x10, 0xC8, 1));
+    assert_eq!((r[8] & 0x18, r[9], r[10]), (0x08 | 0x10, 0xC8, 2));
 }
 
 #[test]
