@@ -410,3 +410,119 @@ fn a_power_cut_while_the_image_waits_costs_only_the_end_of_the_download() {
     net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
     assert!(net.coord.ota_blocks - before >= (image.len() as u32 + 62).div_ceil(48));
 }
+
+fn block_response(net: &mut Net, short: u16, payload: &[u8]) {
+    let seq = 0x70;
+    let mut zcl = vec![0x19, seq, 0x05];
+    zcl.extend_from_slice(payload);
+    let aps = net.coord.aps_frame(0x00, 1, 0x0019, 0x0104, 1, &zcl);
+    net.coord.nwk_data(short, &aps);
+}
+
+#[test]
+fn a_server_that_aborts_the_download_ends_it() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(3000, 4);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_notify(short);
+    net.run_until(10_000, "download started", |net| net.coord.ota_blocks > 2);
+    net.coord.ota_drop_blocks = 1000;
+    block_response(&mut net, short, &[0x95]);
+    net.run(100);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Idle);
+    let blocks = net.coord.ota_blocks;
+    net.coord.ota_drop_blocks = 0;
+    net.run(30_000);
+    assert_eq!(net.coord.ota_blocks, blocks, "and asks for nothing more");
+}
+
+#[test]
+fn a_block_response_with_another_status_or_for_another_place_is_ignored() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(800, 5);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_notify(short);
+    net.run_until(10_000, "download started", |net| net.coord.ota_blocks > 1);
+    net.coord.ota_drop_blocks = 2;
+    let id = [&MFG.to_le_bytes()[..], &TYPE.to_le_bytes()[..]].concat();
+    block_response(&mut net, short, &[0x80]);
+    block_response(&mut net, short, &[&[0x00][..], &id, &NEW.to_le_bytes(), &0x7000u32.to_le_bytes(), &[2, 0xAA, 0xBB]].concat());
+    block_response(&mut net, short, &[&[0x00][..], &id, &(NEW + 1).to_le_bytes(), &0u32.to_le_bytes(), &[2, 0xAA, 0xBB]].concat());
+    block_response(&mut net, short, &[&[0x00][..], &id, &NEW.to_le_bytes(), &0u32.to_le_bytes(), &[0]].concat());
+    block_response(&mut net, short, &[&[0x00][..], &id, &NEW.to_le_bytes(), &0u32.to_le_bytes(), &[3, 0xAA]].concat());
+    net.run(100);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Downloading);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    net.run(2_000);
+    assert!(activated(&net, n));
+    assert_eq!(staged(&net, n, image.len()), image, "none of them went into the image");
+}
+
+#[test]
+fn a_file_with_a_bad_header_is_an_invalid_image() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(600, 6);
+    for (k, damage) in [(0usize, 0x1Fu8), (6, 40)].into_iter().enumerate() {
+        let version = NEW + k as u32;
+        let mut file = make_ota_file(&image, MFG, TYPE, version, 0, false);
+        file[damage.0] = damage.1;
+        net.coord.ota_file = Some(OtaFile { manufacturer: MFG, image_type: TYPE, version, data: file });
+        net.coord.ota_end = None;
+        net.coord.ota_notify(short);
+        net.run_until(60_000, "upgrade end", |net| net.coord.ota_end.is_some());
+        assert_eq!(net.coord.ota_end, Some(0x96), "damage at {}", damage.0);
+        net.run(3_000);
+        assert!(!activated(&net, n));
+    }
+}
+
+#[test]
+fn an_upgrade_time_beyond_the_longest_wait_holds_the_image_without_asking_every_hour() {
+    let (mut net, n, short, _) = downloaded(None);
+    let ends = net.coord.ota_ends;
+    net.coord.ota_upgrade_end_response(short, MFG, TYPE, NEW, 21 * 24 * 3600);
+    net.run(100);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Held);
+    net.run(3_600_000);
+    assert_eq!(net.coord.ota_ends, ends, "not after an hour");
+    assert!(!activated(&net, n));
+}
+
+#[test]
+fn an_upgrade_end_response_for_another_image_is_ignored() {
+    let (mut net, n, short, _) = downloaded(None);
+    for (m, t, v) in [(0x1234u16, TYPE, NEW), (MFG, 0x0391, NEW), (MFG, TYPE, NEW + 1)] {
+        net.coord.ota_upgrade_end_response(short, m, t, v, 0);
+        net.run(2_000);
+        assert!(!activated(&net, n), "{m:#06x} {t:#06x} {v:#x}");
+    }
+    net.coord.ota_upgrade_end_response(short, 0xFFFF, 0xFFFF, 0xFFFF_FFFF, 0);
+    net.run(2_000);
+    assert!(activated(&net, n), "wildcards are this image");
+}
+
+#[test]
+fn a_server_that_does_not_answer_the_query_is_forgotten_and_looked_for_again() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let mut h = net.coord.header(nwk::FRAME_DATA, short, 30);
+    h.src = 0x4444;
+    let seq = 0x71;
+    let aps = net.coord.aps_frame(0x00, 1, 0x0019, 0x0104, 1, &[0x19, seq, 0x00, 0x00, 100]);
+    net.coord.nwk_send(h, &aps, None);
+    net.run(600);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Querying);
+    let asked = net.coord.match_requests;
+    net.run(11_000);
+    assert_eq!(net.nodes[n].stack.ota_state(), OtaState::Idle);
+    net.coord.ota_notify(0xFFFD);
+    net.run(1_000);
+    assert_eq!(net.coord.match_requests, asked + 1, "the server is looked for again");
+}
