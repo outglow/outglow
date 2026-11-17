@@ -1435,3 +1435,18 @@ fn a_broadcast_held_for_many_sleeping_children_lists_each_of_them_as_waiting() {
     want.sort();
     assert_eq!(shorts, want);
 }
+
+#[test]
+fn a_parent_annce_cut_short_claims_nothing_even_when_it_names_many_children() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let mut kids = vec![zed];
+    kids.extend(more_sleepy_children(&mut net, a, 9));
+    let sa = net.nodes[a].short();
+    let mut annce = vec![kids.len() as u8 + 1];
+    for k in &kids {
+        annce.extend_from_slice(&k.ext.to_le_bytes());
+    }
+    net.coord.zdo(0xFFFC, 0x001F, &annce);
+    net.run(1_000);
+    assert!(net.coord.zdo_rx.iter().all(|(s, c, _)| *s != sa || *c != 0x801F), "not even the first nine");
+}

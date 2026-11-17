@@ -68,3 +68,22 @@ fn a_busy_channel_while_joining_moves_on_to_the_next_try_and_the_bulb_joins_late
     net.air.borrow_mut().ports[id].busy = 0;
     net.run_until(60_000, "joined after all", |net| net.nodes[n].stack.state() == State::Up);
 }
+
+#[test]
+fn after_joining_the_bulb_opens_the_network_once_and_only_after_announcing_itself() {
+    let mut net = Net::new();
+    let n = net.add_node();
+    let id = net.nodes[n].id;
+    net.run_until(30_000, "joined", |net| net.nodes[n].stack.state() == State::Up);
+    net.run(10_000);
+    let zdo: Vec<(u32, u16, u8)> = net
+        .timed_nwk_sent_by(id, 0)
+        .into_iter()
+        .filter(|(_, _, h, p)| h.frame_type == zigbee::nwk::FRAME_DATA && p.len() > 6 && p[4..6] == [0x00, 0x00] && h.src == net.nodes[n].short())
+        .map(|(t, _, h, p)| (t, u16::from_le_bytes([p[2], p[3]]), h.seq))
+        .collect();
+    let announce = zdo.iter().find(|e| e.1 == 0x0013).expect("Device_annce").0;
+    let opens: std::collections::BTreeSet<u8> = zdo.iter().filter(|e| e.1 == 0x0036).map(|e| e.2).collect();
+    assert_eq!(opens.len(), 1, "one Mgmt_Permit_Joining_req, sent again only as a broadcast is: {zdo:?}");
+    assert!(zdo.iter().filter(|e| e.1 == 0x0036).all(|e| e.0 > announce));
+}
