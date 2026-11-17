@@ -588,7 +588,7 @@ impl<H: Hal> Stack<H> {
     fn type_of(&self, c: Ctx, cluster: u16, id: u16) -> Option<u8> {
         let mfr = c.mfr.is_some();
         if let Some(o) = objects::object(c.ep) {
-            return if mfr { None } else { objects::attribute_type(o, id) };
+            return objects::attribute_type(o, id);
         }
         if cluster == DIAGNOSTICS {
             if !mfr && id == CLUSTER_REVISION {
@@ -614,12 +614,10 @@ impl<H: Hal> Stack<H> {
     fn list_of(&self, c: Ctx, cluster: u16, start: u16, mut each: impl FnMut(u16, u8) -> bool) {
         let mut a = [(0u16, 0u8); 10];
         if let Some(o) = objects::object(c.ep) {
-            if c.mfr.is_none() {
-                let n = objects::attributes(o, &mut a);
-                for x in a[..n].iter().filter(|x| x.0 >= start) {
-                    if !each(x.0, x.1) {
-                        return;
-                    }
+            let n = objects::attributes(o, &mut a);
+            for x in a[..n].iter().filter(|x| x.0 >= start) {
+                if !each(x.0, x.1) {
+                    return;
                 }
             }
             return;

@@ -261,3 +261,22 @@ fn colour_commands_for_a_light_that_is_off_jump_when_told_to_execute_anyway() {
         ]
     );
 }
+
+#[test]
+fn hue_saturation_and_temperature_move_and_step_down_as_well_as_up() {
+    let (mut net, n, short) = colour_bulb();
+    let hs = |hue: u8, sat: u8, direction: HueDirection, transition_ms: u32| Command::MoveToHueSaturation { hue, sat, direction, transition_ms };
+    let mut send = |cmd: u8, payload: &[u8]| {
+        net.coord.zcl(short, COLOR, 0x11, cmd, payload);
+        net.run(50);
+        last_command(&net, n)
+    };
+    assert_eq!(send(0x01, &[3, 10]), hs(171, 254, HueDirection::Down, 25_400));
+    assert_eq!(send(0x02, &[3, 200, 5]), hs(226, 254, HueDirection::Down, 500));
+    assert_eq!(send(0x04, &[3, 127]), hs(226, 0, HueDirection::Shortest, 2_000));
+    assert_eq!(send(0x05, &[1, 50, 0]), hs(226, 50, HueDirection::Shortest, 0));
+    assert_eq!(send(0x05, &[1, 250, 0]), hs(226, 254, HueDirection::Shortest, 0));
+    assert_eq!(send(0x05, &[3, 100, 0]), hs(226, 154, HueDirection::Shortest, 0));
+    assert_eq!(send(0x4C, &[3, 100, 0, 10, 0, 0, 0, 0, 0]), Command::MoveToColorTemperature { mireds: 233, transition_ms: 1_000 });
+    assert_eq!(send(0x4C, &[3, 200, 0, 10, 0, 0, 0, 0, 0]), Command::MoveToColorTemperature { mireds: 153, transition_ms: 1_000 });
+}
