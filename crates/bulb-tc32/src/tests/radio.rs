@@ -87,6 +87,10 @@ fn reset_radio_state() {
     RADIO_DROPPED.set(0);
     CCA_BUSY.set(0);
     LAST_RX.set(0);
+    LAST_AIR.set(0);
+    RX_PEAK.set(0);
+    TX_SENT.set(0);
+    ACK_SEQ.set(0);
 }
 
 #[test]
@@ -432,4 +436,748 @@ fn a_frame_sent_at_a_given_tick_waits_for_it() {
     assert!((sim::with(|c| c.tick).wrapping_sub(at) as i32) >= 0);
     transmit_at(&[0x01, 0x08, 0x01, 0xff, 0xff], at);
     assert_eq!(sim::with(|c| c.tx_kicks), 1);
+}
+
+fn frame(mpdu: &[u8], stamp: u32, rssi: u8, status: u8) -> Vec<u8> {
+    let phr = mpdu.len() + 2;
+    let mut v = vec![(phr + 9) as u8, 0, 0, 0, phr as u8];
+    v.extend_from_slice(mpdu);
+    v.extend_from_slice(&[0, 0]);
+    v.extend_from_slice(&stamp.to_le_bytes());
+    v.extend_from_slice(&[0, 0, rssi, status]);
+    v
+}
+
+const OUR_PAN: u16 = 0x1a62;
+const OUR_SHORT: u16 = 0x2b3c;
+
+fn ours() {
+    set_filter(OUR_PAN, OUR_SHORT, OUR_EXT);
+    #[cfg(feature = "sense")]
+    set_probe_pan(0x5e55);
+}
+
+fn data_to_short(fcf0: u8, pan: u16, dst: u16) -> Vec<u8> {
+    let [p0, p1] = pan.to_le_bytes();
+    let [d0, d1] = dst.to_le_bytes();
+    vec![fcf0, 0x88, 0x42, p0, p1, d0, d1, 0x00, 0x00, 0xaa]
+}
+
+fn data_to_ext(fcf0: u8, pan: u16, dst: u64) -> Vec<u8> {
+    let [p0, p1] = pan.to_le_bytes();
+    let mut v = vec![fcf0, 0x8c, 0x42, p0, p1];
+    v.extend_from_slice(&dst.to_le_bytes());
+    v.extend_from_slice(&[0x00, 0x00]);
+    v
+}
+
+fn heard(mpdu: &[u8]) -> (bool, usize) {
+    let end_now = sim::with(|c| c.tick).wrapping_add(1_000 * 16);
+    let stamp = end_now.wrapping_sub((mpdu.len() as u32 + 3) * 32 * 16);
+    let kicks = sim::with(|c| c.tx_kicks);
+    deliver(&frame(mpdu, stamp, 60, 0x10));
+    let mut buf = [0u8; 127];
+    let got = receive(&mut buf).is_some();
+    (got, sim::with(|c| c.tx_kicks) - kicks)
+}
+
+#[test]
+fn the_frame_filter_takes_what_is_for_us_and_acknowledges_what_asks_for_it() {
+    let cases: Vec<(&str, Vec<u8>, bool, usize)> = vec![
+        ("beacon", vec![0x00, 0x80, 0x01, 0x34, 0x12, 0x00, 0x00, 0xff, 0xcf, 0, 0], true, 0),
+        ("data to us, ack", data_to_short(0x61, OUR_PAN, OUR_SHORT), true, 1),
+        ("data to us, no ack", data_to_short(0x41, OUR_PAN, OUR_SHORT), true, 0),
+        ("broadcast", data_to_short(0x61, OUR_PAN, 0xffff), true, 0),
+        ("broadcast PAN", data_to_short(0x61, 0xffff, OUR_SHORT), true, 1),
+        ("another short", data_to_short(0x61, OUR_PAN, OUR_SHORT ^ 1), false, 0),
+        ("another short, high octet", data_to_short(0x61, OUR_PAN, OUR_SHORT ^ 0x100), false, 0),
+        ("another PAN", data_to_short(0x61, OUR_PAN ^ 1, OUR_SHORT), false, 0),
+        ("another PAN, high octet", data_to_short(0x61, OUR_PAN ^ 0x100, OUR_SHORT), false, 0),
+        ("our long address", data_to_ext(0x61, OUR_PAN, OUR_EXT), true, 1),
+        ("command to us", { let mut v = data_to_short(0x63, OUR_PAN, OUR_SHORT); v[1] = 0x88; v }, true, 1),
+        ("ack frame type", vec![0x02, 0x00, 0x42], false, 0),
+        ("reserved frame type 4", data_to_short(0x64, OUR_PAN, OUR_SHORT), false, 0),
+        ("reserved frame type 7", data_to_short(0x67, OUR_PAN, OUR_SHORT), false, 0),
+        ("no destination", vec![0x41, 0xc0, 0x42, 0x62, 0x1a, 0x01, 0x02, 0x03, 0x04, 0x05], false, 0),
+        ("reserved destination mode", { let mut v = data_to_short(0x61, OUR_PAN, OUR_SHORT); v[1] = 0x84; v }, false, 0),
+    ];
+    for b in 0..8 {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        let mut e = data_to_ext(0x61, OUR_PAN, OUR_EXT);
+        e[5 + b] ^= 0x01;
+        assert_eq!(heard(&e), (false, 0), "long address octet {b}");
+    }
+    for (what, mpdu, taken, acks) in cases {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        assert_eq!(heard(&mpdu), (taken, acks), "{what}");
+    }
+}
+
+#[test]
+fn a_frame_shorter_than_its_addressing_is_dropped() {
+    for (mpdu, taken) in [
+        (vec![0x41, 0x88, 0x42, 0x62, 0x1a, 0x3c, 0x2b], true),
+        (vec![0x41, 0x88, 0x42, 0x62, 0x1a, 0x3c], false),
+        (data_to_ext(0x41, OUR_PAN, OUR_EXT)[..13].to_vec(), true),
+        (data_to_ext(0x41, OUR_PAN, OUR_EXT)[..12].to_vec(), false),
+    ] {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        assert_eq!(heard(&mpdu).0, taken, "{mpdu:x?}");
+    }
+}
+
+#[cfg(feature = "sense")]
+#[test]
+fn a_probe_broadcast_on_the_probe_pan_is_taken() {
+    for (dst, mode, taken) in [(0xffffu16, 0x88u8, true), (0xfffe, 0x88, false), (0xfeff, 0x88, false), (0xffff, 0x8c, false)] {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        let mut v = data_to_short(0x41, 0x5e55, dst);
+        v[1] = mode;
+        if mode == 0x8c {
+            v = data_to_ext(0x41, 0x5e55, u64::MAX);
+        }
+        assert_eq!(heard(&v).0, taken, "{dst:#x} {mode:#x}");
+    }
+    let _s = sim::session();
+    reset_radio_state();
+    ours();
+    assert!(!heard(&data_to_short(0x41, 0x5e56, 0xffff)).0);
+}
+
+#[test]
+fn the_phy_header_must_hold_a_frame_and_match_the_dma_length() {
+    for (phr, taken) in [(4usize, false), (5, true), (127, true), (128, false)] {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        let mut mpdu = vec![0u8; phr - 2];
+        mpdu[0] = 0x00;
+        let v = frame(&mpdu, 0, 60, 0x10);
+        deliver(&v);
+        assert_eq!(has_frame(), taken, "phr {phr}");
+    }
+}
+
+#[test]
+fn only_a_crc_status_with_bit_4_set_and_bits_0_and_6_clear_is_good() {
+    for status in 0u8..=255 {
+        let _s = sim::session();
+        reset_radio_state();
+        deliver(&frame(&[0x00, 0x80, 0x01, 0x34, 0x12], 0, 60, status));
+        assert_eq!(has_frame(), status & 0x51 == 0x10, "{status:#x}");
+    }
+}
+
+#[test]
+fn a_queued_frame_keeps_its_length_rssi_end_and_octets() {
+    let _s = sim::session();
+    reset_radio_state();
+    ours();
+    let mpdu = data_to_short(0x41, OUR_PAN, OUR_SHORT);
+    deliver(&frame(&mpdu, 0x1234_5678, 0x9c, 0x10));
+    let mut buf = [0u8; 127];
+    let (len, rssi, end) = receive(&mut buf).expect("queued");
+    assert_eq!((len, rssi), (mpdu.len(), 0x9c - 110));
+    assert_eq!(end, 0x1234_5678u32.wrapping_add((mpdu.len() as u32 + 3) * 32 * 16));
+    assert_eq!(buf[..len], mpdu[..]);
+}
+
+#[test]
+fn the_queue_wraps_around_its_sixteen_slots() {
+    let _s = sim::session();
+    reset_radio_state();
+    let mut buf = [0u8; 127];
+    for i in 0..40u8 {
+        deliver(&frame(&[0x00, 0x80, i, 0x34, 0x12], 0, 60 + i, 0x10));
+        if i % 3 != 2 {
+            continue;
+        }
+        let mut n = 0;
+        while let Some((_, rssi, _)) = receive(&mut buf) {
+            assert_eq!(buf[2] as i32, rssi + 110 - 60);
+            n += 1;
+        }
+        assert_eq!(n, 3);
+    }
+    assert_eq!(RADIO_DROPPED.get(), 0);
+    assert_eq!(counters().2, 3);
+    assert_eq!(HEAD.get() as usize, 40 % SLOTS);
+    assert_eq!(TAIL.get() as usize, 39 % SLOTS);
+}
+
+#[test]
+fn the_peak_of_waiting_frames_is_counted_across_the_wrap() {
+    let _s = sim::session();
+    reset_radio_state();
+    RX_PEAK.set(0);
+    HEAD.set(14);
+    TAIL.set(14);
+    for i in 0..5u8 {
+        deliver(&frame(&[0x00, 0x80, i, 0x34, 0x12], 0, 60, 0x10));
+    }
+    let mut buf = [0u8; 127];
+    assert!(receive(&mut buf).is_some());
+    assert_eq!(counters().2, 5);
+    assert!(receive(&mut buf).is_some());
+    assert_eq!(counters().2, 5);
+    for _ in 0..2 {
+        deliver(&frame(&[0x00, 0x80, 9, 0x34, 0x12], 0, 60, 0x10));
+    }
+    assert!(receive(&mut buf).is_some());
+    assert_eq!(counters().2, 5);
+    for _ in 0..4 {
+        deliver(&frame(&[0x00, 0x80, 9, 0x34, 0x12], 0, 60, 0x10));
+    }
+    assert!(receive(&mut buf).is_some());
+    assert_eq!(counters().2, 8);
+}
+
+fn ack_at(late_ticks: i32) -> usize {
+    let _s = sim::session();
+    reset_radio_state();
+    ours();
+    let mpdu = data_to_short(0x61, OUR_PAN, OUR_SHORT);
+    let stamp = 0x4000_0000u32;
+    let end = stamp.wrapping_add((mpdu.len() as u32 + 3) * 32 * 16);
+    sim::with(|c| c.tick = end.wrapping_add(late_ticks as u32).wrapping_sub(32));
+    deliver(&frame(&mpdu, stamp, 60, 0x10));
+    sim::with(|c| c.tx_kicks)
+}
+
+#[test]
+fn a_frame_is_acknowledged_up_to_600_us_after_its_end() {
+    assert_eq!(ack_at(600 * 16), 1);
+    assert_eq!(ack_at(600 * 16 + 1), 0);
+    assert_eq!(ack_at(-1000 * 16), 1);
+}
+
+#[test]
+fn the_ack_starts_160_us_after_the_frame_and_waits_at_most_1_ms_for_its_transmission() {
+    for completes in [true, false] {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        let mpdu = data_to_short(0x61, OUR_PAN, OUR_SHORT);
+        let stamp = 0x4000_0000u32;
+        let end = stamp.wrapping_add((mpdu.len() as u32 + 3) * 32 * 16);
+        sim::with(|c| {
+            c.tick = end.wrapping_sub(320);
+            c.tx_completes = completes;
+        });
+        deliver(&frame(&mpdu, stamp, 60, 0x10));
+        let log = sim::with(|c| c.log.clone());
+        let kick = log.iter().position(|o| *o == Op::W8(0xc43, 0x04)).expect("the ACK is sent");
+        let before: Vec<u32> = log[..kick].iter().filter_map(|o| match *o {
+            Op::R32(0x740, t) => Some(t),
+            _ => None,
+        }).collect();
+        assert_eq!(before.last().copied(), Some(end.wrapping_add(ACK_TURNAROUND_US * 16)));
+        let done = kick + log[kick..].iter().position(|o| *o == Op::W8(RF_IRQ_STATUS, RF_IRQ_TX)).unwrap_or(0);
+        let ticks: Vec<u32> = log[kick..done].iter().filter_map(|o| match *o {
+            Op::R32(0x740, t) => Some(t),
+            _ => None,
+        }).collect();
+        let waited = ticks.last().copied().unwrap_or(0).wrapping_sub(ticks[0]);
+        assert_eq!(waited, if completes { 0 } else { 1000 * 16 + 16 }, "{completes}");
+        let w = w8(&log[done..].iter().copied().filter(Op::is_write).collect::<Vec<_>>());
+        assert_eq!(w[..8].to_vec(), [vec![(0xf20, 0x02)], channel_writes(0x95, 0x25, 0x14), vec![(0xf02, 0x65), (0x428, 0x01)]].concat());
+    }
+}
+
+fn data_request_from(fcf0: u8, fcf1: u8, src: &[u8], cmd: u8) -> Vec<u8> {
+    let [p0, p1] = OUR_PAN.to_le_bytes();
+    let [d0, d1] = OUR_SHORT.to_le_bytes();
+    let mut v = vec![fcf0, fcf1, 0x07, p0, p1, d0, d1];
+    if fcf0 & 0x40 == 0 {
+        v.extend_from_slice(&[0x11, 0x22]);
+    }
+    v.extend_from_slice(src);
+    v.push(cmd);
+    v
+}
+
+fn pending_bit(mpdu: &[u8]) -> Option<bool> {
+    let end = 0x4000_0000u32.wrapping_add((mpdu.len() as u32 + 3) * 32 * 16);
+    sim::with(|c| c.tick = end.wrapping_sub(16));
+    let kicks = sim::with(|c| c.tx_kicks);
+    ACK_BUF.write(5, 0xee);
+    deliver(&frame(mpdu, 0x4000_0000, 60, 0x10));
+    let mut buf = [0u8; 127];
+    let _ = receive(&mut buf);
+    (sim::with(|c| c.tx_kicks) > kicks).then(|| ACK_BUF.read(5) == 0x12)
+}
+
+#[test]
+fn a_data_request_from_a_long_address_is_told_of_its_pending_data() {
+    let _s = sim::session();
+    reset_radio_state();
+    ours();
+    let other: u64 = 0x0011_2233_4455_6677;
+    let mine: u64 = 0x8899_aabb_ccdd_eeff;
+    set_pending(&[], &[other, mine]);
+    assert_eq!(pending_bit(&data_request_from(0x63, 0xc8, &mine.to_le_bytes(), 0x04)), Some(true));
+    assert_eq!(pending_bit(&data_request_from(0x63, 0xc8, &other.to_le_bytes(), 0x04)), Some(true));
+    for i in 0..8 {
+        let mut a = mine.to_le_bytes();
+        a[i] ^= 0x10;
+        assert_eq!(pending_bit(&data_request_from(0x63, 0xc8, &a, 0x04)), Some(false), "octet {i}");
+    }
+    set_pending(&[], &[other]);
+    assert_eq!(pending_bit(&data_request_from(0x63, 0xc8, &mine.to_le_bytes(), 0x04)), Some(false));
+    set_pending(&[], &[]);
+    assert_eq!(pending_bit(&data_request_from(0x63, 0xc8, &other.to_le_bytes(), 0x04)), Some(false));
+}
+
+#[test]
+fn the_pending_bit_needs_a_data_request_after_a_source_address() {
+    let _s = sim::session();
+    reset_radio_state();
+    ours();
+    set_children(&[]);
+    set_pending(&[0x1234], &[]);
+    let src = 0x1234u16.to_le_bytes();
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &src, 0x04)), Some(true));
+    assert_eq!(pending_bit(&data_request_from(0x23, 0x88, &src, 0x04)), Some(true));
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &src, 0x05)), Some(false));
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x48, &src, 0x04)), Some(false));
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x08, &[], 0x04)), Some(false));
+    assert_eq!(pending_bit(&data_request_from(0x61, 0x88, &src, 0x04)), Some(false));
+    let mut cut = data_request_from(0x63, 0x88, &src, 0x04);
+    cut.pop();
+    assert_eq!(pending_bit(&cut), Some(false));
+    let unknown = 0x7777u16.to_le_bytes();
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &unknown, 0x04)), Some(true));
+    set_children(&[0x1111, 0x7777]);
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &unknown, 0x04)), Some(false));
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &0x7776u16.to_le_bytes(), 0x04)), Some(true));
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &0x7677u16.to_le_bytes(), 0x04)), Some(true));
+}
+
+#[test]
+fn the_pending_and_child_tables_keep_what_fits() {
+    let _s = sim::session();
+    reset_radio_state();
+    ours();
+    let shorts: Vec<u16> = (0..PENDING_SHORT_SLOTS as u16 + 3).map(|i| 0x100 + i).collect();
+    let exts: Vec<u64> = (0..PENDING_EXT_SLOTS as u64 + 2).map(|i| 0x1000 + i).collect();
+    set_pending(&shorts, &exts);
+    assert_eq!(N_PENDING_SHORT.get() as usize, PENDING_SHORT_SLOTS);
+    assert_eq!(N_PENDING_EXT.get() as usize, PENDING_EXT_SLOTS);
+    assert_eq!(PENDING_SHORT.get().to_vec(), shorts[..PENDING_SHORT_SLOTS].to_vec());
+    let last = PENDING_EXT_SLOTS - 1;
+    assert_eq!(PENDING_EXT.get()[8 * last..8 * last + 8], (0x1000 + last as u64).to_le_bytes());
+    let src = (0x100 + PENDING_SHORT_SLOTS as u16 - 1).to_le_bytes();
+    set_children(&[u16::from_le_bytes(src)]);
+    assert_eq!(pending_bit(&data_request_from(0x63, 0x88, &src, 0x04)), Some(true));
+    let kids: Vec<u16> = (0..CHILD_SLOTS as u16 + 2).collect();
+    set_children(&kids);
+    assert_eq!(N_CHILDREN.get() as usize, CHILD_SLOTS);
+    assert_eq!(CHILDREN.get().to_vec(), kids[..CHILD_SLOTS].to_vec());
+    set_pending(&[1, 2], &[3]);
+    assert_eq!(PENDING_SHORT.get()[2], 0xffff);
+    assert_eq!(PENDING_EXT.get()[8..16], [0; 8]);
+    assert_eq!((N_PENDING_SHORT.get(), N_PENDING_EXT.get()), (2, 1));
+    set_children(&[5]);
+    assert_eq!(CHILDREN.get()[1], 0xffff);
+}
+
+#[test]
+fn a_frame_seen_while_still_receiving_is_left_for_later() {
+    let _s = sim::session();
+    reset_radio_state();
+    RX_BUF.copy_from(0, &BEACON);
+    sim::with(|c| {
+        c.poke8(RF_IRQ_STATUS, RF_IRQ_RX);
+        c.poke8(RF_RX_STATUS, 0x20);
+        c.poke8(DMA_CHANNEL_ENABLE, 0x0c);
+        c.log.clear();
+    });
+    irq_handler();
+    assert!(!has_frame());
+    assert_eq!(sim::with(|c| c.writes()), vec![Op::W8(0xf20, 0x01), Op::W8(0xc26, 0xfc)]);
+    sim::with(|c| c.log.clear());
+    irq_handler();
+    assert_eq!(sim::with(|c| c.writes()), vec![Op::W8(0xc26, 0xfc)]);
+}
+
+#[test]
+fn suspending_the_radio_first_takes_a_frame_that_has_arrived() {
+    let _s = sim::session();
+    reset_radio_state();
+    RX_BUF.copy_from(0, &BEACON);
+    sim::with(|c| {
+        c.poke8(RF_IRQ_STATUS, RF_IRQ_RX);
+        c.poke8(reg::IRQ_ENABLE, 1);
+    });
+    let s = suspend();
+    assert_eq!(s, 1);
+    assert!(has_frame());
+    let w = sim::with(|c| c.writes());
+    assert_eq!(w[0], Op::W8(reg::IRQ_ENABLE, 0));
+    assert_eq!(w.iter().filter(|o| **o == Op::W8(0xf02, 0x45)).count(), 4);
+}
+
+fn segments(log: &[Op]) -> Vec<Vec<u32>> {
+    let mut out = vec![vec![]];
+    for o in log {
+        match *o {
+            Op::W8(0x643, 0) => out.push(vec![]),
+            Op::R32(0x740, t) => {
+                if let Some(s) = out.last_mut() {
+                    s.push(t)
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn the_backoff_doubles_from_8_to_32_slots_of_320_us() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| {
+        c.poke8(RF_RSSI, 0x40);
+        c.poke8(reg::IRQ_ENABLE, 1);
+    });
+    assert!(!csma_transmit(&mut || 0x1f));
+    let segs = segments(&sim::with(|c| c.log.clone()));
+    let spans: Vec<u32> = segs[..5].iter().map(|s| s.last().copied().unwrap_or(0).wrapping_sub(s[0])).collect();
+    assert_eq!(spans, [7u32, 15, 31, 31, 31].iter().map(|n| n * 320 * 16 + 32).collect::<Vec<_>>());
+    assert_eq!(CCA_BUSY.get(), 5);
+}
+
+#[test]
+fn a_transmission_waits_for_1200_us_after_the_last_frame_heard() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| {
+        c.poke8(RF_RSSI, 0x40);
+        c.poke8(reg::IRQ_ENABLE, 1);
+    });
+    let t = sim::with(|c| c.tick);
+    LAST_RX.set(t);
+    assert!(!csma_transmit(&mut || 0));
+    let segs = segments(&sim::with(|c| c.log.clone()));
+    assert_eq!(segs[0].last().copied(), Some(t.wrapping_add(RX_GAP_US * 16)));
+}
+
+fn cca_with(rssi: &'static [u8]) -> bool {
+    let mut i = 0;
+    sim::with(|c| {
+        c.poke8(RF_RSSI, rssi[0]);
+        c.on(move |c, op| {
+            if let Op::R8(RF_RSSI, _) = op {
+                i = (i + 1).min(rssi.len() - 1);
+                c.poke8(RF_RSSI, rssi[i]);
+            }
+        })
+    });
+    let r = channel_clear();
+    sim::with(|c| c.hook = None);
+    r
+}
+
+#[test]
+fn the_channel_is_clear_when_the_mean_rssi_is_at_most_minus_85_dbm() {
+    let _s = sim::session();
+    reset_radio_state();
+    assert!(cca_with(&[25]));
+    assert!(!cca_with(&[26]));
+    assert!(!cca_with(&[25, 25, 30]));
+    assert!(cca_with(&[25, 30, 15]));
+    assert!(!cca_with(&[25, 15, 35]));
+    sim::with(|c| c.poke8(RF_RX_STATUS, 0x20));
+    assert!(!cca_with(&[0]));
+}
+
+#[test]
+fn the_clear_channel_window_is_128_us_from_before_the_receiver_turns_on() {
+    for at in [128u32 * 16, 128 * 16 + 16] {
+        let _s = sim::session();
+        reset_radio_state();
+        let mut start = None;
+        sim::with(|c| {
+            c.poke8(RF_RSSI, 25);
+            c.on(move |c, op| {
+                if let Op::R32(0x740, t) = op {
+                    let s = *start.get_or_insert(t);
+                    if t.wrapping_sub(s) == at {
+                        c.poke8(RF_RSSI, 0x7f);
+                    }
+                }
+            })
+        });
+        let clear = channel_clear();
+        sim::with(|c| c.hook = None);
+        assert_eq!(clear, at != 128 * 16, "{at}");
+        let w = w8(&sim::with(|c| c.writes()));
+        assert_eq!(w[..8].to_vec(), [channel_writes(0x95, 0x25, 0x14), vec![(0xf16, 0x29), (0x428, 0xe0), (0xf02, 0x45)]].concat());
+    }
+}
+
+#[test]
+fn a_sent_frame_waits_120_us_in_transmit_mode_and_at_most_10_ms_for_the_end() {
+    for completes in [true, false] {
+        let _s = sim::session();
+        reset_radio_state();
+        sim::with(|c| c.tx_completes = completes);
+        assert!(csma_transmit(&mut || 0));
+        let log = sim::with(|c| c.log.clone());
+        let tx_mode = log.iter().position(|o| *o == Op::W8(0xf02, 0x55)).unwrap_or(0);
+        let kick = log.iter().position(|o| *o == Op::W8(0xc43, 0x04)).unwrap_or(0);
+        let settle: Vec<u32> = log[tx_mode..kick].iter().filter_map(|o| match *o {
+            Op::R32(0x740, t) => Some(t),
+            _ => None,
+        }).collect();
+        assert_eq!(settle.last().copied().unwrap_or(0).wrapping_sub(settle[0]), TX_SETTLE_US * 16 + 16);
+        let done = kick + log[kick + 3..].iter().position(|o| *o == Op::W8(RF_IRQ_STATUS, RF_IRQ_TX)).unwrap_or(0) + 3;
+        let waited: Vec<u32> = log[kick..done].iter().filter_map(|o| match *o {
+            Op::R32(0x740, t) => Some(t),
+            _ => None,
+        }).collect();
+        assert_eq!(waited.last().copied().unwrap_or(0).wrapping_sub(waited[0]), if completes { 0 } else { 10_000 * 16 + 16 });
+        let after = w8(&log[done..].iter().copied().filter(Op::is_write).collect::<Vec<_>>());
+        assert_eq!(after[..8].to_vec(), [vec![(0xf20, 0x02)], channel_writes(0x95, 0x25, 0x14), vec![(0xf02, 0x65), (0x428, 0xe1)]].concat());
+        let air = log[done..].iter().rev().find_map(|o| match *o {
+            Op::R32(0x740, t) => Some(t),
+            _ => None,
+        });
+        assert_eq!(Some(LAST_AIR.get()), air);
+        assert_eq!(*log.last().unwrap_or(&Op::R8(0, 0)), Op::W8(0x643, 0));
+    }
+}
+
+fn ack_after(wait: u32) -> TxStatus {
+    let _s = sim::session();
+    reset_radio_state();
+    let mut kicked = false;
+    let mut armed = false;
+    let mut t0 = None;
+    sim::with(|c| {
+        c.on(move |_, op| match op {
+            Op::W8(0xc24, _) => kicked = true,
+            Op::W8(0x643, v) if kicked && v != 0xff => armed = true,
+            Op::R32(0x740, t) if armed => {
+                let s = *t0.get_or_insert(t);
+                if t.wrapping_sub(s) == wait {
+                    ACK_SEEN.set(1);
+                }
+            }
+            _ => {}
+        })
+    });
+    let r = transmit(&[0x61, 0x88, 0x33, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], || 0);
+    sim::with(|c| c.hook = None);
+    r
+}
+
+#[test]
+fn an_ack_is_awaited_for_2_ms_after_the_transmission() {
+    assert_eq!(ack_after(ACK_WAIT_US * 16), TxStatus::Ok);
+    assert_eq!(ACK_WANTED.get(), 0);
+    let _s = sim::session();
+    assert_eq!(sim::with(|c| c.tx_kicks), 0);
+    drop(_s);
+    assert_eq!(ack_after(ACK_WAIT_US * 16 + 16), TxStatus::NoAck);
+}
+
+#[test]
+fn the_frame_and_its_ack_request_are_set_up_once_before_the_attempts() {
+    let _s = sim::session();
+    reset_radio_state();
+    ACK_WANTED.set(0);
+    let mut seen = vec![];
+    let mpdu = [0x61, 0x88, 0x5a, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00];
+    assert_eq!(transmit(&mpdu, || 0), TxStatus::NoAck);
+    seen.push(ACK_SEQ.get());
+    assert_eq!(seen, vec![0x5a]);
+    assert_eq!(counters().3, 4);
+    assert_eq!(transmit(&[0x41, 0x88, 0x5b, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], || 0), TxStatus::Ok);
+    assert_eq!(counters().3, 1);
+    for (len, sent) in [(2usize, false), (3, true), (125, true), (126, false)] {
+        let kicks = sim::with(|c| c.tx_kicks);
+        let mut f = vec![0x41u8; len];
+        f[0] = 0x01;
+        assert_eq!(transmit(&f, || 0), TxStatus::Ok);
+        assert_eq!(sim::with(|c| c.tx_kicks) - kicks, sent as usize, "{len}");
+        if sent {
+            assert_eq!((TX_BUF.read32(0), TX_BUF.read(4), TX_BUF.read(4 + len)), (len as u32 + 1, len as u8 + 2, 0x41));
+        }
+    }
+}
+
+#[test]
+fn a_frame_busy_on_its_last_attempt_ends_busy_and_one_sent_at_last_without_ack_ends_without() {
+    for (busy_from, status) in [(3usize, TxStatus::ChannelBusy), (0, TxStatus::ChannelBusy), (9, TxStatus::NoAck)] {
+        let _s = sim::session();
+        reset_radio_state();
+        let mut attempts = 0;
+        sim::with(|c| {
+            c.on(move |c, op| {
+                if let Op::W8(0x643, 0) = op {
+                    attempts += 1;
+                    c.poke8(RF_RSSI, if attempts > busy_from * 1 { 0x40 } else { 0 });
+                }
+            })
+        });
+        let r = transmit(&[0x61, 0x88, 0x33, 0x62, 0x1a, 0x00, 0x00, 0x01, 0x00], || 0);
+        sim::with(|c| c.hook = None);
+        assert_eq!(r, status, "{busy_from}");
+    }
+}
+
+#[test]
+fn a_timed_frame_goes_to_transmit_mode_240_us_ahead_and_starts_on_its_tick() {
+    let _s = sim::session();
+    reset_radio_state();
+    let at = sim::with(|c| c.tick).wrapping_add(1_000 * 16);
+    transmit_at(&[0x01, 0x08, 0x01], at);
+    let log = sim::with(|c| c.log.clone());
+    let off = log.iter().position(|o| *o == Op::W8(0x643, 0)).unwrap_or(0);
+    assert_eq!(last_tick(&log[..off]), Some(at.wrapping_sub(2 * TX_SETTLE_US * 16)));
+    let kick = log.iter().position(|o| *o == Op::W8(RF_IRQ_STATUS, RF_IRQ_TX)).unwrap_or(0);
+    assert_eq!(last_tick(&log[..kick]), Some(at));
+    assert_eq!((TX_BUF.read32(0), TX_BUF.read(4), TX_BUF.read(7)), (4, 5, 0x01));
+    for (len, sent) in [(2usize, false), (3, true), (125, true), (126, false)] {
+        let kicks = sim::with(|c| c.tx_kicks);
+        let at = sim::with(|c| c.tick).wrapping_add(500 * 16);
+        transmit_at(&vec![0x01; len], at);
+        assert_eq!(sim::with(|c| c.tx_kicks) - kicks, sent as usize, "{len}");
+    }
+    for (ahead, sent) in [(16u32, true), (15, false)] {
+        let kicks = sim::with(|c| c.tx_kicks);
+        let at = sim::with(|c| c.tick).wrapping_add(ahead);
+        transmit_at(&[0x01, 0x08, 0x01], at);
+        assert_eq!(sim::with(|c| c.tx_kicks) - kicks, sent as usize, "{ahead}");
+    }
+}
+
+#[test]
+fn a_timed_frame_waits_at_most_10_ms_for_its_end_and_returns_to_receive() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| {
+        c.tx_completes = false;
+        c.poke8(reg::IRQ_ENABLE, 1);
+    });
+    let at = sim::with(|c| c.tick).wrapping_add(300 * 16);
+    transmit_at(&[0x01, 0x08, 0x01], at);
+    let log = sim::with(|c| c.log.clone());
+    let kick = log.iter().position(|o| *o == Op::W8(0xc43, 0x04)).unwrap_or(0);
+    let done = kick + log[kick..].iter().position(|o| *o == Op::W8(RF_IRQ_STATUS, RF_IRQ_TX)).unwrap_or(0);
+    let ticks: Vec<u32> = log[kick..done].iter().filter_map(|o| match *o {
+        Op::R32(0x740, t) => Some(t),
+        _ => None,
+    }).collect();
+    assert_eq!(ticks.last().copied().unwrap_or(0).wrapping_sub(ticks[0]), 10_000 * 16 + 16);
+    let w = w8(&log[done..].iter().copied().filter(Op::is_write).collect::<Vec<_>>());
+    assert_eq!(w, [vec![(0xf20, 0x02)], channel_writes(0x95, 0x25, 0x14), vec![(0xf02, 0x65), (0x428, 0x01), (0x643, 0x01)]].concat());
+}
+
+fn last_tick(log: &[Op]) -> Option<u32> {
+    log.iter().rev().find_map(|o| match *o {
+        Op::R32(0x740, t) => Some(t),
+        _ => None,
+    })
+}
+
+#[test]
+fn the_noise_floor_is_measured_only_after_3_ms_without_our_transmission_or_a_frame() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| {
+        c.poke8(RF_RSSI, 30);
+        c.poke8(reg::IRQ_ENABLE, 1);
+    });
+    let t = sim::with(|c| c.tick);
+    LAST_AIR.set(t.wrapping_add(16).wrapping_sub(3_000 * 16));
+    assert_eq!(noise_dbm(), Some(-80));
+    let w = sim::with(|c| c.writes());
+    assert_eq!(w.first(), Some(&Op::W8(0x643, 0)));
+    assert_eq!(w.last(), Some(&Op::W8(0x643, 1)));
+    let t = sim::with(|c| c.tick);
+    LAST_AIR.set(t.wrapping_add(17).wrapping_sub(3_000 * 16));
+    sim::with(|c| c.log.clear());
+    assert_eq!(noise_dbm(), None);
+    assert!(sim::with(|c| c.writes()).is_empty());
+    LAST_AIR.set(0);
+    sim::with(|c| {
+        c.poke8(RF_RX_STATUS, 0x20);
+        c.tick = 10_000 * 16;
+        c.log.clear();
+    });
+    assert_eq!(noise_dbm(), None);
+    assert_eq!(sim::with(|c| c.writes()), vec![Op::W8(0x643, 0), Op::W8(0x643, 1)]);
+}
+
+#[test]
+fn the_noise_floor_is_the_mean_of_the_samples_in_128_us() {
+    let _s = sim::session();
+    reset_radio_state();
+    let mut first = None;
+    sim::with(|c| {
+        c.poke8(RF_RSSI, 10);
+        c.on(move |c, op| match op {
+            Op::R32(0x740, t) => {
+                let s = *first.get_or_insert(t);
+                c.poke8(RF_RSSI, if t.wrapping_sub(s) >= 300 * 16 { 50 } else { 10 });
+            }
+            _ => {}
+        })
+    });
+    LAST_AIR.set(0);
+    sim::with(|c| c.tick = 10_000 * 16);
+    let n = noise_dbm();
+    sim::with(|c| c.hook = None);
+    let log = sim::with(|c| c.log.clone());
+    let samples: Vec<i32> = log.iter().filter_map(|o| match *o {
+        Op::R8(RF_RSSI, v) => Some(v as i8 as i32 - 110),
+        _ => None,
+    }).collect();
+    assert_eq!(n, Some(samples.iter().sum::<i32>() / samples.len() as i32));
+    assert!(samples.len() > 10);
+    let w = w8(&sim::with(|c| c.writes()));
+    assert_eq!(w[1..9].to_vec(), [channel_writes(0x95, 0x25, 0x14), vec![(0xf16, 0x29), (0x428, 0xe0), (0xf02, 0x45)]].concat());
+}
+
+#[test]
+fn energy_detection_keeps_the_peak_over_its_milliseconds() {
+    let _s = sim::session();
+    reset_radio_state();
+    let mut first = None;
+    sim::with(|c| {
+        c.poke8(RF_RSSI, 10);
+        c.on(move |c, op| {
+            if let Op::R32(0x740, t) = op {
+                let s = *first.get_or_insert(t);
+                c.poke8(RF_RSSI, if t.wrapping_sub(s) == (85 + 2_000) * 16 + 32 { 70 } else { 10 });
+            }
+        })
+    });
+    assert_eq!(energy_detect(20, 2), -40);
+    sim::with(|c| c.hook = None);
+    let w = w8(&sim::with(|c| c.writes()));
+    assert!(w.contains(&(0x1244, 0x49)));
+    let mut first = None;
+    sim::with(|c| {
+        c.log.clear();
+        c.on(move |c, op| {
+            if let Op::R32(0x740, t) = op {
+                let s = *first.get_or_insert(t);
+                c.poke8(RF_RSSI, if t.wrapping_sub(s) == (85 + 2_000) * 16 + 48 { 70 } else { 10 });
+            }
+        })
+    });
+    assert_eq!(energy_detect(20, 2), -100);
+    sim::with(|c| c.hook = None);
 }

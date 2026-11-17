@@ -1,6 +1,8 @@
 # cargo mutants for crates/bulb-tc32, its own workspace (README, "Coverage and
 # mutation testing"): cargo mutants --manifest-path crates/bulb-tc32/Cargo.toml
-# Its mutants run its host tests, on the simulated chip of src/sim.rs.
+# Its mutants run its host tests, on the simulated chip of src/sim.rs, with every
+# feature: the trace ring and the radio's trace of each transmission are code too.
+all_features = true
 
 exclude_globs = [
   # the simulated chip: test infrastructure
@@ -15,9 +17,6 @@ exclude_re = [
   "^src/reg\\.rs:.*(replace (read|write)(8|16|32) |in (read|write)(8|16|32)$)",
   # flash::read: on the chip the volatile read of the mapped flash
   "^src/flash\\.rs:.*(replace read with |in read$)",
-  # main: the endless main loop and its constants, run by the emulator's scenarios
-  "^src/lib\\.rs:.* in main$",
-  "^src/lib\\.rs:\\d+:\\d+: replace \\* with [+/]$",
   "<impl (fmt::|std::fmt::)?(Display|Debug) for ",
 ]
 

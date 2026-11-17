@@ -1,5 +1,5 @@
 use super::*;
-use crate::sim;
+use crate::sim::{self, Op};
 
 #[test]
 fn lqi_is_a_linear_map_of_rssi_from_minus_99_to_minus_15() {
@@ -138,4 +138,214 @@ fn a_bulb_on_the_simulated_chip_starts_zigbee_and_bluetooth() {
         assert!(crate::ble_radio::lent().0 > 0, "no BLE event in {polls} polls");
     }
     assert_eq!(crate::link::BULB_NET.read(1) >= 11, true);
+}
+
+#[test]
+fn the_random_numbers_are_two_multiply_with_carry_generators_mixed_with_the_tick() {
+    let _s = sim::session();
+    sim::with(|c| {
+        c.flash[MAC_SECTOR..MAC_SECTOR + 8].copy_from_slice(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]);
+        c.tick = 0x1000;
+    });
+    let mut hal = Tc32Hal::new();
+    let a = (0x6745_2301u32 ^ 0x1020) | 1;
+    let b = 0xefcd_ab89u32.wrapping_add(0x1030) | 1;
+    assert_eq!(hal.rng, [a, b]);
+    let (mut x, mut y) = (a, b);
+    let mut t = sim::with(|c| c.tick);
+    for _ in 0..3 {
+        x = 18000 * (x & 0xffff) + (x >> 16);
+        y = 36969 * (y & 0xffff) + (y >> 16);
+        t += 16;
+        assert_eq!(hal.random(), (y << 16).wrapping_add(x) ^ t);
+    }
+}
+
+#[test]
+fn an_address_with_a_listed_ble_oui_is_turned_into_zigbee_order() {
+    for oui in BLE_ORDER_OUIS {
+        let _s = sim::session();
+        let stored = [0x11, 0x22, 0x33, oui[0], oui[1], oui[2], 0x77, 0x88];
+        sim::with(|c| c.flash[MAC_SECTOR..MAC_SECTOR + 8].copy_from_slice(&stored));
+        assert_eq!(Tc32Hal::new().ieee(), u64::from_le_bytes([0x77, 0x88, 0x11, 0x22, 0x33, oui[0], oui[1], oui[2]]), "{oui:x?}");
+    }
+    for stored in [[0x11, 0x22, 0x33, 0x38, 0xc1, 0xa5, 0x77, 0x88], [0, 0, 0, 0, 0, 0, 0, 1], [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe]] {
+        let _s = sim::session();
+        sim::with(|c| c.flash[MAC_SECTOR..MAC_SECTOR + 8].copy_from_slice(&stored));
+        assert_eq!(Tc32Hal::new().ieee(), u64::from_le_bytes(stored));
+        assert!(sim::with(|c| c.flash_ops.is_empty()));
+    }
+}
+
+#[test]
+fn a_new_address_is_stored_in_ble_order_and_read_back_in_zigbee_order() {
+    let _s = sim::session();
+    let ieee = Tc32Hal::new().ieee().to_le_bytes();
+    assert_eq!(ieee[5..], TELINK_OUI);
+    let stored = sim::with(|c| c.flash[MAC_SECTOR..MAC_SECTOR + 8].to_vec());
+    assert_eq!(stored, [&ieee[2..8], &ieee[..2]].concat());
+    assert_ne!(ieee[..5], [0xff; 5]);
+}
+
+#[test]
+fn the_hal_hands_frames_and_tables_to_the_radio_driver() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    sim::with(|c| c.log.clear());
+    let at = sim::with(|c| c.tick) / 16 + 200;
+    hal.transmit_at(&[0x01, 0x08, 0x01], at);
+    assert_eq!(sim::with(|c| c.tx_kicks), 1);
+    let log = sim::with(|c| c.log.clone());
+    let kick = log.iter().position(|o| *o == Op::W8(0xf20, 0x02)).unwrap_or(0);
+    let t = log[..kick].iter().rev().find_map(|o| match *o {
+        Op::R32(0x740, t) => Some(t),
+        _ => None,
+    });
+    assert_eq!(t, Some(at * 16));
+    hal.indirect_pending(&[0x1234], &[0x99]);
+    hal.poll_children(&[0x4321]);
+    assert_eq!(crate::radio::tests_support::tables(), (vec![0x1234], vec![0x99], vec![0x4321]));
+    assert_eq!(hal.transmit(&[0x41, 0x88, 0x01, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00]), TxStatus::Ok);
+    assert_eq!(hal.tx_attempts(), 1);
+    hal.set_channel(20);
+    assert!(sim::with(|c| c.writes()).contains(&Op::W8(0x1244, 0x49)));
+    hal.set_filter(0x1a62, 0x0001);
+    #[cfg(feature = "sense")]
+    hal.sense_listen(0x5e55);
+}
+
+#[test]
+fn a_received_frame_carries_its_lqi_rssi_and_end_in_microseconds() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    let mut buf = [0u8; 127];
+    assert!(hal.receive(&mut buf).is_none());
+    for (rssi_byte, rssi, lqi) in [(0x9cu8, 46i8, 255u8), (53, -57, 127), (0, -110, 0), (0xff, 127, 255), (0x01, -109, 0)] {
+        crate::radio::tests_support::queue(&[0x00, 0x80, 0x01, 0x34, 0x12], rssi_byte, 0x1234_5678);
+        let m = hal.receive(&mut buf).expect("queued");
+        assert_eq!((m.len, m.rssi, m.lqi, m.end_us), (5, rssi, lqi, 0x1234_5678 / 16), "{rssi_byte}");
+    }
+}
+
+#[test]
+fn energy_and_noise_are_read_in_dbm_and_lqi() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    sim::with(|c| c.poke8(0x441, 53));
+    assert_eq!(hal.energy_detect(15), 127);
+    sim::with(|c| c.tick = 10_000 * 16);
+    crate::radio::tests_support::sent_at(0);
+    assert_eq!(hal.noise_dbm(), Some(-57));
+    sim::with(|c| c.poke8(0x441, 0x80));
+    assert_eq!(hal.noise_dbm(), Some(-128));
+    crate::radio::tests_support::sent_at(sim::with(|c| c.tick));
+    assert_eq!(hal.noise_dbm(), None);
+}
+
+#[test]
+fn only_the_first_hal_gets_the_black_box() {
+    let _s = sim::session();
+    let mut a = Tc32Hal::new();
+    let mut b = Tc32Hal::new();
+    assert!(a.black_box().is_some() != b.black_box().is_some() || (a.black_box().is_none() && b.black_box().is_none()));
+    assert!(b.black_box().is_none());
+}
+
+#[test]
+fn an_ota_resume_starts_erasing_at_the_next_whole_sector() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    staging::release(Owner::Ble);
+    for (len, erased) in [(0u32, 0u32), (1, 0x1000), (0x1000, 0x1000), (0x1001, 0x2000), (staging::SIZE, staging::SIZE)] {
+        assert!(hal.ota_resume(len));
+        assert_eq!(hal.staging_erased, erased, "{len}");
+    }
+    assert!(hal.ota_begin(staging::SIZE));
+    assert_eq!(hal.staging_erased, 0);
+    staging::release(Owner::Zigbee);
+    assert!(staging::claim(Owner::Ble));
+    assert!(!hal.ota_begin(1));
+    assert!(!hal.ota_resume(1));
+    hal.ota_write(0, &[1]);
+    assert_eq!(sim::flash8(staging::BASE), 0xff);
+    staging::release(Owner::Ble);
+}
+
+#[test]
+fn an_ota_write_reaching_the_end_of_the_staging_area_is_taken() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    staging::release(Owner::Ble);
+    assert!(hal.ota_resume(staging::SIZE - 0x1000));
+    sim::with(|c| c.flash[staging::BASE + staging::SIZE as usize - 1] = 0);
+    hal.ota_write(staging::SIZE - 2, &[1, 2]);
+    assert_eq!(sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).count()), 1);
+    assert_eq!((sim::flash8(staging::BASE + staging::SIZE as usize - 2), sim::flash8(staging::BASE + staging::SIZE as usize - 1)), (1, 2));
+    hal.ota_write(staging::SIZE - 1, &[3, 4]);
+    assert_eq!(sim::flash8(staging::BASE + staging::SIZE as usize - 1), 2);
+    assert_eq!(hal.staging_erased, staging::SIZE);
+    staging::release(Owner::Zigbee);
+}
+
+#[test]
+fn activating_a_zigbee_download_releases_the_staging_area_or_restarts_into_it() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    staging::release(Owner::Ble);
+    assert!(hal.ota_begin(0x2000));
+    hal.ota_activate();
+    assert!(!staging::holds(Owner::Zigbee));
+    assert!(hal.ota_begin(0x2000));
+    let img = crate::tests::image(0x2000);
+    hal.ota_write(0, &img);
+    assert!(sim::reboots(move || Tc32Hal::new().ota_activate()));
+    assert_eq!(sim::flash8(staging::BASE + 8), 0x4b);
+    staging::release(Owner::Zigbee);
+}
+
+#[test]
+fn retained_data_is_cut_to_its_maximum_and_refused_when_longer_than_the_buffer() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    let long: Vec<u8> = (0..zigbee::stack::RETAIN_MAX as u32 + 5).map(|i| i as u8).collect();
+    hal.retain(&long);
+    assert_eq!(RETAINED.read32(4), zigbee::stack::RETAIN_MAX as u32);
+    assert_eq!(RETAINED.read32(0), RETAINED_MAGIC);
+    let mut buf = vec![0u8; zigbee::stack::RETAIN_MAX];
+    assert_eq!(hal.retained(&mut buf), Some(zigbee::stack::RETAIN_MAX));
+    assert_eq!(buf, long[..zigbee::stack::RETAIN_MAX].to_vec());
+    assert_eq!(RETAINED.read32(0), 0);
+    hal.retain(&[1, 2]);
+    RETAINED.write32(4, zigbee::stack::RETAIN_MAX as u32 + 1);
+    let mut big = vec![0u8; zigbee::stack::RETAIN_MAX + 4];
+    assert_eq!(hal.retained(&mut big), None);
+    hal.retain(&[1, 2]);
+    assert_eq!(hal.retained(&mut [0u8; 2]), Some(2));
+    hal.retain(&[1, 2]);
+    RETAINED.write32(0, RETAINED_MAGIC ^ 1);
+    assert_eq!(hal.retained(&mut [0u8; 2]), None);
+    hal.retain(&[]);
+    assert_eq!(hal.retained(&mut []), Some(0));
+    assert_eq!(retained_sum(0, &[]), 0x811c_9dc5);
+    assert_eq!(retained_sum(1, &[0]), 0x811c_9dc4u32.wrapping_mul(0x0100_0193));
+    assert_eq!(retained_sum(2, &[1, 2]), ((0x811c_9dc7u32 ^ 1).wrapping_mul(0x0100_0193) ^ 2).wrapping_mul(0x0100_0193));
+}
+
+#[test]
+fn the_counters_gather_the_radio_flash_and_ble_figures() {
+    let _s = sim::session();
+    let mut hal = Tc32Hal::new();
+    LOOP_MAX_US.set(77);
+    let c = hal.counters();
+    let (busy, full, peak, _) = radio::counters();
+    assert_eq!((c.cca_busy, c.rx_queue_full, c.rx_queue_peak), (busy, full, peak as u32));
+    assert_eq!((c.flash_erases, c.flash_stores, c.flash_busy_max_us, c.loop_max_us), (flash::ERASES.get(), flash::STORES.get(), flash::ERASE_MAX_US.get(), 77));
+    #[cfg(feature = "ble")]
+    {
+        let (l, m) = crate::ble_radio::lent();
+        assert_eq!((c.ble_lends, c.ble_ms, c.ble_lend_max_us), (l, m, crate::ble_radio::lent_max_us()));
+        BLE_STATS.set(ble::Stats { adv_events: 1, connections: 2, events: 3, events_heard: 4, events_skipped: 5, disconnects: 6, links_lost: 7 });
+        let c = hal.counters();
+        assert_eq!((c.ble_connections, c.ble_disconnects, c.ble_links_lost, c.ble_events, c.ble_events_skipped), (2, 6, 7, 3, 5));
+    }
 }
