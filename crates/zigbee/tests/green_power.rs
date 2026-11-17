@@ -1398,3 +1398,42 @@ fn commissioning_mode_ends_by_itself_after_the_default_window_or_the_one_given()
     net.run(500);
     assert_eq!(gp_frames(&net, 0x04).len(), 1, "closed after the 10 s given");
 }
+
+#[test]
+fn a_secured_frame_is_taken_once_and_a_command_for_the_device_from_it_is_dropped() {
+    let mut net = Net::new();
+    net.join_node();
+    net.coord.gp_pair(&Pairing::new(SWITCH, 3).secured(4, Some(KEY), 100));
+    net.run(200);
+    let mut gpd = Gpd::new(&net.air, SWITCH, Some(KEY));
+    gpd.send(0x22, &[]);
+    net.run(200);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1);
+    let frame = net.sent_by(gpd.port, 0).last().unwrap().clone();
+    net.run(3_000);
+    net.air.borrow_mut().transmit(gpd.port, &frame);
+    net.run(200);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1, "the same frame counter again: a replay");
+    gpd.send(0xF0, &[0x00]);
+    net.run(200);
+    assert_eq!(gp_frames(&net, 0x00).len(), 1, "0xF0 is a command to the device");
+    gpd.send(0xEF, &[]);
+    net.run(200);
+    assert_eq!(gp_frames(&net, 0x00).len(), 2);
+}
+
+#[test]
+fn an_ieee_device_is_matched_to_its_entry_by_endpoint_unless_either_is_all() {
+    let mut net = Net::new();
+    net.join_node();
+    let mut pairing = Pairing::new(0, 3);
+    pairing.ieee = Some((SENSOR, 5));
+    net.coord.gp_pair(&pairing);
+    net.run(200);
+    for (endpoint, forwarded) in [(6u8, 0usize), (5, 1), (0xFF, 2), (0, 3)] {
+        let mut gpd = Gpd::with_ieee(&net.air, SENSOR, endpoint, None);
+        gpd.send(0x22, &[]);
+        net.run(2_500);
+        assert_eq!(gp_frames(&net, 0x00).len(), forwarded, "endpoint {endpoint}");
+    }
+}
