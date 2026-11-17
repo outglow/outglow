@@ -715,13 +715,13 @@ mod ble_switch {
     #[test]
     fn a_ble_window_ends_after_its_minutes_and_stays_ended() {
         let _s = sim::session();
-        settings(1, 1);
+        settings(1, 2);
         let mut link = Link::new();
         polls(&mut link, 10, 1);
         assert!(link.ble.is_some());
         assert!(!link.window_over);
         let ms = link.stack.as_mut().map(|s| s.hal.now_ms()).unwrap_or(0);
-        sim::with(|c| c.tick = c.tick.wrapping_add((59_990 - ms).wrapping_mul(16_000)));
+        sim::with(|c| c.tick = c.tick.wrapping_add((119_990 - ms).wrapping_mul(16_000)));
         let _ = link.poll();
         assert!(link.ble.is_some());
         sim::with(|c| c.tick = c.tick.wrapping_add(20 * 16_000));
