@@ -326,6 +326,8 @@ pub struct Machine {
     pub(crate) sym_names: Vec<String>,
 
     pub idle_skipped: i64,
+    pub(crate) idle_parked: bool,
+    pub(crate) wake_exact: bool,
 }
 
 impl Machine {
@@ -476,6 +478,8 @@ impl Machine {
             sym_addrs: Vec::new(),
             sym_names: Vec::new(),
             idle_skipped: 0,
+            idle_parked: false,
+            wake_exact: false,
             cfg,
         };
         m.level_sources = vec![Rc::new(|m: &mut Machine| (m.regs[0x623] & 0x07) as u32)];
@@ -674,6 +678,7 @@ impl Machine {
         self.v = 0;
         self.cycles = 0;
         self.idle_skipped = 0;
+        self.idle_parked = false;
         self.cpu_hz = CPU_HZ;
         self.ms_base = 0.0;
         self.ms_base_cyc = 0;

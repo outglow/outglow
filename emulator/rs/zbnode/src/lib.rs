@@ -418,6 +418,9 @@ impl Node {
         if m.ms() >= target {
             return RunEvent::At;
         }
+        if m.idle_advance(target, &self.idle) {
+            return RunEvent::Ran;
+        }
         let err = m.run_ms(target, &self.idle);
         if self.sram_boot_pending.get() {
             self.sram_boot_pending.set(false);
