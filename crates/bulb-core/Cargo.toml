@@ -7,3 +7,6 @@ description = "Portable bulb firmware core (no_std): HAL, light logic, configura
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies]
+memcap = { path = "../memcap" }

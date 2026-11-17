@@ -14,3 +14,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 ra-ap-rustc_lexer = "0.185.0"
+
+[dev-dependencies]
+memcap = { path = "../crates/memcap" }

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use memcap as _;
 use clap::{Parser, Subcommand};
 
 mod boards;

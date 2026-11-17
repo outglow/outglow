@@ -1,3 +1,4 @@
+use memcap as _;
 mod sim;
 
 #[path = "../../sense/tests/model/mod.rs"]

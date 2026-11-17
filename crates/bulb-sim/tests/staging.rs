@@ -1,3 +1,4 @@
+use memcap as _;
 use std::cell::Cell;
 
 use bulb_core::staging::{image_good, mark_bootable, Owner, Ownership, BOOT_MARK, MARK};

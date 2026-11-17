@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 #![no_std]
+#[cfg(test)]
+use memcap as _;
 
 pub mod crypto;
 pub mod diag;

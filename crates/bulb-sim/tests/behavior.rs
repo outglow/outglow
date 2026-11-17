@@ -1,3 +1,4 @@
+use memcap as _;
 use bulb_core::command::PowerOnBehavior;
 use bulb_core::{Command, StartupLevel};
 use bulb_sim::Harness;

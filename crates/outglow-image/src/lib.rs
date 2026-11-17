@@ -1,3 +1,5 @@
+#[cfg(test)]
+use memcap as _;
 pub mod board;
 pub mod elf;
 pub mod ota;

@@ -1,3 +1,4 @@
+use memcap as _;
 use std::collections::HashSet;
 
 use bulb_core::reset::{PowerCycles, WordStore};

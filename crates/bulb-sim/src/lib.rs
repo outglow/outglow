@@ -1,4 +1,6 @@
 #![forbid(unsafe_code)]
+#[cfg(test)]
+use memcap as _;
 
 pub mod cut;
 
@@ -238,6 +240,8 @@ struct NorInner {
     ops: Vec<FlashOp>,
 }
 
+pub const MAX_OPS: usize = 1_000_000;
+
 #[derive(Debug, Clone)]
 pub struct NorFlash {
     inner: Rc<RefCell<NorInner>>,
@@ -272,6 +276,11 @@ impl NorFlash {
         let mut i = self.inner.borrow_mut();
         let o = addr - i.base;
         i.mem[o..o + data.len()].copy_from_slice(data);
+    }
+    fn record(&self, op: FlashOp) {
+        let mut i = self.inner.borrow_mut();
+        assert!(i.ops.len() < MAX_OPS, "more than {MAX_OPS} flash operations without clear_ops: a runaway loop");
+        i.ops.push(op);
     }
     pub fn sector_size(&self) -> usize {
         self.inner.borrow().sector
@@ -309,15 +318,16 @@ impl bulb_core::store::Flash for NorFlash {
         buf.copy_from_slice(&i.mem[o..o + buf.len()]);
     }
     fn program(&mut self, addr: usize, data: &[u8]) {
+        assert!(!data.is_empty(), "an empty program at {addr:#x}");
         assert_eq!(addr / 256, (addr + data.len() - 1) / 256, "a program within one page");
         let op = FlashOp::Program { addr, data: data.to_vec() };
         self.apply(&op);
-        self.inner.borrow_mut().ops.push(op);
+        self.record(op);
     }
     fn erase(&mut self, addr: usize) {
         assert_eq!(addr % self.sector_size(), 0, "a sector start");
         let op = FlashOp::Erase { addr };
         self.apply(&op);
-        self.inner.borrow_mut().ops.push(op);
+        self.record(op);
     }
 }

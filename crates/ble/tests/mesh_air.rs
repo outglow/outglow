@@ -1,3 +1,4 @@
+use memcap as _;
 mod sim;
 
 use std::cell::RefCell;

@@ -1,3 +1,4 @@
+use memcap as _;
 mod sim;
 
 use sim::{make_image, ota_packet, Rig, DIMMABLE};

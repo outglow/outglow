@@ -20,6 +20,7 @@ sense = { path = "../sense", optional = true }
 # unless the test's `Identity` asks for it, so the others see the stack as
 # it is without.
 [dev-dependencies]
+memcap = { path = "../memcap" }
 zigbee = { path = ".", features = ["sense"] }
 
 [lints.rust]

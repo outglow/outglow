@@ -1,3 +1,4 @@
+use memcap as _;
 use std::collections::BTreeMap;
 
 use bulb_core::nv::NvLog;

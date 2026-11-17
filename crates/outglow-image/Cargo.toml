@@ -7,3 +7,6 @@ description = "Firmware image formats of TLSR8258 bulbs: ELF to flash image, the
 publish = false
 
 [dependencies]
+
+[dev-dependencies]
+memcap = { path = "../memcap" }

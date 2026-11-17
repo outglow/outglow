@@ -1,3 +1,4 @@
+use memcap as _;
 mod harness;
 mod model;
 

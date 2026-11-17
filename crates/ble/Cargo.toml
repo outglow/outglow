@@ -13,4 +13,5 @@ zigbee = { path = "../zigbee" }
 unsafe_code = "forbid"
 
 [dev-dependencies]
+memcap = { path = "../memcap" }
 bulb-sim = { path = "../bulb-sim" }

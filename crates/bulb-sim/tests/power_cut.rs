@@ -1,3 +1,4 @@
+use memcap as _;
 use bulb_core::config::{Config, BLOCK_LEN};
 use bulb_core::store::LightLog;
 use bulb_core::{Bulb, Command, PowerOnBehavior};

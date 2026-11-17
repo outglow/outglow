@@ -6,3 +6,6 @@ description = "Motion sensing from the RSSI of frames between bulbs (no_std, no 
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies]
+memcap = { path = "../memcap" }

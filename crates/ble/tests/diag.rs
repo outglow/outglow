@@ -1,3 +1,4 @@
+use memcap as _;
 mod sim;
 
 use ble::diag::{self, parse, zigbee_event, DiagCommand, FrameLog, Info, LogEntry, State};

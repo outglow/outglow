@@ -1,3 +1,4 @@
+use memcap as _;
 use bulb_core::reset::{PowerCycles, WordStore};
 
 #[derive(Clone)]
