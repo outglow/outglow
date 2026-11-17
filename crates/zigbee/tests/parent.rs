@@ -1754,3 +1754,17 @@ fn a_refused_rejoin_reaches_a_device_that_listens_at_once() {
     stranger.drain();
     assert!(stranger.rx.iter().any(|(_, p)| p[0] == nwk::CMD_REJOIN_RESPONSE && p[3] == 0x01), "{:02x?}", stranger.rx);
 }
+
+#[test]
+fn after_a_restart_link_status_goes_within_three_to_four_seconds_and_the_parent_annce_within_ten_to_twenty() {
+    let (mut net, a, _zed) = with_sleepy_child();
+    let id = net.nodes[a].id;
+    net.power_cycle(a);
+    let t = net.now();
+    net.run(25_000);
+    let sent = net.timed_nwk_sent_by(id, t);
+    let link_status = sent.iter().find(|(_, _, h, p)| h.frame_type == nwk::FRAME_CMD && p[0] == nwk::CMD_LINK_STATUS).expect("a link status").0 - t;
+    assert!((3_000..4_000).contains(&link_status), "link status {link_status} ms after the restart");
+    let annce = sent.iter().find(|(_, _, h, p)| h.frame_type == nwk::FRAME_DATA && p.len() > 6 && p[2..4] == [0x1F, 0x00]).expect("a Parent_annce").0 - t;
+    assert!((10_000..20_000).contains(&annce), "Parent_annce {annce} ms after the restart");
+}
