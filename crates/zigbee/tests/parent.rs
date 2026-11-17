@@ -1839,3 +1839,33 @@ fn a_child_asking_to_associate_again_gets_the_answer_when_it_polls_under_its_sho
     zed.poll(&mut net, 20);
     assert!(zed.mac_rx.iter().any(|(_, p)| p.first() == Some(&zigbee::mac::CMD_ASSOC_RSP) && p[1..3] == zed.short.to_le_bytes()), "{:02x?}", zed.mac_rx);
 }
+
+#[test]
+fn a_poll_without_a_source_address_takes_no_frame() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let id = net.nodes[a].id;
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x01, &[]);
+    net.run(200);
+    assert_eq!(net.air.borrow().ports[id].pending.0, vec![zed.short]);
+    let mut f = zigbee::util::Buf::new();
+    zigbee::mac::Header {
+        frame_type: zigbee::mac::FRAME_CMD,
+        security: false,
+        pending: false,
+        ack_request: false,
+        seq: 0x42,
+        dst_pan: PAN,
+        dst: zigbee::mac::Addr::Short(sa),
+        src_pan: PAN,
+        src: zigbee::mac::Addr::None,
+    }
+    .write(&mut f);
+    f.u8(zigbee::mac::CMD_DATA_REQ);
+    net.air.borrow_mut().transmit(zed.id, f.as_slice());
+    net.run(100);
+    assert_eq!(net.air.borrow().ports[id].pending.0, vec![zed.short], "still waiting");
+    zed.rx.clear();
+    zed.poll(&mut net, 20);
+    assert!(!zed.rx.is_empty());
+}

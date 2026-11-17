@@ -161,3 +161,48 @@ fn an_unsecured_rejoin_response_does_not_answer_a_secured_rejoin_and_unsecured_d
     net.run(20);
     assert_ne!(net.nodes[n].stack.short_address(), 0x7779, "a secured rejoin wants a secured answer");
 }
+
+#[test]
+fn a_search_for_the_network_passes_over_beacons_of_another_network() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let port = net.nodes[n].id;
+    net.run(1_000);
+    net.coord.key = [0x6A; 16];
+    net.coord.key_seq = 7;
+    for _ in 0..6 {
+        net.coord.zcl(short, 0x0006, 0x00, 0x00, &[0x00, 0x00]);
+        net.run(100);
+    }
+    net.run_until(60_000, "searching", |net| net.nodes[n].stack.state() == State::Scan);
+    let other = Zed::new(&net.air, false);
+    net.link(port, other.id, 200);
+    let mut beacon = zigbee::util::Buf::new();
+    zigbee::mac::Beacon {
+        pan: PAN,
+        short: 0x7777,
+        permit_join: true,
+        pan_coordinator: false,
+        stack_profile: 2,
+        protocol_version: 2,
+        router_capacity: true,
+        end_device_capacity: true,
+        depth: 1,
+        ext_pan: 0x1234,
+        update_id: 0,
+    }
+    .write(1, &mut beacon);
+    for _ in 0..200 {
+        if net.nodes[n].stack.state() != State::Scan {
+            break;
+        }
+        let channel = net.air.borrow().ports[port].channel;
+        net.air.borrow_mut().ports[other.id].channel = channel;
+        net.air.borrow_mut().ports[other.id].powered = true;
+        net.air.borrow_mut().transmit(other.id, beacon.as_slice());
+        net.run(20);
+    }
+    net.run_until(400_000, "back up", |net| net.nodes[n].stack.state() == State::Up);
+    assert_eq!((net.nodes[n].stack.channel(), net.nodes[n].stack.pan_id()), (11, PAN), "not on the other network's channel");
+}

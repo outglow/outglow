@@ -428,8 +428,9 @@ fn a_parent_announce_response_naming_a_child_heard_lately_keeps_it() {
     assert!(zed.join(&mut net, sa));
     net.run(200);
     zed.poll(&mut net, 20);
-    let mut p = vec![0x00, 1];
+    let mut p = vec![0x00, 2];
     p.extend_from_slice(&zed.ext.to_le_bytes());
+    p.extend_from_slice(&0x00124B00_0000_9999u64.to_le_bytes());
     net.coord.zdo(sa, 0x801F, &p);
     net.run(200);
     assert_eq!(net.nodes[a].stack.child_count(), 1);
