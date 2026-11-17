@@ -431,3 +431,13 @@ fn a_poll_by_extended_address_takes_only_that_devices_frame_and_of_two_ending_to
     s.on_data_request(crate::mac::Addr::Short(0x2000));
     assert_eq!(s.hal.sent.last().and_then(|f| f.last()), Some(&0x31));
 }
+
+#[test]
+fn a_new_child_rejoining_takes_away_only_the_frames_kept_for_its_short_address() {
+    let mut s = up_parent();
+    marked(&mut s, 0, false, 0x5000, 50_000, 1);
+    marked(&mut s, 1, true, 0x77, 50_000, 2);
+    marked(&mut s, 2, false, 0x5001, 50_000, 3);
+    rejoin(&mut s, 0x5000, 0x8E, true);
+    assert_eq!([s.indirect[0].used, s.indirect[1].used, s.indirect[2].used], [false, true, true]);
+}
