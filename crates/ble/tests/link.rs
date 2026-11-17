@@ -588,3 +588,18 @@ fn the_bulb_advertises_again_right_after_a_disconnection() {
     let next = *rig.world.borrow().advertised_at.last().unwrap();
     assert!((gone..gone + MS / 5).contains(&next), "{} ticks later", next as i64 - gone as i64);
 }
+
+#[test]
+fn a_connect_request_with_bad_parameters_leaves_the_bulb_advertising_and_an_empty_control_pdu_is_ignored() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.central().params.interval = 5;
+    rig.central().connect = true;
+    rig.run(400);
+    assert_eq!(rig.state(), LinkState::Advertising);
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.central().send_control(&[]);
+    rig.run(200);
+    assert!(rig.central().control.is_empty());
+    assert_eq!(rig.state(), LinkState::Connected);
+}

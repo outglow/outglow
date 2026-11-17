@@ -1089,3 +1089,34 @@ fn a_stock_block_carries_at_most_18_octets_and_needs_all_of_them() {
     rig.run(300);
     assert!(!rig.is_on(), "18 octets");
 }
+
+#[test]
+fn malformed_writes_and_searches_get_their_errors_and_an_empty_pdu_nothing() {
+    let mut rig = connected(DIMMABLE);
+    assert_eq!(rig.att(&[0x12, 0x40, 0x00, 0x01]), [0x01, 0x12, 0x40, 0x00, 0x01], "write to a handle that does not exist");
+    assert_eq!(rig.att(&[0x12, 0x15]), [0x01, 0x12, 0x00, 0x00, 0x04], "write without a whole handle");
+    assert_eq!(rig.att(&[0x06, 0x01, 0x00, 0xff, 0xff, 0x00]), [0x01, 0x06, 0x00, 0x00, 0x04], "Find By Type Value without its type");
+    assert_eq!(rig.att(&[0x06, 0x05, 0x00, 0x01, 0x00, 0x00, 0x28]), [0x01, 0x06, 0x05, 0x00, 0x01], "a range that ends before it starts");
+    rig.central().send_att(&[]);
+    rig.run(300);
+    assert!(rig.central().att.is_empty());
+    assert_eq!(rig.read(0x0b), b"AwoX");
+}
+
+#[test]
+fn the_apps_tunnel_without_a_transition_time_is_instant_and_a_stock_block_0x01_resets_the_mesh() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    rig.write(COMMAND, &block_packet(&key, 0, &[0x00, 0x00, 0x01, 0x08, 0x00, 0x04, 64]));
+    rig.run(20);
+    assert_eq!(rig.level(), 64);
+    for (op, value) in [(4u8, *b"EgloTest\0\0\0\0\0\0\0\0"), (5, *b"s3cret\0\0\0\0\0\0\0\0\0\0")] {
+        rig.write(PAIR, &[&[op][..], &tl_aes_encrypt(&key, &value)].concat());
+    }
+    assert_eq!(rig.read(0x03), b"EgloTest");
+    rig.write(COMMAND, &block_packet(&key, 2, &[0x01, 0, 0]));
+    rig.run(600);
+    assert_eq!(rig.state(), LinkState::Advertising, "the bulb ended the connection");
+    rig.connect();
+    assert_eq!(rig.read(0x03), b"unpaired");
+}

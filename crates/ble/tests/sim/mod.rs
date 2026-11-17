@@ -531,7 +531,7 @@ impl Hal for SimHal {
             if w.nesn != c.sn {
                 c.sn ^= 1;
                 if let Some((3, p)) = c.txq.pop_front() {
-                    if p[0] == 0x02 {
+                    if p.first() == Some(&0x02) {
                         c.ended = true;
                     }
                 }

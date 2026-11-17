@@ -703,3 +703,13 @@ fn a_bulb_listens_on_after_a_packet_while_more_than_half_a_millisecond_is_left()
     assert_eq!(*calls.last().unwrap(), 12 * MS - 28 * 4 * MS / 10);
     assert_eq!(rig.ble.borrow().air_stats().received, 29);
 }
+
+#[test]
+fn an_answer_for_a_bulb_without_an_app_goes_nowhere() {
+    let (ether, mut rig) = alone();
+    ether.borrow_mut().deliver(0, &air_pdu(0x91, 0x000c, 0x000b, 0xc0 | 0x1b, &[1, 30, 64], &LTK));
+    rig.run(500);
+    let stats = rig.ble.borrow().air_stats();
+    assert_eq!((stats.received, stats.to_app, stats.relayed), (1, 1, 0));
+    assert!(ether.borrow().sent(0).is_empty());
+}
