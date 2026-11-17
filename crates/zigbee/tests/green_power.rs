@@ -1508,3 +1508,54 @@ fn a_frame_without_a_command_is_notified_in_commissioning_with_command_zero() {
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].1[10..12], [0x00, 0x00]);
 }
+
+#[test]
+fn a_response_with_more_than_48_bytes_for_the_device_is_not_queued() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    net.coord.gp_response(short, 11, SWITCH, 0xF0, &[0x11; 49]);
+    net.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    assert!(net.air.borrow().timed.is_empty());
+    net.coord.gp_response(short, 11, SWITCH, 0xF0, &[0x11; 48]);
+    net.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    assert_eq!(net.air.borrow().timed.len(), 1, "48 is the most");
+}
+
+#[test]
+fn commissioning_ends_with_a_pairing_only_when_asked_to() {
+    for exit in [false, true] {
+        let mut net = Net::new();
+        net.join_node();
+        net.coord.gp_command(0x02, &[0x01 | (exit as u8) << 2 | 0x20]);
+        net.run(100);
+        net.coord.gp_pair(&Pairing::new(SWITCH, 3));
+        net.run(100);
+        let mut gpd = Gpd::new(&net.air, 0x0000_0404, None);
+        gpd.send(0xE0, &commissioning());
+        net.run(500);
+        assert_eq!(gp_frames(&net, 0x04).len(), !exit as usize, "exit on pairing: {exit}");
+    }
+}
+
+#[test]
+fn a_gp_command_gets_a_default_response_unless_it_asks_for_none() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let pairing = Pairing::new(SWITCH, 3).payload();
+    let seq = net.coord.gp_unicast(short, 0x09, 0x01, &pairing);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl(short, GP, 0x0B).unwrap(), vec![0x10, seq, 0x0B, 0x01, 0x00]);
+    net.coord.zcl_rx.clear();
+    net.coord.gp_unicast(short, 0x19, 0x01, &pairing);
+    net.run(100);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
+}

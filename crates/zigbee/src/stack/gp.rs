@@ -897,7 +897,7 @@ impl<H: Hal> Stack<H> {
                     }
                     return Some(Some(SUCCESS));
                 }
-                if len > MAX_TX_PAYLOAD || !(11..=26).contains(&channel) {
+                if len > MAX_TX_PAYLOAD {
                     return None;
                 }
                 let mut payload = [0u8; MAX_TX_PAYLOAD];
