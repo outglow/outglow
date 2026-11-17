@@ -206,13 +206,14 @@ fn a_child_comes_back_with_its_timeout_counted_from_the_restart() {
     assert!(zed.join(&mut net, sa));
     let mut h = zed.header(zigbee::nwk::FRAME_CMD, sa);
     h.radius = 1;
-    zed.nwk_send(h, &[zigbee::nwk::CMD_TIMEOUT_REQUEST, 0, 0]);
+    zed.nwk_send(h, &[zigbee::nwk::CMD_TIMEOUT_REQUEST, 1, 0]);
     net.run(100);
     zed.poll(&mut net, 20);
-    net.run(2_000);
+    net.run(30_000);
+    zed.poll(&mut net, 20);
     reboot(&mut net, a);
-    net.run(2_000);
-    assert_eq!(net.nodes[a].stack.child_count(), 1, "heard at the restart");
-    net.run(15_000);
-    assert_eq!(net.nodes[a].stack.child_count(), 0, "ten seconds later it is gone");
+    net.run(110_000);
+    assert_eq!(net.nodes[a].stack.child_count(), 1, "heard at the restart: two minutes from then");
+    net.run(30_000);
+    assert_eq!(net.nodes[a].stack.child_count(), 0, "gone after its two minutes");
 }
