@@ -420,3 +420,29 @@ fn the_boot_mark_is_held_back_whichever_block_brings_it() {
         assert_eq!(w.staging[..image.len()], image[..], "blocks of {size}");
     }
 }
+
+#[test]
+fn blocks_may_be_one_octet_and_the_last_shorter_but_none_longer_than_the_first() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.write(OTA, &ota_packet(0, &[0x11]));
+    assert_eq!(status(&mut rig), (3, 0, 1), "a block of one octet");
+
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(1000, 4);
+    for (i, block) in image.chunks(16).enumerate() {
+        rig.write(OTA, &ota_packet(i as u16, block));
+    }
+    let blocks = image.len().div_ceil(16) as u16;
+    rig.write(OTA, &ota_packet(blocks, &[]));
+    assert_eq!(status(&mut rig), (4, 0, blocks), "the last block of 8 octets");
+    rig.run(1200);
+    assert!(rig.world.borrow().activated);
+
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.write(OTA, &ota_packet(0, &image[..16]));
+    rig.write(OTA, &ota_packet(1, &image[16..33]));
+    assert_eq!(status(&mut rig).0..=status(&mut rig).1, 4..=2, "17 octets after 16");
+}
