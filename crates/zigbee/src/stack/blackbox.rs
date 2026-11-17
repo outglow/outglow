@@ -228,9 +228,6 @@ impl BlackBox {
             self.hold_until = Some(now.wrapping_add(HOLD_MS));
         }
         let from = page as usize * BOX_PAGE;
-        if from >= BOX_LEN {
-            return 0;
-        }
         let n = BOX_PAGE.min(BOX_LEN - from);
         if from + n == BOX_LEN {
             self.hold_until = None;

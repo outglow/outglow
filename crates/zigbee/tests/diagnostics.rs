@@ -992,3 +992,28 @@ fn the_platform_figures_for_the_firmware() {
     net.nodes[n].stack.keep_for_restart();
     assert!(net.air.borrow().ports[id].retained.is_some(), "the counters are handed to the HAL to keep over a restart");
 }
+
+#[test]
+fn a_black_box_read_only_in_part_records_again_once_the_hold_is_over() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.run(5_000);
+    let short = net.nodes[a].short();
+    mfr(&mut net, short, &[0x6000]);
+    let held_from = net.now();
+    for _ in 0..14 {
+        net.coord.zcl(short, DIAG, 0x00, 0x00, &ids(&[RESETS]));
+        net.run(5_000);
+    }
+    let b = black_box(&mut net, short);
+    let (neighbors, link_entry, ring_cap, ring_len, ring_entry) = (b[1] as usize, b[2] as usize, b[3] as usize, b[4] as usize, b[5] as usize);
+    assert!(ring_len < ring_cap, "not full yet: {ring_len}");
+    let ring_at = 24 + neighbors * link_entry;
+    let times: Vec<u32> = b[ring_at..ring_at + ring_len * ring_entry].chunks(ring_entry).map(|e| u32::from_le_bytes([e[0], e[1], e[2], e[3]])).collect();
+    assert!(times.iter().any(|t| *t > held_from + 60_000), "recorded after the hold: {times:?}");
+    assert!(!times.iter().any(|t| (held_from..held_from + 60_000).contains(t)), "nothing during it: {times:?}");
+    assert!(b[ring_at + ring_len * ring_entry..ring_at + ring_cap * ring_entry].iter().all(|x| *x == 0), "the rest of the ring is empty");
+    let rows_len = u16::from_le_bytes([b[8], b[9]]) as usize;
+    let rows_at = ring_at + ring_cap * ring_entry;
+    assert!(b[rows_at + rows_len * b[10] as usize..].iter().all(|x| *x == 0), "and so are the rows not written yet");
+}
