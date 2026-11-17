@@ -840,3 +840,47 @@ fn a_scene_with_a_name_a_short_colour_set_and_an_explicit_colour_mode() {
     assert_eq!(recall(&mut net, 2), vec![Command::MoveToHueSaturation { hue: 128, sat: 100, direction: HueDirection::Shortest, transition_ms: 0 }]);
     assert_eq!(recall(&mut net, 3), vec![Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }], "a reserved mode: by the temperature");
 }
+
+#[test]
+fn remove_all_scenes_removes_those_of_its_group_only() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    for g in [0x34u8, 0x35] {
+        net.coord.zcl(short, GROUPS, 0x01, 0x00, &[g, 0x12, 0]);
+        net.coord.zcl(short, SCENES, 0x01, 0x00, &[g, 0x12, 1, 0, 0, 0]);
+        net.run(50);
+    }
+    net.coord.zcl(short, SCENES, 0x01, 0x03, &[0x34, 0x12]);
+    net.run(50);
+    assert_eq!(read(&mut net, short, SCENES, &[0x0000]), vec![ok(0, &[0x20, 1])]);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x01, &[0x35, 0x12, 1]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x01).unwrap()[..4], [0x19, seq, 0x01, 0x00]);
+}
+
+#[test]
+fn a_store_scene_with_no_room_leaves_the_current_scene_alone() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    for id in 1..=8u8 {
+        net.coord.zcl(short, SCENES, 0x01, 0x00, &[0x34, 0x12, id, 0, 0, 0]);
+    }
+    net.run(100);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x04, &[0x34, 0x12, 9]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x04).unwrap(), vec![0x19, seq, 0x04, 0x89, 0x34, 0x12, 9]);
+    assert_eq!(read(&mut net, short, SCENES, &[1, 2, 3]), vec![ok(1, &[0x20, 0]), ok(2, &[0x21, 0, 0]), ok(3, &[0x10, 0])]);
+}
+
+#[test]
+fn move_color_temperature_stops_at_the_bounds_it_is_given_or_the_lights_own() {
+    use bulb_core::command::Command;
+    let (mut net, n, short) = bulb_with(IDENTITY_TW);
+    let target = |c: Option<bulb_core::command::Command>| match c {
+        Some(Command::MoveToColorTemperature { mireds, .. }) => mireds,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(target(last_command(&mut net, n, short, COLOR, 0x4B, &[3, 10, 0, 200, 0, 0, 0])), 200);
+    assert_eq!(target(last_command(&mut net, n, short, COLOR, 0x4B, &[3, 10, 0, 0, 0, 0, 0])), bulb_core::CT_MIN);
+    assert_eq!(target(last_command(&mut net, n, short, COLOR, 0x4B, &[1, 10, 0, 0, 0, 0x2C, 0x01])), 300);
+    assert_eq!(target(last_command(&mut net, n, short, COLOR, 0x4B, &[1, 10, 0, 0, 0, 0, 0])), bulb_core::CT_MAX);
+}
