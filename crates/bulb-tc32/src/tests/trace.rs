@@ -43,3 +43,15 @@ fn a_transmission_is_summed_up_in_attempts_busy_attempts_and_microseconds() {
     assert_eq!(tx_aux([255, 255, 0x10_0000 + 16 - 0xffff * 16]), 0xffff_ffff);
     assert_eq!(tx_aux([1, 0, 0x10_0040 - 0xfffe * 16]), 0xfffe_0001);
 }
+
+#[test]
+fn a_flash_program_and_erase_are_traced_with_their_sector() {
+    let _s = sim::session();
+    ring::ZB_TRACE.write32(4, 0);
+    crate::flash::write(0xf_5010, &[1]);
+    crate::flash::erase_sector(0xf_6000);
+    assert_eq!(entry(0)[1], 0x0000_0010);
+    assert_eq!(entry(0)[2], 0x00f5_0000);
+    assert_eq!(entry(1)[1], 0x0000_0110);
+    assert_eq!(entry(1)[2], 0x00f6_0000);
+}
