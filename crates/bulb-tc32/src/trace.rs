@@ -61,4 +61,4 @@ pub fn span(kind: u8, detail: u8, peer: u16, t0: u32) {
 
 #[cfg(all(test, feature = "trace"))]
 #[path = "tests/trace.rs"]
-mod tests;
+pub(crate) mod tests;

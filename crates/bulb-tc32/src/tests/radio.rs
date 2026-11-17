@@ -1318,3 +1318,34 @@ fn only_an_ack_of_five_octets_with_our_sequence_number_while_we_wait_counts() {
         assert!(!has_frame());
     }
 }
+
+#[cfg(feature = "trace")]
+#[test]
+fn the_trace_of_a_transmission_counts_its_attempts_and_the_busy_clear_channel_checks() {
+    let _s = sim::session();
+    reset_radio_state();
+    sim::with(|c| c.poke8(reg::IRQ_ENABLE, 1));
+    let mpdu = [0x41, 0x88, 0x5c, 0x62, 0x1a, 0x34, 0x12, 0x00, 0x00];
+    assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::Ok);
+    assert_eq!(LAST_TX.get()[..2], [1, 0]);
+    let mut checks = 0;
+    sim::with(|c| {
+        c.on(move |c, op| {
+            if let Op::W8(0x643, 0) = op {
+                checks += 1;
+                c.poke8(RF_RSSI, if checks <= 2 { 0x40 } else { 0 });
+            }
+        })
+    });
+    assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::Ok);
+    sim::with(|c| c.hook = None);
+    assert_eq!(LAST_TX.get()[..2], [1, 2]);
+    sim::with(|c| c.poke8(RF_RSSI, 0x40));
+    crate::trace::tests::rewind();
+    assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::ChannelBusy);
+    assert_eq!(LAST_TX.get()[..2], [4, 4 * (MAX_CCA_ATTEMPTS - 1) + 4]);
+    let e = crate::trace::tests::entry(0);
+    assert_eq!(e[1] & 0x00ff_ffff, 0x005c_0000 | (TxStatus::ChannelBusy as u32) << 8 | crate::trace::MAC as u32);
+    assert_eq!(e[2], 0x1234_0000 | mpdu.len() as u32);
+    assert_eq!(e[3] & 0xffff, 4 | 20 << 8);
+}

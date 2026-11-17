@@ -2,7 +2,7 @@ use super::*;
 use crate::sim;
 use zigbee::hal::Trace;
 
-fn entry(i: usize) -> [u32; 4] {
+pub(crate) fn entry(i: usize) -> [u32; 4] {
     let at = 8 + i * 16;
     [ring::ZB_TRACE.read32(at), ring::ZB_TRACE.read32(at + 4), ring::ZB_TRACE.read32(at + 8), ring::ZB_TRACE.read32(at + 12)]
 }
@@ -54,4 +54,8 @@ fn a_flash_program_and_erase_are_traced_with_their_sector() {
     assert_eq!(entry(0)[2], 0x00f5_0000);
     assert_eq!(entry(1)[1], 0x0000_0110);
     assert_eq!(entry(1)[2], 0x00f6_0000);
+}
+
+pub(crate) fn rewind() {
+    ring::ZB_TRACE.write32(4, 0);
 }
