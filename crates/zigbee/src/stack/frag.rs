@@ -91,7 +91,7 @@ impl<H: Hal> Stack<H> {
         let index = match kind {
             FIRST => {
                 if !((rx.active || rx.done) && rx.a == a) {
-                    if data.is_empty() || data.len() > 255 || block == 0 || block > 32 {
+                    if data.is_empty() || block == 0 || block > 32 {
                         return None;
                     }
                     if (block as usize - 1) * data.len() >= MAX_TRANSFER {
@@ -154,9 +154,9 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    pub(crate) fn send_fragmented(&mut self, a: Addressing, payload: &[u8], secure: bool) -> bool {
-        if self.frag_out.active || payload.len() > MAX_TRANSFER {
-            return false;
+    pub(crate) fn send_fragmented(&mut self, a: Addressing, payload: &[u8], secure: bool) {
+        if self.frag_out.active {
+            return;
         }
         let tx = &mut self.frag_out;
         tx.active = true;
@@ -167,7 +167,6 @@ impl<H: Hal> Stack<H> {
         tx.block = 0;
         tx.tries = 0;
         self.send_block();
-        true
     }
 
     fn send_block(&mut self) {
