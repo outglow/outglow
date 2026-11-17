@@ -1815,3 +1815,37 @@ fn of_three_commissioning_frames_heard_at_once_the_third_finds_no_room_to_wait()
     from.dedup();
     assert_eq!(from, [SWITCH, SWITCH + 1], "two wait at a time");
 }
+
+#[test]
+fn a_response_another_proxy_sends_for_another_device_leaves_the_bulbs_answer_waiting() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let sa = net.nodes[a].short();
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    net.coord.gp_response(sa, 11, SWITCH, 0xF0, &[0x01, 0x62, 0x1A]);
+    net.run(100);
+    net.coord.gp_response(0x7777, 11, SWITCH + 1, 0xF0, &[0x01, 0x62, 0x1A]);
+    net.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    assert_eq!(net.air.borrow().timed.len(), 1, "still sent to its device");
+    let mut net2 = Net::new();
+    let a = net2.join_node();
+    let sa = net2.nodes[a].short();
+    let mut gpd = Gpd::new(&net2.air, SWITCH, None);
+    net2.coord.gp_commissioning_mode(true, true);
+    net2.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net2.run(100);
+    net2.coord.gp_response(sa, 11, SWITCH, 0xF0, &[0x01, 0x62, 0x1A]);
+    net2.run(100);
+    net2.coord.gp_response(0x7777, 11, SWITCH, 0xF0, &[0x01, 0x62, 0x1A]);
+    net2.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net2.run(100);
+    assert!(net2.air.borrow().timed.is_empty(), "another proxy answers that device now");
+}
