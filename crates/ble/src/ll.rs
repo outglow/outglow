@@ -292,11 +292,9 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn terminate(&mut self) {
-        if self.link.state == LinkState::Connected && self.link.closing.is_none() {
-            self.hal.tx_push(pdu::LLID_CONTROL, &[LL_TERMINATE_IND, ERR_REMOTE_USER_TERMINATED]);
-            let timeout = self.link.p.timeout as u32 * 10 * TICKS_PER_MS;
-            self.link.closing = Some(self.hal.now().wrapping_add(timeout));
-        }
+        self.hal.tx_push(pdu::LLID_CONTROL, &[LL_TERMINATE_IND, ERR_REMOTE_USER_TERMINATED]);
+        let timeout = self.link.p.timeout as u32 * 10 * TICKS_PER_MS;
+        self.link.closing = Some(self.hal.now().wrapping_add(timeout));
     }
 
     fn connection_events(&mut self) {
