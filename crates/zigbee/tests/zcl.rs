@@ -707,3 +707,21 @@ fn a_read_answers_as_many_attributes_as_fit_in_the_longest_answer() {
     let records = read_records(&rsp[5..]);
     assert_eq!(records.iter().map(|r| r.0).collect::<Vec<u16>>(), vec![0x5050, 0x5051, 0x5052], "room for three pages of 65 bytes; a fourth is left for the next read");
 }
+
+#[test]
+fn a_reportable_change_of_two_bytes_is_kept_whole() {
+    let (mut net, _, short) = bulb_with(IDENTITY_TW);
+    assert_eq!(global(&mut net, short, COLOR, 0x06, &[0x00, 0x07, 0x00, 0x21, 1, 0, 0x10, 0x0E, 0x02, 0x01]), Some(vec![0x07, 0x00]));
+    assert_eq!(
+        global(&mut net, short, COLOR, 0x08, &[0x00, 0x07, 0x00]),
+        Some(vec![0x09, 0x00, 0x00, 0x07, 0x00, 0x21, 1, 0, 0x10, 0x0E, 0x02, 0x01])
+    );
+}
+
+#[test]
+fn the_sense_cluster_has_no_manufacturer_commands_to_discover() {
+    let (mut net, _, short) = bulb_with(Identity { sense: true, ..IDENTITY });
+    let seq = net.coord.zcl_mfr(short, 0xFC5E, 0x00, MFR, 0x11, &[0, 0xFF]);
+    net.run(100);
+    assert_eq!(net.coord.last_zcl_mfr(short, 0xFC5E, 0x12).unwrap(), vec![0x1C, 0x41, 0x11, seq, 0x12, 1]);
+}
