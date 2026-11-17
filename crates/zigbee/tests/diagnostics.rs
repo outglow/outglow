@@ -1144,3 +1144,47 @@ fn without_a_black_box_its_pages_are_empty() {
     let r = mfr(&mut net, short, &[0x6000]);
     assert_eq!(r[&0x6000], (0x41, vec![0]));
 }
+
+#[test]
+fn the_black_box_lays_its_parts_out_one_after_the_other_and_says_what_each_frame_was() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let short = net.nodes[a].short();
+    net.run(16_000);
+    net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(200);
+    let b = black_box(&mut net, short);
+    let (neighbors, link_entry, ring_cap, ring_len, ring_entry) = (b[1] as usize, b[2] as usize, b[3] as usize, b[4] as usize, b[5] as usize);
+    let rows_cap = u16::from_le_bytes([b[6], b[7]]) as usize;
+    let total = u16::from_le_bytes([b[20], b[21]]) as usize;
+    assert_eq!((neighbors, link_entry, ring_cap, ring_entry, rows_cap, b[10]), (16, 36, 64, 16, 360, 12));
+    assert_eq!(total, 24 + neighbors * link_entry + ring_cap * ring_entry + rows_cap * b[10] as usize);
+    let ring_at = 24 + neighbors * link_entry;
+    let ring: Vec<&[u8]> = b[ring_at..ring_at + ring_len * ring_entry].chunks(ring_entry).collect();
+    let kind_of = |e: &[u8]| (e[10], u16::from_le_bytes([e[11], e[12]]));
+    assert!(ring.iter().any(|e| kind_of(e) == (0x00 | 0x04 | 0x40, ON_OFF)), "a secured unicast of On/Off: {:02x?}", ring.iter().map(|e| kind_of(e)).collect::<Vec<_>>());
+    assert!(ring.iter().any(|e| kind_of(e) == (0x01 | 0x04 | 0x08 | 0x20, 0x08)), "a secured broadcast Link Status");
+    assert!(ring.iter().all(|e| e[10] & 0x10 == 0), "nothing relayed");
+}
+
+#[test]
+fn a_frame_passed_on_for_another_device_is_marked_relayed_in_the_black_box() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    net.coord.permit(120);
+    net.run(600);
+    let b = net.add_node();
+    let pb = net.nodes[b].id;
+    net.link(0, pb, 0);
+    net.run_until(30_000, "b joined through a", |net| net.nodes[b].stack.state() == zigbee::stack::State::Up);
+    net.run(20_000);
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    net.coord.zcl(sb, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(500);
+    let bx = black_box(&mut net, sa);
+    let (neighbors, link_entry, ring_len, ring_entry) = (bx[1] as usize, bx[2] as usize, bx[4] as usize, bx[5] as usize);
+    let ring_at = 24 + neighbors * link_entry;
+    let relayed: Vec<&[u8]> = bx[ring_at..ring_at + ring_len * ring_entry].chunks(ring_entry).filter(|e| e[10] & 0x10 != 0).collect();
+    assert!(relayed.iter().any(|e| u16::from_le_bytes([e[6], e[7]]) == sb), "the read passed on to the second bulb");
+    assert!(relayed.iter().all(|e| u16::from_le_bytes([e[8], e[9]]) != sa));
+}
