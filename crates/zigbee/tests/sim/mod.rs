@@ -616,6 +616,7 @@ pub struct Coord {
     pub ota_offer_anyway: bool,
     pub ota_drop_blocks: u32,
     pub ota_block_requests: u32,
+    pub ota_block_size: Option<usize>,
     pub ota_queries: u32,
     pub ota_blocks: u32,
     pub ota_end: Option<u8>,
@@ -695,6 +696,7 @@ impl Coord {
             ota_offer_anyway: false,
             ota_drop_blocks: 0,
             ota_block_requests: 0,
+            ota_block_size: None,
             ota_queries: 0,
             ota_blocks: 0,
             ota_end: None,
@@ -1439,7 +1441,7 @@ impl Coord {
                 }
                 self.ota_blocks += 1;
                 let offset = u32::from_le_bytes([b[9], b[10], b[11], b[12]]) as usize;
-                let max = b[13] as usize;
+                let max = self.ota_block_size.unwrap_or(b[13] as usize);
                 rsp.push(0x05);
                 if self.ota_wait.0 > 0 {
                     self.ota_wait.0 -= 1;
@@ -1477,6 +1479,10 @@ impl Coord {
                 rsp.extend_from_slice(&upgrade_time.to_le_bytes());
             }
             _ => return,
+        }
+        if rsp.len() > 70 {
+            self.zcl_fragmented(src, 0x0019, 0x19, rsp[2], &rsp[3..], 50);
+            return;
         }
         let aps = self.aps_frame(0x00, 1, 0x0019, 0x0104, 1, &rsp);
         self.nwk_data(src, &aps);

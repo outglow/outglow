@@ -714,3 +714,21 @@ fn a_power_cut_after_a_bad_marker_still_ends_in_an_invalid_image() {
     assert_eq!(net.coord.ota_end, Some(0x96));
     assert!(!activated(&net, n));
 }
+
+#[test]
+fn blocks_larger_than_the_bulb_asked_for_arriving_in_fragments_go_into_the_image_whole() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(3000, 24);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_block_size = Some(150);
+    net.coord.ota_upgrade_time = None;
+    net.coord.ota_notify(short);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    assert_eq!(net.coord.ota_end, Some(0x00));
+    net.run(1_000);
+    let mut held = image.clone();
+    held[8] = 0xFF;
+    assert_eq!(staged(&net, n, image.len()), held);
+}
