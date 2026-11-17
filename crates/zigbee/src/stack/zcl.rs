@@ -682,6 +682,21 @@ impl<H: Hal> Stack<H> {
         self.identity.color && cluster == COLOR && matches!(id, 0x0000 | 0x0001 | 0x0003 | 0x0004 | 0x0008)
     }
 
+    fn diag_attribute(&mut self, attr: diag::Attr, out: &mut Long) {
+        match attr {
+            diag::Attr::Octets(src) => {
+                let mut b = [0u8; 64];
+                let n = self.diag_bytes(src, &mut b);
+                out.u8(n as u8);
+                out.bytes(&b[..n]);
+            }
+            diag::Attr::Number(ty, src) => {
+                let v = self.diag_value(src);
+                put_number(out, ty, v);
+            }
+        }
+    }
+
     fn value_of(&mut self, c: Ctx, cluster: u16, id: u16, out: &mut Long) {
         if let Some(o) = objects::object(c.ep) {
             let single = |out: &mut Long, v: f32| out.u32(v.to_bits());
@@ -710,20 +725,7 @@ impl<H: Hal> Stack<H> {
             return;
         }
         if cluster == DIAGNOSTICS && !(c.mfr.is_none() && id == CLUSTER_REVISION) {
-            if let Some(attr) = diag::attribute(c.mfr.is_some(), id) {
-                match attr {
-                    diag::Attr::Octets(src) => {
-                        let mut b = [0u8; 64];
-                        let n = self.diag_bytes(src, &mut b);
-                        out.u8(n as u8);
-                        out.bytes(&b[..n]);
-                    }
-                    diag::Attr::Number(ty, src) => {
-                        let v = self.diag_value(src);
-                        put_number(out, ty, v);
-                    }
-                }
-            }
+            if let Some(attr) = diag::attribute(c.mfr.is_some(), id) { self.diag_attribute(attr, out) }
             return;
         }
         #[cfg(feature = "sense")]
@@ -867,10 +869,11 @@ impl<H: Hal> Stack<H> {
                 }
                 if undivided && !failed {
                     r = records;
-                    while let (Some(id), Some(ty)) = (r.u16(), r.u8()) {
-                        let Some(v) = value_len(ty, &r).and_then(|n| r.take(n)) else {
-                            break;
-                        };
+                    let mut next = || {
+                        let (id, ty) = (r.u16()?, r.u8()?);
+                        Some((id, value_len(ty, &r).and_then(|n| r.take(n))?))
+                    };
+                    while let Some((id, v)) = next() {
                         self.write_at(c, cluster, id, v);
                     }
                 }

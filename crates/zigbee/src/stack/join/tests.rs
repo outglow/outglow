@@ -157,3 +157,120 @@ fn an_association_starts_the_tables_anew_with_the_parent_as_the_one_confirmed_ne
     assoc_rsp(&mut s, crate::mac::Addr::Short(0x0000), 0x1234);
     assert_eq!(s.neighbors[0].ext, 0, "a parent known only by its short address");
 }
+
+use crate::mac::{self, Addr};
+use crate::stack::State;
+
+fn mac_cmd(s: &mut Stack<Scripted>, dst: Addr, dst_pan: u16, src: Addr, payload: &[u8]) {
+    let h = mac::Header { frame_type: mac::FRAME_CMD, security: false, pending: false, ack_request: true, seq: 1, dst_pan, dst, src_pan: dst_pan, src };
+    s.on_mac_command(&h, payload);
+}
+
+#[test]
+fn a_candidate_heard_again_with_a_better_link_moves_up() {
+    let mut s = stack();
+    s.candidate_add(candidate(1, 120, true, 1));
+    s.candidate_add(candidate(2, 150, true, 1));
+    s.candidate_add(candidate(1, 200, true, 1));
+    assert_eq!(order(&s), [1, 2]);
+    assert_eq!(s.scan_found[0].unwrap().lqi, 200);
+}
+
+#[test]
+fn the_join_timers_of_a_bulb_waiting_for_a_key_outside_a_join_take_it_down_and_leave_one_that_is_up_alone() {
+    let mut s = stack();
+    s.state = State::WaitKey;
+    s.steering = 0;
+    s.timer = 1_000;
+    s.join_timers(1_000);
+    assert_eq!(s.state, State::Down);
+    let mut s = stack();
+    s.state = State::Up;
+    s.timer = 1_000;
+    s.join_timers(1_000);
+    assert_eq!(s.state, State::Up);
+    assert!(s.hal.sent.is_empty());
+}
+
+#[test]
+fn a_rejoin_response_without_a_rejoin_is_ignored() {
+    let mut s = stack();
+    s.state = State::Up;
+    s.nib.short = 0x0042;
+    let h = crate::nwk::Header::new(crate::nwk::FRAME_CMD, 0x0042, 0x0000, 1, 1);
+    s.on_rejoin_response(&h, 0x0000, &[crate::nwk::CMD_REJOIN_RESPONSE, 0x34, 0x12, 0x00]);
+    assert_eq!(s.nib.short, 0x0042);
+}
+
+#[test]
+fn beacons_are_taken_only_while_scanning_and_when_searching_only_those_of_the_network() {
+    let beacon = |s: &mut Stack<Scripted>, ext_pan: u64| {
+        let mut c = candidate(1, 200, true, 1).beacon;
+        c.ext_pan = ext_pan;
+        let mut f = crate::util::Buf::new();
+        c.write(7, &mut f);
+        let (h, off) = mac::Header::parse(f.as_slice()).unwrap();
+        s.on_beacon(&h, &f.as_slice()[off..], 200);
+    };
+    let mut s = stack();
+    s.state = State::Scan;
+    beacon(&mut s, 1);
+    assert_eq!(order(&s), [1]);
+    let mut s = stack();
+    s.state = State::AssocPoll;
+    beacon(&mut s, 1);
+    assert!(order(&s).is_empty(), "not while associating");
+    let mut s = stack();
+    s.state = State::Scan;
+    s.searching = Some(0);
+    s.nib.ext_pan = 9;
+    beacon(&mut s, 1);
+    assert!(order(&s).is_empty(), "another network");
+    beacon(&mut s, 9);
+    assert_eq!(order(&s), [1]);
+    let mut s = stack();
+    s.state = State::Scan;
+    let h = mac::Header { frame_type: mac::FRAME_BEACON, security: false, pending: false, ack_request: false, seq: 1, dst_pan: 0, dst: Addr::None, src_pan: 0x1A62, src: Addr::Short(1) };
+    s.on_beacon(&h, &[0x00], 200);
+    assert!(order(&s).is_empty(), "not a beacon");
+}
+
+#[test]
+fn an_association_request_that_is_not_sent_moves_on_to_the_next_candidate() {
+    let mut s = stack();
+    s.state = State::Scan;
+    s.scan_found[0] = Some(candidate(0x0001, 200, true, 1));
+    s.scan_found[1] = Some(candidate(0x0002, 200, true, 1));
+    s.hal.deaf = std::vec![0x0001];
+    s.join_next(1_000);
+    let to: Vec<u16> = s.hal.sent.iter().map(|f| u16::from_le_bytes([f[5], f[6]])).collect();
+    assert_eq!(to, [0x0001, 0x0002]);
+    assert_eq!(s.state, State::AssocPoll);
+}
+
+#[test]
+fn mac_commands_of_a_bulb_that_is_up_answer_only_its_own_address_and_its_children() {
+    let mut s = stack();
+    s.state = State::Up;
+    s.nib.short = 0x0042;
+    s.nib.pan = 0x1A62;
+    s.allow_children = true;
+    s.permit_until = Some(100_000);
+    mac_cmd(&mut s, Addr::Short(0x0042), 0x1A62, Addr::Short(0x0005), &[mac::CMD_ASSOC_REQ, 0x8E]);
+    mac_cmd(&mut s, Addr::Short(0x0042), 0x1A62, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ]);
+    mac_cmd(&mut s, Addr::Short(0x0043), 0x1A62, Addr::Ext(0x77), &[mac::CMD_ASSOC_REQ, 0x8E]);
+    assert!(s.children.iter().all(|c| !c.used));
+    mac_cmd(&mut s, Addr::Short(0xFFFF), 0xFFFF, Addr::Short(0x0005), &[mac::CMD_ORPHAN]);
+    mac_cmd(&mut s, Addr::Short(0xFFFF), 0xFFFF, Addr::Ext(0x77), &[mac::CMD_ORPHAN]);
+    assert!(s.hal.sent.is_empty(), "an orphan that is no child is not realigned");
+}
+
+#[test]
+fn a_bulb_resumed_with_its_trust_center_key_requested_but_not_confirmed_asks_to_verify_it() {
+    for (state, step) in [(0u8, 1u8), (1, 5), (2, 0), (3, 0)] {
+        let mut s = stack();
+        s.nib.tclk_state = state;
+        s.resume(1_000);
+        assert_eq!(s.tclk_step, step, "{state}");
+    }
+}
