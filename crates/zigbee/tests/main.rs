@@ -12,6 +12,7 @@ mod frames;
 mod green_power;
 mod hal_defaults;
 mod network;
+mod nv;
 mod ota;
 mod parent;
 mod persistence;
