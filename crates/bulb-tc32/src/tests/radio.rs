@@ -79,6 +79,7 @@ pub(crate) fn reset_radio_state() {
     ACK_WANTED.set(0);
     ACK_SEEN.set(0);
     PAN.set(0xffff);
+    PROBE_PAN.set(0xffff);
     SHORT.set(0xffff);
     EXT.set([0; 8]);
     N_PENDING_SHORT.set(0);
