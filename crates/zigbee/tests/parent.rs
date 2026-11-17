@@ -1895,8 +1895,7 @@ fn the_devices_with_frames_waiting_are_published_once_each_and_an_unknown_one_by
     }
     .write(&mut f);
     f.bytes(&[zigbee::mac::CMD_ASSOC_REQ, stranger.capability()]);
-    net.coord.permit(120);
-    net.run(200);
+    net.run(200_000);
     net.air.borrow_mut().transmit(stranger.id, f.as_slice());
     net.run(100);
     let (shorts, exts) = net.air.borrow().ports[id].pending.clone();
