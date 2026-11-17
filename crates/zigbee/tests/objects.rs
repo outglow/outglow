@@ -168,3 +168,29 @@ fn reports_go_only_to_bindings_of_their_cluster_that_are_in_use() {
     net.run(3_000);
     assert!(net.coord.zcl_rx.iter().all(|(s, c, f)| *s != short || *c != 0x0008 || f[2] != 0x0A), "no level report");
 }
+
+#[test]
+fn hue_and_x_are_reported_once_configured_and_no_sooner_than_the_minimum_interval() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_COLOR;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 1, COLOR);
+    let seq = net.coord.zcl(short, COLOR, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x20, 5, 0, 0x10, 0x0E, 1, 0x00, 0x03, 0x00, 0x21, 1, 0, 0x10, 0x0E, 0x10, 0x00]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, COLOR, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00]);
+    let reports = |net: &Net, attr: u8| -> Vec<Vec<u8>> { net.coord.zcl_rx.iter().filter(|e| e.0 == short && e.1 == COLOR && e.2[2] == 0x0A && e.2[3] == attr).map(|e| e.2[3..].to_vec()).collect() };
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x40, 0x00, 0x50, 0, 0]);
+    net.run(3_000);
+    assert_eq!(reports(&net, 0x03).last(), Some(&vec![0x03, 0x00, 0x21, 0x00, 0x40]));
+    net.run(6_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[80, 90, 0, 0]);
+    net.run(1_000);
+    let hue = reports(&net, 0x00).len();
+    assert_eq!(reports(&net, 0x00).last(), Some(&vec![0x00, 0x00, 0x20, 80]));
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[100, 90, 0, 0]);
+    net.run(3_000);
+    assert_eq!(reports(&net, 0x00).len(), hue, "not within the minimum interval");
+    net.run(3_000);
+    assert_eq!(reports(&net, 0x00).last(), Some(&vec![0x00, 0x00, 0x20, 100]));
+}
