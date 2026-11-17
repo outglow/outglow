@@ -420,10 +420,6 @@ impl<H: Hal> Stack<H> {
 
     fn defer_reply(&mut self, dst: u16, dst_ep: u8, cluster: u16, payload: &[u8]) {
         self.send_deferred();
-        if payload.len() > super::DEFERRED_MAX {
-            self.aps_data(dst, dst_ep, cluster, PROFILE_HA, ENDPOINT, payload);
-            return;
-        }
         let mut data = [0u8; super::DEFERRED_MAX];
         data[..payload.len()].copy_from_slice(payload);
         self.deferred = Some(super::Deferred { dst, dst_ep, cluster, secured: self.reply_secured, len: payload.len() as u8, data });
