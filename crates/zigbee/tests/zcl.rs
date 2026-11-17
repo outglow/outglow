@@ -462,3 +462,15 @@ fn a_colour_scene_without_a_mode_takes_temperature_when_it_has_one_and_xy_otherw
     assert_eq!(last_command(&mut net, n, short, SCENES, 0x05, &[0x34, 0x12, 1]), Some(Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }));
     assert_eq!(last_command(&mut net, n, short, SCENES, 0x05, &[0x34, 0x12, 2]), Some(Command::MoveToXy { x: 0x2010, y: 0x4030, transition_ms: 0 }));
 }
+
+#[test]
+fn the_identify_time_counts_down_to_zero_and_stays_there() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    net.coord.zcl(short, IDENTIFY, 0x01, 0x00, &[3, 0]);
+    net.run(1_100);
+    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 1, 0])]);
+    net.run(2_500);
+    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 0, 0])]);
+    net.run(60_000);
+    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 0, 0])]);
+}

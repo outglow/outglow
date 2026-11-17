@@ -14,6 +14,7 @@ mod hal_defaults;
 mod network;
 mod ota;
 mod parent;
+mod persistence;
 mod sense;
 mod settings;
 mod touchlink;
