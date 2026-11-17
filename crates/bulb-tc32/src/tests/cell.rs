@@ -56,3 +56,28 @@ fn a_take_once_gives_its_value_only_the_first_time() {
     ONCE.release();
     assert_eq!(ONCE.take_with(|| 11).copied(), Some(11));
 }
+
+#[repr(C)]
+struct GuardedBuf {
+    buf: SharedBuf<8>,
+    guard: [u8; 4],
+}
+
+#[repr(C)]
+struct GuardedArray {
+    array: Shared<[u16; 3]>,
+    guard: u16,
+}
+
+#[test]
+fn nothing_is_read_or_written_past_the_end() {
+    let g = GuardedBuf { buf: SharedBuf::new([0; 8]), guard: [0x5a; 4] };
+    assert_eq!(g.buf.read(8), 0);
+    g.buf.write(8, 0x88);
+    g.buf.copy_from(6, &[1, 2, 3, 4]);
+    assert_eq!(std::hint::black_box(&g).guard, [0x5a; 4]);
+    let a = GuardedArray { array: Shared::new([1, 2, 3]), guard: 0x5a5a };
+    a.array.set_at(3, 9);
+    assert_eq!(a.array.at(3), None);
+    assert_eq!(std::hint::black_box(&a).guard, 0x5a5a);
+}

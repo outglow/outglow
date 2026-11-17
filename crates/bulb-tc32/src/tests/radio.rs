@@ -218,9 +218,15 @@ fn a_busy_channel_ends_in_channel_busy_without_sending() {
 fn frames_too_short_or_too_long_are_not_sent() {
     let _s = sim::session();
     reset_radio_state();
-    assert_eq!(transmit(&[1, 2], || 0), TxStatus::Ok);
-    assert_eq!(transmit(&[0; 126], || 0), TxStatus::Ok);
+    assert_eq!(transmit(&[1, 2], no_backoff), TxStatus::Ok);
+    assert_eq!(transmit(&[0; 126], no_backoff), TxStatus::Ok);
     assert_eq!(sim::with(|c| c.tx_kicks), 0);
+    assert_eq!(transmit(&[0x01, 0x08, 0x01], no_backoff), TxStatus::Ok);
+    assert_eq!(sim::with(|c| c.tx_kicks), 1);
+}
+
+fn no_backoff() -> u32 {
+    0
 }
 
 fn deliver(bytes: &[u8]) {
