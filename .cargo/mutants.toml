@@ -27,6 +27,8 @@ exclude_re = [
   # zigbee: the options of a route reply, 0x20 | 0x10 when the originator's extended address is
   # in it: two bits that never overlap (every other a | b of the stack goes through util::pack)
   "zigbee/src/stack/net\\.rs:[0-9]+:[0-9]+: replace \\| with \\^ in Stack<H>::on_route_request$",
+  # zigbee: when two times are equal, the later of them (or the sooner link status) is the same time
+  "zigbee/src/stack/net\\.rs:[0-9]+:[0-9]+: replace > with >= in Stack<H>::link_status_soon$",
   # zigbee: a child heard exactly 2^31 ms (24.8 days) after the start counts as heard before it either way
   "zigbee/src/stack/zdo\\.rs:.*replace < with <= in Stack<H>::child_alive",
 ]

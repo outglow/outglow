@@ -1,6 +1,7 @@
 use super::super::address_tests::{Scripted, IDENTITY};
 use super::super::diag::k;
 use super::NEIGHBOR_FORGET;
+use crate::nwk;
 use crate::stack::{Stack, AGE_LIMIT, NEIGHBORS};
 extern crate std;
 use std::vec::Vec;
@@ -88,4 +89,45 @@ fn a_neighbour_goes_stale_after_the_age_limit_and_is_forgotten_after_forty_link_
     assert_eq!(s.neighbors.iter().filter(|n| n.used).count(), 1);
     assert!(s.neighbors[2].used);
     assert_eq!(s.diag.n[k::NEIGHBOR_REMOVED], NEIGHBORS as u32 - 1);
+}
+
+fn announce(short: u16) -> [u8; 12] {
+    let s = short.to_le_bytes();
+    [0x08, 0x00, 0x13, 0x00, 0x00, 0x00, 0x01, 0x80, s[0], s[1], 0x42, 0x8E]
+}
+
+#[test]
+fn a_device_announce_straight_from_a_neighbour_brings_the_link_status_forward() {
+    let cases: [(u8, u16, u16, usize, bool, bool); 7] = [
+        (nwk::FRAME_DATA, 0x1000, 0x1000, 12, true, true),
+        (nwk::FRAME_DATA, 0x1000, 0x1000, 9, true, true),
+        (nwk::FRAME_DATA, 0x1000, 0x1000, 8, true, false),
+        (nwk::FRAME_CMD, 0x1000, 0x1000, 12, true, false),
+        (nwk::FRAME_DATA, 0x1001, 0x1000, 12, true, false),
+        (nwk::FRAME_DATA, 0x1000, 0x1000, 12, false, false),
+        (nwk::FRAME_DATA, 0x2222, 0x2222, 12, false, false),
+    ];
+    for (i, (frame_type, src, mac_src, len, announce_frame, soon)) in cases.into_iter().enumerate() {
+        let mut s = stack();
+        fill(&mut s);
+        s.link_status_at = 50_000;
+        let mut p = announce(src);
+        if !announce_frame {
+            p[2] = 0x14;
+        }
+        s.neighbor_announced(&nwk::Header::new(frame_type, 0xFFFD, src, 30, 1), mac_src, &p[..len]);
+        assert_eq!(s.link_status_at, if soon { 4_000 } else { 50_000 }, "case {i}");
+    }
+}
+
+#[test]
+fn a_link_status_lists_only_as_many_entries_as_its_count_says() {
+    let mut s = stack();
+    fill(&mut s);
+    s.nib.short = 0x0042;
+    s.neighbors[0].out_cost = 0;
+    s.on_link_status(0x1000, &[nwk::CMD_LINK_STATUS, 0x61, 0x43, 0x00, 0x11, 0x42, 0x00, 0x33]);
+    assert_eq!(s.neighbors[0].out_cost, 0, "the second entry is past the count");
+    s.on_link_status(0x1000, &[nwk::CMD_LINK_STATUS, 0x62, 0x43, 0x00, 0x11, 0x42, 0x00, 0x33]);
+    assert_eq!(s.neighbors[0].out_cost, 3);
 }

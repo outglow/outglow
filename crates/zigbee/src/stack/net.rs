@@ -1358,7 +1358,7 @@ impl<H: Hal> Stack<H> {
         p.u8(0);
         let mut count = 0u8;
         let mut after: i32 = -1;
-        while count < 24 {
+        for _ in 0..self.neighbors.len() {
             let next = self
                 .neighbors
                 .iter()
