@@ -1119,3 +1119,17 @@ fn the_network_status_figures_follow_the_statuses_heard() {
     let after = mfr(&mut net, short, &[0x5024, 0x5025]);
     assert_eq!([0x5024, 0x5025].map(|a| number(&after[&a].1)), [1, 0x09]);
 }
+
+#[test]
+fn a_busy_channel_is_a_channel_access_failure() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    let before = mfr1(&mut net, short, 0x500D);
+    net.air.borrow_mut().ports[id].busy = 2;
+    let seq = net.coord.zcl(short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(200);
+    assert_eq!(net.coord.last_zcl(short, ON_OFF, 0x01).unwrap()[1], seq, "answered once the channel is free");
+    assert_eq!(mfr1(&mut net, short, 0x500D), before + 2);
+}

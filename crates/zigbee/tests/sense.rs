@@ -664,3 +664,43 @@ fn a_configuration_stored_by_the_previous_version_is_read_with_the_automatic_cal
     assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "a record of the wrong length is not read");
     assert_eq!(write(&mut net, sa, SENSE, 0x0077, T_U8, &[1]), 0x86);
 }
+
+#[test]
+fn the_manufacturer_cluster_has_revision_one() {
+    let (mut net, _, _, [sa, _]) = two_off();
+    assert_eq!(read(&mut net, sa, SENSE, 0xFFFD), Some(vec![1, 0]));
+}
+
+#[test]
+fn a_busy_channel_holds_the_probes_back() {
+    let (mut net, _, n, _) = two();
+    let [pa, _] = ports(&net, n);
+    past_holdoff(&mut net);
+    net.run(2_000);
+    net.air.borrow_mut().ports[pa].busy = 1_000_000;
+    let t = net.now();
+    net.run(2_000);
+    assert!(probes(&net, pa, t).is_empty());
+    net.air.borrow_mut().ports[pa].busy = 0;
+    let t = net.now();
+    net.run(2_000);
+    assert!(probes(&net, pa, t).len() >= 5, "and they go again once it is free");
+}
+
+#[test]
+fn a_probe_waits_while_frames_are_still_coming_in() {
+    let (mut net, _, n, [sa, _]) = two();
+    let [pa, _] = ports(&net, n);
+    past_holdoff(&mut net);
+    let t = net.now();
+    for _ in 0..400 {
+        for _ in 0..6 {
+            net.coord.nwk_data(sa, &[0x01, 0x55, 0x2A]);
+        }
+        net.run(1);
+    }
+    assert!(probes(&net, pa, t).len() <= 1, "{} probes in a flood", probes(&net, pa, t).len());
+    let t = net.now();
+    net.run(2_000);
+    assert!(probes(&net, pa, t).len() >= 5);
+}

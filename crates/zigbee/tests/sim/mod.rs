@@ -124,6 +124,8 @@ pub struct Port {
     pub retained: Option<Vec<u8>>,
     pub zcl_received: Vec<(u16, u16, u8, u8, u8, i8)>,
     pub probe_pan: u16,
+    pub busy: u32,
+    pub no_black_box: bool,
 }
 
 pub struct Air {
@@ -213,6 +215,8 @@ impl Air {
             retained: None,
             zcl_received: Vec::new(),
             probe_pan: 0xFFFF,
+            busy: 0,
+            no_black_box: false,
         });
         let n = self.ports.len();
         for row in self.lqi.iter_mut() {
@@ -341,7 +345,12 @@ impl Hal for SimHal {
         air.ports[self.id].short = short;
     }
     fn transmit(&mut self, mpdu: &[u8]) -> TxStatus {
-        self.air.borrow_mut().transmit(self.id, mpdu)
+        let mut air = self.air.borrow_mut();
+        if air.ports[self.id].busy > 0 {
+            air.ports[self.id].busy -= 1;
+            return TxStatus::ChannelBusy;
+        }
+        air.transmit(self.id, mpdu)
     }
     fn ota_begin(&mut self, size: u32) -> bool {
         if size as usize > STAGING_MAX {
@@ -440,6 +449,9 @@ impl Hal for SimHal {
         self.air.borrow().ports[self.id].hal_counters
     }
     fn black_box(&mut self) -> Option<&mut zigbee::BlackBox> {
+        if self.air.borrow().ports[self.id].no_black_box {
+            return None;
+        }
         Some(&mut self.bx)
     }
     fn noise_dbm(&mut self) -> Option<i8> {
