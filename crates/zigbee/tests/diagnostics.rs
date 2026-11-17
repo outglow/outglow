@@ -1398,3 +1398,16 @@ fn the_black_box_tells_the_cluster_of_a_groupcast_and_of_an_ack_with_its_fields_
     assert_eq!(relayed.iter().filter(|r| **r == (0x00 | 0x04 | 0x10 | 0x60, 0x0006)).count(), 1, "one acknowledgement with its cluster: {relayed:02x?}");
     assert!(relayed.contains(&(0x00 | 0x04 | 0x10, 0)), "and one without fields: {relayed:02x?}");
 }
+
+#[test]
+fn a_read_of_every_standard_counter_is_answered_in_one_frame_as_far_as_numbers_fit() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let all: Vec<u16> = [0x0000u16, 0x0001].into_iter().chain(0x0100..=0x011D).collect();
+    let seq = net.coord.zcl(short, DIAG, 0x00, 0x00, &ids(&all));
+    net.run(200);
+    let rsp = net.coord.last_zcl(short, DIAG, 0x01).unwrap();
+    assert_eq!(rsp[1], seq);
+    assert_eq!(records(&rsp[3..]).len(), all.len(), "{} bytes", rsp.len());
+}
