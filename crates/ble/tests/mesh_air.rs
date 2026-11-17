@@ -487,3 +487,22 @@ fn a_bulb_passes_a_packet_on_with_one_hop_less_unless_it_is_for_it_or_has_none_l
         assert!(ether.borrow().sent(0).is_empty());
     }
 }
+
+#[test]
+fn a_bulb_without_a_connection_sends_a_packet_64_times_every_5_ms_or_so() {
+    let (ether, mut rig) = alone();
+    ether.borrow_mut().deliver(0, &air_pdu_hops(0x61, 0x0021, 0xffff, 0xc0 | 0x10, &[0], 2, &LTK));
+    rig.run(1500);
+    let e = ether.borrow();
+    assert_eq!(e.sent(0).len(), 64 * 4, "64 bursts on the four channels");
+    let bursts = e.bursts_of(0);
+    let gaps: Vec<u64> = bursts.windows(2).map(|w| w[1] - w[0]).collect();
+    let usual: Vec<u64> = gaps.iter().copied().filter(|g| *g < 8 * MS).collect();
+    assert!(usual.len() >= 55, "{gaps:?}");
+    let sending = 2 * MS;
+    for step in 0..4u64 {
+        let pause = 4500 * MS / 1000 + step * MS / 4;
+        assert!(usual.iter().any(|g| (sending + pause..sending + pause + MS / 10).contains(g)), "a pause of {pause} ticks: {usual:?}");
+    }
+    assert!(usual.iter().all(|g| (sending + 4500 * MS / 1000..sending + 5250 * MS / 1000 + MS / 10).contains(g)), "{usual:?}");
+}
