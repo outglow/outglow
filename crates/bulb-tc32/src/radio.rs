@@ -484,7 +484,7 @@ fn on_frame() {
                     let poller = u16::from_le_bytes([at(src), at(src + 1)]);
                     let n = N_PENDING_SHORT.get() as usize;
                     let mut i = 0;
-                    while i < n && !pending {
+                    while i != n && !pending {
                         pending = PENDING_SHORT.at(i) == Some(poller);
                         i += 1;
                     }
@@ -492,7 +492,7 @@ fn on_frame() {
                         let n = N_CHILDREN.get() as usize;
                         let mut known = false;
                         i = 0;
-                        while i < n && !known {
+                        while i != n && !known {
                             known = CHILDREN.at(i) == Some(poller);
                             i += 1;
                         }
@@ -501,9 +501,9 @@ fn on_frame() {
                 } else {
                     let n = N_PENDING_EXT.get() as usize;
                     let mut slot = 0;
-                    while slot < n && !pending {
+                    while slot != n && !pending {
                         let mut i = 0;
-                        while i < 8 && PENDING_EXT.at(slot * 8 + i) == Some(at(src + i)) {
+                        while i != 8 && PENDING_EXT.at(slot * 8 + i) == Some(at(src + i)) {
                             i += 1;
                         }
                         pending = i == 8;
