@@ -1728,7 +1728,7 @@ impl<H: Hal> Stack<H> {
                     let room = |c: u16, rate: i32| -> u32 {
                         match rate {
                             0 => u32::MAX,
-                            r if r > 0 => (0xFEFF - c.min(0xFEFF) as u32) * 1000 / r as u32,
+                            r @ 1.. => (0xFEFF - c.min(0xFEFF) as u32) * 1000 / r as u32,
                             r => c as u32 * 1000 / (-r) as u32,
                         }
                     };
