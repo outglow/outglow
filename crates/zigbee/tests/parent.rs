@@ -1483,3 +1483,36 @@ fn a_rejoin_request_without_the_extended_source_or_capability_is_not_answered() 
     zed.poll(&mut net, 20);
     assert!(!zed.rx.iter().any(|(_, p)| p[0] == nwk::CMD_REJOIN_RESPONSE));
 }
+
+#[test]
+fn a_child_removed_while_a_broadcast_waits_for_it_leaves_the_broadcast_to_the_others() {
+    let (mut net, a, zed) = with_sleepy_child();
+    let mut kids = vec![zed];
+    kids.extend(more_sleepy_children(&mut net, a, 1));
+    let sa = net.nodes[a].short();
+    let id = net.nodes[a].id;
+    net.coord.zcl(0xFFFF, ON_OFF, 0x11, 0x02, &[]);
+    net.run(300);
+    net.coord.remove_device(sa, kids[0].ext);
+    net.run(300);
+    kids[0].poll(&mut net, 20);
+    kids[0].poll(&mut net, 20);
+    assert!(kids[0].rx.iter().all(|(h, _)| h.dst != 0xFFFF), "the removed child gets its leave, not the broadcast");
+    kids[1].poll(&mut net, 20);
+    assert!(kids[1].rx.iter().any(|(h, _)| h.dst == 0xFFFF), "the other still gets it");
+    net.run(100);
+    assert!(net.air.borrow().ports[id].pending.0.is_empty());
+}
+
+#[test]
+fn a_timeout_request_cut_short_is_not_answered() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let sa = net.nodes[a].short();
+    let mut h = zed.header(nwk::FRAME_CMD, sa);
+    h.radius = 1;
+    zed.nwk_send(h, &[nwk::CMD_TIMEOUT_REQUEST, 0x03]);
+    net.run(100);
+    zed.rx.clear();
+    zed.poll(&mut net, 20);
+    assert!(!zed.rx.iter().any(|(_, p)| p[0] == nwk::CMD_TIMEOUT_RESPONSE));
+}
