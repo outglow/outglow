@@ -368,3 +368,30 @@ fn the_app_in_its_own_format_gets_no_mesh_answers() {
     assert_eq!(from_b(&mut rigs[0]), 0);
     assert_eq!(rigs[0].ble.borrow().air_stats().to_app, 1, "heard, not passed on");
 }
+
+#[test]
+fn the_last_eight_packets_are_remembered_and_not_carried_out_twice() {
+    let (ether, mut rig) = alone();
+    let pdu = |sn: u32| air_pdu(sn, 0x0021, 0xffff, 0xc0 | 0x10, &[0], &LTK);
+    let received = |rig: &Rig| rig.ble.borrow().air_stats().received;
+    for sn in 1..=8 {
+        ether.borrow_mut().deliver(0, &pdu(sn));
+        rig.run(400);
+    }
+    assert_eq!(received(&rig), 8);
+    for sn in [1, 8, 4] {
+        ether.borrow_mut().deliver(0, &pdu(sn));
+        rig.run(400);
+    }
+    assert_eq!(received(&rig), 8, "all eight still remembered");
+    ether.borrow_mut().deliver(0, &air_pdu(1, 0x0022, 0xffff, 0xc0 | 0x10, &[0], &LTK));
+    ether.borrow_mut().deliver(0, &air_pdu(1, 0x0021, 0xffff, 0xc0 | 0x11, &[0], &LTK));
+    rig.run(400);
+    assert_eq!(received(&rig), 10, "another source, another opcode: other packets");
+    ether.borrow_mut().deliver(0, &pdu(3));
+    rig.run(400);
+    assert_eq!(received(&rig), 10, "the eighth newest");
+    ether.borrow_mut().deliver(0, &pdu(2));
+    rig.run(400);
+    assert_eq!(received(&rig), 11, "the ninth newest was forgotten");
+}
