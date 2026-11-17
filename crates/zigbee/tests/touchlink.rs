@@ -708,3 +708,32 @@ fn a_join_request_with_a_reserved_key_index_is_refused() {
     net.run(1_000);
     assert_eq!(net.nodes[n].stack.pan_id(), pan);
 }
+
+#[test]
+fn a_bulb_up_on_a_network_leaves_it_before_it_takes_the_initiators() {
+    let mut net = Net::new();
+    let mut i = Initiator::new(&mut net);
+    let (n, ext, pan) = on_a_touchlink_network(&mut net, &mut i);
+    let id = net.nodes[n].id;
+    let (response_id, _) = scan_for(&mut net, &mut i);
+    let t = net.now();
+    i.send(&mut net, Some(ext), 0x12, &join_request(0, response_id));
+    net.run(100);
+    let leaves: Vec<Vec<u8>> = net
+        .sent_by(id, t)
+        .into_iter()
+        .filter(|f| f.len() > 9 && f[0] & 7 == 1 && f[3..5] == pan.to_le_bytes())
+        .collect();
+    assert!(!leaves.is_empty(), "a leave on the old PAN");
+    let mut net = Net::new();
+    net.coord.permit_join = false;
+    let n = net.add_node();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let mut i = Initiator::new(&mut net);
+    let (response_id, _) = scan_for(&mut net, &mut i);
+    let t = net.now();
+    i.send(&mut net, Some(ext), 0x12, &join_request(0, response_id));
+    net.run(100);
+    let on_air: Vec<Vec<u8>> = net.sent_by(net.nodes[n].id, t).into_iter().filter(|f| f[0] & 7 == 1 && f[1] & 0x0C == 0x08 && f[3..5] != [0x21, 0x43]).collect();
+    assert!(on_air.is_empty(), "a factory-new bulb has nothing to leave: {on_air:02x?}");
+}
