@@ -123,6 +123,7 @@ pub struct Port {
     pub reset_cause: ResetCause,
     pub retained: Option<Vec<u8>>,
     pub zcl_received: Vec<(u16, u16, u8, u8, u8, i8)>,
+    pub traces: Vec<zigbee::hal::Trace>,
     pub probe_pan: u16,
     pub busy: u32,
     pub no_black_box: bool,
@@ -214,6 +215,7 @@ impl Air {
             reset_cause: ResetCause::PowerOn,
             retained: None,
             zcl_received: Vec::new(),
+            traces: Vec::new(),
             probe_pan: 0xFFFF,
             busy: 0,
             no_black_box: false,
@@ -462,6 +464,9 @@ impl Hal for SimHal {
     }
     fn retain(&mut self, data: &[u8]) {
         self.air.borrow_mut().ports[self.id].retained = Some(data.to_vec());
+    }
+    fn trace(&mut self, ev: zigbee::hal::Trace) {
+        self.air.borrow_mut().ports[self.id].traces.push(ev);
     }
     fn zcl_received(&mut self, src: u16, cluster: u16, cmd: u8, frame_control: u8, lqi: u8, rssi: i8) {
         self.air.borrow_mut().ports[self.id].zcl_received.push((src, cluster, cmd, frame_control, lqi, rssi));
