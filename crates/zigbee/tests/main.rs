@@ -13,6 +13,7 @@ mod green_power;
 mod hal_defaults;
 mod network;
 mod nv;
+mod objects;
 mod ota;
 mod parent;
 mod persistence;

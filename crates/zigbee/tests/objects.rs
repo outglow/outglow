@@ -1,0 +1,103 @@
+use crate::sim::*;
+use zigbee::hal::NvItem;
+
+const COLOR: u16 = 0x0300;
+const ANALOG_INPUT: u16 = 0x000C;
+
+fn bind(net: &mut Net, n: usize, ep: u8, cluster: u16) {
+    let short = net.nodes[n].short();
+    let ext = net.air.borrow().ports[net.nodes[n].id].ext;
+    let mut p = ext.to_le_bytes().to_vec();
+    p.push(ep);
+    p.extend_from_slice(&cluster.to_le_bytes());
+    p.push(3);
+    p.extend_from_slice(&COORD_EXT.to_le_bytes());
+    p.push(1);
+    net.coord.zdo(short, 0x0021, &p);
+    net.run(100);
+    assert_eq!(net.coord.last_zdo(short, 0x8021).unwrap()[1], 0x00);
+}
+
+fn present_value(net: &mut Net, short: u16, ep: u8) -> f32 {
+    let seq = net.coord.zcl_ep(short, ep, ANALOG_INPUT, 0x00, 0x00, &[0x55, 0x00]);
+    net.run(60);
+    let rsp = net.coord.last_zcl_ep(short, ep, ANALOG_INPUT, 0x01).unwrap();
+    assert_eq!(rsp[..8], [0x18, seq, 0x01, 0x55, 0x00, 0x00, 0x39, rsp[7]]);
+    f32::from_le_bytes([rsp[7], rsp[8], rsp[9], rsp[10]])
+}
+
+#[test]
+fn the_end_device_children_object_counts_them() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let sa = net.nodes[a].short();
+    assert_eq!(present_value(&mut net, sa, 6), 0.0);
+    net.coord.permit(120);
+    net.run(600);
+    let mut zed = Zed::new(&net.air, true);
+    net.link(0, zed.id, 0);
+    assert!(zed.join(&mut net, sa));
+    net.run(200);
+    assert_eq!(present_value(&mut net, sa, 6), 1.0);
+}
+
+#[test]
+fn saturation_y_and_the_colour_mode_are_reported_once_configured() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_COLOR;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 1, COLOR);
+    let seq = net.coord.zcl(
+        short,
+        COLOR,
+        0x00,
+        0x06,
+        &[0x00, 0x01, 0x00, 0x20, 1, 0, 0x10, 0x0E, 1, 0x00, 0x04, 0x00, 0x21, 1, 0, 0x10, 0x0E, 0x10, 0x00, 0x00, 0x08, 0x00, 0x30, 1, 0, 0x10, 0x0E],
+    );
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, COLOR, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00]);
+    let report = |net: &Net, attr: u8| net.coord.zcl_rx.iter().rev().find(|e| e.1 == COLOR && e.2[2] == 0x0A && e.2[3] == attr).map(|e| e.2[3..].to_vec());
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x40, 0x00, 0x50, 0, 0]);
+    net.run(3_000);
+    assert_eq!(report(&net, 0x04), Some(vec![0x04, 0x00, 0x21, 0x00, 0x50]));
+    assert_eq!(report(&net, 0x08), Some(vec![0x08, 0x00, 0x30, 0x01]), "now in xy");
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[80, 90, 0, 0]);
+    net.run(3_000);
+    assert_eq!(report(&net, 0x01), Some(vec![0x01, 0x00, 0x20, 90]));
+    assert_eq!(report(&net, 0x08), Some(vec![0x08, 0x00, 0x30, 0x00]), "now in hue and saturation");
+}
+
+#[test]
+fn the_status_flags_of_an_object_are_reported_periodically() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 2, ANALOG_INPUT);
+    let seq = net.coord.zcl_ep(short, 2, ANALOG_INPUT, 0x00, 0x06, &[0x00, 0x6F, 0x00, 0x18, 1, 0, 2, 0]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl_ep(short, 2, ANALOG_INPUT, 0x07).unwrap(), vec![0x18, seq, 0x07, 0x00]);
+    net.run(5_000);
+    let rep = net.coord.last_zcl_ep(short, 2, ANALOG_INPUT, 0x0A).expect("a periodic report");
+    assert_eq!(rep[3..], [0x6F, 0x00, 0x18, 0x00]);
+}
+
+#[test]
+fn reporting_configurations_stored_in_another_version_are_not_restored() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 2, ANALOG_INPUT);
+    net.coord.zcl_ep(short, 2, ANALOG_INPUT, 0x00, 0x06, &[0x00, 0x6F, 0x00, 0x18, 1, 0, 2, 0]);
+    net.run(2_000);
+    let id = net.nodes[n].id;
+    let mut stored = net.air.borrow().ports[id].nv[&(NvItem::Reports as u8)].clone();
+    assert_eq!(stored[0], 1);
+    stored[0] = 2;
+    net.air.borrow_mut().ports[id].nv.insert(NvItem::Reports as u8, stored);
+    net.power_cycle(n);
+    net.run(500);
+    net.coord.zcl_rx.clear();
+    net.run(5_000);
+    assert!(net.coord.last_zcl_ep(short, 2, ANALOG_INPUT, 0x0A).is_none());
+}

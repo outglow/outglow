@@ -298,38 +298,31 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn object_write(&mut self, o: &Object, value: &[u8]) {
-        match o.value {
-            Value::AllowChildren => {
-                self.allow_children = value.first().is_some_and(|b| *b != 0);
-                self.tables_dirty = true;
-            }
-            Value::BleWindow => {
-                let mut v = [0u8; 4];
-                v.copy_from_slice(value.get(..4).unwrap_or(&[0; 4]));
-                let minutes = (f32::from_le_bytes(v) + 0.5) as u16;
-                if minutes == 0 {
-                    self.ble_mode = super::BleMode::On;
-                } else {
-                    self.ble_mode = super::BleMode::Window;
-                    self.ble_window = minutes;
-                }
-                self.store_settings();
-            }
-            _ => {}
+        if o.value == Value::AllowChildren {
+            self.allow_children = value.first().is_some_and(|b| *b != 0);
+            self.tables_dirty = true;
+            return;
         }
+        let mut v = [0u8; 4];
+        v.copy_from_slice(value.get(..4).unwrap_or(&[0; 4]));
+        let minutes = (f32::from_le_bytes(v) + 0.5) as u16;
+        if minutes == 0 {
+            self.ble_mode = super::BleMode::On;
+        } else {
+            self.ble_mode = super::BleMode::Window;
+            self.ble_window = minutes;
+        }
+        self.store_settings();
     }
 
     pub(crate) fn object_value_ok(o: &Object, value: &[u8]) -> bool {
-        match o.value {
-            Value::AllowChildren => value.first().is_some_and(|b| *b <= 1),
-            Value::BleWindow => {
-                let mut v = [0u8; 4];
-                v.copy_from_slice(value.get(..4).unwrap_or(&[0; 4]));
-                let f = f32::from_le_bytes(v);
-                f >= o.min && f <= o.max && f == (f as u16) as f32
-            }
-            _ => false,
+        if o.value == Value::AllowChildren {
+            return value.first().is_some_and(|b| *b <= 1);
         }
+        let mut v = [0u8; 4];
+        v.copy_from_slice(value.get(..4).unwrap_or(&[0; 4]));
+        let f = f32::from_le_bytes(v);
+        f >= o.min && f <= o.max && f == (f as u16) as f32
     }
 
     pub fn allows_children(&self) -> bool {
