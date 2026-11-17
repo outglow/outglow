@@ -72,7 +72,7 @@ fn channel_writes(mhz_low: u8, mhz_high: u8, band: u8) -> Vec<(usize, u8)> {
     vec![(0xf02, 0x45), (0x1228, 0x13), (0x1244, mhz_low), (0x1245, mhz_high), (0x1229, band)]
 }
 
-fn reset_radio_state() {
+pub(crate) fn reset_radio_state() {
     FREQ_OFFSET.set(5);
     HEAD.set(0);
     TAIL.set(0);
@@ -1180,4 +1180,46 @@ fn energy_detection_keeps_the_peak_over_its_milliseconds() {
     });
     assert_eq!(energy_detect(20, 2), -100);
     sim::with(|c| c.hook = None);
+}
+
+pub fn tables() -> (Vec<u16>, Vec<u64>, Vec<u16>) {
+    let ns = crate::radio::N_PENDING_SHORT.get() as usize;
+    let ne = crate::radio::N_PENDING_EXT.get() as usize;
+    let nc = crate::radio::N_CHILDREN.get() as usize;
+    let ext = crate::radio::PENDING_EXT.get();
+    (
+        crate::radio::PENDING_SHORT.get()[..ns].to_vec(),
+        ext.chunks(8).take(ne).map(|c| u64::from_le_bytes(c.try_into().unwrap_or([0; 8]))).collect(),
+        crate::radio::CHILDREN.get()[..nc].to_vec(),
+    )
+}
+
+pub fn drain() {
+    crate::radio::TAIL.set(crate::radio::HEAD.get());
+}
+
+pub fn queue(mpdu: &[u8], rssi: u8, end: u32) {
+    let head = crate::radio::HEAD.get() as usize;
+    let slot = head * crate::radio::SLOT_LEN;
+    crate::radio::QUEUE.write(slot, mpdu.len() as u8);
+    crate::radio::QUEUE.write(slot + 1, rssi);
+    crate::radio::QUEUE.copy_from(slot + 2, &end.to_le_bytes());
+    crate::radio::QUEUE.copy_from(slot + 6, mpdu);
+    crate::radio::HEAD.set(((head + 1) % crate::radio::SLOTS) as u8);
+}
+
+pub fn forget_rx() {
+    crate::radio::LAST_RX.set(0);
+}
+
+pub fn heard_now() {
+    crate::radio::LAST_RX.set(crate::reg::tick());
+}
+
+pub fn heard_at(t: u32) {
+    crate::radio::LAST_RX.set(t);
+}
+
+pub fn sent_at(t: u32) {
+    crate::radio::LAST_AIR.set(t);
 }

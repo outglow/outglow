@@ -355,6 +355,8 @@ pub fn session() -> Session {
     });
     *STARTED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     CHIP.with(|c| *c.borrow_mut() = Some(Chip::new()));
+    #[cfg(test)]
+    crate::tests::reset_statics();
     Session { _guard: guard }
 }
 

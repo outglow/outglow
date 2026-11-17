@@ -107,4 +107,4 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 #[cfg(test)]
 #[path = "tests/lib.rs"]
-mod tests;
+pub(crate) mod tests;

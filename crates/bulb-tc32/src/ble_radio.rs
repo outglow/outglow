@@ -694,4 +694,4 @@ pub fn lent_max_us() -> u32 {
 
 #[cfg(test)]
 #[path = "tests/ble_radio.rs"]
-mod tests;
+pub(crate) mod tests;

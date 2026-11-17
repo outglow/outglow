@@ -89,7 +89,7 @@ fn an_unanswered_advertising_event_matches_the_vendor_trace() {
 fn a_recently_busy_zigbee_air_advertises_on_channel_37_only() {
     let _s = sim::session();
     sim::with(|c| c.tick = 0x1000_0000);
-    crate::radio::tests_support::heard_now();
+    crate::radio::tests::heard_now();
     let mut connect = [0u8; CONNECT_LEN];
     let _ = advertise(&[0x00, 0x06, 1, 2, 3, 4, 5, 6], &[0x04, 0x06, 1, 2, 3, 4, 5, 6], &mut connect);
     let w = sim::with(|c| c.writes());
@@ -269,14 +269,19 @@ fn central(steps: Vec<Step>) -> impl FnMut(&mut sim::Chip, Op) {
     }
 }
 
-fn fresh_link() {
-    crate::radio::tests_support::forget_rx();
+pub(crate) fn reset_statics() {
     connection_reset();
     RX_CURRENT.set(0);
     FIFO_STARTED.set(0);
     FIFO_RPTR.set(0);
     FIFO_FREED.set(0);
     FIFO_WORD.set(0);
+    FIFO_KIND.set([0; 16]);
+}
+
+pub(crate) fn fresh_link() {
+    crate::radio::tests::forget_rx();
+    reset_statics();
     sim::with(|c| c.tick = 0x2000_0000);
 }
 
@@ -1233,7 +1238,7 @@ fn zigbee_traffic_heard_in_the_last_64_ms_keeps_advertising_on_channel_37() {
             c.log.clear();
             c.on(move |c, op| {
                 if op == Op::W16(RF_IRQ_MASK, 0) {
-                    crate::radio::tests_support::heard_at(c.tick.wrapping_add(c.tick_step).wrapping_sub(ago));
+                    crate::radio::tests::heard_at(c.tick.wrapping_add(c.tick_step).wrapping_sub(ago));
                 }
             })
         });
@@ -1254,7 +1259,7 @@ fn advertising_waits_up_to_6_ms_for_3_ms_of_quiet_zigbee_air() {
         c.on(move |c, op| {
             if let (Op::R8(0x448, _), None) = (op, heard) {
                 heard = Some(c.tick.wrapping_add(c.tick_step));
-                crate::radio::tests_support::heard_at(c.tick.wrapping_add(c.tick_step));
+                crate::radio::tests::heard_at(c.tick.wrapping_add(c.tick_step));
             }
         })
     });

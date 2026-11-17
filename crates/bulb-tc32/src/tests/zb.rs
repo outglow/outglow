@@ -204,7 +204,7 @@ fn the_hal_hands_frames_and_tables_to_the_radio_driver() {
     assert_eq!(t, Some(at * 16));
     hal.indirect_pending(&[0x1234], &[0x99]);
     hal.poll_children(&[0x4321]);
-    assert_eq!(crate::radio::tests_support::tables(), (vec![0x1234], vec![0x99], vec![0x4321]));
+    assert_eq!(crate::radio::tests::tables(), (vec![0x1234], vec![0x99], vec![0x4321]));
     assert_eq!(hal.transmit(&[0x41, 0x88, 0x01, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00]), TxStatus::Ok);
     assert_eq!(hal.tx_attempts(), 1);
     hal.set_channel(20);
@@ -221,7 +221,7 @@ fn a_received_frame_carries_its_lqi_rssi_and_end_in_microseconds() {
     let mut buf = [0u8; 127];
     assert!(hal.receive(&mut buf).is_none());
     for (rssi_byte, rssi, lqi) in [(0x9cu8, 46i8, 255u8), (53, -57, 127), (0, -110, 0), (0xff, 127, 255), (0x01, -109, 0)] {
-        crate::radio::tests_support::queue(&[0x00, 0x80, 0x01, 0x34, 0x12], rssi_byte, 0x1234_5678);
+        crate::radio::tests::queue(&[0x00, 0x80, 0x01, 0x34, 0x12], rssi_byte, 0x1234_5678);
         let m = hal.receive(&mut buf).expect("queued");
         assert_eq!((m.len, m.rssi, m.lqi, m.end_us), (5, rssi, lqi, 0x1234_5678 / 16), "{rssi_byte}");
     }
@@ -234,11 +234,11 @@ fn energy_and_noise_are_read_in_dbm_and_lqi() {
     sim::with(|c| c.poke8(0x441, 53));
     assert_eq!(hal.energy_detect(15), 127);
     sim::with(|c| c.tick = 10_000 * 16);
-    crate::radio::tests_support::sent_at(0);
+    crate::radio::tests::sent_at(0);
     assert_eq!(hal.noise_dbm(), Some(-57));
     sim::with(|c| c.poke8(0x441, 0x80));
     assert_eq!(hal.noise_dbm(), Some(-128));
-    crate::radio::tests_support::sent_at(sim::with(|c| c.tick));
+    crate::radio::tests::sent_at(sim::with(|c| c.tick));
     assert_eq!(hal.noise_dbm(), None);
 }
 

@@ -703,45 +703,4 @@ fn transmit_frame(mpdu: &[u8], mut random: impl FnMut() -> u32) -> TxStatus {
 
 #[cfg(test)]
 #[path = "tests/radio.rs"]
-mod tests;
-
-#[cfg(test)]
-pub mod tests_support {
-    pub fn tables() -> (Vec<u16>, Vec<u64>, Vec<u16>) {
-        let ns = super::N_PENDING_SHORT.get() as usize;
-        let ne = super::N_PENDING_EXT.get() as usize;
-        let nc = super::N_CHILDREN.get() as usize;
-        let ext = super::PENDING_EXT.get();
-        (
-            super::PENDING_SHORT.get()[..ns].to_vec(),
-            ext.chunks(8).take(ne).map(|c| u64::from_le_bytes(c.try_into().unwrap_or([0; 8]))).collect(),
-            super::CHILDREN.get()[..nc].to_vec(),
-        )
-    }
-
-    pub fn queue(mpdu: &[u8], rssi: u8, end: u32) {
-        let head = super::HEAD.get() as usize;
-        let slot = head * super::SLOT_LEN;
-        super::QUEUE.write(slot, mpdu.len() as u8);
-        super::QUEUE.write(slot + 1, rssi);
-        super::QUEUE.copy_from(slot + 2, &end.to_le_bytes());
-        super::QUEUE.copy_from(slot + 6, mpdu);
-        super::HEAD.set(((head + 1) % super::SLOTS) as u8);
-    }
-
-    pub fn forget_rx() {
-        super::LAST_RX.set(0);
-    }
-
-    pub fn heard_now() {
-        super::LAST_RX.set(crate::reg::tick());
-    }
-
-    pub fn heard_at(t: u32) {
-        super::LAST_RX.set(t);
-    }
-
-    pub fn sent_at(t: u32) {
-        super::LAST_AIR.set(t);
-    }
-}
+pub(crate) mod tests;

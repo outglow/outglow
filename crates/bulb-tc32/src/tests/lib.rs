@@ -3,6 +3,15 @@ use crate::sim;
 use bulb_core::hal::ConfigStore;
 use zigbee::hal::NvItem;
 
+pub fn reset_statics() {
+    crate::radio::tests::reset_radio_state();
+    #[cfg(feature = "ble")]
+    crate::ble_radio::tests::reset_statics();
+    staging::release(staging::Owner::Zigbee);
+    staging::release(staging::Owner::Ble);
+    zb::BLE_NEXT.set(None);
+}
+
 pub fn crc32(data: &[u8]) -> u32 {
     let mut c = 0xffff_ffffu32;
     for &b in data {
@@ -29,6 +38,7 @@ pub fn image(size: usize) -> Vec<u8> {
 #[test]
 fn idling_arms_the_timer_and_waits_for_the_tick() {
     let _s = sim::session();
+    crate::radio::tests::drain();
     let until = sim::with(|c| c.tick).wrapping_add(500 * reg::TICKS_PER_US);
     bulb_idle(until);
     assert!(sim::with(|c| c.writes()).contains(&sim::Op::W32(reg::SYSTEM_TICK_IRQ, until)));
@@ -183,10 +193,11 @@ fn the_fifth_quick_power_cycle_resets_the_bulb_to_factory_settings() {
 #[test]
 fn idling_ends_on_the_tick_or_as_soon_as_a_frame_is_waiting() {
     let _s = sim::session();
+    crate::radio::tests::drain();
     let until = sim::with(|c| c.tick).wrapping_add(300 * reg::TICKS_PER_US);
     bulb_idle(until);
     assert_eq!(sim::with(|c| c.ticks_read()).last().copied(), Some(until));
-    crate::radio::tests_support::queue(&[0x00, 0x80, 0x01, 0x34, 0x12], 60, 0);
+    crate::radio::tests::queue(&[0x00, 0x80, 0x01, 0x34, 0x12], 60, 0);
     sim::with(|c| c.log.clear());
     bulb_idle(sim::with(|c| c.tick).wrapping_add(300 * reg::TICKS_PER_US));
     assert_eq!(sim::with(|c| c.ticks_read()).len(), 1);
