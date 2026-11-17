@@ -1009,3 +1009,34 @@ fn read_by_type_stops_at_the_first_value_of_another_length() {
     assert_eq!((rsp[1], rsp.len()), (21, 2 + 2 * 21), "two in 64 octets, all of one length");
     assert_eq!(rsp[2 + 21..2 + 23], [0x14, 0x00]);
 }
+
+#[test]
+fn power_0xee_is_not_a_command_and_brightness_and_temperature_are_clamped() {
+    let mut rig = logged_in(TUNABLE);
+    rig.command(OP_POWER, &[0xee]);
+    assert!(rig.is_on(), "0xee is no power state");
+    rig.command(OP_POWER, &[0x02]);
+    assert!(rig.is_on(), "anything but 0 is on");
+    rig.command(OP_BRIGHTNESS, &[0]);
+    assert_eq!((rig.is_on(), rig.level()), (true, 1), "the dimmest, not off");
+    rig.command(OP_BRIGHTNESS, &[200]);
+    assert_eq!(rig.level(), 254);
+    rig.command(OP_TEMPERATURE, &[200]);
+    assert_eq!(rig.bulb.state().color_temp, 454, "past 127 is the warmest");
+    let key = rig.key.unwrap();
+    rig.write(COMMAND, &block_packet(&key, 2, &[0xe0, 0x60, 0x01, 0x21]));
+    assert_eq!(rig.world.borrow().nv_writes, 0, "an address needs two octets");
+    rig.write(COMMAND, &block_packet(&key, 2, &[0xe0, 0x60, 0x01, 0x21, 0x00]));
+    assert_eq!(rig.world.borrow().nv_writes, 1);
+}
+
+#[test]
+fn a_mesh_reset_ends_the_connection_300_ms_later() {
+    let mut rig = logged_in(DIMMABLE);
+    let packet = rig.command_packet(0xffff, OP_RESET, &[0]);
+    rig.write(COMMAND, &packet);
+    rig.run(200);
+    assert_eq!(rig.state(), LinkState::Connected);
+    rig.run(200);
+    assert_eq!(rig.state(), LinkState::Advertising);
+}
