@@ -98,11 +98,6 @@ impl<const N: usize> Buffer<N> {
         self.n = 0;
         self.overflow = false;
     }
-    pub fn truncate(&mut self, n: usize) {
-        if n < self.n as usize {
-            self.n = n as u16;
-        }
-    }
     pub fn bytes(&mut self, s: &[u8]) {
         let n = self.n as usize;
         match self.d.get_mut(n..n + s.len()) {
