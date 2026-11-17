@@ -1603,3 +1603,40 @@ fn a_full_child_table_takes_the_capacity_out_of_the_beacon() {
     let b = beacon(&mut net);
     assert!(!b.router_capacity && !b.end_device_capacity);
 }
+
+#[test]
+fn an_association_response_waiting_for_a_device_is_listed_under_its_extended_address() {
+    let (mut net, a) = open_network();
+    let sa = net.nodes[a].short();
+    let id = net.nodes[a].id;
+    let s = sa.to_le_bytes();
+    let ext = 0x00124B00000000E7u64;
+    let mut assoc = vec![0x23, 0xC8, 0x04, 0x62, 0x1A, s[0], s[1], 0xFF, 0xFF];
+    assoc.extend_from_slice(&ext.to_le_bytes());
+    assoc.extend_from_slice(&[0x01, 0x80]);
+    net.air.borrow_mut().ports[id].queue.push_back((assoc, 255));
+    net.run(50);
+    let pending = net.air.borrow().ports[id].pending.clone();
+    assert_eq!(pending.1, vec![ext]);
+    assert_eq!(pending.0.len(), 1, "and under the address it was given");
+}
+
+#[test]
+fn of_two_frames_waiting_for_a_child_the_first_goes_with_frame_pending_and_the_second_without() {
+    let (mut net, a, mut zed) = with_sleepy_child();
+    let id = net.nodes[a].id;
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x01, &[]);
+    net.run(100);
+    net.coord.zcl(zed.short, ON_OFF, 0x11, 0x00, &[]);
+    net.run(100);
+    let t = net.now();
+    zed.poll(&mut net, 20);
+    zed.poll(&mut net, 20);
+    let frames: Vec<u8> = net
+        .sent_by(id, t)
+        .into_iter()
+        .filter(|f| f[0] & 7 == 1 && f[5..7] == zed.short.to_le_bytes())
+        .map(|f| f[0] & 0x10)
+        .collect();
+    assert_eq!(frames, vec![0x10, 0x00]);
+}
