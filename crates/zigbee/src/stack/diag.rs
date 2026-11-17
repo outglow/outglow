@@ -353,26 +353,14 @@ const fn width(ty: u8) -> usize {
     }
 }
 
-const fn counter_width(a: Attr) -> usize {
-    match a {
-        Attr::Number(ty, _) => {
-            assert!(matches!(ty, T_U8 | T_I8 | T_ENUM8 | T_U16 | T_U32), "a number");
-            width(ty)
-        }
-        Attr::Octets(_) => panic!("a number"),
-    }
-}
-
 pub const DIAG_COUNTERS_MAX: usize = {
     let mut n = 1;
     let mut i = 0;
-    while i < STANDARD.len() {
-        n += 3 + counter_width(STANDARD[i].1);
-        i += 1;
-    }
-    let mut i = 0;
-    while i < COUNTERS_MFR {
-        n += 3 + counter_width(MANUFACTURER[i].1);
+    while i < STANDARD.len() + COUNTERS_MFR {
+        let a = if i < STANDARD.len() { STANDARD[i].1 } else { MANUFACTURER[i - STANDARD.len()].1 };
+        let Attr::Number(ty, _) = a else { panic!("a number") };
+        assert!(matches!(ty, T_U8 | T_I8 | T_ENUM8 | T_U16 | T_U32), "a number");
+        n += 3 + width(ty);
         i += 1;
     }
     n

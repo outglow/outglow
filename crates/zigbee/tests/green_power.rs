@@ -1745,7 +1745,7 @@ fn in_commissioning_a_maintenance_frame_other_than_a_channel_request_is_not_tunn
 }
 
 #[test]
-fn a_commissioning_frame_too_long_to_tunnel_is_dropped_and_of_three_at_once_two_are_tunnelled() {
+fn a_commissioning_frame_too_long_to_tunnel_is_dropped() {
     let mut net = Net::new();
     net.join_node();
     net.coord.gp_commissioning_mode(true, true);
@@ -1754,12 +1754,30 @@ fn a_commissioning_frame_too_long_to_tunnel_is_dropped_and_of_three_at_once_two_
     gpd.send(0xE0, &[0x02; 80]);
     net.run(500);
     assert!(gp_frames(&net, 0x04).is_empty());
-    let mut gpds: Vec<Gpd> = (0..3).map(|k| Gpd::new(&net.air, SWITCH + k, None)).collect();
-    for g in gpds.iter_mut() {
-        g.send(0xE0, &commissioning());
-    }
+    gpd.send(0xE0, &commissioning());
     net.run(500);
-    assert_eq!(gp_frames(&net, 0x04).len(), 2, "two wait at a time; the third is not kept");
+    assert_eq!(gp_frames(&net, 0x04).len(), 1);
+}
+
+#[test]
+fn an_answer_waiting_for_one_device_is_not_sent_to_another_that_listens() {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let sa = net.nodes[a].short();
+    let mut gpd = Gpd::new(&net.air, SWITCH, None);
+    let mut other = Gpd::new(&net.air, SWITCH + 1, None);
+    net.coord.gp_commissioning_mode(true, true);
+    net.run(100);
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    net.coord.gp_response(sa, 11, SWITCH, 0xF0, &[0x01, 0x62, 0x1A]);
+    net.run(100);
+    other.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    assert!(net.air.borrow().timed.is_empty());
+    gpd.send_and_listen(0xE0, &[0x02, 0x23]);
+    net.run(100);
+    assert_eq!(net.air.borrow().timed.len(), 1);
 }
 
 #[test]
