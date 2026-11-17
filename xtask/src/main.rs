@@ -6,8 +6,10 @@ mod boards;
 mod build;
 mod comments;
 mod compare;
+mod coverage;
 mod index;
 mod mutants;
+mod mutants_report;
 mod notes;
 mod toolchain;
 
@@ -26,10 +28,12 @@ enum Task {
     Boards(boards::Args),
     #[doc = " The website's comparison data: the conformance tests on the original firmware and on Outglow"]
     Compare(compare::Args),
+    Coverage(coverage::Args),
     #[doc = " The Zigbee2MQTT OTA index and the web flasher's release list from built images"]
     Index(index::Args),
-    #[doc = " Mutation tests: break the code on purpose, the tests must notice"]
+    #[doc = " Hand-written mutation tests (xtask/src/mutants/): break the code on purpose, the tests must notice"]
     Mutants(mutants::Args),
+    MutantsReport(mutants_report::Args),
     #[doc = " The top of a release's notes: how to install, the files of every board"]
     ReleaseNotes(notes::Args),
     #[doc = " Download the prebuilt llvm-tc32 compiler (or say how to build it)"]
@@ -46,8 +50,10 @@ fn main() -> anyhow::Result<()> {
         Task::Build(a) => build::run(a),
         Task::Boards(a) => boards::run(a),
         Task::Compare(a) => compare::run(a),
+        Task::Coverage(a) => coverage::run(a),
         Task::Index(a) => index::run(a),
         Task::Mutants(a) => mutants::run(a),
+        Task::MutantsReport(a) => mutants_report::run(a),
         Task::ReleaseNotes(a) => notes::run(a),
         Task::Toolchain(a) => toolchain::run(a),
         Task::Comments(a) => comments::run(&a),
