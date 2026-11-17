@@ -738,3 +738,21 @@ fn a_probe_of_another_network_is_taken_by_the_sensing_and_other_frames_are_left_
     net.run(20);
     assert_ne!(read(&mut net, sa, 0x0B05, 0x0100), before, "a beacon request goes to the stack");
 }
+
+#[test]
+fn the_automatic_calibration_turned_off_stays_off_over_a_power_cycle_and_a_record_of_another_version_is_not_taken() {
+    let (mut net, _, n, [sa, _]) = two();
+    assert_eq!(write(&mut net, sa, SENSE, 0x0000, T_U8, &[40]), 0);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![0]));
+    net.power_cycle(n[0]);
+    net.run(1000);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0006), Some(vec![0]), "still off");
+    let id = net.nodes[n[0]].id;
+    let item = NvItem::Sense as u8;
+    let mut stored = net.air.borrow().ports[id].nv[&item].clone();
+    stored[0] ^= 0x40;
+    net.air.borrow_mut().ports[id].nv.insert(item, stored);
+    net.power_cycle(n[0]);
+    net.run(1000);
+    assert_eq!(read(&mut net, sa, SENSE, 0x0000), Some(vec![SENSE_DEFAULT_S]), "the defaults");
+}
