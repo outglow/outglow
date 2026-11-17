@@ -1,0 +1,70 @@
+use crate::sim::*;
+use zigbee::stack::State;
+
+fn ext_of(net: &Net, n: usize) -> u64 {
+    net.air.borrow().ports[net.nodes[n].id].ext
+}
+
+fn association_response(net: &mut Net, n: usize, src: [u8; 8], short: u16, status: u8, to: u64) {
+    let mut f = vec![0x63, 0xCC, 0x09, 0x62, 0x1A];
+    f.extend_from_slice(&to.to_le_bytes());
+    f.extend_from_slice(&src);
+    let s = short.to_le_bytes();
+    f.extend_from_slice(&[0x02, s[0], s[1], status]);
+    let id = net.nodes[n].id;
+    net.air.borrow_mut().ports[id].queue.push_back((f, 255));
+    net.run(5);
+}
+
+fn waiting_for_the_response(net: &mut Net, n: usize) {
+    net.run_until(30_000, "association sent", |net| net.nodes[n].stack.state() == State::AssocWait);
+}
+
+#[test]
+fn an_association_response_refusing_the_bulb_or_with_a_reserved_address_moves_on() {
+    for (status, short) in [(0x01u8, 0x1234u16), (0x00, 0xFFF8)] {
+        let mut net = Net::new();
+        net.coord.ignore_associations = true;
+        let n = net.add_node();
+        let ext = ext_of(&net, n);
+        waiting_for_the_response(&mut net, n);
+        association_response(&mut net, n, COORD_EXT.to_le_bytes(), short, status, ext);
+        assert_ne!(net.nodes[n].stack.state(), State::WaitKey, "status {status:#04x} address {short:#06x}");
+        assert_ne!(net.nodes[n].stack.state(), State::AssocWait);
+    }
+}
+
+#[test]
+fn an_association_response_for_another_device_or_cut_short_is_not_taken() {
+    let mut net = Net::new();
+    net.coord.ignore_associations = true;
+    let n = net.add_node();
+    let ext = ext_of(&net, n);
+    waiting_for_the_response(&mut net, n);
+    association_response(&mut net, n, COORD_EXT.to_le_bytes(), 0x1234, 0, ext ^ 1);
+    assert_eq!(net.nodes[n].stack.state(), State::AssocWait);
+    let id = net.nodes[n].id;
+    let mut f = vec![0x63, 0xCC, 0x09, 0x62, 0x1A];
+    f.extend_from_slice(&ext.to_le_bytes());
+    f.extend_from_slice(&COORD_EXT.to_le_bytes());
+    f.extend_from_slice(&[0x02, 0x34, 0x12]);
+    net.air.borrow_mut().ports[id].queue.push_back((f, 255));
+    net.run(5);
+    assert_eq!(net.nodes[n].stack.state(), State::AssocWait);
+    association_response(&mut net, n, COORD_EXT.to_le_bytes(), 0x1234, 0, ext);
+    assert_eq!(net.nodes[n].stack.state(), State::WaitKey);
+    assert_eq!(net.nodes[n].stack.short_address(), 0x1234);
+}
+
+#[test]
+fn a_busy_channel_while_joining_moves_on_to_the_next_try_and_the_bulb_joins_later() {
+    let mut net = Net::new();
+    let n = net.add_node();
+    let id = net.nodes[n].id;
+    net.run_until(30_000, "association sent", |net| net.nodes[n].stack.state() == State::AssocPoll);
+    net.air.borrow_mut().ports[id].busy = 1_000_000;
+    net.run(3_000);
+    assert_ne!(net.nodes[n].stack.state(), State::Up);
+    net.air.borrow_mut().ports[id].busy = 0;
+    net.run_until(60_000, "joined after all", |net| net.nodes[n].stack.state() == State::Up);
+}
