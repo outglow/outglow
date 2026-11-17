@@ -1150,3 +1150,16 @@ fn an_old_broadcast_of_the_bulbs_own_still_remembered_is_its_echo_not_a_conflict
     heard(&mut s, nwk::Header::new(nwk::FRAME_DATA, 0xFFFD, 0x0042, 5, 36), 1, &[0x08]);
     assert_ne!(s.conflict.0, 0x0042);
 }
+
+#[test]
+fn a_network_status_passed_on_drops_its_route_only_when_the_hop_does_not_answer() {
+    for (deaf, kept) in [(false, true), (true, false)] {
+        let mut s = relaying();
+        route(&mut s, 0, 0x5000, 0x1002, false, 0);
+        if deaf {
+            s.hal.deaf = std::vec![0x1002];
+        }
+        relay_status(&mut s, 0x5000, nwk::STATUS_NO_ROUTE);
+        assert_eq!(s.routes[0].status == super::ROUTE_ACTIVE, kept, "deaf {deaf}");
+    }
+}
