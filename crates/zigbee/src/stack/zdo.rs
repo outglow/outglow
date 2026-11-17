@@ -4,7 +4,7 @@ use super::{Binding, Stack, ROUTE_ACTIVE, ROUTE_FREE};
 use crate::hal::Hal;
 use crate::mac;
 use crate::nwk;
-use crate::util::{Buf, Reader};
+use crate::util::{pack, Buf, Reader};
 
 const SUCCESS: u8 = 0x00;
 const INVALID_REQUEST: u8 = 0x80;
@@ -34,6 +34,7 @@ const MGMT_LEAVE_REQ: u16 = 0x0034;
 const MGMT_PERMIT_JOINING_REQ: u16 = 0x0036;
 const MGMT_NWK_UPDATE_REQ: u16 = 0x0038;
 const RESPONSE: u16 = 0x8000;
+const PARENT_ANNCE_RSP: u16 = 0x801F;
 const PARENT_ANNCE_CHILDREN: usize = (super::frag::SINGLE_MAX - 2) / 8;
 const PARENT_ANNCE_RSP_CHILDREN: usize = (super::frag::SINGLE_MAX - 3) / 8;
 
@@ -70,7 +71,7 @@ impl<H: Hal> Stack<H> {
         let mut rsp = Buf::new();
         rsp.u8(seq);
         if self.zdo_request(cluster, r, unicast, &mut rsp).is_some() {
-            self.aps_data(src, 0, cluster | RESPONSE, PROFILE_ZDO, 0, rsp.as_slice());
+            self.aps_data(src, 0, pack(&[(cluster, 0), (RESPONSE, 0)]), PROFILE_ZDO, 0, rsp.as_slice());
         }
     }
 
@@ -299,7 +300,7 @@ impl<H: Hal> Stack<H> {
                     rsp.u64(self.nib.ext_pan);
                     rsp.u64(ext);
                     rsp.u16(short);
-                    rsp.u8(device | rx_on << 2 | relation << 4);
+                    rsp.u8(pack(&[(device as u16, 0), (rx_on as u16, 2), (relation as u16, 4)]) as u8);
                     rsp.u8(2);
                     rsp.u8(depth);
                     rsp.u8(lqi);
@@ -319,7 +320,7 @@ impl<H: Hal> Stack<H> {
                 for e in self.routes.iter().filter(|e| e.status != ROUTE_FREE).skip(start).take(10) {
                     rsp.u16(e.dst);
                     let status = if e.status == ROUTE_ACTIVE { 0 } else { 1 };
-                    rsp.u8(status | (e.many_to_one as u8) << 4 | (e.record_due as u8) << 5);
+                    rsp.u8(pack(&[(status, 0), (e.many_to_one as u16, 4), (e.record_due as u16, 5)]) as u8);
                     rsp.u16(e.next);
                     count += 1;
                 }
@@ -362,7 +363,7 @@ impl<H: Hal> Stack<H> {
                     self.leave_at = Some(now.wrapping_add(500));
                     self.leave_rejoin = flags & 0x80 != 0;
                 } else if let Some(i) = self.child_by_ext(who) {
-                    self.dismiss_child(i, (flags & 0x80) >> 2 | (flags & 0x40) << 1);
+                    self.dismiss_child(i, pack(&[((flags & 0x80 != 0) as u16, 5), ((flags & 0x40 != 0) as u16, 7)]) as u8);
                     rsp.u8(SUCCESS);
                 } else {
                     rsp.u8(UNKNOWN_DEVICE);
@@ -542,7 +543,7 @@ impl<H: Hal> Stack<H> {
             }
             if count != 0 && (count == PARENT_ANNCE_RSP_CHILDREN || k + 1 == n) {
                 rsp.set(2, count as u8);
-                self.aps_data(src, 0, PARENT_ANNCE | RESPONSE, PROFILE_ZDO, 0, rsp.as_slice());
+                self.aps_data(src, 0, PARENT_ANNCE_RSP, PROFILE_ZDO, 0, rsp.as_slice());
                 count = 0;
             }
         }

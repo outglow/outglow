@@ -1,6 +1,6 @@
 use crate::aes::Aes128;
 use crate::crypto;
-use crate::util::{Buf, Reader};
+use crate::util::{pack, Buf, Reader};
 
 pub const FRAME_DATA: u8 = 0;
 pub const FRAME_CMD: u8 = 1;
@@ -108,15 +108,17 @@ impl Header {
     }
 
     pub fn write(&self, b: &mut Buf) {
-        let fc = self.frame_type as u16
-            | (PROTOCOL_VERSION as u16) << 2
-            | (self.discover as u16) << 6
-            | (self.multicast.is_some() as u16) << 8
-            | (self.security as u16) << 9
-            | (self.relays.is_some() as u16) << 10
-            | (self.dst_ext.is_some() as u16) << 11
-            | (self.src_ext.is_some() as u16) << 12
-            | (self.end_device_initiator as u16) << 13;
+        let fc = pack(&[
+            (self.frame_type as u16, 0),
+            (PROTOCOL_VERSION as u16, 2),
+            (self.discover as u16, 6),
+            (self.multicast.is_some() as u16, 8),
+            (self.security as u16, 9),
+            (self.relays.is_some() as u16, 10),
+            (self.dst_ext.is_some() as u16, 11),
+            (self.src_ext.is_some() as u16, 12),
+            (self.end_device_initiator as u16, 13),
+        ]);
         b.u16(fc);
         b.u16(self.dst);
         b.u16(self.src);
@@ -188,7 +190,7 @@ pub fn parse_aux(frame: &[u8], header_len: usize) -> Option<Aux> {
 
 pub fn unsecure(key: &Aes128, aux: &Aux, frame: &mut [u8], header_len: usize) -> Option<usize> {
     let (aad, body) = frame.split_at_mut_checked(header_len + AUX_LEN)?;
-    let sc = (aad[header_len] & !7) | 5;
+    let sc = pack(&[(aad[header_len] & !7, 0), (5, 0)]);
     aad[header_len] = sc;
     crypto::ccm_decrypt(key, &nonce(aux.ext, aux.counter, sc), aad, body)
 }

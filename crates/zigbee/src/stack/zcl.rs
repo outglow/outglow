@@ -6,7 +6,7 @@ use super::{diag, objects};
 use super::sense::{self, OCCUPANCY, SENSE};
 use super::{BleMode, Scene, Stack, BLE_WINDOW_DEFAULT_MIN, BLE_WINDOW_MAX_MIN, GROUPS, REPORT_COLOR_TEMP, REPORT_LEVEL, REPORT_ON_OFF};
 use crate::hal::Hal;
-use crate::util::{due, Buf, Long, Reader};
+use crate::util::{due, le, pack, Buf, Long, Reader};
 
 pub(crate) const BASIC: u16 = 0x0000;
 pub(crate) const IDENTIFY: u16 = 0x0003;
@@ -38,6 +38,7 @@ const CLUSTERS_TW_BLE_SENSE: [u16; 12] =
     [BASIC, IDENTIFY, GROUPS_CLUSTER, SCENES_CLUSTER, ON_OFF, LEVEL, COLOR, DIAGNOSTICS, TOUCHLINK, SETTINGS, OCCUPANCY, SENSE];
 pub(crate) const COLOR_OPTIONS_DEFAULT: u8 = EXECUTE_IF_OFF;
 const COUPLE_COLOR_TEMP: u8 = 0x02;
+const LEVEL_OPTIONS_CT: u8 = 0x03;
 const DEVICE_DIMMABLE_LIGHT: u16 = 0x0101;
 const DEVICE_COLOR_TEMPERATURE_LIGHT: u16 = 0x010C;
 const DEVICE_EXTENDED_COLOR_LIGHT: u16 = 0x010D;
@@ -87,6 +88,7 @@ const DISCOVER_ATTRIBUTES_EXTENDED: u8 = 0x15;
 const DISCOVER_ATTRIBUTES_EXTENDED_RSP: u8 = 0x16;
 
 const FC_GLOBAL_RSP: u8 = 0x18;
+const FC_GLOBAL_RSP_MFR: u8 = 0x1C;
 const FC_CLUSTER_RSP: u8 = 0x19;
 
 pub(crate) const CLUSTER_REVISION: u16 = 0xFFFD;
@@ -96,6 +98,7 @@ const MIN_LEVEL: u8 = bulb_core::LEVEL_MIN;
 pub(crate) const SCENE_NO_ON_OFF: u8 = 0x01;
 pub(crate) const SCENE_NO_LEVEL: u8 = 0x02;
 pub(crate) const SCENE_NO_COLOR: u8 = 0x04;
+const SCENE_NO_STATE: u8 = 0x07;
 const DEFAULT_MOVE_RATE: u32 = 50;
 
 const ATTRIBUTES: [(u16, u16, u8); 60] = [
@@ -166,7 +169,7 @@ fn execute_if_off(attribute: u8, r: &mut Reader) -> bool {
         (Some(mask), Some(over)) => (mask, over),
         _ => (0, 0),
     };
-    (attribute & !mask | over & mask) & EXECUTE_IF_OFF != 0
+    (if mask & EXECUTE_IF_OFF != 0 { over } else { attribute }) & EXECUTE_IF_OFF != 0
 }
 
 #[derive(Clone, Copy)]
@@ -403,7 +406,7 @@ impl<H: Hal> Stack<H> {
                 let mut f = Buf::new();
                 match manufacturer {
                     Some(code) => {
-                        f.u8(FC_GLOBAL_RSP | 0x04);
+                        f.u8(FC_GLOBAL_RSP_MFR);
                         f.u16(code);
                     }
                     None => f.u8(FC_GLOBAL_RSP),
@@ -510,10 +513,10 @@ impl<H: Hal> Stack<H> {
         if !writable(cluster, id) {
             return READ_ONLY;
         }
-        let v = value.iter().rev().fold(0u16, |v, b| v << 8 | *b as u16);
+        let v = le(value) as u16;
         let valid = match (cluster, id) {
             (ON_OFF, 0x4003) => matches!(v, 0 | 1 | 2 | 0xFF),
-            (LEVEL, 0x000F) if self.identity.color_temperature => v & !(EXECUTE_IF_OFF | COUPLE_COLOR_TEMP) as u16 == 0,
+            (LEVEL, 0x000F) if self.identity.color_temperature => v & !LEVEL_OPTIONS_CT as u16 == 0,
             (LEVEL | COLOR, 0x000F) => v & !EXECUTE_IF_OFF as u16 == 0,
             (LEVEL, 0x0011) => v != 0,
             (COLOR, 0x4010) => v == 0xFFFF || (self.identity.ct_min..=self.identity.ct_max).contains(&v),
@@ -529,7 +532,7 @@ impl<H: Hal> Stack<H> {
     }
 
     fn attribute_write(&mut self, cluster: u16, id: u16, value: &[u8]) {
-        let v = value.iter().rev().fold(0u16, |v, b| v << 8 | *b as u16);
+        let v = le(value) as u16;
         match (cluster, id) {
             (ON_OFF, 0x4003) => {
                 self.push_command(Command::SetPowerOnBehavior(PowerOnBehavior::from_u8(v as u8)));
@@ -775,7 +778,7 @@ impl<H: Hal> Stack<H> {
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         let mut f = Long::new();
         if mfr {
-            f.u8(FC_GLOBAL_RSP | 0x04);
+            f.u8(FC_GLOBAL_RSP_MFR);
             f.u16(self.identity.manufacturer_code);
         } else {
             f.u8(FC_GLOBAL_RSP);
@@ -807,7 +810,7 @@ impl<H: Hal> Stack<H> {
     fn zcl_global(&mut self, c: Ctx, cluster: u16, cmd: u8, mut r: Reader, seq: u8, rsp: &mut Long) -> Option<u8> {
         let header = |rsp: &mut Long, id: u8| match c.mfr {
             Some(code) => {
-                rsp.u8(FC_GLOBAL_RSP | 0x04);
+                rsp.u8(FC_GLOBAL_RSP_MFR);
                 rsp.u16(code);
                 rsp.bytes(&[seq, id]);
             }
@@ -890,7 +893,7 @@ impl<H: Hal> Stack<H> {
                             break;
                         };
                         let change = if is_analog(ty) {
-                            value_len(ty, &r).and_then(|n| r.take(n)).map(|v| v.iter().rev().fold(0u32, |a, b| a << 8 | *b as u32))
+                            value_len(ty, &r).and_then(|n| r.take(n)).map(le)
                         } else {
                             Some(0)
                         };
@@ -995,7 +998,7 @@ impl<H: Hal> Stack<H> {
                     rsp.u16(id);
                     rsp.u8(ty);
                     if extended {
-                        rsp.u8(0x01 | (self.writable_at(c, cluster, id) as u8) << 1 | (self.reportable_at(c, cluster, id) as u8) << 2);
+                        rsp.u8(pack(&[(1, 0), (self.writable_at(c, cluster, id) as u16, 1), (self.reportable_at(c, cluster, id) as u16, 2)]) as u8);
                     }
                 }
                 if more {
@@ -1468,7 +1471,7 @@ impl<H: Hal> Stack<H> {
                     colour: super::SceneColour::TEMPERATURE,
                     transition,
                     tenths,
-                    omitted: SCENE_NO_ON_OFF | SCENE_NO_LEVEL | SCENE_NO_COLOR,
+                    omitted: SCENE_NO_STATE,
                 };
                 while let (Some(cluster), Some(len)) = (r.u16(), r.u8()) {
                     let data = r.take(len as usize)?;

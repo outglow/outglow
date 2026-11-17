@@ -9,7 +9,7 @@ use crate::aes::Aes128;
 use crate::hal::{trace, Hal, Trace, TxStatus};
 use crate::mac::{self, Addr};
 use crate::nwk::{self, Header};
-use crate::util::{due, Buf, Reader};
+use crate::util::{due, pack, Buf, Reader};
 
 const CONFLICT_QUIET_MS: u32 = 5_000;
 const CONFLICT_JITTER_MS: u32 = 64;
@@ -1371,14 +1371,14 @@ impl<H: Hal> Stack<H> {
                 break;
             };
             p.u16(n.short);
-            p.u8(nwk::cost_from_lqi(n.lqi) | n.out_cost << 4);
+            p.u8(pack(&[(nwk::cost_from_lqi(n.lqi), 0), (n.out_cost, 4)]));
             after = n.short as i32;
             count += 1;
             if let Some(i) = self.neighbor_index(after as u16) {
                 self.neighbors[i].listed = true;
             }
         }
-        p.set(1, count | 0x60);
+        p.set(1, pack(&[(count, 0), (0x60, 0)]));
         let h = self.new_header(nwk::FRAME_CMD, nwk::BROADCAST_ROUTERS, 1);
         self.transmit_nwk(mac::BROADCAST, &h, p.as_slice());
     }

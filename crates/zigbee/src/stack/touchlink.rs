@@ -2,7 +2,7 @@ use super::{Stack, State};
 use crate::aes::Aes128;
 use crate::hal::Hal;
 use crate::mac::{self, Addr};
-use crate::util::{due, Buf, Reader};
+use crate::util::{due, pack, Buf, Reader};
 
 const PROFILE_ZLL: u16 = 0xC05E;
 const CLUSTER_TOUCHLINK: u16 = 0x1000;
@@ -102,7 +102,7 @@ impl<H: Hal> Stack<H> {
                     return Some(());
                 }
             }
-            let response_id = self.hal.random() | 1;
+            let response_id = pack(&[(self.hal.random(), 0), (1, 0)]);
             let pan = (self.hal.random() % 0xFFFE) as u16 + 1;
             self.touchlink =
                 Some(Transaction { id: transaction, initiator, until: now.wrapping_add(TRANSACTION_MS), response: response_id, pan });
@@ -113,9 +113,9 @@ impl<H: Hal> Stack<H> {
             let mut f = self.interpan_frame(initiator, seq, SCAN_RESPONSE, transaction);
             f.u8(0);
             f.u8(0x05);
-            f.u8(!on_network as u8 | 0x80);
+            f.u8(pack(&[(!on_network as u8, 0), (1, 7)]));
             let master = self.identity.touchlink_master_key.is_some() as u16;
-            f.u16(1 << KEY_DEVELOPMENT | master << KEY_MASTER | 1 << KEY_CERTIFICATION);
+            f.u16(pack(&[(1, KEY_DEVELOPMENT as u32), (master, KEY_MASTER as u32), (1, KEY_CERTIFICATION as u32)]));
             f.u32(response_id);
             f.u64(self.nib.ext_pan);
             f.u8(self.nib.update_id);
@@ -198,7 +198,7 @@ impl<H: Hal> Stack<H> {
                 let valid = key.is_some() && short != 0 && short < 0xFFF8 && !centralized;
                 if cmd == NETWORK_START_REQUEST {
                     if ext_pan == 0 {
-                        ext_pan = self.ext ^ ((self.hal.random() as u64) << 32 | self.hal.random() as u64) | 1;
+                        ext_pan = pack(&[(self.ext ^ pack(&[(self.hal.random() as u64, 32), (self.hal.random() as u64, 0)]), 0), (1, 0)]);
                     }
                     if pan == 0 {
                         pan = (self.hal.random() % 0xFFF0) as u16 + 1;

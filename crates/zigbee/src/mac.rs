@@ -1,4 +1,4 @@
-use crate::util::{Buf, Reader};
+use crate::util::{pack, Buf, Reader};
 
 pub const FRAME_BEACON: u8 = 0;
 pub const FRAME_DATA: u8 = 1;
@@ -86,13 +86,15 @@ impl Header {
             Addr::Short(_) => 2,
             Addr::Ext(_) => 3,
         };
-        let fcf = self.frame_type as u16
-            | (self.security as u16) << 3
-            | (self.pending as u16) << 4
-            | (self.ack_request as u16) << 5
-            | (compress as u16) << 6
-            | mode(&self.dst) << 10
-            | mode(&self.src) << 14;
+        let fcf = pack(&[
+            (self.frame_type as u16, 0),
+            (self.security as u16, 3),
+            (self.pending as u16, 4),
+            (self.ack_request as u16, 5),
+            (compress as u16, 6),
+            (mode(&self.dst), 10),
+            (mode(&self.src), 14),
+        ]);
         b.u16(fcf);
         b.u8(self.seq);
         let put = |b: &mut Buf, a: &Addr| {
@@ -178,12 +180,12 @@ impl Beacon {
             src: Addr::Short(self.short),
         }
         .write(b);
-        b.u16(0x0FFF | (self.pan_coordinator as u16) << 14 | (self.permit_join as u16) << 15);
+        b.u16(pack(&[(0x0FFF, 0), (self.pan_coordinator as u16, 14), (self.permit_join as u16, 15)]));
         b.u8(0);
         b.u8(0);
         b.u8(0);
-        b.u8(self.stack_profile | self.protocol_version << 4);
-        b.u8((self.router_capacity as u8) << 2 | (self.depth & 0x0F) << 3 | (self.end_device_capacity as u8) << 7);
+        b.u8(pack(&[(self.stack_profile as u16, 0), (self.protocol_version as u16, 4)]) as u8);
+        b.u8(pack(&[(self.router_capacity as u16, 2), ((self.depth & 0x0F) as u16, 3), (self.end_device_capacity as u16, 7)]) as u8);
         b.u64(self.ext_pan);
         b.bytes(&[0xFF, 0xFF, 0xFF]);
         b.u8(self.update_id);

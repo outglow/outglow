@@ -1,7 +1,7 @@
 use super::blackbox;
 use super::Stack;
 use crate::hal::{Hal, HalCounters, NvItem, ResetCause, TxStatus};
-use crate::util::{due, Reader};
+use crate::util::{due, pack, Reader};
 
 pub(crate) mod k {
     pub const PERSISTENT_WRITES: usize = 0;
@@ -790,12 +790,14 @@ impl<H: Hal> Stack<H> {
                     o[2] = nb.lqi;
                     o[3] = nb.out_cost;
                     o[4] = nb.age;
-                    o[5] = nb.used as u8
-                        | (nb.relays as u8) << 1
-                        | (nb.listed as u8) << 2
-                        | (child as u8) << 3
-                        | (nb.link_cost() & 7) << 4
-                        | (nb.measured() as u8) << 7;
+                    o[5] = pack(&[
+                        (nb.used as u16, 0),
+                        (nb.relays as u16, 1),
+                        (nb.listed as u16, 2),
+                        (child as u16, 3),
+                        ((nb.link_cost() & 7) as u16, 4),
+                        (nb.measured() as u16, 7),
+                    ]) as u8;
                     o[6] = nb.stales;
                     o[7..9].copy_from_slice(&nb.rx.to_le_bytes());
                     o[9] = nb.rssi_avg as u8;

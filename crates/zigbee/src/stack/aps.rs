@@ -6,7 +6,7 @@ use crate::aes::Aes128;
 use crate::crypto;
 use crate::hal::Hal;
 use crate::nwk;
-use crate::util::{due, Buf, Reader};
+use crate::util::{due, pack, Buf, Reader};
 
 pub(crate) const PROFILE_ZDO: u16 = 0x0000;
 pub(crate) const PROFILE_HA: u16 = 0x0104;
@@ -139,7 +139,7 @@ impl<H: Hal> Stack<H> {
             self.diag.add(k::APS_FC_FAILURE);
             return None;
         }
-        let sc_calc = (sc & !7) | 5;
+        let sc_calc = pack(&[(sc & !7, 0), (5, 0)]);
         let mut aad = [0u8; 12 + 13];
         let n = header_len + aux_len;
         aad.get_mut(..n)?.copy_from_slice(&p[..n]);
@@ -292,7 +292,7 @@ impl<H: Hal> Stack<H> {
             let aux_len = a.pos();
             let cipher = a.rest();
             let key_id = (sc >> 3) & 3;
-            let sc_calc = (sc & !7) | 5;
+            let sc_calc = pack(&[(sc & !7, 0), (5, 0)]);
             let mut aad = [0u8; 2 + 13];
             aad[..2].copy_from_slice(&p[..2]);
             aad[2..2 + aux_len].copy_from_slice(&rest[..aux_len]);

@@ -2,7 +2,7 @@ use super::aps::{ENDPOINT, PROFILE_HA, PROFILE_ZDO};
 use super::Stack;
 use crate::hal::{Hal, NvItem};
 use crate::nwk;
-use crate::util::{due, Buf, Reader};
+use crate::util::{due, pack, Buf, Reader};
 
 pub(crate) const OTA: u16 = 0x0019;
 
@@ -343,7 +343,7 @@ impl<H: Hal> Stack<H> {
         b.u32(o.offset);
         b.u32(o.skip);
         b.u32(o.element_left);
-        b.u8(o.in_image as u8 | (o.seen_file_header as u8) << 1 | (o.marker_ok as u8) << 2);
+        b.u8(pack(&[(o.in_image as u16, 0), (o.seen_file_header as u16, 1), (o.marker_ok as u16, 2)]) as u8);
         b.bytes(&o.head);
         b.u8(o.head_len);
         b.u32(o.image_len);

@@ -26,6 +26,7 @@ mod sense;
 mod settings;
 mod touchlink;
 mod traces;
+mod util;
 mod zcl;
 mod zdo;
 

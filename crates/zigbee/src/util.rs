@@ -1,3 +1,5 @@
+use core::ops::{BitOr, Shl};
+
 pub const MAX_MPDU: usize = 125;
 
 #[derive(Clone, Copy)]
@@ -134,6 +136,16 @@ impl<const N: usize> Default for Buffer<N> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn pack<T: Copy + Default + BitOr<Output = T> + Shl<u32, Output = T>>(fields: &[(T, u32)]) -> T {
+    fields.iter().fold(T::default(), |a, &(v, at)| a | v << at)
+}
+
+pub fn le(value: &[u8]) -> u32 {
+    let mut a = [0u8; 4];
+    a.iter_mut().zip(value).for_each(|(d, s)| *d = *s);
+    u32::from_le_bytes(a)
 }
 
 pub fn due(now: u32, at: u32) -> bool {

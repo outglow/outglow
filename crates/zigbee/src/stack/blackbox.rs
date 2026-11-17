@@ -1,6 +1,7 @@
 const HOLD_MS: u32 = 60_000;
 
 use super::NEIGHBORS;
+use crate::util::pack;
 
 pub(crate) const LINK_FRAMES: usize = 64;
 pub(crate) const RING: usize = 64;
@@ -106,10 +107,11 @@ impl BlackBox {
         if self.held(now) {
             return;
         }
-        let v = attempts.min(7) | (ok as u8) << 3;
+        let v = pack(&[(attempts.min(7) as u16, 0), (ok as u16, 3)]);
         let at = self.link_head[slot] as usize;
         let b = &mut self.links[slot][at / 2];
-        *b = if at % 2 == 0 { (*b & 0xF0) | v } else { (*b & 0x0F) | v << 4 };
+        let (lo, hi) = ((*b & 0x0F) as u16, (*b >> 4) as u16);
+        *b = if at % 2 == 0 { pack(&[(v, 0), (hi, 4)]) } else { pack(&[(lo, 0), (v, 4)]) } as u8;
         self.link_head[slot] = ((at + 1) % LINK_FRAMES) as u8;
         self.link_len[slot] = (self.link_len[slot] + 1).min(LINK_FRAMES as u8);
     }
@@ -127,7 +129,7 @@ impl BlackBox {
         e[10] = kind;
         e[11..13].copy_from_slice(&id.to_le_bytes());
         e[13] = seq;
-        e[14] = attempts.min(15) | status << 4;
+        e[14] = pack(&[(attempts.min(15) as u16, 0), (status as u16, 4)]) as u8;
         e[15] = 0;
         self.ring_head = ((self.ring_head as usize + 1) % RING) as u8;
         self.ring_len = (self.ring_len + 1).min(RING as u8);
@@ -149,10 +151,12 @@ impl BlackBox {
         e[4..6].copy_from_slice(&(d(t.rx, l.rx).min(0xFFFF) as u16).to_le_bytes());
         e[6] = d(t.retries, l.retries).min(255) as u8;
         e[7] = d(t.fails, l.fails).min(255) as u8;
-        e[8] = (r.coord_cost & 7)
-            | (r.coord_measured as u8) << 3
-            | ((r.coord_hop == 0x0000) as u8) << 4
-            | (d(t.route_disc, l.route_disc).min(7) as u8) << 5;
+        e[8] = pack(&[
+            ((r.coord_cost & 7) as u16, 0),
+            (r.coord_measured as u16, 3),
+            ((r.coord_hop == 0x0000) as u16, 4),
+            (d(t.route_disc, l.route_disc).min(7) as u16, 5),
+        ]) as u8;
         e[9] = r.coord_delivery;
         e[10] = r.stale;
         e[11] = r.noise as u8;
@@ -199,7 +203,7 @@ impl BlackBox {
                         if at % 2 == 0 { b & 0x0F } else { b >> 4 }
                     };
                     let i = (o - 4) * 2;
-                    nib(i) | nib(i + 1) << 4
+                    pack(&[(nib(i) as u16, 0), (nib(i + 1) as u16, 4)]) as u8
                 }
             };
         }

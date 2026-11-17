@@ -5,7 +5,7 @@ use crate::crypto;
 use crate::hal::{Hal, NvItem};
 use crate::mac::Addr;
 use crate::nwk::{self, Header};
-use crate::util::{due, Buf, Buffer, Long, Reader};
+use crate::util::{due, le, pack, Buf, Buffer, Long, Reader};
 
 pub(crate) const GP_ENDPOINT: u8 = 242;
 pub(crate) const PROFILE_GP: u16 = 0xA1E0;
@@ -219,24 +219,26 @@ impl ProxyEntry {
 
     fn write<const N: usize>(&self, out: &mut Buffer<N>) {
         let secure = self.security >= 2;
-        let options: u16 = self.gpd.app() as u16
-            | 1 << 3
-            | 1 << 4
-            | (self.seq_cap as u16) << 5
-            | ((self.sink_count != 0) as u16) << 6
-            | (self.derived_group as u16) << 7
-            | ((self.group_count != 0) as u16) << 8
-            | (self.in_range as u16) << 10
-            | (self.fixed as u16) << 11
-            | (self.alias.is_some() as u16) << 13
-            | (secure as u16) << 14;
+        let options = pack(&[
+            (self.gpd.app() as u16, 0),
+            (1, 3),
+            (1, 4),
+            (self.seq_cap as u16, 5),
+            ((self.sink_count != 0) as u16, 6),
+            (self.derived_group as u16, 7),
+            ((self.group_count != 0) as u16, 8),
+            (self.in_range as u16, 10),
+            (self.fixed as u16, 11),
+            (self.alias.is_some() as u16, 13),
+            (secure as u16, 14),
+        ]);
         out.u16(options);
         self.gpd.write(out, self.endpoint);
         if let Some(alias) = self.alias {
             out.u16(alias);
         }
         if secure {
-            out.u8(self.security | self.key_type << 2);
+            out.u8(pack(&[(self.security as u16, 0), (self.key_type as u16, 2)]) as u8);
         }
         if secure || self.seq_cap {
             out.u32(self.counter);
@@ -396,7 +398,7 @@ fn unsecure(key: &[u8; 16], engine: Option<crate::aes::Engine>, f: &Gpdf, out: &
 
 fn link(lqi: u8, rssi: i8) -> u8 {
     let rssi = (rssi as i32).clamp(-109, 8);
-    ((rssi + 110) / 2) as u8 | (lqi >> 6) << 6
+    pack(&[(((rssi + 110) / 2) as u16, 0), ((lqi >> 6) as u16, 6)]) as u8
 }
 
 fn dmin(rx_after_tx: bool) -> u32 {
@@ -521,15 +523,17 @@ impl<H: Hal> Stack<H> {
         self.zcl_seq = self.zcl_seq.wrapping_add(1);
         z.bytes(&[0x11, self.zcl_seq, GP_NOTIFICATION]);
         let rx_after_tx = f.rx_after_tx && !matches!(cmd, GPD_COMMISSIONING | GPD_DECOMMISSIONING);
-        let options: u16 = f.gpd.app() as u16
-            | ((e.sink_count != 0) as u16) << 3
-            | (e.derived_group as u16) << 4
-            | ((e.group_count != 0) as u16) << 5
-            | (e.security as u16) << 6
-            | (e.key_type as u16) << 8
-            | (rx_after_tx as u16) << 11
-            | 1 << 12
-            | 1 << 14;
+        let options = pack(&[
+            (f.gpd.app() as u16, 0),
+            ((e.sink_count != 0) as u16, 3),
+            (e.derived_group as u16, 4),
+            ((e.group_count != 0) as u16, 5),
+            (e.security as u16, 6),
+            (e.key_type as u16, 8),
+            (rx_after_tx as u16, 11),
+            (1, 12),
+            (1, 14),
+        ]);
         z.u16(options);
         f.gpd.write(&mut z, f.endpoint);
         z.u32(f.counter);
@@ -760,12 +764,14 @@ impl<H: Hal> Stack<H> {
             (_, true) => KEY_NONE,
             _ => key_type,
         };
-        let options: u16 = f.gpd.app() as u16
-            | (f.rx_after_tx as u16) << 3
-            | (f.security as u16) << 4
-            | (key_type as u16) << 6
-            | (failed as u16) << 9
-            | 1 << 11;
+        let options = pack(&[
+            (f.gpd.app() as u16, 0),
+            (f.rx_after_tx as u16, 3),
+            (f.security as u16, 4),
+            (key_type as u16, 6),
+            (failed as u16, 9),
+            (1, 11),
+        ]);
         z.u16(options);
         f.gpd.write(&mut z, f.endpoint);
         z.u32(f.counter);
@@ -825,7 +831,7 @@ impl<H: Hal> Stack<H> {
         let seq = r.u8()?;
         let cmd = r.u8()?;
         let mut rsp = Long::new();
-        let rsp_fc = 0x10 | (!fc & 0x08);
+        let rsp_fc = pack(&[(1, 4), ((fc & 0x08 == 0) as u16, 3)]) as u8;
         let status = if fc & 3 == 0 {
             self.gp_global(cmd, r, seq, rsp_fc, &mut rsp)
         } else if fc & 0x08 == 0 {
@@ -949,7 +955,7 @@ impl<H: Hal> Stack<H> {
     }
 
     fn gp_pairing(&mut self, mut r: Reader) -> Option<u8> {
-        let options = r.u8()? as u32 | (r.u8()? as u32) << 8 | (r.u8()? as u32) << 16;
+        let options = le(r.take(3)?);
         let (gpd, endpoint) = Gpd::read((options & 7) as u8, &mut r)?;
         let found = self.proxy_index(gpd);
         if options & 0x10 != 0 {
@@ -1172,12 +1178,14 @@ impl<H: Hal> Stack<H> {
                 Gpd::Src(id) => (false, id as u64),
                 Gpd::Ieee(ieee) => (true, ieee),
             };
-            b.u8(e.derived_group as u8
-                | (e.alias.is_some() as u8) << 1
-                | (e.seq_cap as u8) << 2
-                | (e.fixed as u8) << 3
-                | (ieee as u8) << 4
-                | (e.in_range as u8) << 5);
+            b.u8(pack(&[
+                (e.derived_group as u16, 0),
+                (e.alias.is_some() as u16, 1),
+                (e.seq_cap as u16, 2),
+                (e.fixed as u16, 3),
+                (ieee as u16, 4),
+                (e.in_range as u16, 5),
+            ]) as u8);
             b.u64(id);
             b.u8(e.endpoint);
             b.u16(e.alias.unwrap_or(0));

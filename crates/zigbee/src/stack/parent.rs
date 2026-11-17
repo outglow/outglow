@@ -2,10 +2,11 @@ use super::{Stack, CHILDREN, INDIRECT, INDIRECT_PER_CHILD, PENDING_SHORTS};
 use crate::hal::{Hal, TxStatus};
 use crate::mac::{self, Addr};
 use crate::nwk::{self, Header};
-use crate::util::{due, Buf};
+use crate::util::{due, pack, Buf};
 
 pub(crate) const CAP_FFD: u8 = 0x02;
 pub(crate) const CAP_RX_ON: u8 = 0x08;
+const CAP_ROUTER: u8 = 0x0A;
 
 const INDIRECT_MS: u32 = 7_680;
 const DEFAULT_TIMEOUT: u8 = 8;
@@ -396,7 +397,7 @@ impl<H: Hal> Stack<H> {
             let (broadcast, association, addr) = (self.indirect[i].broadcast, self.indirect[i].association, self.indirect[i].addr);
             if waiting > 1 {
                 let fc0 = frame.get(0);
-                frame.set(0, fc0 | 0x10);
+                frame.set(0, pack(&[(fc0, 0), (0x10, 0)]));
             }
             let to = child.filter(|_| broadcast);
             if let Some(c) = to {
@@ -498,7 +499,7 @@ impl<H: Hal> Stack<H> {
         let known = self.child_by_ext(ext);
         let neighbor = self.neighbor_by_ext(ext);
         if !secured {
-            let kind = CAP_FFD | CAP_RX_ON;
+            let kind = CAP_ROUTER;
             let differs = match (known, neighbor) {
                 (Some(i), _) => self.children[i].short != h.src || (self.children[i].capability ^ capability) & kind != 0,
                 (None, Some(n)) => self.neighbors[n].short != h.src || capability & CAP_FFD == 0,
@@ -638,7 +639,7 @@ impl<H: Hal> Stack<H> {
         }
         let mut h = self.new_header(nwk::FRAME_CMD, c.short, 1);
         h.dst_ext = Some(c.ext);
-        let leave = [nwk::CMD_LEAVE, 0x40 | options & 0xA0];
+        let leave = [nwk::CMD_LEAVE, pack(&[(0x40, 0), (options & 0xA0, 0)])];
         if c.sleepy() {
             let f = self.nwk_frame(c.short, &h, &leave);
             if f.ok() {

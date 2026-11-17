@@ -4,7 +4,7 @@ use sense::{Core, LINES, NO_SRC};
 use super::aps::{ENDPOINT, PROFILE_HA};
 use super::{Stack, State};
 use crate::hal::{Hal, NvItem, TxStatus};
-use crate::util::{due, Long};
+use crate::util::{due, le, pack, Long};
 
 pub(crate) const OCCUPANCY: u16 = 0x0406;
 pub(crate) const SENSE: u16 = 0xFC5E;
@@ -334,7 +334,7 @@ impl<H: Hal> Stack<H> {
                 out.u8((6 * n) as u8);
                 for (i, l) in c.line.iter().enumerate().filter(|(_, l)| l.used()) {
                     out.u16(l.src);
-                    out.bytes(&[l.rssi as u8, l.noise, l.sum, l.on() as u8 | (i as u8) << 4]);
+                    out.bytes(&[l.rssi as u8, l.noise, l.sum, pack(&[(l.on() as u16, 0), (i as u16, 4)]) as u8]);
                 }
             }
             (SENSE, A_CALIBRATE) => out.u8(c.cal_left(now).min(255) as u8),
@@ -364,7 +364,7 @@ impl<H: Hal> Stack<H> {
         if !writable {
             return 0x88;
         }
-        let v = value.iter().rev().fold(0u32, |v, b| v << 8 | *b as u32);
+        let v = le(value);
         let valid = match (cluster, id) {
             (OCCUPANCY, A_OFF_DELAY) => v >= 1,
             (SENSE, A_SENSITIVITY) => v <= 100,
@@ -381,7 +381,7 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn sense_write(&mut self, cluster: u16, id: u16, value: &[u8]) {
-        let v = value.iter().rev().fold(0u32, |v, b| v << 8 | *b as u32);
+        let v = le(value);
         let now = self.hal.now_ms();
         let c = &mut self.sense.core;
         match (cluster, id) {

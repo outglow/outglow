@@ -2,7 +2,7 @@ use super::parent::Child;
 use super::{Binding, BleMode, Nib, Stack, BINDINGS, BLE_WINDOW_MAX_MIN, CHILDREN, COUNTER_STEP, GROUPS};
 use crate::aes::Aes128;
 use crate::hal::{Hal, NvItem};
-use crate::util::Reader;
+use crate::util::{pack, Reader};
 
 const NETWORK_VERSION: u8 = 1;
 const TABLES_VERSION: u8 = 2;
@@ -76,7 +76,7 @@ impl<H: Hal> Stack<H> {
         b.u16(n.parent);
         b.put(&n.key);
         b.u8(n.key_seq);
-        b.u8(n.alt_valid as u8 | (n.alt_old as u8) << 1);
+        b.u8(pack(&[(n.alt_valid as u16, 0), (n.alt_old as u16, 1)]) as u8);
         b.u8(n.alt_seq);
         b.put(&n.alt_key);
         b.u64(n.tc_ext);
@@ -183,7 +183,7 @@ impl<H: Hal> Stack<H> {
             b.u16(g);
         }
         for bind in self.bindings {
-            b.u8(bind.used as u8 | (bind.group as u8) << 1 | (bind.src_ep.wrapping_sub(1) & 0x3F) << 2);
+            b.u8(pack(&[(bind.used as u16, 0), (bind.group as u16, 1), ((bind.src_ep.wrapping_sub(1) & 0x3F) as u16, 2)]) as u8);
             b.u16(bind.cluster);
             b.u64(bind.dst);
             b.u8(bind.dst_ep);
@@ -251,7 +251,7 @@ impl<H: Hal> Stack<H> {
         for s in self.scenes.iter().filter(|s| s.used) {
             b.u16(s.group);
             b.u8(s.id);
-            b.u8(s.on as u8 | s.omitted << 1);
+            b.u8(pack(&[(s.on as u16, 0), (s.omitted as u16, 1)]) as u8);
             b.u8(s.level);
             b.u16(s.color_temp);
             b.u16(s.transition);
