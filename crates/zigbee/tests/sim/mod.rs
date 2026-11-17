@@ -2039,7 +2039,7 @@ impl Pairing {
         if self.remove_gpd {
             return p;
         }
-        if self.mode == 3 {
+        if self.mode == 0 || self.mode == 3 {
             p.extend_from_slice(&self.sink.0.to_le_bytes());
             p.extend_from_slice(&self.sink.1.to_le_bytes());
         } else {
