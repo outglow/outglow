@@ -226,3 +226,73 @@ fn a_secured_rejoin_renews_a_known_child_and_an_end_device_is_no_longer_a_neighb
     assert_eq!((c.used, c.ext, c.joined, c.fc_next, c.fc_seq, c.heard), (true, EXT, true, 77, 2, 4_000));
     assert!(s.neighbors[0].used, "a router stays a neighbour");
 }
+
+#[test]
+fn a_child_removed_takes_its_frames_and_its_share_of_broadcasts_with_it() {
+    let mut s = up_parent();
+    let c = &mut s.children[2];
+    c.used = true;
+    c.joined = true;
+    c.ext = EXT;
+    c.short = 0x2002;
+    let entries: [(bool, u64, bool, u32); 6] = [
+        (true, EXT, false, 0),
+        (false, 0x2002, false, 0),
+        (false, 0x2003, false, 0),
+        (true, EXT + 1, false, 0),
+        (false, 0, true, 1 << 2 | 1 << 5),
+        (false, 0, true, 1 << 2),
+    ];
+    for (k, (ext, addr, broadcast, due)) in entries.into_iter().enumerate() {
+        let e = &mut s.indirect[k];
+        e.used = true;
+        e.ext = ext;
+        e.addr = addr;
+        e.broadcast = broadcast;
+        e.due = due;
+        e.expires = 50_000;
+    }
+    s.remove_child(2);
+    let used: Vec<bool> = s.indirect[..6].iter().map(|e| e.used).collect();
+    assert_eq!(used, [false, false, true, true, true, false]);
+    assert_eq!(s.indirect[4].due, 1 << 5);
+    assert!(!s.children[2].used);
+    assert_eq!(s.diag.n[crate::stack::diag::k::CHILD_MOVED], 1);
+}
+
+#[test]
+fn a_timeout_request_of_up_to_fourteen_is_taken_from_an_end_device_child_without_configuration() {
+    for (timeout, configuration, taken) in [(14, 0, true), (15, 0, false), (3, 1, false)] {
+        let mut s = up_parent();
+        let c = &mut s.children[0];
+        c.used = true;
+        c.joined = true;
+        c.short = 0x2000;
+        c.capability = 0x88;
+        let h = crate::nwk::Header::new(crate::nwk::FRAME_CMD, 0x0042, 0x2000, 1, 1);
+        s.on_timeout_request(&h, &[crate::nwk::CMD_TIMEOUT_REQUEST, timeout, configuration]);
+        assert_eq!(s.children[0].timeout == timeout, taken, "{timeout} {configuration}");
+        assert_eq!(s.hal.sent.len(), 1, "answered either way");
+    }
+}
+
+#[test]
+fn a_refused_rejoin_of_a_sleepy_device_waits_for_its_poll_when_there_is_room() {
+    let mut s = up_parent();
+    s.nib.tc_ext = crate::stack::NO_TRUST_CENTER;
+    rejoin(&mut s, 0x5000, 0x80, false);
+    assert!(s.hal.sent.is_empty());
+    assert!(s.indirect.iter().any(|e| e.used && !e.ext && e.addr == 0x5000));
+    let mut s = up_parent();
+    s.nib.tc_ext = crate::stack::NO_TRUST_CENTER;
+    for e in s.indirect.iter_mut() {
+        e.used = true;
+        e.addr = 0x7000;
+        e.expires = 50_000;
+    }
+    rejoin(&mut s, 0x5000, 0x80, false);
+    assert!(s.indirect.iter().all(|e| e.addr == 0x7000), "no room");
+    s.indirect[3].expires = 900;
+    rejoin(&mut s, 0x5000, 0x80, false);
+    assert_eq!(s.indirect.iter().filter(|e| e.addr == 0x5000).count(), 1, "an expired one makes room");
+}
