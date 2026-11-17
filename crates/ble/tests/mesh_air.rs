@@ -222,6 +222,10 @@ fn step(rigs: &mut [Rig], ms: u64) {
 }
 
 fn air_pdu(sn: u32, src: u16, dst: u16, op: u8, params: &[u8], ltk: &[u8; 16]) -> Vec<u8> {
+    air_pdu_hops(sn, src, dst, op, params, 0, ltk)
+}
+
+fn air_pdu_hops(sn: u32, src: u16, dst: u16, op: u8, params: &[u8], hops: u8, ltk: &[u8; 16]) -> Vec<u8> {
     let mut p = vec![0u8; 39];
     p[0] = 0x82;
     p[1] = 0x25;
@@ -234,6 +238,8 @@ fn air_pdu(sn: u32, src: u16, dst: u16, op: u8, params: &[u8], ltk: &[u8; 16]) -
     p[16] = op;
     p[17..19].copy_from_slice(&[0x60, 0x01]);
     p[19..19 + params.len()].copy_from_slice(params);
+    p[31] = 2;
+    p[34] = hops;
     let nonce: [u8; 8] = p[8..16].try_into().unwrap();
     let mic = mesh_mic(ltk, &nonce, &p[16..35]);
     p[35..].copy_from_slice(&mic[..4]);
@@ -429,4 +435,25 @@ fn a_bulb_alone_listens_12_ms_after_each_advertising_event_on_the_next_channel()
         assert_eq!(channel, [2, 12, 23, 34][i % 4]);
         assert_eq!(from, adv + 3 * MS, "right after the advertising event, which takes 3 ms here");
     }
+}
+
+#[test]
+fn a_command_goes_on_air_in_the_stock_packet_format() {
+    let (ether, mut rigs) = bulbs(&[A]);
+    let sn = 0x101u32;
+    send(&mut rigs, 0xffff, OP_BRIGHTNESS, &[50], 400);
+    let sent = ether.borrow().sent(0);
+    assert!(sent.len() >= 4);
+    assert!(sent.iter().all(|p| *p == sent[0]), "the same packet on every channel and every repeat");
+    let want = air_pdu_hops(sn, 0x000a, 0xffff, OP_BRIGHTNESS, &[50], 2, &LTK);
+    assert_eq!(sent[0], want, "sender and source 0x000a, two hops, the stock's 2 at offset 31");
+}
+
+#[test]
+fn a_bulb_does_not_take_its_own_packet_back_from_a_neighbour() {
+    let (_ether, mut rigs) = bulbs(&[A, B]);
+    send(&mut rigs, 0xffff, OP_POWER, &[0], 1500);
+    assert!(rigs[1].ble.borrow().air_stats().relayed >= 1, "B passed it on");
+    let a = rigs[0].ble.borrow().air_stats();
+    assert_eq!((a.received, a.relayed), (0, 0), "A heard it back and knew it");
 }

@@ -262,6 +262,10 @@ impl Ether {
         self.sends.iter().filter(|s| s.4 == node && pdu_filter(&s.3)).count()
     }
 
+    pub fn sent(&self, node: usize) -> Vec<Vec<u8>> {
+        self.sends.iter().filter(|s| s.4 == node).map(|s| s.3.clone()).collect()
+    }
+
     pub fn deliver(&mut self, node: usize, pdu: &[u8]) {
         self.inbox[node].push_back(pdu.to_vec());
     }
