@@ -63,3 +63,15 @@ fn the_neighbour_table_lists_the_neighbours_and_the_joined_end_device_children()
     let short = |k: usize| u16::from_le_bytes([r[4 + k * 22 + 16], r[4 + k * 22 + 17]]);
     assert_eq!([short(0), short(1), short(2)], [0x0000, 0x2000, 0x2003]);
 }
+
+#[test]
+fn a_node_descriptor_nobody_asked_for_changes_nothing() {
+    let mut s = stack();
+    s.tclk_step = 0;
+    s.nib.tclk_state = 1;
+    let mut p = std::vec![0x00, 0x00, 0x00];
+    p.extend_from_slice(&[0; 8]);
+    p.extend_from_slice(&(22u16 << 9).to_le_bytes());
+    let _ = s.on_zdo_response(0x0000, NODE_DESC_REQ | RESPONSE, Reader::new(&p));
+    assert_eq!((s.tclk_step, s.nib.tclk_state), (0, 1));
+}
