@@ -664,3 +664,27 @@ fn a_bulb_whose_link_holds_the_burst_back_listens_its_whole_window() {
     assert!(windows.len() >= 5);
     assert!(windows.iter().all(|l| *l == 12 * MS), "{windows:?}");
 }
+
+#[test]
+fn a_listening_window_owed_opens_only_with_4_ms_to_spare() {
+    for (left, opens) in [(4 * MS, true), (4 * MS - 1, false)] {
+        let (_ether, mut rig) = alone();
+        rig.run(700);
+        let last = *rig.world.borrow().advertised_at.last().unwrap();
+        rig.world.borrow_mut().zigbee_busy.push((last + 295 * MS, u64::MAX, true));
+        rig.run(330);
+        assert_eq!(rig.world.borrow().advertised_at.last(), Some(&last), "the event was left out");
+        let before = rig.world.borrow().listened.len();
+        let now = rig.world.borrow().now;
+        rig.world.borrow_mut().zigbee_busy = vec![(last + 295 * MS, now, true)];
+        jump_to_idle(&mut rig, left);
+        assert_eq!(rig.world.borrow().listened.len() > before, opens, "{left} ticks left");
+    }
+}
+
+#[test]
+fn a_connected_bulb_listens_only_while_it_waits_for_answers() {
+    let (_ether, mut rigs) = bulbs(&[A]);
+    rigs[0].run(2000);
+    assert!(rigs[0].world.borrow().listened.iter().all(|l| l.0 < rigs[0].world.borrow().event_starts[0]), "not while connected");
+}
