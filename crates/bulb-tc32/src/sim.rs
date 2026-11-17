@@ -54,7 +54,10 @@ pub struct Chip {
     pub tx_kicks: usize,
     reset_requested: bool,
     erased: bool,
+    pub hook: Option<Hook>,
 }
+
+pub type Hook = Box<dyn FnMut(&mut Chip, Op)>;
 
 impl Chip {
     fn new() -> Self {
@@ -78,6 +81,7 @@ impl Chip {
             tx_kicks: 0,
             reset_requested: false,
             erased: false,
+            hook: None,
         }
     }
 
@@ -89,12 +93,45 @@ impl Chip {
         self.regs.insert(off, v);
     }
 
+    pub fn poke32(&mut self, off: usize, v: u32) {
+        for (i, b) in v.to_le_bytes().iter().enumerate() {
+            self.regs.insert(off + i, *b);
+        }
+    }
+
+    pub fn raise16(&mut self, off: usize, bits: u16) {
+        let [lo, hi] = bits.to_le_bytes();
+        let (a, b) = (self.peek8(off), self.peek8(off + 1));
+        self.regs.insert(off, a | lo);
+        self.regs.insert(off + 1, b | hi);
+    }
+
+    pub fn ticks_read(&self) -> Vec<u32> {
+        self.log.iter().filter_map(|o| match *o {
+            Op::R32(reg::SYSTEM_TICK, t) => Some(t),
+            _ => None,
+        }).collect()
+    }
+
     pub fn analog(&self, addr: u8) -> u8 {
         self.analog[addr as usize]
     }
 
     pub fn set_analog(&mut self, addr: u8, v: u8) {
         self.analog[addr as usize] = v;
+    }
+
+    pub fn on(&mut self, hook: impl FnMut(&mut Chip, Op) + 'static) {
+        self.hook = Some(Box::new(hook));
+    }
+
+    fn run_hook(&mut self, op: Op) {
+        if let Some(mut h) = self.hook.take() {
+            h(self, op);
+            if self.hook.is_none() {
+                self.hook = Some(h);
+            }
+        }
     }
 
     pub fn writes(&self) -> Vec<Op> {
@@ -160,6 +197,15 @@ impl Chip {
             reg::MSPI_DATA => self.spi_byte(bytes[0]),
             reg::PWDN_CTRL if bytes[0] & 0x20 != 0 => self.reset_requested = true,
             AES_DATA if width == 4 => self.aes_feed(bytes),
+            TX_FIFO_RPTR => {
+                let w = self.peek8(TX_FIFO_WPTR) & 0x0f;
+                let r = if bytes[0] & 0x10 != 0 { w } else { bytes[0] & 0x0f };
+                self.regs.insert(TX_FIFO_RPTR, r);
+            }
+            TX_FIFO_PUSH => {
+                let w = self.peek8(TX_FIFO_WPTR);
+                self.regs.insert(TX_FIFO_WPTR, (w + 1) & 0x0f);
+            }
             DMA_TX_READY if bytes[0] & 0x08 != 0 => {
                 self.tx_kicks += 1;
                 if self.tx_completes {
@@ -270,6 +316,9 @@ const AES_CTRL: usize = 0x540;
 const AES_DATA: usize = 0x548;
 const AES_KEY: usize = 0x550;
 const RF_IRQ_STATUS: usize = 0xf20;
+const TX_FIFO_RPTR: usize = 0xc2a;
+const TX_FIFO_WPTR: usize = 0xc2b;
+const TX_FIFO_PUSH: usize = 0xc2c;
 const DMA_TX_READY: usize = 0xc24;
 const W1C: [usize; 2] = [0xf20, 0xf21];
 
@@ -283,14 +332,35 @@ pub struct Session {
     _guard: MutexGuard<'static, ()>,
 }
 
+pub const SESSION_MAX: std::time::Duration = std::time::Duration::from_secs(10);
+
+static STARTED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+static WATCHDOG: std::sync::Once = std::sync::Once::new();
+
+fn watch() {
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let started = *STARTED.lock().unwrap_or_else(|e| e.into_inner());
+        if started.is_some_and(|t| t.elapsed() > SESSION_MAX) {
+            eprintln!("a test ran {SESSION_MAX:?} on the simulated chip: a loop that never ends without touching a register");
+            std::process::abort();
+        }
+    }
+}
+
 pub fn session() -> Session {
     let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    WATCHDOG.call_once(|| {
+        std::thread::spawn(watch);
+    });
+    *STARTED.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::time::Instant::now());
     CHIP.with(|c| *c.borrow_mut() = Some(Chip::new()));
     Session { _guard: guard }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        *STARTED.lock().unwrap_or_else(|e| e.into_inner()) = None;
         CHIP.with(|c| *c.borrow_mut() = None);
     }
 }
@@ -323,11 +393,13 @@ pub fn read(off: usize, width: usize) -> u32 {
     bounded();
     with(|c| {
         let v = c.read(off, width);
-        c.log.push(match width {
+        let op = match width {
             1 => Op::R8(off, v as u8),
             2 => Op::R16(off, v as u16),
             _ => Op::R32(off, v),
-        });
+        };
+        c.log.push(op);
+        c.run_hook(op);
         v
     })
 }
@@ -335,12 +407,14 @@ pub fn read(off: usize, width: usize) -> u32 {
 pub fn write(off: usize, width: usize, v: u32) {
     bounded();
     with(|c| {
-        c.log.push(match width {
+        let op = match width {
             1 => Op::W8(off, v as u8),
             2 => Op::W16(off, v as u16),
             _ => Op::W32(off, v),
-        });
+        };
+        c.log.push(op);
         c.write(off, width, v);
+        c.run_hook(op);
     })
 }
 
@@ -348,10 +422,10 @@ pub fn flash8(addr: usize) -> u8 {
     with(|c| c.flash.get(addr).copied().unwrap_or(0xff))
 }
 
-pub fn reboots<F: FnOnce() + std::panic::UnwindSafe>(f: F) -> bool {
+pub fn reboots<F: FnOnce()>(f: F) -> bool {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
-    let r = std::panic::catch_unwind(f);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     std::panic::set_hook(hook);
     match r {
         Ok(()) => false,
