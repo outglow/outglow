@@ -294,3 +294,34 @@ fn an_encrypted_answer_is_fragmented_from_sixty_four_bytes_on() {
         assert_eq!(aps_sent(&net, n, t).iter().map(|a| a[0]).collect::<Vec<u8>>(), kinds, "{} bytes", rsp.len());
     }
 }
+
+#[test]
+fn an_acknowledgement_without_the_extended_header_does_not_move_a_transfer_on() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let (request, _) = long_read(22);
+    net.coord.drop_fragments = 100;
+    let t = net.now();
+    net.coord.zcl(short, BASIC, 0x00, 0x00, &request);
+    net.run(100);
+    let first = aps_sent(&net, n, t).into_iter().find(|a| a[0] & 0x80 != 0).unwrap();
+    let counter = first[7];
+    net.coord.nwk_data(short, &[0x02, first[6], first[2], first[3], first[4], first[5], first[1], counter, 1, 0, 0x01]);
+    net.coord.nwk_data(short, &[0x12, counter, 1, 0, 0x01]);
+    net.run(100);
+    let blocks: Vec<u8> = aps_sent(&net, n, t).into_iter().filter(|a| a[0] & 0x80 != 0).map(|a| a[9]).collect();
+    assert_eq!(blocks, vec![0x02]);
+}
+
+#[test]
+fn a_frame_to_the_green_power_endpoint_for_another_cluster_is_ignored() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl_rx.clear();
+    let aps = net.coord.aps_frame(0x00, 242, 0x0022, 0xA1E0, 242, &[0x19, 0x44, 0x0B, 0x08, 0]);
+    net.coord.nwk_data(short, &aps);
+    net.run(100);
+    assert!(net.coord.zcl_rx.iter().all(|(s, _, _)| *s != short));
+}
