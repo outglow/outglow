@@ -510,9 +510,7 @@ impl Diag {
     }
 
     pub(crate) fn peak(&mut self, i: usize, v: u32) {
-        if v > self.n[i] {
-            self.n[i] = v;
-        }
+        self.n[i] = self.n[i].max(v);
     }
 
     pub(crate) fn take_hal(&mut self, c: HalCounters) {

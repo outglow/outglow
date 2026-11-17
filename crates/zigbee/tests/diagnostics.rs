@@ -1109,6 +1109,25 @@ fn the_event_log_kept_over_a_restart_comes_back_with_the_counters() {
 }
 
 #[test]
+fn a_boot_record_of_another_version_restarts_the_reset_count() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let id = net.nodes[n].id;
+    net.power_cycle(n);
+    net.run(1_000);
+    let resets = diag1(&mut net, short, 0x0000);
+    assert!(resets >= 2);
+    let item = zigbee::hal::NvItem::Boot as u8;
+    let mut boot = net.air.borrow().ports[id].nv[&item].clone();
+    boot[0] ^= 0xFF;
+    net.air.borrow_mut().ports[id].nv.insert(item, boot);
+    net.power_cycle(n);
+    net.run(1_000);
+    assert_eq!(diag1(&mut net, short, 0x0000), 1);
+}
+
+#[test]
 fn ble_disconnects_are_logged_as_such_unless_the_link_was_lost() {
     let mut net = Net::new();
     let n = net.join_node();
