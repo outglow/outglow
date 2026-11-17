@@ -420,8 +420,8 @@ impl<H: Hal> Stack<H> {
                     }
                     None => e.used = false,
                 }
-                if association {
-                    self.update_device(addr, UPDATE_DEVICE_JOINED);
+                if let (true, Some(c)) = (association, self.child_by_ext(addr)) {
+                    self.update_device(c, UPDATE_DEVICE_JOINED);
                 }
                 if let (Some(c), true) = (child, waiting > 1) {
                     self.children[c].more = true;
@@ -457,10 +457,8 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    fn update_device(&mut self, ext: u64, status: u8) {
-        let Some(i) = self.child_by_ext(ext) else {
-            return;
-        };
+    fn update_device(&mut self, i: usize, status: u8) {
+        let ext = self.children[i].ext;
         if self.nib.tc_ext == super::NO_TRUST_CENTER {
             if matches!(status, UPDATE_DEVICE_JOINED | UPDATE_DEVICE_TC_REJOIN) {
                 let now = self.hal.now_ms();
@@ -551,7 +549,7 @@ impl<H: Hal> Stack<H> {
         rh.security = secured;
         let s = short.to_le_bytes();
         self.transmit_nwk(mac_src, &rh, &[nwk::CMD_REJOIN_RESPONSE, s[0], s[1], 0x00]);
-        self.update_device(ext, if secured { UPDATE_DEVICE_SECURED_REJOIN } else { UPDATE_DEVICE_TC_REJOIN });
+        self.update_device(i, if secured { UPDATE_DEVICE_SECURED_REJOIN } else { UPDATE_DEVICE_TC_REJOIN });
         if secured {
             self.store_children();
         }
@@ -599,9 +597,8 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn child_left(&mut self, i: usize) {
-        let ext = self.children[i].ext;
         if self.children[i].joined {
-            self.update_device(ext, UPDATE_DEVICE_LEFT);
+            self.update_device(i, UPDATE_DEVICE_LEFT);
         }
         self.remove_child(i);
     }
