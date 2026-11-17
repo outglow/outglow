@@ -130,8 +130,7 @@ impl<H: Hal> Ble<H> {
     }
 
     pub fn ota_busy(&self) -> bool {
-        self.ota.active()
-            || (self.ota.state == State::Done && !self.ota.failed)
+        (self.ota.state == State::Done && !self.ota.failed)
             || (self.link.state == crate::LinkState::Connected && self.ota_this_link)
     }
 
