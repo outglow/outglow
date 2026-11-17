@@ -1,7 +1,7 @@
 use memcap as _;
 mod sim;
 
-use sim::{make_image, ota_packet, Rig, DIMMABLE};
+use sim::{make_image, ota_packet, Rig, DIMMABLE, MS};
 
 const OTA: u16 = 0x1b;
 const OTA_CLASSIC: u16 = 0x18;
@@ -315,4 +315,110 @@ fn a_finished_transfer_takes_nothing_more_until_its_restart() {
     let w = rig.world.borrow();
     assert!(w.activated);
     assert_eq!(w.staging[..image.len()], image[..]);
+}
+
+fn send_in(rig: &mut Rig, image: &[u8], size: usize) -> u16 {
+    for (i, block) in image.chunks(size).enumerate() {
+        let mut b = block.to_vec();
+        b.resize(size, 0xff);
+        rig.write(OTA, &ota_packet(i as u16, &b));
+    }
+    image.len().div_ceil(size) as u16
+}
+
+#[test]
+fn the_erase_goes_a_sector_every_10_ms_and_stops_at_the_end_of_the_staging_area() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let mut packet = [0u8; 20];
+    packet[2] = 0xff;
+    rig.write(OTA, &packet);
+    rig.run(2000);
+    let w = rig.world.borrow();
+    assert_eq!(w.erased_sectors, (0..8).map(|i| i * 0x1000).collect::<Vec<u32>>(), "eight sectors of 4 KiB in the 32 KiB here");
+    for pair in w.erased_at.windows(2) {
+        let pause = pair[1] - pair[0] - 40 * MS;
+        assert!((10 * MS..10 * MS + MS / 5).contains(&pause), "{pause} ticks between the end of an erase and the next");
+    }
+}
+
+#[test]
+fn what_an_erase_packet_is() {
+    for (packet, erase) in [
+        (&[0u8, 0, 2][..], true),
+        (&[0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], true),
+        (&[0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], false),
+        (&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], false),
+        (&[1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], false),
+        (&[0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], false),
+        (&[0, 0], false),
+    ] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.connect();
+        rig.write(OTA, packet);
+        rig.run(500);
+        assert_eq!(rig.world.borrow().erased_sectors.len(), if erase { 2 } else { 0 }, "{packet:02x?}");
+        assert_eq!(status(&mut rig).0, if erase { 2 } else { 0 }, "{packet:02x?}");
+    }
+}
+
+#[test]
+fn the_status_tells_how_far_the_transfer_is() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(16_000, 4);
+    for (i, block) in image.chunks(16).take(333).enumerate() {
+        rig.write(OTA, &ota_packet(i as u16, block));
+    }
+    let s = rig.read(OTA);
+    assert_eq!(s[..8], [3, 0, 0x4d, 0x01, 0x4d, 0x01, 0, 33], "333 blocks of 16 octets: 33 % of 16000");
+    assert_eq!(s[8..], [0; 12]);
+}
+
+#[test]
+fn the_smallest_image_is_64_octets() {
+    for (len, good) in [(0x40, true), (0x3c, false)] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.connect();
+        let image = make_image(len, 6);
+        let blocks = send_blocks(&mut rig, OTA, &image);
+        rig.write(OTA, &ota_packet(blocks, &[]));
+        assert_eq!(status(&mut rig).1, if good { 0 } else { 2 }, "{len} octets");
+        rig.run(1200);
+        assert_eq!(rig.world.borrow().activated, good, "{len} octets");
+    }
+}
+
+#[test]
+fn an_image_fills_the_staging_area_exactly_and_no_block_reaches_past_it() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let image = make_image(sim::STAGING, 8);
+    let blocks = send_blocks(&mut rig, OTA, &image);
+    rig.write(OTA, &ota_packet(blocks, &[]));
+    assert_eq!(status(&mut rig), (4, 0, blocks));
+    rig.run(1200);
+    assert!(rig.world.borrow().activated);
+
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    assert_eq!(rig.att(&[0x02, 64, 0]), [0x03, 64, 0]);
+    let blocks = send_in(&mut rig, &image, 48);
+    assert_eq!(status(&mut rig).0..=status(&mut rig).1, 4..=2, "the last of {blocks} blocks of 48 octets reached past the end");
+}
+
+#[test]
+fn the_boot_mark_is_held_back_whichever_block_brings_it() {
+    for size in [8, 12, 9] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.connect();
+        let image = make_image(600, 2);
+        let blocks = send_in(&mut rig, &image, size);
+        assert_eq!(rig.world.borrow().staging[8], 0xff, "blocks of {size}");
+        rig.write(OTA, &ota_packet(blocks, &[]));
+        rig.run(1200);
+        let w = rig.world.borrow();
+        assert!(w.activated, "blocks of {size}");
+        assert_eq!(w.staging[..image.len()], image[..], "blocks of {size}");
+    }
 }

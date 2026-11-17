@@ -296,6 +296,7 @@ pub struct World {
     pub nv_writes: u32,
     pub staging: Vec<u8>,
     pub erased_sectors: Vec<u32>,
+    pub erased_at: Vec<u64>,
     pub activated: bool,
     pub mesh_listens: u32,
     pub listened: Vec<(u64, u64, u8)>,
@@ -597,6 +598,8 @@ impl Hal for SimHal {
         assert!(offset % 0x1000 == 0 && (offset as usize) < STAGING);
         w.staging[offset as usize..offset as usize + 0x1000].fill(0xff);
         w.erased_sectors.push(offset);
+        let at = w.now;
+        w.erased_at.push(at);
         w.now += 40 * MS;
     }
 
@@ -738,6 +741,7 @@ impl Rig {
             nv_writes: 0,
             staging: vec![0xa5; STAGING],
             erased_sectors: vec![],
+            erased_at: vec![],
             activated: false,
             flash_fault: false,
             zigbee_busy: vec![],
