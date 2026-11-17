@@ -111,3 +111,118 @@ fn an_associating_device_is_heard_now_and_unauthenticated() {
     s.parent_timers(100_000 + 5_000);
     assert!(s.children.iter().any(|c| c.used), "kept while it gets its key");
 }
+
+const EXT: u64 = 0x00124B00_0000_7777;
+
+fn rejoin(s: &mut Stack<Scripted>, src: u16, capability: u8, secured: bool) -> Option<(u16, u8)> {
+    let mut h = crate::nwk::Header::new(crate::nwk::FRAME_CMD, 0x0042, src, 1, 1);
+    h.src_ext = Some(EXT);
+    s.hal.sent.clear();
+    s.on_rejoin_request(&h, src, &[crate::nwk::CMD_REJOIN_REQUEST, capability], secured);
+    let f = s.hal.sent.first()?;
+    let r = &f[f.len() - 4..];
+    (!secured).then(|| (u16::from_le_bytes([r[1], r[2]]), r[3]))
+}
+
+fn up_parent() -> Stack<Scripted> {
+    let mut s = stack();
+    s.state = crate::stack::State::Up;
+    s.nib.short = 0x0042;
+    s.nib.tc_ext = 0x00124B00_0000_0001;
+    s
+}
+
+#[test]
+fn an_unsecured_rejoin_is_taken_only_from_a_known_device_with_its_address_and_kind() {
+    let cases: [(u16, u8, u16, u8, Option<(u16, u8)>); 5] = [
+        (0x2000, 0x88, 0x2000, 0x88, Some((0x2000, 0x00))),
+        (0x2000, 0x88, 0x2000, 0x8C, Some((0x2000, 0x00))),
+        (0x2000, 0x88, 0x2000, 0x80, Some((0x2000, 0x02))),
+        (0x2000, 0x8A, 0x2000, 0x88, Some((0x2000, 0x02))),
+        (0x2000, 0x88, 0x2001, 0x88, Some((0x2001, 0x02))),
+    ];
+    for (short, capability, src, asked, answer) in cases {
+        let mut s = up_parent();
+        let c = &mut s.children[0];
+        c.used = true;
+        c.ext = EXT;
+        c.short = short;
+        c.capability = capability;
+        assert_eq!(rejoin(&mut s, src, asked, false), answer, "{capability:02X} {src:04X} {asked:02X}");
+    }
+}
+
+#[test]
+fn an_unsecured_rejoin_of_a_neighbour_is_taken_only_for_a_router_with_its_address() {
+    for (src, asked, answer) in [(0x3000, 0x8E, (0x3000, 0x00)), (0x3000, 0x88, (0x3000, 0x02)), (0x3001, 0x8E, (0x3001, 0x02))] {
+        let mut s = up_parent();
+        let n = &mut s.neighbors[0];
+        n.used = true;
+        n.short = 0x3000;
+        n.ext = EXT;
+        assert_eq!(rejoin(&mut s, src, asked, false), Some(answer), "{src:04X} {asked:02X}");
+    }
+}
+
+#[test]
+fn a_rejoining_device_keeps_its_address_unless_it_is_taken() {
+    let cases: [(u16, Option<(u16, u64)>, bool); 6] = [
+        (0x5000, None, true),
+        (0x0042, None, false),
+        (0xFFF8, None, false),
+        (0xFFF7, None, true),
+        (0x5000, Some((0x5000, 0x99)), false),
+        (0x5000, Some((0x5000, 0)), true),
+    ];
+    for (src, neighbor, kept) in cases {
+        let mut s = up_parent();
+        if let Some((short, ext)) = neighbor {
+            let n = &mut s.neighbors[0];
+            n.used = true;
+            n.short = short;
+            n.ext = ext;
+        }
+        s.hal.random = [0x0777].to_vec();
+        let (short, status) = rejoin(&mut s, src, 0x8E, false).unwrap();
+        assert_eq!((short == src, status), (kept, 0x00), "{src:04X} {neighbor:?}");
+    }
+    let mut s = up_parent();
+    s.children[3].used = true;
+    s.children[3].short = 0x5000;
+    s.children[3].capability = 0x8E;
+    s.hal.random = [0x0777].to_vec();
+    assert_eq!(rejoin(&mut s, 0x5000, 0x8E, false), Some((0x0777, 0x00)), "another child's");
+}
+
+#[test]
+fn a_secured_rejoin_renews_a_known_child_and_an_end_device_is_no_longer_a_neighbour() {
+    let mut s = up_parent();
+    let c = &mut s.children[2];
+    c.used = true;
+    c.ext = EXT;
+    c.short = 0x2000;
+    c.capability = 0x80;
+    c.timeout = 3;
+    c.heard = 5;
+    let n = &mut s.neighbors[0];
+    n.used = true;
+    n.short = 0x2000;
+    n.ext = EXT;
+    s.hal.now = 4_000;
+    rejoin(&mut s, 0x2000, 0x88, true);
+    let c = s.children[2];
+    assert_eq!((c.short, c.capability, c.joined, c.timeout, c.heard), (0x2000, 0x88, true, super::DEFAULT_TIMEOUT, 4_000));
+    assert!(!s.neighbors[0].used);
+    let mut s = up_parent();
+    let n = &mut s.neighbors[0];
+    n.used = true;
+    n.short = 0x3000;
+    n.ext = EXT;
+    n.fc_next = 77;
+    n.fc_seq = 2;
+    s.hal.now = 4_000;
+    rejoin(&mut s, 0x3000, 0x8E, true);
+    let c = s.children[0];
+    assert_eq!((c.used, c.ext, c.joined, c.fc_next, c.fc_seq, c.heard), (true, EXT, true, 77, 2, 4_000));
+    assert!(s.neighbors[0].used, "a router stays a neighbour");
+}
