@@ -60,6 +60,12 @@ real bulb.
   noise, sensitivity and whether it sees motion now. Refresh it from the
   device page, or with `diagnostics_refresh`. In Home Assistant its state is
   how many links see motion now, and the links are its attribute `links`.
+- The device option `motion_activity_rate` (advanced, 0–5, default 0): while
+  motion is seen, the bulb sends every link's activity (the sum of its RSSI
+  deviations over the last 16 probes, in dB) that many times a second, into
+  `motion_links` `activity`; one more report when the motion ends. Meant for
+  locating people from all the links. The bulb does not store it: the
+  converter writes it again when the bulb comes back after a power-on.
 - `room_occupancy` and the device option `motion_room`: list the IEEE
   addresses of the other bulbs of the room in `motion_room`, and
   `room_occupancy` counts only the links to them, so a walk past a bulb of

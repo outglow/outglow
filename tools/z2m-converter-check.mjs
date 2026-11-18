@@ -279,6 +279,27 @@ if (hasOcc) {
     definition.meta?.overrideHaDiscoveryPayload?.(ho, {});
     check("room_occupancy is an occupancy sensor in Home Assistant, nothing else changes", hr.device_class === "occupancy" && ho.device_class === undefined &&
           ho.json_attributes_topic === undefined, JSON.stringify([hr, ho]));
+    // the activity of every link (0xFF47: sender, level), sent a few times a second while motion is seen
+    check("the activity attributes are known under code 0x1141",
+          Zcl.Utils.getClusterAttribute(sc, 0xff47, 0x1141)?.name === "lineActivity" && Zcl.Utils.getClusterAttribute(sc, 0x0007, 0x1141)?.name === "activityRate");
+    let act = {};
+    for (const f of fzs) {
+        Object.assign(act, f.convert(definition, {type: "attributeReport", cluster: "outglowSense", data: {lineActivity: Buffer.from([0x2b, 0x1a, 37, 0x4d, 0x3c, 0]), lineState: 1}, endpoint: ep, device, meta: {}},
+                                     () => {}, {}, {device, logger: console, state: lk}) ?? {});
+    }
+    const [a0, a1] = act.motion_links ?? [];
+    check("a report of the activity sets each link's activity and motion", a0?.activity === 37 && a0.motion && a1?.activity === 0 && !a1.motion && a0.signal === -57,
+          JSON.stringify(act.motion_links));
+    check("motion_activity_rate is a device option", (definition.options ?? []).some((o) => (o.property ?? o.name) === "motion_activity_rate"));
+    const actWrites = [];
+    const actDevice = {getEndpoint: () => ({write: async (c, a, o) => actWrites.push([c, a, o]), supportsInputCluster: () => true}), isDummyDevice: false};
+    const handlers = definition.onEvent ? [definition.onEvent] : [];
+    for (const h of handlers) {
+        await h({type: "deviceOptionsChanged", data: {device: actDevice, from: {}, to: {motion_activity_rate: 9}, deviceExposesChanged: () => {}}});
+        await h({type: "deviceAnnounce", data: {device: actDevice, options: {motion_activity_rate: 2}}});
+    }
+    const rates = actWrites.filter((w) => w[0] === "outglowSense").map((w) => w[1].activityRate);
+    check("the option writes the activity rate, at most 5, when it changes and when the bulb comes back", rates.includes(5) && rates.includes(2), JSON.stringify(actWrites));
     // the switch writes the rate
     const writes = [];
     const fakeEp = {write: async (c, a, o) => writes.push([c, a, o]), read: async () => {}};

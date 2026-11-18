@@ -133,6 +133,10 @@ impl Line {
         self.flags & F_ON != 0
     }
 
+    pub fn level(&self) -> u8 {
+        self.dev.iter().map(|&d| d as u16).sum::<u16>().min(255) as u8
+    }
+
     fn win_sum(&self, thr_q4: u8) -> u8 {
         let mut sum = 0u8;
         for &d in &self.dev {
@@ -543,7 +547,22 @@ impl Core {
 
 #[cfg(test)]
 mod tests {
-    use super::env_u8;
+    use super::{env_u8, Line, WIN};
+
+    #[test]
+    fn the_level_of_a_line_is_the_sum_of_its_window_up_to_255() {
+        let mut l = Line::EMPTY;
+        assert_eq!(l.level(), 0);
+        l.dev[0] = 3;
+        l.dev[WIN - 1] = 4;
+        assert_eq!(l.level(), 7);
+        l.dev = [15; WIN];
+        assert_eq!(l.level(), 240);
+        l.dev = [16; WIN];
+        assert_eq!(l.level(), 255);
+        l.dev = [63; WIN];
+        assert_eq!(l.level(), 255);
+    }
 
     #[test]
     fn a_build_setting_is_a_decimal_byte() {

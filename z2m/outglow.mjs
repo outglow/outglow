@@ -636,9 +636,13 @@ const senseCluster = m.deviceAddCustomCluster("outglowSense", {
         selfTuning: {name: "selfTuning", ID: 0x0004, type: UINT8, write: true, max: 1},
         lineSensitivity: {name: "lineSensitivity", ID: 0x0005, type: OCTETS},
         autoCalibration: {name: "autoCalibration", ID: 0x0006, type: UINT8, write: true, max: 1},
+        // reports a second of lineActivity while motion is seen (0: none)
+        activityRate: {name: "activityRate", ID: 0x0007, type: UINT8, write: true, max: 5},
         // the same as Occupancy; and which links see motion (bit = the bulb's slot of the link)
         zone: {name: "zone", ID: 0xff43, type: UINT8},
         lineState: {name: "lineState", ID: 0xff46, type: BITMAP16},
+        // per line: sender (2), the sum of its RSSI deviations over the last 16 probes in dB (1)
+        lineActivity: {name: "lineActivity", ID: 0xff47, type: OCTETS},
     },
     commands: {},
     commandsResponse: {},
@@ -712,6 +716,13 @@ function senseLinks(device, known, data) {
             by.set(address, {...(by.get(address) ?? {address}), sensitivity: b[o + 2], calibrated_sensitivity: b[o + 3]});
         }
     }
+    if (data.lineActivity !== undefined) {
+        const b = Buffer.from(data.lineActivity);
+        for (let o = 0; o + 3 <= b.length; o += 3) {
+            const l = by.get(hex4(b.readUInt16LE(o)));
+            if (l) l.activity = b[o + 2];
+        }
+    }
     if (data.lineState !== undefined) {
         for (const l of by.values()) if (l.slot !== undefined) l.motion = !!(data.lineState & (1 << l.slot));
     }
@@ -757,7 +768,7 @@ const sense = [
                         out.motion_sensing = msg.data.probeRate ? "ON" : "OFF";
                         if (!msg.data.probeRate) Object.assign(out, {occupancy: false, room_occupancy: false});
                     }
-                    if (["lines", "lineSensitivity", "lineState"].some((k) => msg.data[k] !== undefined)) {
+                    if (["lines", "lineSensitivity", "lineState", "lineActivity"].some((k) => msg.data[k] !== undefined)) {
                         out.motion_links = senseLinks(meta.device, meta.state?.motion_links, msg.data);
                         out.room_occupancy = roomOccupancy(out.motion_links, options);
                     }
@@ -948,10 +959,32 @@ const sense = [
             entityCategory: "diagnostic",
         }),
     ),
-    // the state after a power-on: what the bulb has stored
+    // the state after a power-on: what the bulb has stored; the activity rate is not stored, so it is written again
     {
         isModernExtend: true,
+        options: [
+            e.numeric("motion_activity_rate", ea.SET)
+                .withValueMin(0)
+                .withValueMax(5)
+                .withDescription(
+                    "Advanced: while motion is seen, how many times a second the bulb sends every link's activity (motion_links activity), " +
+                        "for locating people from all the links; 0 (the default) sends none",
+                ),
+        ],
         onEvent: [
+            async (event) => {
+                const d = event.data;
+                const changed = event.type === "deviceOptionsChanged" && d.from?.motion_activity_rate !== d.to?.motion_activity_rate;
+                if (!changed && event.type !== "deviceAnnounce") return;
+                const options = event.type === "deviceOptionsChanged" ? d.to : d.options;
+                const rate = options?.motion_activity_rate;
+                if (rate === undefined || rate === null || rate === "" || d.device?.isDummyDevice || !hasSense(d.device)) return;
+                try {
+                    await d.device.getEndpoint(1).write("outglowSense", {activityRate: Math.max(0, Math.min(5, Math.round(Number(rate))))}, mfr);
+                } catch {
+                    // the bulb is away: written when it next announces itself
+                }
+            },
             async (event) => {
                 if (event.type !== "deviceAnnounce" || !hasSense(event.data.device) || event.data.device.isDummyDevice) return;
                 try {
