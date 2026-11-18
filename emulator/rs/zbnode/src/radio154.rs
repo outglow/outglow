@@ -508,8 +508,16 @@ impl Radio154 {
     fn frame_start(&self, m: &mut Machine, id: i64, f: &Frame, rssi: i64) {
         if f.channel != channel(m) {
             let mut s = self.b();
+            let switching = zigbee_mode(m) && s.switching_ble(f.t0);
+            if switching {
+                *s.dropped.entry("collision or receiver off at start".into()).or_insert(0) += 1;
+            }
             if let Some(log) = &mut s.rx_log {
-                let fate = if zigbee_mode(m) { "other channel" } else { "BLE mode" };
+                let fate = match (zigbee_mode(m), switching) {
+                    (false, _) => "BLE mode",
+                    (true, true) => "off at start: switching to or from BLE",
+                    (true, false) => "other channel",
+                };
                 log.push(RxFate { t0: f.t0, t1: f.t1, fcs: fcs_of(&f.psdu), len: f.psdu.len(), fate, cleared: None });
             }
             return;
