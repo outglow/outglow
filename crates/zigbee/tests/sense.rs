@@ -810,6 +810,12 @@ fn the_lines_of_two_neighbours_are_listed_with_their_lengths() {
     net.run(8_000);
     assert_eq!(read(&mut net, shorts[0], SENSE, 0x0002).map(|l| l.len()), Some(12));
     assert_eq!(read(&mut net, shorts[0], SENSE, 0x0005).map(|l| l.len()), Some(8));
+    let act = read(&mut net, shorts[0], SENSE, A_LINE_ACTIVITY).unwrap();
+    let mut senders: Vec<u16> = act.chunks_exact(3).map(|e| u16::from_le_bytes([e[0], e[1]])).collect();
+    senders.sort();
+    let mut others = shorts[1..].to_vec();
+    others.sort();
+    assert_eq!((act.len(), senders), (6, others), "a sender and a level for each line");
 }
 
 #[test]
