@@ -49,26 +49,30 @@ pub(crate) struct Object {
 
 const UNIT_PERCENT: u16 = 98;
 const UNIT_MINUTES: u16 = 72;
+const UNIT_NONE: u16 = 95;
 const APP_COUNT: u32 = 0x000C_0000;
 const APP_PERCENT: u32 = 0x0004_0000;
+const APP_INPUT_OTHER: u32 = 0x00FF_0000;
+const APP_OUTPUT_OTHER: u32 = 0x01FF_0000;
 const COUNT_MAX: f32 = 16_777_216.0;
 pub(crate) const BLE_WINDOW_MAX: u16 = 1440;
 
 pub(crate) const OBJECTS: [Object; 7] = [
-    Object { ep: 2, cluster: ANALOG_INPUT, value: Value::RelaysLost, description: "Relayed frames lost", units: None, app_type: Some(APP_COUNT),
+    Object { ep: 2, cluster: ANALOG_INPUT, value: Value::RelaysLost, description: "Relayed frames lost", units: Some(UNIT_NONE), app_type: Some(APP_COUNT),
              min: 0.0, max: COUNT_MAX, resolution: 1.0 },
-    Object { ep: 3, cluster: ANALOG_INPUT, value: Value::MacRetries, description: "MAC retries per APS message", units: None, app_type: None,
+    Object { ep: 3, cluster: ANALOG_INPUT, value: Value::MacRetries, description: "MAC retries per APS message", units: Some(UNIT_NONE),
+             app_type: Some(APP_INPUT_OTHER),
              min: 0.0, max: 12.0, resolution: 0.01 },
     Object { ep: 4, cluster: ANALOG_INPUT, value: Value::BleShare, description: "Radio time lent to BLE", units: Some(UNIT_PERCENT),
              app_type: Some(APP_PERCENT), min: 0.0, max: 100.0, resolution: 0.1 },
-    Object { ep: 5, cluster: ANALOG_INPUT, value: Value::Neighbors, description: "Router neighbours", units: None, app_type: Some(APP_COUNT),
+    Object { ep: 5, cluster: ANALOG_INPUT, value: Value::Neighbors, description: "Router neighbours", units: Some(UNIT_NONE), app_type: Some(APP_COUNT),
              min: 0.0, max: super::NEIGHBORS as f32, resolution: 1.0 },
-    Object { ep: 6, cluster: ANALOG_INPUT, value: Value::Children, description: "End-device children", units: None, app_type: Some(APP_COUNT),
+    Object { ep: 6, cluster: ANALOG_INPUT, value: Value::Children, description: "End-device children", units: Some(UNIT_NONE), app_type: Some(APP_COUNT),
              min: 0.0, max: super::CHILDREN as f32, resolution: 1.0 },
     Object { ep: 7, cluster: BINARY_OUTPUT, value: Value::AllowChildren, description: "Allow end devices to join", units: None, app_type: None,
              min: 0.0, max: 1.0, resolution: 1.0 },
     Object { ep: 8, cluster: ANALOG_OUTPUT, value: Value::BleWindow, description: "BLE window after power-on", units: Some(UNIT_MINUTES),
-             app_type: None, min: 0.0, max: BLE_WINDOW_MAX as f32, resolution: 1.0 },
+             app_type: Some(APP_OUTPUT_OTHER), min: 0.0, max: BLE_WINDOW_MAX as f32, resolution: 1.0 },
 ];
 
 pub(crate) const ENDPOINTS: [u8; 7] = [2, 3, 4, 5, 6, 7, 8];
