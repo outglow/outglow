@@ -83,7 +83,8 @@ jobs:
 
   # the host workspace in 14 parts (round-robin: every part gets mutants of
   # every crate, so the parts take about the same time), bulb-core with
-  # bulb-sim's tests in 2, bulb-tc32 (its own workspace) in 1
+  # bulb-sim's tests in 2, bulb-tc32 (its own workspace) in 4: in one part
+  # the runner was lost or killed after 75-100 minutes, twice (2026-11-18)
   shard:
     name: Mutants (${{ matrix.part.name }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -109,7 +110,10 @@ jobs:
           - { name: "part 14 of 14", args: "--workspace --exclude crates/bulb-core/** --shard 13/14 --sharding round-robin" }
           - { name: "bulb-core 1 of 2", args: "-p bulb-core --test-package bulb-core,bulb-sim --timeout 120 --shard 0/2 --sharding round-robin" }
           - { name: "bulb-core 2 of 2", args: "-p bulb-core --test-package bulb-core,bulb-sim --timeout 120 --shard 1/2 --sharding round-robin" }
-          - { name: "bulb-tc32", args: "--manifest-path crates/bulb-tc32/Cargo.toml" }
+          - { name: "bulb-tc32 1 of 4", args: "--manifest-path crates/bulb-tc32/Cargo.toml --shard 0/4 --sharding round-robin" }
+          - { name: "bulb-tc32 2 of 4", args: "--manifest-path crates/bulb-tc32/Cargo.toml --shard 1/4 --sharding round-robin" }
+          - { name: "bulb-tc32 3 of 4", args: "--manifest-path crates/bulb-tc32/Cargo.toml --shard 2/4 --sharding round-robin" }
+          - { name: "bulb-tc32 4 of 4", args: "--manifest-path crates/bulb-tc32/Cargo.toml --shard 3/4 --sharding round-robin" }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/nix-shell
