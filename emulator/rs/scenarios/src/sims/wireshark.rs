@@ -247,6 +247,18 @@ fn have_tshark() -> bool {
     Command::new("tshark").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+fn from_stdin(mut cmd: Command, pcap: &Path) -> Result<std::process::Output, String> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let data = std::fs::read(pcap).map_err(|e| format!("{}: {e}", pcap.display()))?;
+    let mut child = cmd.args(["-r", "-"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let mut stdin = child.stdin.take().ok_or("tshark without a standard input")?;
+    let writer = std::thread::spawn(move || stdin.write_all(&data));
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let _ = writer.join();
+    Ok(out)
+}
+
 struct Zb {
     master: Vec<String>,
 }
@@ -254,7 +266,6 @@ struct Zb {
 impl Zb {
     fn tshark(&self, pcap: &Path, args: &[&str]) -> Result<String, String> {
         let mut cmd = Command::new("tshark");
-        cmd.arg("-r").arg(pcap);
         for k in KEYS {
             cmd.args(["-o", &format!("uat:zigbee_pc_keys:\"{k}\",\"Normal\",\"test\"")]);
         }
@@ -264,7 +275,8 @@ impl Zb {
         for k in GP_KEYS {
             cmd.args(["-o", &format!("uat:zigbee_gp_keys:\"{k}\",\"Normal\",\"test\"")]);
         }
-        let r = cmd.args(args).output().map_err(|e| e.to_string())?;
+        cmd.args(args);
+        let r = from_stdin(cmd, pcap)?;
         if !r.status.success() {
             let e = String::from_utf8_lossy(&r.stderr).trim().chars().take(300).collect::<String>();
             return Err(format!("tshark {}: {e}", args.join(" ")));
@@ -545,7 +557,9 @@ const BLE_EXPECT: &[(&str, &str, usize)] = &[
 ];
 
 fn btshark(pcap: &Path, args: &[&str]) -> Result<String, String> {
-    let r = Command::new("tshark").arg("-r").arg(pcap).args(args).output().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new("tshark");
+    cmd.args(args);
+    let r = from_stdin(cmd, pcap)?;
     if !r.status.success() {
         let e = String::from_utf8_lossy(&r.stderr).trim().chars().take(300).collect::<String>();
         return Err(format!("tshark {}: {e}", args.join(" ")));
