@@ -8,6 +8,7 @@ pub struct Known {
     pub ble_product: u16,
     pub kind: &'static str,
     pub image_type: u16,
+    pub fw_offset: u32,
 }
 
 include!("boards_table.rs");

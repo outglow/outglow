@@ -3,12 +3,13 @@
  * The first _ramcode_size_align_256_ bytes of the image are copied to SRAM
  * and run at address 0 upwards (they must not depend on the flash: the flash
  * driver and the radio interrupt live in .ram_code). The rest runs in place
- * from the flash, where the image sits at FW_OFFSET: 0x6A000, the address
- * the bulb's resident bootloader installs applications at and the stock
- * firmware is linked for (docs/ble-first-flash.md). In the file the two
- * parts follow each other without a gap. */
+ * from the flash, where the image sits at FW_OFFSET (given by `cargo xtask
+ * build` with --defsym, from the board): 0x6A000 on the bulbs, the address
+ * their resident bootloader installs applications at and the stock firmware
+ * is linked for (docs/ble-first-flash.md), 0 on a bare module the boot ROM
+ * starts directly. In the file the two parts follow each other without a
+ * gap. */
 ENTRY(__start)
-FW_OFFSET = DEFINED(FW_OFFSET) ? FW_OFFSET : 0x6A000;
 
 SECTIONS
 {

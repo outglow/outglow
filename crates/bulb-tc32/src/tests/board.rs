@@ -237,7 +237,7 @@ fn every_board_starts_each_of_its_pwm_outputs_on_its_pin() {
         let mut expected = vec![Op::W8(reg::PWM_CLK_DIV, 0)];
         for o in outputs(b) {
             expected.push(Op::W16(0x796 + 4 * o.pwm as usize, b.period));
-            expected.push(Op::W16(0x794 + 4 * o.pwm as usize, 0));
+            expected.push(Op::W16(0x794 + 4 * o.pwm as usize, if o.invert { b.period } else { 0 }));
             let m = regs[&o.mux] & !(3 << o.shift) | o.value << o.shift;
             regs.insert(o.mux, m);
             expected.push(Op::W8(o.mux, m));
@@ -262,7 +262,8 @@ fn every_board_drives_its_channels_and_tells_its_light_kind() {
         set_cold(b, b.period + 7);
         set_cold(b, 3);
         set_colour(b, 10, 20, 30);
-        let mut expected = vec![Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period), Op::W16(0x794 + 4 * b.warm.pwm as usize, b.period - 1)];
+        let warm = if b.warm.invert { [0, 1] } else { [b.period, b.period - 1] };
+        let mut expected = vec![Op::W16(0x794 + 4 * b.warm.pwm as usize, warm[0]), Op::W16(0x794 + 4 * b.warm.pwm as usize, warm[1])];
         if let Some(c) = b.cold {
             expected.extend([Op::W16(0x794 + 4 * c.pwm as usize, b.period), Op::W16(0x794 + 4 * c.pwm as usize, 3)]);
         }
@@ -275,6 +276,30 @@ fn every_board_drives_its_channels_and_tells_its_light_kind() {
     let kinds: Vec<(bool, bool, bool)> = crate::boards::BOARDS.iter().map(|b| (b.cold.is_some(), b.rgb.is_some(), b.tunable())).collect();
     assert!(kinds.contains(&(false, false, false)) && kinds.contains(&(true, false, true)) && kinds.contains(&(false, true, true)));
     assert!(crate::boards::BOARDS.iter().any(|b| b.rgb_beside_white) && crate::boards::BOARDS.iter().any(|b| b.colour_default != (170, 254)));
+    assert!(crate::boards::BOARDS.iter().any(|b| b.warm.invert));
+}
+
+#[test]
+fn an_inverted_output_lights_its_pin_for_the_duty_and_starts_dark() {
+    let lilygo = board_named("LILYGO_T_ZigBee-1.00");
+    let _s = sim::session();
+    start(&lilygo, lilygo.warm);
+    set_warm(&lilygo, 0);
+    set_warm(&lilygo, 12_000);
+    set_warm(&lilygo, lilygo.period);
+    let cmp = 0x794 + 4 * lilygo.warm.pwm as usize;
+    let cmps: Vec<Op> = sim::with(|c| c.writes()).into_iter().filter(|op| matches!(op, Op::W16(a, _) if *a == cmp)).collect();
+    assert_eq!(cmps, [Op::W16(cmp, 48_000), Op::W16(cmp, 48_000), Op::W16(cmp, 36_000), Op::W16(cmp, 0)]);
+}
+
+#[test]
+fn a_bulb_keeps_the_awox_flash_map_and_a_bare_512k_module_keeps_the_telink_factory_data() {
+    assert_eq!((AWOX_1M.store, AWOX_1M.reset, AWOX_1M.mac, AWOX_1M.cap_trim, AWOX_1M.staging), (0xf_0000, 0xc_f000, 0xf_f000, 0xf_e000, 0x6_4000));
+    assert_eq!((BARE_512K.store, BARE_512K.reset, BARE_512K.mac, BARE_512K.cap_trim, BARE_512K.staging), (0x7_8000, 0x7_f000, 0x7_6000, 0x7_7000, 0));
+    assert_eq!((CONFIG_SECTORS, COLOUR_SECTORS, RESET_SECTOR), ([0xf_0000, 0xf_4000], [0xf_5000, 0xf_6000], 0xc_f000));
+    assert_eq!(BOARD.flash.store, AWOX_1M.store);
+    assert_eq!(board_named("LILYGO_T_ZigBee-1.00").flash.store, BARE_512K.store);
+    assert!(BARE_512K.store + 0x7000 <= BARE_512K.reset && BARE_512K.store > BARE_512K.cap_trim);
 }
 
 #[test]

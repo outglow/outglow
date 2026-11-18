@@ -220,7 +220,7 @@ fn a_build_runs_the_toolchain_in_order() {
             ),
             format!("ROOT/llvm/clang {flags} -DIMAGE_TYPE=0x0390 -c ROOT/crates/bulb-tc32/boot/start.S -o {out}/start.o"),
             format!(
-                "ROOT/llvm/ld.lld -T ROOT/crates/bulb-tc32/boot/link.ld --gc-sections -Map={out}/bulb-tc32.map \
+                "ROOT/llvm/ld.lld -T ROOT/crates/bulb-tc32/boot/link.ld --defsym=FW_OFFSET=0x6a000 --gc-sections -Map={out}/bulb-tc32.map \
                  {out}/start.o {out}/rust.o -o {out}/bulb-tc32.elf"
             ),
             format!("ROOT/llvm/llvm-size {out}/bulb-tc32.elf"),

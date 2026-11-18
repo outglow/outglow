@@ -97,7 +97,7 @@ const fn parse_hex(s: &str) -> u32 {
     v
 }
 
-const MAC_SECTOR: usize = 0xf_f000;
+const MAC_SECTOR: usize = crate::board::BOARD.flash.mac;
 const TELINK_OUI: [u8; 3] = [0x38, 0xc1, 0xa4];
 const BLE_ORDER_OUIS: [[u8; 3]; 7] = [
     [0x38, 0xc1, 0xa4],

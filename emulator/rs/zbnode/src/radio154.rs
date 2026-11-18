@@ -667,6 +667,37 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_on_another_channel_while_the_radio_comes_back_from_ble_is_missed_in_the_switch() {
+        let mut fl = Flash::new(Config::env().flash_size);
+        fl.mem[8] = 0x4B;
+        let mut m = Machine::new(fl, -1, 1).unwrap();
+        let r = Radio154::new(&mut m);
+        r.b().rx_log = Some(Vec::new());
+        m.regs[0x1245] = 37;
+        m.regs[0x1244] = 37 << 2;
+        let (c0, ms0, hz) = (m.cycles, m.ms(), m.cpu_hz as f64);
+        let steps = [(0.0, true, false), (1.0, false, false), (1.03, false, true), (3.08, false, false), (3.2, true, false)];
+        for t0 in [3.1, 6.0] {
+            r.inject(Frame { t0: ms0 + t0, t1: ms0 + t0 + airtime_ms(5), channel: 12, psdu: vec![0x02, 0x00, 0x01, 0x00, 0x00] }, -40);
+        }
+        let mut next = steps.iter().peekable();
+        for i in 0..=1600 {
+            let t = i as f64 * 0.005;
+            while let Some((_, rx, ble)) = next.next_if(|s| s.0 <= t + 1e-9) {
+                m.regs[0xF02] = if *rx { 0x20 } else { 0x00 };
+                m.regs[0x428] = if *rx { 0x01 } else { 0x00 };
+                m.regs[0x404] = if *ble { 0x01 } else { 0x00 };
+            }
+            m.cycles = c0 + (t * hz / 1000.0) as i64;
+            m.update_time().unwrap();
+        }
+        let got: Vec<(f64, &str)> =
+            r.b().rx_log.as_ref().unwrap().iter().map(|e| (((e.t0 - ms0) * 100.0).round() / 100.0, e.fate)).collect();
+        assert_eq!(got, [(3.1, "off at start: switching to or from BLE"), (6.0, "other channel")]);
+        assert_eq!(r.b().dropped.get("collision or receiver off at start"), Some(&1));
+    }
+
+    #[test]
     fn frames_lost_around_a_ble_event_are_told_apart() {
         let mut fl = Flash::new(Config::env().flash_size);
         fl.mem[8] = 0x4B;

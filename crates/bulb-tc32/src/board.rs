@@ -18,7 +18,20 @@ pub struct Out {
     pub mux: usize,
     pub shift: u8,
     pub value: u8,
+    pub invert: bool,
 }
+
+#[derive(Clone, Copy)]
+pub struct Flash {
+    pub store: usize,
+    pub reset: usize,
+    pub mac: usize,
+    pub cap_trim: usize,
+    pub staging: u32,
+}
+
+pub const AWOX_1M: Flash = Flash { store: 0xf_0000, reset: 0xc_f000, mac: 0xf_f000, cap_trim: 0xf_e000, staging: 0x6_4000 };
+pub const BARE_512K: Flash = Flash { store: 0x7_8000, reset: 0x7_f000, mac: 0x7_6000, cap_trim: 0x7_7000, staging: 0 };
 
 #[derive(Clone, Copy)]
 pub struct Board {
@@ -38,6 +51,7 @@ pub struct Board {
     pub ct_min: u16,
     pub ct_max: u16,
     pub image_type: u16,
+    pub flash: Flash,
 }
 
 impl Board {
@@ -201,7 +215,7 @@ pub fn reboot() -> ! {
 
 pub struct FlashWords;
 
-const RESET_SECTOR: usize = 0xc_f000;
+const RESET_SECTOR: usize = BOARD.flash.reset;
 
 impl bulb_core::reset::WordStore for FlashWords {
     fn slots(&self) -> usize {
@@ -251,9 +265,17 @@ fn start_outputs(b: &Board) {
     }
 }
 
+fn level(b: &Board, o: Out, duty: u16) -> u16 {
+    let d = duty.min(b.period);
+    match o.invert {
+        false => d,
+        true => b.period - d,
+    }
+}
+
 fn start(b: &Board, o: Out) {
     reg::write16(reg::pwm_max(o.pwm), b.period);
-    reg::write16(reg::pwm_cmp(o.pwm), 0);
+    reg::write16(reg::pwm_cmp(o.pwm), level(b, o, 0));
     reg::modify8(o.mux, !(3 << o.shift), o.value << o.shift);
     reg::clear8(o.gpio, o.bit);
     match o.pwm {
@@ -264,13 +286,13 @@ fn start(b: &Board, o: Out) {
 
 #[inline(always)]
 fn set_warm(b: &Board, duty: u16) {
-    reg::write16(reg::pwm_cmp(b.warm.pwm), duty.min(b.period));
+    reg::write16(reg::pwm_cmp(b.warm.pwm), level(b, b.warm, duty));
 }
 
 #[inline(always)]
 fn set_cold(b: &Board, duty: u16) {
     if let Some(cold) = b.cold {
-        reg::write16(reg::pwm_cmp(cold.pwm), duty.min(b.period));
+        reg::write16(reg::pwm_cmp(cold.pwm), level(b, cold, duty));
     }
 }
 
@@ -350,13 +372,13 @@ impl Clock for SystemClock {
 
 pub struct FlashStore(LightLog<BoardFlash>, Option<LightLog<BoardFlash>>);
 
-pub const COLOUR_SECTORS: [usize; 2] = [0xf_5000, 0xf_6000];
+pub const COLOUR_SECTORS: [usize; 2] = [BOARD.flash.store + 0x5000, BOARD.flash.store + 0x6000];
 
 fn is_colour(r: &[u8]) -> bool {
     bulb_core::colour::ColourRecord::decode(r).is_some()
 }
 
-pub const CONFIG_SECTORS: [usize; 2] = [0xf_0000, 0xf_4000];
+pub const CONFIG_SECTORS: [usize; 2] = [BOARD.flash.store, BOARD.flash.store + 0x4000];
 const SECTOR_SIZE: usize = 0x1000;
 
 pub struct BoardFlash;

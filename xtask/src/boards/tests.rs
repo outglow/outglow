@@ -58,7 +58,7 @@ fn a_dimmable_board() {
     let b = board(&profile("ESMLFzm_w6_Dimm", &[("PC1", "PWM0")], &[0]), 0x0390).unwrap();
     assert_eq!((b.name.as_str(), b.model.as_str(), b.hw_revision.as_str(), b.hw_version), ("ESMLFzm_w6_Dimm-4.62", "ESMLFzm_w6_Dimm", "4.62", 62));
     assert_eq!((b.product, b.kind, b.period, b.ct, b.image_type, b.beside, b.colour_default), (0x2096, "outglow-dimm", 48000, (153, 454), 0x0390, false, (170, 254)));
-    assert_eq!(rs_out(&b.warm), "Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2 }");
+    assert_eq!(rs_out(&b.warm), "Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2, invert: false }");
     assert!(b.cold.is_none() && b.rgb.is_none());
 }
 
@@ -67,7 +67,7 @@ fn a_tunable_white_board() {
     let p = tunable(profile("T", &[("PC1", "PWM0"), ("PB5", "PWM5")], &[0, 5]), 0, 5);
     let b = board(&p, 0x0391).unwrap();
     assert_eq!((b.kind, b.ct), ("outglow-tw", (153, 370)));
-    assert_eq!(rs_out(b.cold.as_ref().unwrap()), "Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1 }");
+    assert_eq!(rs_out(b.cold.as_ref().unwrap()), "Out { pwm: 5, gpio: 0x58e, bit: 0x20, mux: 0x5ab, shift: 2, value: 1, invert: false }");
 }
 
 #[test]
@@ -77,8 +77,8 @@ fn colour_boards() {
     let b = board(&p, 1).unwrap();
     assert_eq!((b.kind, b.ct), ("outglow-rgbtw", (153, 370)));
     let rgb: Vec<String> = b.rgb.as_ref().unwrap().iter().map(rs_out).collect();
-    assert_eq!(rgb[0], "Out { pwm: 2, gpio: 0x586, bit: 0x10, mux: 0x5a9, shift: 0, value: 2 }");
-    assert_eq!(rgb[2], "Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0 }");
+    assert_eq!(rgb[0], "Out { pwm: 2, gpio: 0x586, bit: 0x10, mux: 0x5a9, shift: 0, value: 2, invert: false }");
+    assert_eq!(rgb[2], "Out { pwm: 4, gpio: 0x58e, bit: 0x02, mux: 0x5aa, shift: 2, value: 0, invert: false }");
     let p = coloured(profile("RGBW", &pins[..4], &[0, 1, 2, 3]), [1, 2, 3], Some(0));
     let b = board(&p, 1).unwrap();
     assert_eq!((b.kind, b.ct, rs_out(&b.warm).starts_with("Out { pwm: 0,")), ("outglow-rgbw", (153, 370), true));
@@ -175,6 +175,37 @@ fn colour_profiles_the_firmware_cannot_drive() {
     let all_full: Vec<bool> = narrow["hue_sweep"].as_array().unwrap().iter().map(|r| pwm(r, 0) > 99.0).collect();
     assert_eq!(all_full, [true; 4]);
     assert_eq!(pwm(&json!({}), 0), 0.0);
+}
+
+#[test]
+fn a_development_board_drives_a_pin_inverted_only_when_it_carries_nothing_else() {
+    let b = devboard("LILYGO_T_ZigBee-1.00", 0x03a5, 0x0f58, "PA0").unwrap();
+    assert_eq!((b.name.as_str(), b.model.as_str(), b.hw_revision.as_str(), b.hw_version), ("LILYGO_T_ZigBee-1.00", "LILYGO_T_ZigBee", "1.00", 0));
+    assert_eq!((b.product, b.kind, b.period, b.ct, b.image_type, b.beside, b.colour_default), (0x0f58, "outglow-dimm", 48000, (153, 454), 0x03a5, false, (170, 254)));
+    assert_eq!(rs_out(&b.warm), "Out { pwm: 0, gpio: 0x586, bit: 0x01, mux: 0x5a8, shift: 0, value: 1, invert: true }");
+    assert!(b.cold.is_none() && b.rgb.is_none());
+    assert_eq!((b.layout.firmware(), b.layout.fw_offset()), ("crate::board::BARE_512K", 0));
+    let b = devboard("D-1.00", 1, 2, "PD4").unwrap();
+    assert_eq!(rs_out(&b.warm), "Out { pwm: 2, gpio: 0x59e, bit: 0x10, mux: 0x5af, shift: 0, value: 2, invert: true }");
+    let b = devboard("D-1.00", 1, 2, "PC1").unwrap();
+    assert_eq!(rs_out(&b.warm), "Out { pwm: 0, gpio: 0x596, bit: 0x02, mux: 0x5ac, shift: 2, value: 2, invert: false }");
+    let b = devboard("D-1.00", 1, 2, "PC4").unwrap();
+    assert_eq!(rs_out(&b.warm), "Out { pwm: 2, gpio: 0x596, bit: 0x10, mux: 0x5ad, shift: 0, value: 0, invert: false }");
+    assert_eq!(format!("{:#}", devboard("D-1.00", 1, 2, "PA1").err().unwrap()), "D-1.00: PA1 carries no PWM");
+    assert_eq!(format!("{:#}", devboard("D", 1, 2, "PA0").err().unwrap()), "D: no revision");
+    assert_eq!((Layout::Awox1M.firmware(), Layout::Awox1M.fw_offset()), ("crate::board::AWOX_1M", 0x6_a000));
+}
+
+#[test]
+fn a_bare_module_is_built_at_zero_and_left_out_of_the_bulb_site() {
+    let b = devboard("D-1.00", 0x03a5, 2, "PA0").unwrap();
+    assert!(firmware_table(std::slice::from_ref(&b)).contains("        flash: crate::board::BARE_512K,\n"));
+    assert!(tools_table(std::slice::from_ref(&b)).contains("image_type: 0x03a5, fw_offset: 0x00000 }"));
+    assert_eq!(site_json(std::slice::from_ref(&b)), "[]\n");
+    let d = board(&profile("ESMLFzm_w6_Dimm", &[("PC1", "PWM0")], &[0]), 0x0390).unwrap();
+    assert!(firmware_table(std::slice::from_ref(&d)).contains("        flash: crate::board::AWOX_1M,\n"));
+    assert!(tools_table(std::slice::from_ref(&d)).contains("fw_offset: 0x6a000 }"));
+    assert!(site_json(std::slice::from_ref(&d)).contains("ESMLFzm_w6_Dimm-4.62"));
 }
 
 #[test]

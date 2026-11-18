@@ -330,7 +330,7 @@ fn build(c: &mut Ctx, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
 
     println!("== link");
     let elf_path = out.join("bulb-tc32.elf");
-    c.run(Command::new(llvm.join("ld.lld")).arg("-T").arg(here.join("boot/link.ld")).arg("--gc-sections")
+    c.run(Command::new(llvm.join("ld.lld")).arg("-T").arg(here.join("boot/link.ld")).arg(format!("--defsym=FW_OFFSET={:#x}", known.fw_offset)).arg("--gc-sections")
         .arg(format!("-Map={}", out.join("bulb-tc32.map").display()))
         .arg(out.join("start.o")).arg(out.join("rust.o")).arg("-o").arg(&elf_path))?;
     let (image, segments) = elf::image_of(&std::fs::read(&elf_path)?).map_err(|e| anyhow!("{}: {e}", elf_path.display()))?;

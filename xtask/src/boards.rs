@@ -60,6 +60,28 @@ struct Out {
     mux: u32,
     shift: u32,
     value: u32,
+    invert: bool,
+}
+
+#[derive(Clone, Copy)]
+enum Layout {
+    Awox1M,
+    Bare512K,
+}
+
+impl Layout {
+    fn firmware(self) -> &'static str {
+        match self {
+            Layout::Awox1M => "crate::board::AWOX_1M",
+            Layout::Bare512K => "crate::board::BARE_512K",
+        }
+    }
+    fn fw_offset(self) -> u32 {
+        match self {
+            Layout::Awox1M => 0x6_a000,
+            Layout::Bare512K => 0,
+        }
+    }
 }
 
 struct Board {
@@ -77,6 +99,38 @@ struct Board {
     period: u64,
     ct: (i64, i64),
     image_type: u16,
+    layout: Layout,
+}
+
+const DEVBOARDS: [(&str, u16, u16, &str); 1] = [("LILYGO_T_ZigBee-1.00", 0x03a5, 0x0f58, "PA0")];
+
+fn devboard(name: &str, image_type: u16, product: u16, pin: &str) -> Result<Board> {
+    let (model, hw) = name.rsplit_once('-').ok_or_else(|| anyhow!("{name}: no revision"))?;
+    let &(p, mux, shift, value, func) = PWM_MUX.iter().filter(|e| e.0 == pin).min_by_key(|e| e.4.ends_with("_N"))
+        .ok_or_else(|| anyhow!("{name}: {pin} carries no PWM"))?;
+    let (pwm, invert) = match func.strip_suffix("_N") {
+        Some(f) => (f, true),
+        None => (func, false),
+    };
+    let b = p.as_bytes();
+    let warm = Out { pwm: u32::from(pwm.as_bytes()[3] - b'0'), gpio: GPIO_FUNC[usize::from(b[1] - b'A')], bit: 1 << (b[2] - b'0'), mux, shift, value, invert };
+    Ok(Board {
+        name: name.into(),
+        model: model.into(),
+        product,
+        hw_revision: hw.into(),
+        hw_version: 0,
+        warm,
+        cold: None,
+        rgb: None,
+        beside: false,
+        colour_default: (170, 254),
+        kind: "outglow-dimm",
+        period: 48000,
+        ct: (153, 454),
+        image_type,
+        layout: Layout::Bare512K,
+    })
 }
 
 fn out_of(name: &str, pwm: u32, pins: &[(String, String)]) -> Result<Out> {
@@ -86,7 +140,7 @@ fn out_of(name: &str, pwm: u32, pins: &[(String, String)]) -> Result<Out> {
     let &(p, mux, shift, value, _) = PWM_MUX.iter().find(|e| e.0 == pin && e.4 == func)
         .ok_or_else(|| anyhow!("{name}: {pin} cannot carry {func}"))?;
     let b = p.as_bytes();
-    Ok(Out { pwm, gpio: GPIO_FUNC[usize::from(b[1] - b'A')], bit: 1 << (b[2] - b'0'), mux, shift, value })
+    Ok(Out { pwm, gpio: GPIO_FUNC[usize::from(b[1] - b'A')], bit: 1 << (b[2] - b'0'), mux, shift, value, invert: false })
 }
 
 fn pwm(row: &Value, c: u32) -> f64 {
@@ -176,6 +230,7 @@ fn board(p: &Value, image_type: u16) -> Result<Board> {
         period: *periods.iter().next().unwrap(),
         ct,
         image_type,
+        layout: Layout::Awox1M,
         product,
         hw_version,
         hw_revision: hw,
@@ -185,7 +240,7 @@ fn board(p: &Value, image_type: u16) -> Result<Board> {
 }
 
 fn rs_out(o: &Out) -> String {
-    format!("Out {{ pwm: {}, gpio: {:#05x}, bit: {:#04x}, mux: {:#05x}, shift: {}, value: {} }}", o.pwm, o.gpio, o.bit, o.mux, o.shift, o.value)
+    format!("Out {{ pwm: {}, gpio: {:#05x}, bit: {:#04x}, mux: {:#05x}, shift: {}, value: {}, invert: {} }}", o.pwm, o.gpio, o.bit, o.mux, o.shift, o.value, o.invert)
 }
 
 fn firmware_table(boards: &[Board]) -> String {
@@ -209,6 +264,7 @@ fn firmware_table(boards: &[Board]) -> String {
         let _ = writeln!(s, "        ct_min: {},", b.ct.0);
         let _ = writeln!(s, "        ct_max: {},", b.ct.1);
         let _ = writeln!(s, "        image_type: {:#06x},", b.image_type);
+        let _ = writeln!(s, "        flash: {},", b.layout.firmware());
         let _ = writeln!(s, "    }},");
     }
     s.push_str("];\n");
@@ -227,15 +283,15 @@ fn tsv(boards: &[Board]) -> String {
 fn tools_table(boards: &[Board]) -> String {
     let mut s = format!("pub const BOARDS: [Known; {}] = [\n", boards.len());
     for b in boards {
-        let _ = writeln!(s, "    Known {{ name: \"{}\", model: \"{}\", hw_revision: \"{}\", ble_product: {:#06x}, kind: \"{}\", image_type: {:#06x} }},",
-                         b.name, b.model, b.hw_revision, b.product, b.kind, b.image_type);
+        let _ = writeln!(s, "    Known {{ name: \"{}\", model: \"{}\", hw_revision: \"{}\", ble_product: {:#06x}, kind: \"{}\", image_type: {:#06x}, fw_offset: {:#07x} }},",
+                         b.name, b.model, b.hw_revision, b.product, b.kind, b.image_type, b.layout.fw_offset());
     }
     s.push_str("];\n");
     s
 }
 
 fn site_json(boards: &[Board]) -> String {
-    let v: Vec<Value> = boards.iter().map(|b| serde_json::json!({
+    let v: Vec<Value> = boards.iter().filter(|b| matches!(b.layout, Layout::Awox1M)).map(|b| serde_json::json!({
         "name": b.name, "model": b.model, "ble_product": b.product, "hw_revision": b.hw_revision,
         "kind": b.kind, "image_type": b.image_type,
     })).collect();
@@ -257,6 +313,9 @@ pub fn run_in(root: &Path, a: Args) -> Result<()> {
             bail!("{}: the profile did not join a network", path.display());
         }
         boards.push(board(&p, image_type).with_context(|| path.display().to_string())?);
+    }
+    for (name, image_type, product, pin) in DEVBOARDS {
+        boards.push(devboard(name, image_type, product, pin)?);
     }
     let targets = [
         (root.join("crates/bulb-tc32/src/boards.rs"), firmware_table(&boards)),

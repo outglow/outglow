@@ -6,7 +6,7 @@ use crate::board::{self, BoardFlash};
 use crate::cell::Shared;
 
 pub const BASE: usize = 0x6000;
-pub const SIZE: u32 = 0x6_4000;
+pub const SIZE: u32 = board::BOARD.flash.staging;
 
 static OWNER: Shared<Ownership> = Shared::new(Ownership::FREE);
 

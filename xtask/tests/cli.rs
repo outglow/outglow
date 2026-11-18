@@ -50,7 +50,7 @@ fn as_a_rustc_wrapper_it_runs_the_compiler() {
 fn tasks_that_only_read() {
     let o = xtask(&["boards", "--check"], &[]);
     assert!(o.status.success(), "{}", text(&o.stderr));
-    assert_eq!(text(&o.stdout), "21 boards, all files up to date\n");
+    assert_eq!(text(&o.stdout), "22 boards, all files up to date\n");
     let o = xtask(&["comments"], &[]);
     assert!(o.status.success(), "{}", text(&o.stdout));
     assert_eq!(text(&o.stdout), "no comments in Rust sources\n");
@@ -97,7 +97,7 @@ fn tasks_that_write() {
     assert!(o.status.success(), "{}", text(&o.stderr));
     assert!(std::fs::read_to_string(&index).unwrap().contains("outglow-ESMLFzm_w6_Dimm-4.63-9.9.9.ota"));
     let o = xtask(&["release-notes", "--version", "9.9.9", "--assets", t.0.to_str().unwrap()], &[]);
-    assert!(text(&o.stdout).starts_with("Outglow 9.9.9 for 21 boards."));
+    assert!(text(&o.stdout).starts_with("Outglow 9.9.9 for 22 boards."));
     let out = t.path("outcomes.json");
     std::fs::write(&out, r#"{"outcomes": []}"#).unwrap();
     let o = xtask(&["mutants-report", out.to_str().unwrap()], &[]);

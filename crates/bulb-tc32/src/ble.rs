@@ -21,9 +21,9 @@ pub const IDENTITY: Identity = Identity {
 
 pub(crate) const RADIO_QUIET: u32 = 3 * 16_000;
 
-const MAC_SECTOR: usize = 0xf_f000;
+const MAC_SECTOR: usize = crate::board::BOARD.flash.mac;
 
-pub const MESH_SECTOR: usize = 0xf_3000;
+pub const MESH_SECTOR: usize = crate::board::BOARD.flash.store + 0x3000;
 const SECTOR_SIZE: usize = 0x1000;
 const RECORD_MAX: usize = 64;
 const RECORD_BUF: usize = 67;

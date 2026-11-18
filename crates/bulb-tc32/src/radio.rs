@@ -63,7 +63,7 @@ const INIT_TABLE: [(u16, u8); 35] = [
     (0x0401, 0x00),
 ];
 
-const CAP_TRIM_ADDR: usize = 0xfe000;
+const CAP_TRIM_ADDR: usize = crate::board::BOARD.flash.cap_trim;
 
 const RX_BUF_LEN: usize = 144;
 const SLOTS: usize = 16;
