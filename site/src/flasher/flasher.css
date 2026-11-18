@@ -54,7 +54,7 @@
 .badge { display: inline-block; padding: .05rem .55rem; border-radius: 999px; font-size: .85rem; font-weight: 600; }
 .badge.ok { background: color-mix(in srgb, #3fa45b 20%, transparent); color: #3fa45b; }
 .badge.bad { background: color-mix(in srgb, #d6453d 20%, transparent); color: #d6453d; }
-.badge.info { background: var(--accent-soft); color: var(--accent); }
+.badge.neutral { background: var(--accent-soft); color: var(--accent); }
 
 /* firmware choice: Outglow or the original */
 .choice { display: grid; gap: .5rem; margin: .4rem 0 .6rem; }

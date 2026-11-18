@@ -505,7 +505,7 @@ function renderDetected(b: ota.Bulb | null): void {
 }
 
 /** A label, a value and an optional badge kind. */
-type Fact = [string, string, ("ok" | "bad" | "info")?];
+type Fact = [string, string, ("ok" | "bad" | "neutral")?];
 
 function facts(rows: Fact[]): HTMLElement {
   const dl = document.createElement("dl");
@@ -539,7 +539,7 @@ function render(): void {
       ["Hardware", b.revision ?? "unknown"],
       ["Board", state.board ? state.board.name : "not supported", state.board ? "ok" : "bad"],
       ["Running", b.running === "outglow" ? "Outglow" : b.running === "stock" ? "Original firmware" : "Unknown",
-        b.running === "outglow" ? "ok" : b.running === "stock" ? "info" : "bad"],
+        b.running === "outglow" ? "ok" : b.running === "stock" ? "neutral" : "bad"],
       [b.running === "outglow" ? "Reported version" : "Firmware", (b.firmware ?? "unknown") +
         (b.running === "outglow" ? " (the original's, for the vendor app)" : "")],
     ];
