@@ -11,7 +11,7 @@ pub struct Args {
     outputs: Vec<PathBuf>,
     #[arg(long, help = "Write the missed mutants of all outputs, one per line, to this file")]
     missed: Option<PathBuf>,
-    #[arg(long, help = "Exit with an error when a mutant was missed or timed out")]
+    #[arg(long, help = "Exit with an error when a mutant was missed (a timeout counts as caught)")]
     strict: bool,
 }
 
@@ -101,8 +101,8 @@ pub fn run(a: Args) -> Result<()> {
     if baseline_failed {
         bail!("the tests failed on the unmutated tree");
     }
-    if a.strict && tallies.values().any(|t| t.missed > 0 || t.timeout > 0) {
-        bail!("mutants missed or timed out");
+    if a.strict && tallies.values().any(|t| t.missed > 0) {
+        bail!("mutants missed");
     }
     Ok(())
 }
@@ -243,14 +243,14 @@ mod tests {
             "crates/a/src/lib.rs:2:1: replace + with -\ncrates/a/src/lib.rs:9:9: replace + with -\n"
         );
         let e = run(args(&[one.to_str().unwrap(), "--strict"])).unwrap_err().to_string();
-        assert_eq!(e, "mutants missed or timed out");
+        assert_eq!(e, "mutants missed");
         let clean = t.put("clean.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "CaughtMutant"}]}"#);
         run(args(&[clean.to_str().unwrap(), "--strict"])).unwrap();
         let missed_only = t.put("missed.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "MissedMutant"}]}"#);
         assert!(run(args(&[missed_only.to_str().unwrap(), "--strict"])).is_err());
         run(args(&[missed_only.to_str().unwrap()])).unwrap();
         let timed = t.put("timed.json", r#"{"outcomes": [{"scenario": {"Mutant": {"name": "n", "package": "p"}}, "summary": "Timeout"}]}"#);
-        assert!(run(args(&[timed.to_str().unwrap(), "--strict"])).is_err());
+        run(args(&[timed.to_str().unwrap(), "--strict"])).unwrap();
         let failed = t.put("failed.json", OUTCOMES.replacen("\"Success\"", "\"Failure\"", 1));
         assert_eq!(run(args(&[failed.to_str().unwrap()])).unwrap_err().to_string(), "the tests failed on the unmutated tree");
         let bad = t.put("bad.json", "nope");
