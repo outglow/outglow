@@ -155,12 +155,16 @@ fn reports(net: &Net, short: u16, cluster: u16, attr: u16, since: usize) -> Vec<
 }
 
 fn activity_reports(net: &Net, short: u16, since: usize) -> Vec<Vec<(u16, u8)>> {
+    activity_frames(net, short, since).into_iter().map(|(e, _)| e).collect()
+}
+
+fn activity_frames(net: &Net, short: u16, since: usize) -> Vec<(Vec<(u16, u8)>, u16)> {
     let mut out = vec![];
     for (s, c, f) in &net.coord.zcl_rx[since..] {
         if *s != short || *c != SENSE || f[0] & 0x04 == 0 || f.get(4) != Some(&0x0A) {
             continue;
         }
-        let mut i = 5;
+        let (mut i, mut levels, mut mask) = (5, None, None);
         while i + 3 <= f.len() {
             let id = u16::from_le_bytes([f[i], f[i + 1]]);
             let n = match f[i + 2] {
@@ -170,9 +174,15 @@ fn activity_reports(net: &Net, short: u16, since: usize) -> Vec<Vec<(u16, u8)>> 
                 _ => break,
             };
             if id == A_LINE_ACTIVITY {
-                out.push(f[i + 4..i + 3 + n].chunks_exact(3).map(|e| (u16::from_le_bytes([e[0], e[1]]), e[2])).collect());
+                levels = Some(f[i + 4..i + 3 + n].chunks_exact(3).map(|e| (u16::from_le_bytes([e[0], e[1]]), e[2])).collect());
+            }
+            if id == 0xFF46 {
+                mask = Some(u16::from_le_bytes([f[i + 3], f[i + 4]]));
             }
             i += 3 + n;
+        }
+        if let Some(levels) = levels {
+            out.push((levels, mask.expect("the line state goes with the activity")));
         }
     }
     out
@@ -837,7 +847,10 @@ fn the_activity_of_every_line_is_reported_while_motion_is_seen_and_once_more_aft
     assert!((8..=40).contains(&r.len()), "two a second while motion is seen: {}", r.len());
     assert!(r.iter().all(|e| e.len() == 1 && e[0].0 == sb), "every line, here the one to B: {r:?}");
     assert!(r.iter().any(|e| e[0].1 >= 16), "the crossing shows: {r:?}");
-    assert_eq!(reports(&net, sa, SENSE, 0xFF46, n1).last(), Some(&0), "the last one says no line sees motion");
+    let masks: Vec<u16> = activity_frames(&net, sa, n1).into_iter().map(|(_, m)| m).collect();
+    assert_eq!(masks.first(), Some(&1), "the first goes as soon as the line sees motion: {masks:?}");
+    assert_eq!(masks.last(), Some(&0), "one more once no line sees motion: {masks:?}");
+    assert!(masks[..masks.len() - 1].iter().all(|&m| m == 1), "only one after: {masks:?}");
     assert!(activity_reports(&net, sb, n1).is_empty(), "B was not asked for them");
     let n2 = net.coord.zcl_rx.len();
     net.run(10_000);
