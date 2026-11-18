@@ -452,7 +452,7 @@ fn the_object_endpoints_describe_themselves() {
     assert_eq!(r[&0x0051], (0x10, vec![0]));
     assert_eq!(r[&0x006F], (0x18, vec![0]));
     assert_eq!(r[&0x0055].0, 0x39);
-    assert!(!r.contains_key(&0x0075), "a count has no unit");
+    assert_eq!(r[&0x0075], (0x31, vec![95, 0]), "a count has no unit: BACnet no-units");
     assert_eq!(number(&r[&0x0100].1), 0x000C_0000, "Count");
     assert_eq!(r[&0xFFFD], (0x21, vec![1, 0]));
     let r = read_ep(&mut net, short, 4, ANALOG_INPUT, &[0x001C, 0x0075, 0x0100, 0x0055]);

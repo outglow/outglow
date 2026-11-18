@@ -146,6 +146,32 @@ fn the_ble_window_object_is_out_of_service_while_ble_is_off() {
 }
 
 #[test]
+fn every_analog_object_has_the_units_and_application_type_a_generic_controller_reads() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_BLE;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let objects = [
+        (2u8, ANALOG_INPUT, 95u16, 0x000C_0000u32),
+        (3, ANALOG_INPUT, 95, 0x00FF_0000),
+        (4, ANALOG_INPUT, 98, 0x0004_0000),
+        (5, ANALOG_INPUT, 95, 0x000C_0000),
+        (6, ANALOG_INPUT, 95, 0x000C_0000),
+        (8, 0x000D, 72, 0x01FF_0000),
+    ];
+    for (ep, cluster, units, app_type) in objects {
+        let seq = net.coord.zcl_ep(short, ep, cluster, 0x00, 0x00, &[0x75, 0x00, 0x00, 0x01]);
+        net.run(60);
+        let rsp = net.coord.last_zcl_ep(short, ep, cluster, 0x01).unwrap();
+        let mut want = vec![0x18, seq, 0x01, 0x75, 0x00, 0x00, 0x31];
+        want.extend_from_slice(&units.to_le_bytes());
+        want.extend_from_slice(&[0x00, 0x01, 0x00, 0x23]);
+        want.extend_from_slice(&app_type.to_le_bytes());
+        assert_eq!(rsp, want, "endpoint {ep}");
+    }
+}
+
+#[test]
 fn reports_go_only_to_bindings_of_their_cluster_that_are_in_use() {
     let mut net = Net::new();
     let n = net.join_node();

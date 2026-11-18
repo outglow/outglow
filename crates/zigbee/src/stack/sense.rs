@@ -20,8 +20,10 @@ const A_CALIBRATE: u16 = 0x0003;
 const A_SELF_TUNE: u16 = 0x0004;
 const A_LINE_SENS: u16 = 0x0005;
 const A_AUTO_CAL: u16 = 0x0006;
+const A_ACTIVITY_RATE: u16 = 0x0007;
 pub(crate) const A_ZONE: u16 = 0xFF43;
 pub(crate) const A_LINE_STATE: u16 = 0xFF46;
+const A_LINE_ACTIVITY: u16 = 0xFF47;
 const REVISION: u16 = 0xFFFD;
 
 const T_BITMAP8: u8 = 0x18;
@@ -39,6 +41,7 @@ pub const MAX_RATE: u8 = 10;
 pub const HOLDOFF_MS: u32 = 60_000;
 pub const REPORT_MIN_MS: u32 = 500;
 pub const HEARTBEAT_MS: u32 = 30 * 60 * 1000;
+pub const MAX_ACTIVITY_RATE: u8 = 5;
 const NV_VERSION: u8 = 3;
 const NV_HEAD: usize = 7;
 const NV_LEN: usize = NV_HEAD + 6 * LINES;
@@ -52,7 +55,7 @@ const OCC_ATTRS: [(u16, u8, bool); 5] = [
     (A_OFF_DELAY, T_U16, true),
     (REVISION, T_U16, false),
 ];
-const SENSE_ATTRS: [(u16, u8, bool); 10] = [
+const SENSE_ATTRS: [(u16, u8, bool); 12] = [
     (A_SENSITIVITY, T_U8, true),
     (A_RATE, T_U8, true),
     (A_LINES, T_OCTETS, false),
@@ -60,8 +63,10 @@ const SENSE_ATTRS: [(u16, u8, bool); 10] = [
     (A_SELF_TUNE, T_U8, true),
     (A_LINE_SENS, T_OCTETS, false),
     (A_AUTO_CAL, T_U8, true),
+    (A_ACTIVITY_RATE, T_U8, true),
     (A_ZONE, T_U8, false),
     (A_LINE_STATE, T_BITMAP16, false),
+    (A_LINE_ACTIVITY, T_OCTETS, false),
     (REVISION, T_U16, false),
 ];
 
@@ -89,6 +94,9 @@ pub(crate) struct Sense {
     last_report: u32,
     pub drained: bool,
     paused: bool,
+    activity_rate: u8,
+    next_activity: u32,
+    moving: bool,
 }
 
 impl Sense {
@@ -107,6 +115,9 @@ impl Sense {
             last_report: now,
             drained: false,
             paused: false,
+            activity_rate: 0,
+            next_activity: now,
+            moving: false,
         }
     }
 
@@ -114,6 +125,8 @@ impl Sense {
         self.core = Core::new(now, DEFAULT_S, DEFAULT_OFF_S);
         self.core.auto_cal = true;
         self.rate = DEFAULT_RATE;
+        self.activity_rate = 0;
+        self.moving = false;
     }
 }
 
@@ -260,7 +273,38 @@ impl<H: Hal> Stack<H> {
             self.sense.last_report = now;
             self.sense_report(mask);
         }
+        self.sense_activity(now, mask);
         self.sense_probe(now);
+    }
+
+    fn sense_activity(&mut self, now: u32, mask: u16) {
+        if self.sense.activity_rate == 0 || !due(now, self.sense.next_activity) {
+            return;
+        }
+        self.sense.next_activity = now.wrapping_add(1000 / self.sense.activity_rate as u32);
+        let moving = mask != 0;
+        if moving || self.sense.moving {
+            self.sense_activity_report();
+        }
+        self.sense.moving = moving;
+    }
+
+    fn sense_activity_report(&mut self) {
+        self.zcl_seq = self.zcl_seq.wrapping_add(1);
+        let code = self.identity.manufacturer_code.to_le_bytes();
+        let (a, l, m) = (A_LINE_ACTIVITY.to_le_bytes(), A_LINE_STATE.to_le_bytes(), self.sense.core.on_mask.to_le_bytes());
+        let mut f = [0u8; 64];
+        f[..9].copy_from_slice(&[0x1C, code[0], code[1], self.zcl_seq, 0x0A, a[0], a[1], T_OCTETS, 0]);
+        let mut n = 9;
+        for line in self.sense.core.line.iter().filter(|l| l.used()) {
+            let src = line.src.to_le_bytes();
+            f[n..n + 3].copy_from_slice(&[src[0], src[1], line.level()]);
+            n += 3;
+        }
+        f[8] = (n - 9) as u8;
+        let end = n + 5;
+        f[n..end].copy_from_slice(&[l[0], l[1], T_BITMAP16, m[0], m[1]]);
+        self.aps_data(0x0000, ENDPOINT, SENSE, PROFILE_HA, ENDPOINT, &f[..end]);
     }
 
     fn sense_report(&mut self, mask: u16) {
@@ -315,7 +359,7 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn sense_long(&self, cluster: u16, id: u16) -> bool {
-        self.identity.sense && cluster == SENSE && matches!(id, A_LINES | A_LINE_SENS)
+        self.identity.sense && cluster == SENSE && matches!(id, A_LINES | A_LINE_SENS | A_LINE_ACTIVITY)
     }
 
     pub(crate) fn sense_value(&mut self, cluster: u16, id: u16, out: &mut Long) {
@@ -349,6 +393,15 @@ impl<H: Hal> Stack<H> {
                     out.bytes(&[l.s, l.anchor_s]);
                 }
             }
+            (SENSE, A_ACTIVITY_RATE) => out.u8(self.sense.activity_rate),
+            (SENSE, A_LINE_ACTIVITY) => {
+                let n = c.line.iter().filter(|l| l.used()).count();
+                out.u8((3 * n) as u8);
+                for l in c.line.iter().filter(|l| l.used()) {
+                    out.u16(l.src);
+                    out.u8(l.level());
+                }
+            }
             (SENSE, A_ZONE) => out.u8((reported != 0) as u8),
             (SENSE, A_LINE_STATE) => out.u16(reported),
             _ => out.u16(1),
@@ -372,6 +425,7 @@ impl<H: Hal> Stack<H> {
             (SENSE, A_RATE) => v <= MAX_RATE as u32,
             (SENSE, A_SELF_TUNE) => v <= 1,
             (SENSE, A_AUTO_CAL) => v <= 1,
+            (SENSE, A_ACTIVITY_RATE) => v <= MAX_ACTIVITY_RATE as u32,
             _ => v == 0 || self.sense.rate != 0,
         };
         if valid {
@@ -396,6 +450,12 @@ impl<H: Hal> Stack<H> {
                 c.auto_cal = false;
             }
             (SENSE, A_AUTO_CAL) => c.auto_cal = v != 0,
+            (SENSE, A_ACTIVITY_RATE) => {
+                self.sense.activity_rate = v as u8;
+                self.sense.next_activity = now;
+                self.sense.moving = false;
+                return;
+            }
             (SENSE, A_RATE) => {
                 let was = self.sense.rate;
                 self.sense.rate = v as u8;

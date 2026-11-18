@@ -18,6 +18,8 @@ const CODE: u16 = 0x1141;
 const PROBE_PAN: u16 = 0x5E55;
 const T_U8: u8 = 0x20;
 const T_U16: u8 = 0x21;
+const A_ACTIVITY_RATE: u16 = 0x0007;
+const A_LINE_ACTIVITY: u16 = 0xFF47;
 
 struct Field {
     links: HashMap<(u16, usize), Channel>,
@@ -147,6 +149,40 @@ fn reports(net: &Net, short: u16, cluster: u16, attr: u16, since: usize) -> Vec<
                 out.push(f[i + 3..i + 3 + n].iter().rev().fold(0u32, |v, b| v << 8 | *b as u32));
             }
             i += 3 + n;
+        }
+    }
+    out
+}
+
+fn activity_reports(net: &Net, short: u16, since: usize) -> Vec<Vec<(u16, u8)>> {
+    activity_frames(net, short, since).into_iter().map(|(e, _)| e).collect()
+}
+
+fn activity_frames(net: &Net, short: u16, since: usize) -> Vec<(Vec<(u16, u8)>, u16)> {
+    let mut out = vec![];
+    for (s, c, f) in &net.coord.zcl_rx[since..] {
+        if *s != short || *c != SENSE || f[0] & 0x04 == 0 || f.get(4) != Some(&0x0A) {
+            continue;
+        }
+        let (mut i, mut levels, mut mask) = (5, None, None);
+        while i + 3 <= f.len() {
+            let id = u16::from_le_bytes([f[i], f[i + 1]]);
+            let n = match f[i + 2] {
+                0x18 | 0x20 => 1,
+                0x19 | 0x21 => 2,
+                0x41 => 1 + f[i + 3] as usize,
+                _ => break,
+            };
+            if id == A_LINE_ACTIVITY {
+                levels = Some(f[i + 4..i + 3 + n].chunks_exact(3).map(|e| (u16::from_le_bytes([e[0], e[1]]), e[2])).collect());
+            }
+            if id == 0xFF46 {
+                mask = Some(u16::from_le_bytes([f[i + 3], f[i + 4]]));
+            }
+            i += 3 + n;
+        }
+        if let Some(levels) = levels {
+            out.push((levels, mask.expect("the line state goes with the activity")));
         }
     }
     out
@@ -774,6 +810,12 @@ fn the_lines_of_two_neighbours_are_listed_with_their_lengths() {
     net.run(8_000);
     assert_eq!(read(&mut net, shorts[0], SENSE, 0x0002).map(|l| l.len()), Some(12));
     assert_eq!(read(&mut net, shorts[0], SENSE, 0x0005).map(|l| l.len()), Some(8));
+    let act = read(&mut net, shorts[0], SENSE, A_LINE_ACTIVITY).unwrap();
+    let mut senders: Vec<u16> = act.chunks_exact(3).map(|e| u16::from_le_bytes([e[0], e[1]])).collect();
+    senders.sort();
+    let mut others = shorts[1..].to_vec();
+    others.sort();
+    assert_eq!((act.len(), senders), (6, others), "a sender and a level for each line");
 }
 
 #[test]
@@ -785,4 +827,62 @@ fn switching_the_sensing_off_in_an_empty_room_reports_nothing() {
     switch(&mut net, sa, false);
     net.run(500);
     assert!(reports(&net, sa, OCC, 0, n0).is_empty());
+}
+
+#[test]
+fn the_activity_of_every_line_is_reported_while_motion_is_seen_and_once_more_after() {
+    let (mut net, f, n, [sa, sb]) = two();
+    let p = ports(&net, n);
+    assert_eq!(read(&mut net, sa, SENSE, A_ACTIVITY_RATE), Some(vec![0]), "off out of the box");
+    assert_eq!(write(&mut net, sa, SENSE, A_ACTIVITY_RATE, T_U8, &[6]), 0x87, "at most 5 a second");
+    assert_eq!(write(&mut net, sa, SENSE, A_ACTIVITY_RATE, T_U8, &[2]), 0);
+    assert_eq!(read(&mut net, sa, SENSE, A_ACTIVITY_RATE), Some(vec![2]));
+    assert_eq!(write(&mut net, sa, OCC, 0x0010, T_U16, &5u16.to_le_bytes()), 0);
+    past_holdoff(&mut net);
+    net.run(10_000);
+    let n0 = net.coord.zcl_rx.len();
+    net.run(30_000);
+    assert!(activity_reports(&net, sa, n0).is_empty(), "the still room: nothing");
+
+    let t = net.now() + 500;
+    both(&f, [sa, sb], p, |ch| ch.crossings.push(Crossing { t0: t, t1: t + 2000, depth: 8.0 }));
+    let n1 = net.coord.zcl_rx.len();
+    net.run_until(15_000, "unoccupied", |net| reports(net, sa, OCC, 0, n1).contains(&0));
+    net.run(2000);
+    let r = activity_reports(&net, sa, n1);
+    assert!((8..=40).contains(&r.len()), "two a second while motion is seen: {}", r.len());
+    assert!(r.iter().all(|e| e.len() == 1 && e[0].0 == sb), "every line, here the one to B: {r:?}");
+    assert!(r.iter().any(|e| e[0].1 >= 16), "the crossing shows: {r:?}");
+    let masks: Vec<u16> = activity_frames(&net, sa, n1).into_iter().map(|(_, m)| m).collect();
+    assert_eq!(masks.first(), Some(&1), "the first goes as soon as the line sees motion: {masks:?}");
+    assert_eq!(masks.last(), Some(&0), "one more once no line sees motion: {masks:?}");
+    assert!(masks[..masks.len() - 1].iter().all(|&m| m == 1), "only one after: {masks:?}");
+    assert!(activity_reports(&net, sb, n1).is_empty(), "B was not asked for them");
+    let n2 = net.coord.zcl_rx.len();
+    net.run(10_000);
+    assert!(activity_reports(&net, sa, n2).is_empty(), "then nothing");
+    let lv = read(&mut net, sa, SENSE, A_LINE_ACTIVITY).unwrap();
+    assert_eq!((lv.len(), u16::from_le_bytes([lv[0], lv[1]])), (3, sb), "the sender and its level: {lv:?}");
+    assert_eq!(write(&mut net, sa, SENSE, A_LINE_ACTIVITY, 0x41, &[0]), 0x88, "read only");
+}
+
+#[test]
+fn the_activity_reports_stop_at_0_and_are_not_kept_over_a_power_cycle() {
+    let (mut net, f, n, [sa, sb]) = two();
+    let p = ports(&net, n);
+    assert_eq!(write(&mut net, sa, SENSE, A_ACTIVITY_RATE, T_U8, &[5]), 0);
+    assert_eq!(write(&mut net, sa, SENSE, A_ACTIVITY_RATE, T_U8, &[0]), 0);
+    past_holdoff(&mut net);
+    net.run(10_000);
+    let t = net.now() + 500;
+    both(&f, [sa, sb], p, |ch| ch.crossings.push(Crossing { t0: t, t1: t + 2000, depth: 8.0 }));
+    let n1 = net.coord.zcl_rx.len();
+    net.run(8000);
+    assert!(activity_reports(&net, sa, n1).is_empty(), "0 is off");
+    assert!(reports(&net, sa, SENSE, 0xFF46, n1).contains(&1), "the motion is still reported");
+    assert_eq!(write(&mut net, sa, SENSE, A_ACTIVITY_RATE, T_U8, &[3]), 0);
+    net.power_cycle(n[0]);
+    net.run(5000);
+    assert_eq!(read(&mut net, sa, SENSE, A_ACTIVITY_RATE), Some(vec![0]), "set again by the controller after a power-on");
+    assert_eq!(read(&mut net, sa, SENSE, 0x0001), Some(vec![SENSE_ON_RATE]), "the sensing itself is kept");
 }
