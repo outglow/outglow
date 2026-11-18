@@ -58,7 +58,13 @@ real bulb.
   off.
 - `motion_links` (diagnostic): the bulbs it senses with, each link's signal,
   noise, sensitivity and whether it sees motion now. Refresh it from the
-  device page, or with `diagnostics_refresh`.
+  device page, or with `diagnostics_refresh`. In Home Assistant its state is
+  how many links see motion now, and the links are its attribute `links`.
+- `room_occupancy` and the device option `motion_room`: list the IEEE
+  addresses of the other bulbs of the room in `motion_room`, and
+  `room_occupancy` counts only the links to them, so a walk past a bulb of
+  the next room does not light this one. Without the option it is motion on
+  any link.
 
 Without the converter: Occupancy Sensing (`0x0406`) and the manufacturer
 cluster `0xFC5E` (code `0x1141`); attribute `0x0001` is the probe rate.

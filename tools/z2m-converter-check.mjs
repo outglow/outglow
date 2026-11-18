@@ -218,7 +218,7 @@ check("no Bluetooth entities any more", !propsOf(exposesWith({diagnostics: "full
 
 // motion sensing: in every image, off until switched on (crates/zigbee/src/stack/sense.rs)
 const SENSE_KEYS = ["motion_sensing", "occupancy", "occupancy_timeout", "motion_sensitivity", "motion_probes", "motion_auto_calibration",
-                    "motion_self_tuning", "motion_calibrate", "motion_calibration_left", "motion_links"];
+                    "motion_self_tuning", "motion_calibrate", "motion_calibration_left", "motion_links", "room_occupancy"];
 const hasOcc = model.endpoints.some((x) => x.ID === 1 && x.inputClusters.includes(0x0406));
 const senseEx = exposesWith({});
 const byName = Object.fromEntries(senseEx.map((x) => [x.property ?? x.name, x]));
@@ -237,7 +237,8 @@ if (hasOcc) {
           sc.ID === 0xfc5e && Zcl.Utils.getClusterAttribute(sc, 0xff46, 0x1141)?.name === "lineState" && Zcl.Utils.getClusterAttribute(sc, 0x0002, 0x1141)?.name === "lines");
     const off = await convert("outglowSense", "readResponse", {probeRate: 0, sensitivity: 40});
     const on = await convert("outglowSense", "readResponse", {probeRate: 5});
-    check("the rate reads as the switch", off.motion_sensing === "OFF" && off.motion_probes === 0 && off.occupancy === false && off.motion_sensitivity === 40 &&
+    check("the rate reads as the switch", off.motion_sensing === "OFF" && off.motion_probes === 0 && off.occupancy === false && off.room_occupancy === false &&
+          off.motion_sensitivity === 40 &&
           on.motion_sensing === "ON" && on.motion_probes === 5, `${JSON.stringify(off)} ${JSON.stringify(on)}`);
     // two links: 0x1a2b at -57 dBm, noise 1.5 dB, still; 0x3c4d at -71 dBm in slot 3, ON
     const lines = Buffer.from([0x2b, 0x1a, 0xc7, 12, 2, 0x00, 0x4d, 0x3c, 0xb9, 20, 30, 0x31]);
@@ -250,6 +251,34 @@ if (hasOcc) {
     let st = {};
     for (const f of fzs) Object.assign(st, f.convert(definition, {type: "attributeReport", cluster: "outglowSense", data: {zone: 0, lineState: 0}, endpoint: ep, device, meta: {}}, () => {}, {}, {device, logger: console, state: lk}) ?? {});
     check("a report of the line state updates the links", st.motion_links?.length === 2 && st.motion_links.every((l) => !l.motion), JSON.stringify(st.motion_links));
+    // the room: motion on a link to one of the bulbs named in motion_room (IEEE addresses), without it on any link
+    const known = [{address: "0x1a2b", ieee_address: "0x00124b0000001a2b", slot: 0, motion: false},
+                   {address: "0x3c4d", ieee_address: "0x00124b0000003c4d", slot: 3, motion: false}];
+    const roomRun = (options, lineState) => {
+        const o = {};
+        for (const f of fzs) {
+            Object.assign(o, f.convert(definition, {type: "attributeReport", cluster: "outglowSense", data: {zone: lineState ? 1 : 0, lineState}, endpoint: ep, device, meta: {}},
+                                       () => {}, options, {device, logger: console, state: {motion_links: known}}) ?? {});
+        }
+        return o.room_occupancy;
+    };
+    const rooms = [roomRun({}, 1 << 3), roomRun({motion_room: "0x00124B0000003C4D"}, 1 << 3), roomRun({motion_room: "0x00124b0000001a2b, 00124b000000ffff"}, 1 << 3),
+                   roomRun({motion_room: "0x00124b0000003c4d"}, 0)];
+    check("room_occupancy is motion on a link to a bulb of the room", rooms.join() === "true,true,false,false", rooms.join());
+    check("motion_room is a device option", (definition.options ?? []).some((o) => (o.property ?? o.name) === "motion_room"));
+    // Home Assistant: the links as attributes and how many see motion as the state; the room as an occupancy sensor
+    const ha = {value_template: `{{ value_json["motion_links"] | default('',True) | string | truncate(254, True, '', 0) }}`, state_topic: "zigbee2mqtt/K1"};
+    definition.meta?.overrideHaDiscoveryPayload?.(ha, {});
+    check("motion_links in Home Assistant: every link as an attribute, the links seeing motion counted as the state",
+          ha.json_attributes_topic === "zigbee2mqtt/K1" && /value_json\.motion_links/.test(ha.json_attributes_template ?? "") && /tojson/.test(ha.json_attributes_template ?? "") &&
+              /selectattr\('motion'\)/.test(ha.value_template) && !/truncate/.test(ha.value_template),
+          JSON.stringify(ha));
+    const hr = {value_template: `{% if value_json["room_occupancy"] %}true{% else %}false{% endif %}`, state_topic: "zigbee2mqtt/K1"};
+    definition.meta?.overrideHaDiscoveryPayload?.(hr, {});
+    const ho = {value_template: `{% if value_json["occupancy"] %}true{% else %}false{% endif %}`, state_topic: "zigbee2mqtt/K1"};
+    definition.meta?.overrideHaDiscoveryPayload?.(ho, {});
+    check("room_occupancy is an occupancy sensor in Home Assistant, nothing else changes", hr.device_class === "occupancy" && ho.device_class === undefined &&
+          ho.json_attributes_topic === undefined, JSON.stringify([hr, ho]));
     // the switch writes the rate
     const writes = [];
     const fakeEp = {write: async (c, a, o) => writes.push([c, a, o]), read: async () => {}};
@@ -258,7 +287,7 @@ if (hasOcc) {
     const r2 = await tzOf("motion_sensing").convertSet(fakeEp, "motion_sensing", "OFF", {state: {motion_probes: 5}, device, mapped: definition, options: {}, message: {}});
     check("motion_sensing ON writes 5 probes/s, OFF writes 0 and clears occupancy",
           writes[0]?.[0] === "outglowSense" && writes[0][1].probeRate === 5 && writes[0][2].manufacturerCode === 0x1141 && writes[1]?.[1].probeRate === 0 &&
-              r1.state.motion_sensing === "ON" && r2.state.occupancy === false, JSON.stringify(writes));
+              r1.state.motion_sensing === "ON" && r2.state.occupancy === false && r2.state.room_occupancy === false, JSON.stringify(writes));
     let refused = false;
     try {
         await tzOf("motion_calibrate").convertSet(fakeEp, "motion_calibrate", "start", {state: {motion_sensing: "OFF"}, device, mapped: definition, options: {}, message: {}});

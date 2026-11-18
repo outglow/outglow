@@ -21,7 +21,9 @@
 //   is switched on; shown only on a bulb with Occupancy Sensing): the
 //   switch, occupancy, its timeout, the sensitivity, automatic calibration,
 //   self-tuning, a calibration to start with the room empty, the probe rate
-//   (advanced) and `motion_links`, the bulbs it senses with;
+//   (advanced), `motion_links`, the bulbs it senses with (in Home Assistant
+//   the number seeing motion, each link an attribute), and `room_occupancy`,
+//   motion on the links to the bulbs of the device option `motion_room`;
 // - the black box (crates/zigbee/src/stack/blackbox.rs), not exposed and
 //   never polled: setting `black_box_read` to "all" (or a page number) reads
 //   its pages, each published as `black_box_page` {page, hex};
@@ -716,6 +718,30 @@ function senseLinks(device, known, data) {
     return [...by.values()].sort((x, y) => x.address.localeCompare(y.address));
 }
 
+/// The bulbs of this one's room: the IEEE addresses in the option motion_room, or none (every link counts).
+function roomOf(options) {
+    const ids = String(options?.motion_room ?? "").toLowerCase().match(/(0x)?[0-9a-f]{16}/g) ?? [];
+    return ids.length ? new Set(ids.map((x) => (x.startsWith("0x") ? x : `0x${x}`))) : undefined;
+}
+
+/// Motion in the room: on a link to one of its bulbs (to any bulb when the room is not set).
+function roomOccupancy(links, options) {
+    const room = roomOf(options);
+    return (links ?? []).some((l) => l.motion && (!room || room.has(l.ieee_address)));
+}
+
+/// Home Assistant: motion_links keeps every link as an attribute and counts the links seeing motion
+/// (its JSON alone would be cut at 255 characters); room_occupancy is an occupancy sensor.
+function haDiscovery(payload) {
+    const t = typeof payload.value_template === "string" ? payload.value_template : "";
+    if (t.includes('value_json["motion_links"]')) {
+        payload.value_template = "{{ value_json.motion_links | default([], true) | selectattr('motion') | list | count }}";
+        payload.json_attributes_topic = payload.state_topic;
+        payload.json_attributes_template = "{{ {'links': value_json.motion_links | default([], true)} | tojson }}";
+    }
+    if (t.includes('value_json["room_occupancy"]')) payload.device_class = "occupancy";
+}
+
 const sense = [
     senseCluster,
     // the switch: a probe rate, or 0
@@ -729,10 +755,11 @@ const sense = [
                     const out = {};
                     if (msg.data.probeRate !== undefined) {
                         out.motion_sensing = msg.data.probeRate ? "ON" : "OFF";
-                        if (!msg.data.probeRate) out.occupancy = false;
+                        if (!msg.data.probeRate) Object.assign(out, {occupancy: false, room_occupancy: false});
                     }
                     if (["lines", "lineSensitivity", "lineState"].some((k) => msg.data[k] !== undefined)) {
                         out.motion_links = senseLinks(meta.device, meta.state?.motion_links, msg.data);
+                        out.room_occupancy = roomOccupancy(out.motion_links, options);
                     }
                     return out;
                 },
@@ -749,7 +776,7 @@ const sense = [
                     const rate = on ? (known > 0 ? known : SENSE_ON_RATE) : 0;
                     await entity.write("outglowSense", {probeRate: rate}, mfr);
                     const state = {motion_sensing: on ? "ON" : "OFF", motion_probes: rate};
-                    if (!on) Object.assign(state, {occupancy: false, motion_calibration_left: 0});
+                    if (!on) Object.assign(state, {occupancy: false, room_occupancy: false, motion_calibration_left: 0});
                     return {state};
                 },
                 convertGet: async (entity) => {
@@ -784,6 +811,13 @@ const sense = [
                     "Experimental: notice people moving from how the radio signal between Outglow bulbs changes. " +
                         "Switch it on in at least two bulbs in the same room, then leave it a day to calibrate itself, " +
                         "or calibrate it now with the room empty. Off (the default), the bulb sends nothing extra.",
+                ),
+            e
+                .binary("room_occupancy", ea.STATE, true, false)
+                .withLabel("Room occupancy")
+                .withDescription(
+                    "Motion on a link to one of the bulbs of this room (the device option motion_room); without that option, on any link. " +
+                        "Lights a room without the links that cross into the next one",
                 ),
             e
                 .list(
@@ -994,7 +1028,12 @@ function definition(model, description, light) {
         options: [
             e.enum("diagnostics", ea.SET, LEVELS)
                 .withDescription("Router diagnostics shown: off; summary (default: link health, way to the coordinator, neighbours, uptime); full (every counter and table)"),
+            e.text("motion_room", ea.SET)
+                .withDescription(
+                    "The other bulbs of this one's room, by IEEE address (comma separated): room_occupancy then counts only the links to them",
+                ),
         ],
+        meta: {overrideHaDiscoveryPayload: haDiscovery},
         ota: true,
     };
 }
