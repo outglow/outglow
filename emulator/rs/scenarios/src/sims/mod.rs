@@ -64,6 +64,7 @@ pub fn sims() -> Vec<SimDef> {
         rust_fw::def(),
         rust_gp::def(),
         rust_radio::def(),
+        rust_radio::def_slow_ack(),
         rust_sense::def(),
         rust_touchlink::def(),
         rust_staging::def(),

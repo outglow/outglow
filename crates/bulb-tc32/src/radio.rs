@@ -451,23 +451,6 @@ fn on_frame() {
     }
     if acknowledge {
         set_state(STATE_TX);
-    }
-    let slot = head * SLOT_LEN;
-    QUEUE.write(slot, len as u8);
-    QUEUE.write(slot + 1, at(dma_len + 2));
-    let mut i = 0;
-    while i < 4 {
-        QUEUE.write(slot + 2 + i, (end >> (8 * i)) as u8);
-        i += 1;
-    }
-    i = 0;
-    while i != len {
-        QUEUE.write(slot + 6 + i, at(mac + i));
-        i += 1;
-    }
-    HEAD.set(next as u8);
-
-    if acknowledge {
         let mut pending = false;
         if frame_type == 3 {
             let mut src = mac + 3 + if fcf1 & 0x0c == 0x08 { 4 } else { 10 };
@@ -516,6 +499,24 @@ fn on_frame() {
         ACK_BUF.write(7, seq);
         while (tick().wrapping_sub(end) as i32) < (ACK_TURNAROUND_US * reg::TICKS_PER_US) as i32 {}
         start_tx(ACK_BUF.addr());
+    }
+
+    let slot = head * SLOT_LEN;
+    QUEUE.write(slot, len as u8);
+    QUEUE.write(slot + 1, at(dma_len + 2));
+    let mut i = 0;
+    while i < 4 {
+        QUEUE.write(slot + 2 + i, (end >> (8 * i)) as u8);
+        i += 1;
+    }
+    i = 0;
+    while i != len {
+        QUEUE.write(slot + 6 + i, at(mac + i));
+        i += 1;
+    }
+    HEAD.set(next as u8);
+
+    if acknowledge {
         let t = tick();
         while read8(RF_IRQ_STATUS) & RF_IRQ_TX == 0 && tick().wrapping_sub(t) <= 1000 * reg::TICKS_PER_US {}
         write8(RF_IRQ_STATUS, RF_IRQ_TX);

@@ -705,6 +705,34 @@ fn the_ack_starts_160_us_after_the_frame_and_waits_at_most_1_ms_for_its_transmis
     }
 }
 
+#[test]
+fn the_ack_goes_before_the_frame_is_copied_to_the_queue_so_its_time_does_not_grow_with_the_length() {
+    for n in [0usize, 100] {
+        let _s = sim::session();
+        reset_radio_state();
+        ours();
+        let mut mpdu = data_to_short(0x61, OUR_PAN, OUR_SHORT);
+        mpdu.extend(std::iter::repeat(0x5a).take(n));
+        let stamp = 0x4000_0000u32;
+        let end = stamp.wrapping_add((mpdu.len() as u32 + 3) * 32 * 16);
+        let queued_at_kick = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = queued_at_kick.clone();
+        sim::with(|c| {
+            c.tick = end.wrapping_sub(320);
+            c.on(move |_, op| {
+                if op == Op::W8(0xc43, 0x04) {
+                    seen.set(Some(has_frame()));
+                }
+            });
+        });
+        deliver(&frame(&mpdu, stamp, 60, 0x10));
+        assert_eq!(queued_at_kick.get(), Some(false), "{n}");
+        let mut buf = [0u8; 127];
+        let (len, _, _) = receive(&mut buf).expect("queued after the ACK");
+        assert_eq!(buf[..len], mpdu[..]);
+    }
+}
+
 fn data_request_from(fcf0: u8, fcf1: u8, src: &[u8], cmd: u8) -> Vec<u8> {
     let [p0, p1] = OUR_PAN.to_le_bytes();
     let [d0, d1] = OUR_SHORT.to_le_bytes();

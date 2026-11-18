@@ -11,6 +11,18 @@ pub fn def() -> SimDef {
     SimDef { name: "rust_radio", doc: "the Rust radio driver leaves the radio as Telink's does; ACK turnaround; energy scan", run }
 }
 
+pub fn def_slow_ack() -> SimDef {
+    SimDef {
+        name: "rust_ack_slow_cpu",
+        doc: "on a CPU eight times slower (cpi 24, as cargo stress runs) the Rust driver's ACK does not wait for the frame's length",
+        run: run_slow_ack,
+    }
+}
+
+const SLOW_CPI: i64 = 24;
+const ACK_WAIT_US: f64 = 864.0;
+const ACK_SPREAD_US: f64 = 60.0;
+
 const CHANNEL: i64 = 15;
 const CPI: i64 = 3;
 const DEFAULT_KEY: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
@@ -76,8 +88,8 @@ fn chs(c: Option<i64>) -> String {
     c.map(|c| c.to_string()).unwrap_or_else(|| "None".into())
 }
 
-fn join(img: &crate::image::Image, max_ms: f64, ev: &Rc<RefCell<Vec<String>>>) -> R<(World, bool)> {
-    let mut node = node_of(img, CPI)?;
+fn join(img: &crate::image::Image, cpi: i64, max_ms: f64, ev: &Rc<RefCell<Vec<String>>>) -> R<(World, bool)> {
+    let mut node = node_of(img, cpi)?;
     ev.borrow_mut().push(format!("[{:9.3} ms] reset #{}: boot slot 0x{:05x}", 0.0, node.m.reset_count, node.m.boot_slot));
     let e = ev.clone();
     node.m.event = Some(Rc::new(move |m: &mut tc32emu::Machine, text: &str| {
@@ -155,6 +167,71 @@ fn ack_delays(w: &World) -> Vec<(Option<f64>, bool, bool)> {
     out
 }
 
+fn run_slow_ack(cx: &mut SimCtx) -> R<()> {
+    let ri = cx.image("rust", "target/tc32/bulb-tc32.bin");
+    if !ri.path.exists() {
+        return Err(Stop::Error(format!("{} not found", ri.path.display())));
+    }
+    let ev = Rc::new(RefCell::new(Vec::new()));
+    let (mut w, ok) = join(&ri, SLOW_CPI, 30000.0, &ev)?;
+    cx.results.push(("the Rust firmware joins at cpi 24".into(), ok, format!("after {:.1} s", w.now() / 1000.0)));
+    if !ok {
+        return Ok(());
+    }
+    let short = w.coord.devices.iter().find(|d| d.announced).unwrap().short;
+    let n0 = w.air.frames.len();
+    let mut by_len: Vec<(usize, f64)> = Vec::new();
+    for attrs in [1usize, 8, 16, 24, 30] {
+        let ids: Vec<u16> = (0..attrs as u16).collect();
+        for _ in 0..3 {
+            w.coord.read_attrs(&mut w.air, short, 1, 0x0000, &ids);
+            let t = w.now() + 300.0;
+            w.run_ms(t).map_err(emu)?;
+        }
+    }
+    let mut unheard = 0;
+    let heard = |w: &World, t0: f64| {
+        w.air.dut.radio.b().rx_log.as_ref().is_some_and(|l| l.iter().any(|e| (e.t0 - t0).abs() < 0.001 && e.fate == "received"))
+    };
+    let fr = &w.air.frames;
+    for (i, f) in fr.iter().enumerate().skip(n0) {
+        if f.who != NodeId::Coord {
+            continue;
+        }
+        let Some(m) = mac_parse(&f.psdu) else { continue };
+        if !m.ar || m.ty == 2 {
+            continue;
+        }
+        let rest = &fr[i + 1..(i + 4).min(fr.len())];
+        let next = rest.iter().position(|g| g.who == NodeId::Coord).unwrap_or(rest.len());
+        let ack = rest[..next]
+            .iter()
+            .find(|g| g.who == NodeId::Dut && g.psdu.len() == 5 && g.psdu[0] & 7 == 2 && g.psdu[2] == m.seq);
+        match ack {
+            Some(g) => by_len.push((f.psdu.len(), (g.t0 - f.t1) * 1000.0)),
+            None if !heard(&w, f.t0) && rest.get(next).is_some_and(|g| g.psdu == f.psdu) => unheard += 1,
+            None => by_len.push((f.psdu.len(), f64::INFINITY)),
+        }
+    }
+    by_len.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let shown = by_len.iter().map(|(l, d)| format!("{l} B {d:.0}")).collect::<Vec<_>>().join(", ");
+    cx.say(&format!("ACK start after the frame's end (frame length, us): {shown}; {unheard} first copy/copies begun while the receiver was off (lent to BLE or sending), acknowledged on the MAC retry"));
+    let lens = (by_len.first().map_or(0, |x| x.0), by_len.last().map_or(0, |x| x.0));
+    let hi = by_len.iter().map(|x| x.1).fold(f64::NEG_INFINITY, f64::max);
+    let lo = by_len.iter().map(|x| x.1).fold(f64::INFINITY, f64::min);
+    cx.results.push((
+        "frames of 53 to 116 bytes are all acknowledged within macAckWaitDuration (864 us)".into(),
+        lens == (53, 116) && hi <= ACK_WAIT_US,
+        format!("{} frame(s) of {}..{} B, ACK {lo:.0}..{hi:.0} us after the end", by_len.len(), lens.0, lens.1),
+    ));
+    cx.results.push((
+        "the ACK's delay does not grow with the frame's length".into(),
+        hi - lo <= ACK_SPREAD_US,
+        format!("{:.0} us between the earliest and the latest ACK", hi - lo),
+    ));
+    Ok(())
+}
+
 fn complaints(w: &World) -> (String, bool) {
     let r = w.air.dut.radio.b();
     let why = if r.dropped.is_empty() {
@@ -201,11 +278,11 @@ fn run(cx: &mut SimCtx) -> R<()> {
         }
     };
     cx.say(&format!("vendor driver: {}", rel(&ci)));
-    let (cw, c_ok) = join(&ci, 30000.0, &ev)?;
+    let (cw, c_ok) = join(&ci, CPI, 30000.0, &ev)?;
     flush(cx, &ev);
     check(cx, "the stock firmware joins (reference run)", c_ok, &format!("after {:.1} s", cw.now() / 1000.0));
     cx.say(&format!("Rust driver: {}", rel(&ri)));
-    let (rw, r_ok) = join(&ri, 30000.0, &ev)?;
+    let (rw, r_ok) = join(&ri, CPI, 30000.0, &ev)?;
     flush(cx, &ev);
     check(cx, "the Rust firmware joins", r_ok, &format!("after {:.1} s", rw.now() / 1000.0));
     if c_ok && r_ok {

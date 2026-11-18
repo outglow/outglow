@@ -323,7 +323,7 @@ pub fn main_with(argv: &[String]) -> i32 {
         }
         println!("   wrote {}", path.display());
     }
-    if results.iter().any(|r| r.error.is_some()) {
+    if failed > 0 {
         1
     } else {
         0
