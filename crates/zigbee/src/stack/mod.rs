@@ -572,6 +572,7 @@ pub struct Stack<H: Hal> {
     pub(crate) diag: diag::Diag,
     pub(crate) xreports: [objects::XReport; objects::XREPORTS],
     pub(crate) xreports_dirty: bool,
+    pub(crate) light_known: bool,
     pub(crate) xreport_at: u32,
     pub(crate) allow_children: bool,
     #[cfg(feature = "sense")]
@@ -707,6 +708,7 @@ impl<H: Hal> Stack<H> {
             stats: Stats::default(),
             diag: diag::Diag::new(now),
             xreports: [objects::XReport::EMPTY; objects::XREPORTS],
+            light_known: false,
             xreports_dirty: false,
             xreport_at: now,
             allow_children: true,
@@ -798,6 +800,10 @@ impl<H: Hal> Stack<H> {
             y: s.y,
         };
         self.light = l;
+        if !self.light_known {
+            self.light_known = true;
+            self.xreports_take_values();
+        }
         #[cfg(feature = "sense")]
         self.sense_light(s.on, s.level, s.color_temp);
     }

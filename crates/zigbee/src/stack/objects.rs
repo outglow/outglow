@@ -289,6 +289,9 @@ impl<H: Hal> Stack<H> {
             };
             *slot = XReport { ep, cluster, attr, mfr: flags & 1 != 0, min_s, max_s, change, last: 0, last_sent: now };
         }
+    }
+
+    pub(crate) fn xreports_take_values(&mut self) {
         for i in 0..XREPORTS {
             let r = self.xreports[i];
             self.xreports[i].last = self.xreport_value(&r).map_or(0, |v| v.0);

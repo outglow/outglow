@@ -196,6 +196,31 @@ fn hue_and_x_are_reported_once_configured_and_no_sooner_than_the_minimum_interva
 }
 
 #[test]
+fn after_a_restart_a_configured_colour_is_reported_only_when_it_changes() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_COLOR;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 1, COLOR);
+    net.coord.zcl(short, COLOR, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x20, 1, 0, 0x10, 0x0E, 1, 0x00, 0x03, 0x00, 0x21, 1, 0, 0x10, 0x0E, 0x10, 0x00]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[80, 90, 0, 0]);
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x40, 0x00, 0x50, 0, 0]);
+    net.run(3_000);
+    let reports = |net: &Net, attr: u8| -> Vec<Vec<u8>> { net.coord.zcl_rx.iter().filter(|e| e.0 == short && e.1 == COLOR && e.2[2] == 0x0A && e.2[3] == attr).map(|e| e.2[3..].to_vec()).collect() };
+    assert_eq!(reports(&net, 0x00).last(), Some(&vec![0x00, 0x00, 0x20, 80]));
+    assert_eq!(reports(&net, 0x03).last(), Some(&vec![0x03, 0x00, 0x21, 0x00, 0x40]));
+    net.power_cycle(n);
+    net.coord.zcl_rx.clear();
+    net.run(5_000);
+    assert_eq!(reports(&net, 0x00), Vec::<Vec<u8>>::new(), "the hue is what it was");
+    assert_eq!(reports(&net, 0x03), Vec::<Vec<u8>>::new(), "and so is x");
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[100, 90, 0, 0]);
+    net.run(3_000);
+    assert_eq!(reports(&net, 0x00).last(), Some(&vec![0x00, 0x00, 0x20, 100]));
+}
+
+#[test]
 fn a_present_value_is_reported_only_for_a_change_of_at_least_the_reportable_change() {
     for (step, reported) in [(5.0f32, false), (0.5, true)] {
         let mut net = Net::new();
