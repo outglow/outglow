@@ -132,6 +132,9 @@ jobs:
       matrix:
         part:
           - { name: scenarios, run: cargo sims-quick, devtools: true }
+          # four Rust bulbs under traffic, noise, churn and a broadcast storm at
+          # --cpi 24 (about 30 s); a slow ACK there made a bulb leave (2026-11-18)
+          - { name: stress, run: cargo stress -- --sets rust }
           # full fidelity (--cpi 24 shifts timings) against the committed
           # verdicts of emulator/rs/scenarios/expect/{zigbee,ble}-dimm.txt
           - { name: Zigbee conformance, run: cargo spec && cargo ble-spec }
