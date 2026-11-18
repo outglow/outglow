@@ -1,0 +1,73 @@
+name: Comparison
+
+# The comparison page (why.html, site/public/compare.json): the conformance
+# tests (cargo xtask compare) run in the emulator on the original firmware
+# images and on Outglow. They take a quarter of an hour, so they run here and
+# not in the site's build: the Website workflow (site.yml) takes compare.json
+# from the newest successful run of this one on main, and this one asks for a
+# new site when it is done. A release's site update so waits for nothing.
+
+on:
+  push:
+    branches: [main]
+    # the firmware, the tests and their runner: the page shows their results
+    paths: [crates/**, emulator/rs/**, xtask/**, .github/workflows/compare.yml]
+  # weekly: a newer original firmware in outglow/original-firmware gets tested
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: compare
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the tags: the page names the release the tested commit belongs to
+          fetch-depth: 0
+      - name: Original firmware images (outglow/original-firmware; never uploaded)
+        env:
+          KEY: ${{ secrets.ORIGINAL_FIRMWARE_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "no deploy key: nothing to compare against"
+            exit 1
+          fi
+          install -m 600 /dev/null "$RUNNER_TEMP/original-firmware-key" && printf '%s\n' "$KEY" > "$RUNNER_TEMP/original-firmware-key"
+          GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/original-firmware-key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git clone -q --depth 1 git@github.com:outglow/original-firmware.git "$RUNNER_TEMP/original-firmware"
+          rm -f "$RUNNER_TEMP/original-firmware-key"
+          # outside the workspace: no artifact path can reach it
+          echo "OUTGLOW_STOCK_DIR=$RUNNER_TEMP/original-firmware" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/tc32-toolchain
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            emulator/rs
+      - name: The conformance tests on the original firmware and on Outglow
+        timeout-minutes: 45
+        run: |
+          start=$(date +%s)
+          cargo xtask compare
+          echo "compare: $(( $(date +%s) - start )) s"
+          git diff --stat -- site/public/compare.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: compare-json
+          path: site/public/compare.json
+          retention-days: 90
+      - name: A new site with these results
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
