@@ -84,9 +84,11 @@ jobs:
             gh release download -R outglow/outglow "$tag" -D "rel/$tag" -p 'outglow-*.json' -p '*-ota.bin' || continue
             mv rel/$tag/*-ota.bin "site/dist/firmware/$tag/" 2>/dev/null || true
           done
-          # one index and one release list over all of them (fileVersion strings sort as numbers: fixed width)
+          # one index and one release list over all of them. In the index the newest of an image
+          # type comes first: Zigbee2MQTT takes the first entry that matches a device
+          # (zigbee-herdsman Device.findMatchingOtaImage), not the highest version
           if ls rel/*/outglow-index.json >/dev/null 2>&1; then
-            jq -s 'add | sort_by(.imageType, .fileVersion)' rel/*/outglow-index.json > site/dist/ota/index.json
+            jq -s 'add | sort_by(.imageType, -(.fileVersion | tonumber))' rel/*/outglow-index.json > site/dist/ota/index.json
             jq -s '{schema: 1, images: (map(.images) | add | sort_by(.board, .fileVersion))}' \
               rel/*/outglow-firmware.json > site/dist/firmware.json
           fi
