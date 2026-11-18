@@ -31,9 +31,6 @@ impl MockPwm {
     pub fn colour(max: u16) -> Self {
         MockPwm { max, duty: 0, history: vec![], cold: Some(0), rgb: Some([0; 3]) }
     }
-    pub fn fraction(&self) -> f32 {
-        self.duty as f32 / self.max as f32
-    }
 }
 
 impl Pwm for MockPwm {
@@ -97,9 +94,6 @@ impl MockFlash {
     }
     pub fn handle(&self) -> MockFlash {
         self.clone()
-    }
-    pub fn is_blank(&self) -> bool {
-        self.data.borrow().is_none()
     }
     pub fn write_count(&self) -> u32 {
         *self.writes.borrow()
@@ -217,12 +211,6 @@ impl Harness {
     }
     pub fn state(&self) -> StateReport {
         self.bulb.state()
-    }
-}
-
-impl Default for Harness {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
