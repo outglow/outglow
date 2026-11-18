@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -60,6 +61,7 @@ struct Export {
 #[derive(Deserialize)]
 struct Data {
     files: Vec<File>,
+    functions: Vec<Function>,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +69,23 @@ struct File {
     filename: String,
     summary: Summary,
 }
+
+#[derive(Deserialize)]
+struct Function {
+    filenames: Vec<String>,
+    regions: Vec<Region>,
+}
+
+#[derive(Deserialize)]
+struct Region(u64, u64, u64, u64, u64, usize, IgnoredAny, u64);
+
+const CODE_REGION: u64 = 0;
+
+type Span<'a> = (Option<&'a String>, u64, u64, u64, u64);
+
+type Spans<'a> = BTreeMap<Option<&'a String>, BTreeMap<Span<'a>, bool>>;
+
+type Lines<'a> = BTreeMap<(Option<&'a String>, u64, u64), BTreeMap<u64, bool>>;
 
 #[derive(Deserialize, Clone, Copy, Default)]
 struct Summary {
@@ -143,17 +162,17 @@ pub fn run_in(c: &mut Ctx, a: &Args) -> Result<()> {
         let json = dir.join("summary.json");
         let skip = format!("{TEST_ONLY}|{GLUE}");
         let ignore = ["--ignore-filename-regex", skip.as_str()];
-        llvm_cov(c, &manifest, &[&["report", "--json", "--summary-only", "--output-path", path_str(&json)?][..], &ignore].concat())?;
+        llvm_cov(c, &manifest, &[&["report", "--json", "--output-path", path_str(&json)?][..], &ignore].concat())?;
         llvm_cov(c, &manifest, &[&["report", "--html", "--output-dir", path_str(&dir)?][..], &ignore].concat())?;
         html.push(dir.join("html").join("index.html"));
         let export: Export = serde_json::from_slice(&std::fs::read(&json)?).with_context(|| format!("reading {}", json.display()))?;
-        for f in export.data.into_iter().flat_map(|d| d.files) {
-            let rel = Path::new(&f.filename).strip_prefix(&root).unwrap_or(Path::new(&f.filename)).to_string_lossy().replace('\\', "/");
+        for (filename, summary) in export.data.iter().flat_map(merged) {
+            let rel = Path::new(filename).strip_prefix(&root).unwrap_or(Path::new(filename)).to_string_lossy().replace('\\', "/");
             let Some(name) = crate_of(&rel).filter(|n| (ws.keeps)(n)) else {
                 continue;
             };
-            crates.entry(name).or_default().add(f.summary);
-            files.push((rel, f.summary));
+            crates.entry(name).or_default().add(summary);
+            files.push((rel, summary));
         }
     }
 
@@ -220,6 +239,44 @@ fn llvm_cov(c: &mut Ctx, manifest: &Path, args: &[&str]) -> Result<()> {
         bail!("cargo llvm-cov {} failed ({status}); it runs in `nix develop .#coverage`", args.join(" "));
     }
     Ok(())
+}
+
+fn merged(data: &Data) -> Vec<(&str, Summary)> {
+    let mut spans: Spans = BTreeMap::new();
+    let mut lines: Lines = BTreeMap::new();
+    for f in &data.functions {
+        let main = f.filenames.first();
+        let code = || f.regions.iter().filter(|r| r.7 == CODE_REGION);
+        let file = spans.entry(main).or_default();
+        for r in code() {
+            *file.entry((f.filenames.get(r.5), r.0, r.1, r.2, r.3)).or_default() |= r.4 > 0;
+        }
+        let own = || code().filter(|r| r.5 == 0);
+        let Some(first) = own().next() else { continue };
+        let group = lines.entry((main, first.0, first.1)).or_default();
+        for r in own() {
+            for line in r.0..=r.2 {
+                *group.entry(line).or_default() |= r.4 > 0;
+            }
+        }
+    }
+    data.files
+        .iter()
+        .map(|f| {
+            let name = Some(&f.filename);
+            let regions = spans.get(&name).map(|m| covered(m.values())).unwrap_or_default();
+            let mut lines_of = Count::default();
+            for (_, group) in lines.range((name, 0, 0)..=(name, u64::MAX, u64::MAX)) {
+                lines_of.add(covered(group.values()));
+            }
+            (f.filename.as_str(), Summary { lines: lines_of, regions, functions: f.summary.functions })
+        })
+        .collect()
+}
+
+fn covered<'a>(v: impl ExactSizeIterator<Item = &'a bool>) -> Count {
+    let count = v.len() as u64;
+    Count { count, covered: v.filter(|&&c| c).count() as u64 }
 }
 
 pub fn crate_of(rel: &str) -> Option<String> {
@@ -416,15 +473,17 @@ mod tests {
     use crate::sh::fake::{env, Fake, Tmp};
 
     fn export(root: &Path, files: &[(&str, (u64, u64))]) -> String {
-        let files: Vec<serde_json::Value> = files
+        let files: Vec<(serde_json::Value, serde_json::Value)> = files
             .iter()
             .map(|(f, (n, c))| {
                 let name = if f.starts_with('/') { f.to_string() } else { root.join(f).display().to_string() };
                 let count = serde_json::json!({"count": n, "covered": c});
-                serde_json::json!({"filename": name, "summary": {"lines": count, "regions": count, "functions": count}})
+                let regions: Vec<_> = (0..*n).map(|i| serde_json::json!([i + 1, 1, i + 1, 2, u64::from(i < *c), 0, 0, 0])).collect();
+                (serde_json::json!({"filename": name, "summary": {"lines": count, "regions": count, "functions": count}}), serde_json::json!({"filenames": [name], "regions": regions}))
             })
             .collect();
-        serde_json::json!({"data": [{"files": files}]}).to_string()
+        let (files, functions): (Vec<_>, Vec<_>) = files.into_iter().unzip();
+        serde_json::json!({"data": [{"files": files, "functions": functions}]}).to_string()
     }
 
     fn flags(extra: &[&str]) -> Args {
@@ -477,11 +536,11 @@ mod tests {
             [
                 "cargo llvm-cov clean --manifest-path ROOT/Cargo.toml --workspace".to_string(),
                 "CARGO_INCREMENTAL=1 cargo llvm-cov --manifest-path ROOT/Cargo.toml --no-report --workspace".into(),
-                format!("cargo llvm-cov report --manifest-path ROOT/Cargo.toml --json --summary-only --output-path ROOT/target/coverage/host/summary.json --ignore-filename-regex {skip}"),
+                format!("cargo llvm-cov report --manifest-path ROOT/Cargo.toml --json --output-path ROOT/target/coverage/host/summary.json --ignore-filename-regex {skip}"),
                 format!("cargo llvm-cov report --manifest-path ROOT/Cargo.toml --html --output-dir ROOT/target/coverage/host --ignore-filename-regex {skip}"),
                 "cargo llvm-cov clean --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --workspace".into(),
                 "CARGO_INCREMENTAL=1 cargo llvm-cov --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --no-report".into(),
-                format!("cargo llvm-cov report --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --json --summary-only --output-path ROOT/target/coverage/bulb-tc32/summary.json --ignore-filename-regex {skip}"),
+                format!("cargo llvm-cov report --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --json --output-path ROOT/target/coverage/bulb-tc32/summary.json --ignore-filename-regex {skip}"),
                 format!("cargo llvm-cov report --manifest-path ROOT/crates/bulb-tc32/Cargo.toml --html --output-dir ROOT/target/coverage/bulb-tc32 --ignore-filename-regex {skip}"),
             ]
         );
@@ -510,6 +569,29 @@ mod tests {
         assert!(log.contains(&format!("{run} -p tc32emu -p ble -p zbnode")), "{log:?}");
         assert!(log.contains(&format!("{run} -p scenarios --lib")), "{log:?}");
         assert!(log.contains(&"/bin/cargo llvm-cov clean --manifest-path ROOT/emulator/rs/Cargo.toml --workspace".to_string()), "{log:?}");
+    }
+
+    #[test]
+    fn instantiations_and_copies_of_a_function_add_up() {
+        let file = |n: &str| n.to_string();
+        let r = |l0, c0, l1, c1, n, f, k| Region(l0, c0, l1, c1, n, f, IgnoredAny, k);
+        let data = Data {
+            files: vec![
+                File { filename: file("a.rs"), summary: Summary { lines: Count { count: 9, covered: 9 }, regions: Count { count: 9, covered: 9 }, functions: Count { count: 2, covered: 1 } } },
+                File { filename: file("c.rs"), summary: Summary::default() },
+            ],
+            functions: vec![
+                Function { filenames: vec![file("a.rs"), file("m.rs")], regions: vec![r(1, 1, 2, 9, 2, 0, 0), r(3, 1, 3, 9, 0, 0, 0), r(4, 1, 4, 9, 0, 1, 0), r(6, 1, 6, 2, 0, 0, 3)] },
+                Function { filenames: vec![file("a.rs"), file("m.rs")], regions: vec![r(1, 1, 2, 9, 0, 0, 0), r(3, 1, 3, 9, 7, 0, 0), r(4, 1, 4, 9, 0, 0, 0)] },
+                Function { filenames: vec![file("a.rs")], regions: vec![r(2, 5, 2, 8, 0, 0, 0)] },
+                Function { filenames: vec![file("a.rs"), file("m.rs")], regions: vec![r(9, 1, 9, 2, 3, 1, 0)] },
+                Function { filenames: vec![file("b.rs")], regions: vec![r(1, 1, 1, 9, 4, 0, 0)] },
+            ],
+        };
+        let m = merged(&data);
+        let got: Vec<(&str, (u64, u64), (u64, u64), (u64, u64))> =
+            m.iter().map(|(n, s)| (*n, (s.lines.count, s.lines.covered), (s.regions.count, s.regions.covered), (s.functions.count, s.functions.covered))).collect();
+        assert_eq!(got, [("a.rs", (5, 3), (6, 3), (2, 1)), ("c.rs", (0, 0), (0, 0), (0, 0))]);
     }
 
     #[test]
