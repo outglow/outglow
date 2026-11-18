@@ -139,8 +139,11 @@ jobs:
         with:
           pattern: mutants-*
           path: out
-      - run: cargo xtask mutants-report out/mutants-* --missed missed.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: |
+          set -o pipefail
+          cargo xtask mutants-report out/mutants-* --missed missed.txt --strict | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: mutants-missed
           path: missed.txt
