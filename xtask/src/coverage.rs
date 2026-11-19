@@ -26,7 +26,7 @@ pub struct Args {
 
 const TOLERANCE: f64 = 0.05;
 
-const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval\\.rs$|crates/memcap/|crates/bulb-tc32/src/(sim\\.rs$|tests/)";
+const TEST_ONLY: &str = "crates/zigbee/src/stack/link_eval(\\.rs$|/)|crates/memcap/|crates/bulb-tc32/src/(sim\\.rs$|tests/)";
 
 const GLUE: &str = "crates/outglow/src/(flash/bt|diag/mqtt)\\.rs$";
 

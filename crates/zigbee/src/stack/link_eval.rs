@@ -406,7 +406,7 @@ const BURSTS: [(&str, f64, f64, f64, f64); 3] = [
 
 #[test]
 fn link_eval_scorecard() {
-    println!("\nthe firmware's estimator (average 1/16 an attempt, hysteresis 0.12)");
+    println!("\nthe firmware's estimator (average 1/128 an attempt, hysteresis 0.06)");
     header("steady links (truth = spec cost of p)");
     let mut worst_within1 = 100.0f64;
     let mut worst_flaps = 0.0f64;
@@ -729,5 +729,33 @@ fn aging() {
             AGE_LIMIT + 1,
             100.0 * stale_ticks as f64 / ticks as f64
         );
+    }
+}
+
+mod home;
+
+#[test]
+#[ignore = "a comparison to read, not a check"]
+fn link_eval_home() {
+    use home::{Algo, Floor};
+    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured };
+    let mut algos = std::vec![
+        Algo { floor: Floor::Oracle, ..firmware },
+        Algo { floor: Floor::LqiOnly, ..firmware },
+        Algo { shift: 4, margin: 0.12, ..firmware },
+        firmware,
+    ];
+    for shift in [4, 5, 6, 7] {
+        for margin in [0.06, 0.12, 0.18] {
+            for expire in [0u8, 120, 240] {
+                algos.push(Algo { shift, margin, expire, floor: Floor::Measured });
+            }
+        }
+    }
+    let seeds = std::env::var("HOME_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
+    let hours = std::env::var("HOME_HOURS").ok().and_then(|s| s.parse().ok()).unwrap_or(6.0);
+    println!("\nthe owner's home: links replayed from the black boxes of nine bulbs, {seeds} runs of {hours} h each");
+    for (a, o) in home::table(&algos, seeds, hours) {
+        o.row(&a.name());
     }
 }

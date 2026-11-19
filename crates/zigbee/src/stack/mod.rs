@@ -197,8 +197,8 @@ pub(crate) struct Neighbor {
 }
 
 pub(crate) const DELIVERY_SAMPLES: u8 = 16;
-const DELIVERY_SHIFT: u32 = 4;
-const DELIVERY_MARGIN: u16 = 7864;
+const DELIVERY_SHIFT: u32 = 7;
+const DELIVERY_MARGIN: u16 = 3932;
 
 impl Neighbor {
     pub(crate) fn delivery_sample(&mut self, attempts: u8, ok: bool) {
