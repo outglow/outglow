@@ -231,6 +231,7 @@ impl<H: Hal> Stack<H> {
                 if r.status == ROUTE_ACTIVE && r.many_to_one && (r.record_due || r.no_cache) {
                     let rh = self.new_header(nwk::FRAME_CMD, dst, nwk::DEFAULT_RADIUS);
                     self.transmit_nwk(r.next, &rh, &[nwk::CMD_ROUTE_RECORD, 0]);
+                    self.routes[i].record_due &= r.next != dst;
                 }
             }
         }

@@ -1839,11 +1839,13 @@ fn what_a_concentrator_announced_outlives_an_ordinary_route_discovery() {
         net.coord.zcl(sa, ON_OFF, 0x01, 0x00, &[]);
         net.run(200);
     }
-    assert_eq!(records(&net, sa) - before, 3 * 2, "one before each acknowledgement and each answer");
+    assert_eq!(before, 1, "next door to the concentrator: one record, which lists no relays, with the first frame");
+    assert_eq!(records(&net, sa), before, "and none before the acknowledgements and answers after it");
+    assert!(routes(&mut net, a).contains(&(0x0000, 0x10, 0x0000)));
     net.coord.nwk_command(0xFFFC, 30, &[nwk::CMD_ROUTE_REQUEST, 0x00, 0x61, sa.to_le_bytes()[0], sa.to_le_bytes()[1], 0]);
     net.run(500);
     assert!(net.coord.nwk_cmd_rx.iter().any(|(s, p)| *s == sa && p[0] == nwk::CMD_ROUTE_REPLY && p[2] == 0x61));
-    assert!(routes(&mut net, a).contains(&(0x0000, 0x30, 0x0000)));
+    assert!(routes(&mut net, a).contains(&(0x0000, 0x10, 0x0000)), "the route request leaves the concentrator's route as it was");
     net.coord.source_route.insert(sb, vec![sa]);
     net.coord.zcl(sb, ON_OFF, 0x01, 0x00, &[]);
     net.run(1_000);
