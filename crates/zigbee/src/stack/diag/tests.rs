@@ -144,17 +144,24 @@ fn route(s: &mut Stack<Scripted>, i: usize, dst: u16, next: u16, status: u8, man
 }
 
 #[test]
-fn the_way_to_the_coordinator_is_a_live_neighbour_or_else_an_active_route() {
+fn the_way_to_the_coordinator_is_the_active_route_the_frames_take_or_else_a_live_neighbour() {
     let mut s = with_neighbors();
-    assert_eq!(s.coordinator_route().0, 0x0000);
-    s.neighbors[0].age = crate::stack::AGE_LIMIT + 1;
+    assert_eq!(s.coordinator_route(), (0x0000, s.neighbors[0].link_cost(), false));
     route(&mut s, 0, 0x7777, 0x1002, crate::stack::ROUTE_ACTIVE, false);
     route(&mut s, 1, 0x0000, 0x1003, crate::stack::ROUTE_DISCOVERY, false);
+    assert_eq!(s.coordinator_route().0, 0x0000, "a route still being discovered is not taken");
     route(&mut s, 2, 0x0000, 0x1001, crate::stack::ROUTE_ACTIVE, true);
-    assert_eq!(s.coordinator_route(), (0x1001, s.neighbors[2].link_cost(), true));
+    assert_eq!(s.coordinator_route(), (0x1001, s.neighbors[2].link_cost(), true), "the many-to-one route wins over the coordinator heard directly");
     s.neighbors[2].used = false;
     assert_eq!(s.coordinator_route(), (0x1001, 0, true), "a next hop that is no neighbour has no cost");
     s.routes[2].status = crate::stack::ROUTE_FREE;
+    assert_eq!(s.coordinator_route().0, 0x0000);
+    s.neighbors[0].age = crate::stack::AGE_LIMIT;
+    assert_eq!(s.coordinator_route().0, 0x0000);
+    s.neighbors[0].age = crate::stack::AGE_LIMIT + 1;
+    assert_eq!(s.coordinator_route(), (0xFFFF, 0, false));
+    s.neighbors[0].age = 0;
+    s.neighbors[0].used = false;
     assert_eq!(s.coordinator_route(), (0xFFFF, 0, false));
 }
 

@@ -725,21 +725,13 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn coordinator_route(&self) -> (u16, u8, bool) {
-        if let Some(i) = self.neighbor_index(0x0000) {
-            let n = &self.neighbors[i];
-            if n.used && n.age <= super::AGE_LIMIT {
-                return (0x0000, n.link_cost(), false);
-            }
-        }
+        let cost = |short: u16| self.neighbor_index(short).map(|i| self.neighbors[i].link_cost()).unwrap_or(0);
         match self.routes.iter().find(|r| r.status == super::ROUTE_ACTIVE && r.dst == 0x0000) {
-            Some(r) => {
-                let cost = self
-                    .neighbor_index(r.next)
-                    .map(|i| self.neighbors[i].link_cost())
-                    .unwrap_or(0);
-                (r.next, cost, r.many_to_one)
-            }
-            None => (0xFFFF, 0, false),
+            Some(r) => (r.next, cost(r.next), r.many_to_one),
+            None => match self.neighbor_index(0x0000).filter(|&i| self.neighbors[i].age <= super::AGE_LIMIT) {
+                Some(_) => (0x0000, cost(0x0000), false),
+                None => (0xFFFF, 0, false),
+            },
         }
     }
 
