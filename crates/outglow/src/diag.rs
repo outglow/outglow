@@ -106,6 +106,14 @@ pub fn msg_of(ev: Result<Event, ConnectionError>, topic: &str, broker: &str) -> 
     }
 }
 
+pub fn device_name(devices: &[u8], id: &str) -> Option<String> {
+    let list: Vec<Value> = serde_json::from_slice(devices).ok()?;
+    list.iter()
+        .find(|d| d.get("ieee_address").and_then(Value::as_str).is_some_and(|a| a.eq_ignore_ascii_case(id)))
+        .and_then(|d| d.get("friendly_name").and_then(Value::as_str))
+        .map(str::to_owned)
+}
+
 pub fn received(r: Result<Msg, mpsc::RecvTimeoutError>) -> Result<Option<Msg>> {
     match r {
         Ok(Msg::Failed(e)) => bail!(e),

@@ -3,10 +3,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use rumqttc::{Client, MqttOptions, QoS};
+use rumqttc::{Client, Event, MqttOptions, Packet, QoS};
 use serde_json::Value;
 
-use super::{cache_dir, diag_on, fetch_box, local_time, msg_of, received, subscribed, BoxArgs, Bus, Conn, DiagArgs, Msg};
+use super::{cache_dir, device_name, diag_on, fetch_box, local_time, msg_of, received, subscribed, BoxArgs, Bus, Conn, DiagArgs, Msg};
 
 pub struct Mqtt {
     client: Client,
@@ -21,7 +21,23 @@ pub fn connect(c: &Conn, ieee: &str) -> Result<Mqtt> {
     o.set_keep_alive(Duration::from_secs(30));
     o.set_max_packet_size(1 << 20, 1 << 20);
     let (client, mut conn) = Client::new(o, 64);
-    let topic = format!("{}/{ieee}", c.base_topic);
+    let devices = format!("{}/bridge/devices", c.base_topic);
+    client.subscribe(&devices, QoS::AtMostOnce)?;
+    let until = Instant::now() + Duration::from_secs_f64(c.timeout.clamp(1.0, 10.0));
+    let mut name = None;
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match conn.recv_timeout(left) {
+            Ok(Ok(Event::Incoming(Packet::Publish(p)))) if p.topic == devices => {
+                name = device_name(&p.payload, ieee);
+                break;
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => anyhow::bail!("MQTT broker {broker}: {e}"),
+            Err(_) => break,
+        }
+    }
+    client.unsubscribe(&devices)?;
+    let topic = format!("{}/{}", c.base_topic, name.as_deref().unwrap_or(ieee));
     let (tx, rx) = mpsc::channel();
     let t = topic.clone();
     std::thread::spawn(move || {

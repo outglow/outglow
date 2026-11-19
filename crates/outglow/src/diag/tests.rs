@@ -146,6 +146,17 @@ fn local_time_through_strftime() {
 }
 
 #[test]
+fn the_ieee_address_finds_the_friendly_name() {
+    let list = br#"[{"ieee_address": "0x0000000000000000", "friendly_name": "Coordinator"},
+                    {"ieee_address": "0xa4c1380000123456", "friendly_name": "Hall 2"}, {"ieee_address": "0x1"}]"#;
+    assert_eq!(device_name(list, "0xa4c1380000123456").as_deref(), Some("Hall 2"));
+    assert_eq!(device_name(list, "0xA4C1380000123456").as_deref(), Some("Hall 2"));
+    assert_eq!(device_name(list, "0x1"), None);
+    assert_eq!(device_name(list, "Hall 2"), None);
+    assert_eq!(device_name(b"{}", "0x1"), None);
+}
+
+#[test]
 fn mqtt_events_become_messages() {
     let ok = |p| Ok(Event::Incoming(p));
     assert!(matches!(msg_of(ok(Packet::SubAck(SubAck::new(1, vec![]))), "t", "b"), Some(Msg::Subscribed)));
