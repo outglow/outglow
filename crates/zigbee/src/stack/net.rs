@@ -149,6 +149,10 @@ impl<H: Hal> Stack<H> {
         };
         self.trace(trace::TX, detail, h, mac_dst, 0);
         self.box_frame(mac_dst, h, payload, self.diag.last_attempts, status as u8);
+        let status = match status {
+            TxStatus::ChannelBusy if self.diag.last_attempts > 0 => TxStatus::NoAck,
+            other => other,
+        };
         if mac_dst != mac::BROADCAST {
             if let Some(i) = self.neighbor_index(mac_dst) {
                 let n = &mut self.neighbors[i];
@@ -553,7 +557,7 @@ impl<H: Hal> Stack<H> {
                 let next = self.next_hop(h.dst).filter(|&n| !self.link_failed(n));
                 match next.map(|next| (next, self.transmit_nwk(next, &h, payload))) {
                     Some((_, TxStatus::Ok)) => self.diag.add(k::RELAYED_UCAST),
-                    Some((next, TxStatus::ChannelBusy)) => self.busy_drop(&h, next),
+                    Some((next, TxStatus::ChannelBusy)) => self.busy_drop(&h, next, k::RELAY_DROP_MAC_FAIL),
                     Some((next, TxStatus::NoAck)) => {
                         self.link_lost(next, h.dst);
                         self.status_undelivered(&h, mac_src, payload, k::RELAY_DROP_MAC_FAIL);
@@ -697,11 +701,11 @@ impl<H: Hal> Stack<H> {
             if retries > 0 && self.hold_retry(h, payload, ROUTED, retries) {
                 return;
             }
+            let lost = if retries > 0 { k::RELAY_DROP_QUEUE_FULL } else { k::RELAY_DROP_MAC_FAIL };
             if status == TxStatus::ChannelBusy {
-                self.busy_drop(h, next);
+                self.busy_drop(h, next, lost);
                 return;
             }
-            let lost = if retries > 0 { k::RELAY_DROP_QUEUE_FULL } else { k::RELAY_DROP_MAC_FAIL };
             self.link_lost(next, h.dst);
             if record {
                 if !originated {
@@ -795,12 +799,13 @@ impl<H: Hal> Stack<H> {
         if retries > 0 && self.hold_retry(h, payload, next, retries) {
             return;
         }
+        let lost = if retries > 0 { k::RELAY_DROP_QUEUE_FULL } else { k::RELAY_DROP_MAC_FAIL };
         if status == TxStatus::ChannelBusy {
-            self.busy_drop(h, next);
+            self.busy_drop(h, next, lost);
             return;
         }
         if relayed {
-            self.diag.add(if retries > 0 { k::RELAY_DROP_QUEUE_FULL } else { k::RELAY_DROP_MAC_FAIL });
+            self.diag.add(lost);
         }
         self.link_lost(next, h.dst);
         let status = h.frame_type == nwk::FRAME_CMD && payload.first() == Some(&nwk::CMD_NETWORK_STATUS);
@@ -824,9 +829,9 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    fn busy_drop(&mut self, h: &Header, next: u16) {
+    fn busy_drop(&mut self, h: &Header, next: u16, lost: usize) {
         if h.src != self.nib.short {
-            self.diag.add(k::RELAY_DROP_MAC_FAIL);
+            self.diag.add(lost);
         } else if h.frame_type == nwk::FRAME_DATA {
             self.diag.add(k::APS_TX_UCAST_FAIL);
         }

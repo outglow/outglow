@@ -1394,3 +1394,48 @@ fn a_network_status_lost_to_a_busy_channel_keeps_its_route_and_takes_no_other_ro
         assert_eq!(got, ([0, 1, 0], 1, super::ROUTE_ACTIVE), "status {status:02X}");
     }
 }
+
+#[test]
+fn a_next_hop_that_never_acked_before_the_channel_went_busy_still_loses_its_route() {
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1002, false, 0);
+    s.hal.busy = true;
+    s.hal.attempts = 3;
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x1000, 5, 1);
+    s.relay(h, 0x1000, &[0x00, 0x01]);
+    for _ in 0..4 {
+        s.hal.now += 100;
+        s.net_timers(s.hal.now);
+    }
+    assert_eq!(s.routes[0].status, super::ROUTE_FREE, "three unacked frames then one CCA failure: the route is kept");
+}
+
+#[test]
+fn a_frame_sent_unacknowledged_before_the_channel_went_busy_counts_against_its_link() {
+    let mut s = relaying();
+    s.hal.busy = true;
+    s.hal.attempts = 1;
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x0042, 5, 1);
+    assert_eq!(s.transmit_nwk(0x1001, &h, &[0x00]), crate::hal::TxStatus::NoAck);
+    assert_eq!(s.neighbors[1].failures, 1);
+}
+
+#[test]
+fn a_frame_lost_to_a_busy_channel_with_no_room_to_wait_for_a_retry_counts_as_a_full_queue() {
+    let full = |s: &mut Stack<Scripted>| {
+        s.hal.busy = true;
+        for e in s.held.iter_mut() {
+            e.used = true;
+        }
+    };
+    let mut s = routed(false, &[]);
+    full(&mut s);
+    let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+    assert_eq!((t.counts, s.routes[0].status), ([0, 0, 1, 0], super::ROUTE_ACTIVE));
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1002, false, 0);
+    full(&mut s);
+    s.send_to(0x1002, &nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x3000, 5, 1), &[0x00], 2);
+    let got = (s.hal.sent.len(), s.diag.n[k::RELAY_DROP_MAC_FAIL], s.diag.n[k::RELAY_DROP_QUEUE_FULL], s.routes[0].status);
+    assert_eq!(got, (1, 0, 1, super::ROUTE_ACTIVE));
+}

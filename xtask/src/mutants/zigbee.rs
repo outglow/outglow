@@ -2686,7 +2686,13 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: a frame lost to a busy channel counts against its link",
         file: "stack/net.rs",
-        old: "            if status == TxStatus::ChannelBusy {\n                self.busy_drop(h, next);\n                return;\n            }\n            let lost",
-        new: "            let lost",
+        old: "            if status == TxStatus::ChannelBusy {\n                self.busy_drop(h, next, lost);\n                return;\n            }\n            self.link_lost(next, h.dst);",
+        new: "            self.link_lost(next, h.dst);",
+    },
+    Mutation {
+        name: "NWK: frames that went on air unacknowledged before the channel went busy do not count against the link",
+        file: "stack/net.rs",
+        old: "            TxStatus::ChannelBusy if self.diag.last_attempts > 0 => TxStatus::NoAck,\n",
+        new: "",
     },
 ];
