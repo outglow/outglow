@@ -512,7 +512,7 @@ impl Node {
                 if level == 0 {
                     self.on &= transition_ms != 0;
                     let now = self.stack.hal.air.borrow().now;
-                    self.off_at = self.on.then_some(now + transition_ms);
+                    self.off_at = self.on.then_some(now.wrapping_add(transition_ms));
                 } else {
                     self.on = true;
                     self.level = level;
@@ -551,7 +551,7 @@ impl Node {
 
     fn tick(&mut self) {
         let now = self.stack.hal.air.borrow().now;
-        if self.off_at.is_some_and(|at| now >= at) {
+        if self.off_at.is_some_and(|at| now.wrapping_sub(at) as i32 >= 0) {
             self.off_at = None;
             self.on = false;
             self.report();
@@ -614,7 +614,7 @@ pub struct Coord {
     key_due: Vec<(u32, u16, u64)>,
     next_short: u16,
     fc_in: HashMap<u64, u32>,
-    seen: HashSet<(u16, u8)>,
+    pub seen: HashSet<(u16, u8)>,
     pub via: HashMap<u16, u16>,
     pub source_route: HashMap<u16, Vec<u16>>,
     pub join_key: [u8; 16],
@@ -662,6 +662,8 @@ pub struct Coord {
     fragments: HashMap<(u16, u8), Vec<Option<Vec<u8>>>>,
     last_fragmented: Option<(u16, u16, Vec<u8>, u8, usize)>,
     pub mic_failures: u32,
+    pub tolerant: bool,
+    pub harness_panics: u32,
     next_link_status: u32,
 }
 
@@ -742,7 +744,9 @@ impl Coord {
             fragments: HashMap::new(),
             last_fragmented: None,
             mic_failures: 0,
-            next_link_status: now + 15_000,
+            tolerant: false,
+            harness_panics: 0,
+            next_link_status: now.wrapping_add(15_000),
         }
     }
 
@@ -1060,17 +1064,20 @@ impl Coord {
             let Some((frame, _)) = next else {
                 break;
             };
-            self.on_frame(&frame);
+            match self.tolerant {
+                true => self.harness_panics += std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.on_frame(&frame))).is_err() as u32,
+                false => self.on_frame(&frame),
+            }
         }
         let now = self.air.borrow().now;
-        while let Some(i) = self.key_due.iter().position(|e| now >= e.0) {
+        while let Some(i) = self.key_due.iter().position(|e| now.wrapping_sub(e.0) as i32 >= 0) {
             let (_, short, ext) = self.key_due.remove(i);
             let key = self.key;
             let seq = self.key_seq;
             self.transport_network_key(short, ext, &key, seq, false);
         }
-        if now >= self.next_link_status {
-            self.next_link_status = now + 15_000;
+        if now.wrapping_sub(self.next_link_status) as i32 >= 0 {
+            self.next_link_status = now.wrapping_add(15_000);
             self.link_status();
         }
     }
@@ -1130,7 +1137,7 @@ impl Coord {
                         f.u8(0);
                         self.tx(f.as_slice());
                         let now = self.air.borrow().now;
-                        self.key_due.push((now + 30, short, ext));
+                        self.key_due.push((now.wrapping_add(30), short, ext));
                     }
                 }
             }
@@ -1166,7 +1173,7 @@ impl Coord {
                     self.nwk_send(rh, &[nwk::CMD_REJOIN_RESPONSE, s[0], s[1], 0], Some(mac_src));
                     self.fc_in.remove(&ext);
                     let now = self.air.borrow().now;
-                    self.key_due.push((now + 30, short, ext));
+                    self.key_due.push((now.wrapping_add(30), short, ext));
                 }
             }
             return;
@@ -2269,7 +2276,9 @@ impl Net {
 
     pub fn run(&mut self, ms: u32) {
         for _ in 0..ms {
-            self.air.borrow_mut().now += 1;
+            let mut air = self.air.borrow_mut();
+            air.now = air.now.wrapping_add(1);
+            drop(air);
             self.coord.poll();
             for node in self.nodes.iter_mut() {
                 let powered = node.stack.hal.air.borrow().ports[node.id].powered;

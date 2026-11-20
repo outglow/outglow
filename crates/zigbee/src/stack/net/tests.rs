@@ -651,7 +651,7 @@ fn secured(h: nwk::Header, ext: u64, counter: u32, key_seq: u8, key: &[u8; 16], 
 
 fn heard(s: &mut Stack<Scripted>, h: nwk::Header, counter: u32, payload: &[u8]) {
     let f = secured(h, SENDER, counter, 0, &[0; 16], payload);
-    s.on_nwk(0x1000, &f, 200);
+    s.on_nwk(0x1000, true, &f, 200);
 }
 
 #[test]
@@ -685,7 +685,7 @@ fn a_frame_under_a_key_number_neither_current_nor_kept_is_one_with_an_unknown_ke
         s.nib.alt_valid = alt_valid;
         s.nib.alt_seq = alt_seq;
         let f = secured(nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x1000, 5, 1), SENDER, 1, key_seq, &[0; 16], &[0x40]);
-        s.on_nwk(0x1000, &f, 200);
+        s.on_nwk(0x1000, true, &f, 200);
         assert_eq!(s.unknown_key_frames == 1, unknown, "{alt_valid} {alt_seq} {key_seq}");
     }
 }
@@ -978,7 +978,7 @@ fn an_unsecured_rejoin_request_is_answered_only_by_a_bulb_that_is_up() {
         let mut f = crate::util::Buf::new();
         h.write(&mut f);
         f.bytes(&[nwk::CMD_REJOIN_REQUEST, 0x8E]);
-        s.on_nwk(0x7001, f.as_slice(), 200);
+        s.on_nwk(0x7001, true, f.as_slice(), 200);
         assert_eq!(!s.hal.sent.is_empty(), answered, "{state:?}");
     }
 }
@@ -997,14 +997,14 @@ fn an_empty_command_from_an_end_device_that_is_no_child_is_no_rejoin_request_wha
 #[test]
 fn frames_that_cannot_be_read_are_dropped() {
     let mut s = relaying();
-    s.on_nwk(0x1000, &[0x08], 200);
+    s.on_nwk(0x1000, true, &[0x08], 200);
     assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 1, "no header");
     let mut f = crate::util::Buf::new();
     let mut h = nwk::Header::new(nwk::FRAME_DATA, 0x0042, 0x1000, 5, 1);
     h.security = true;
     h.write(&mut f);
     f.bytes(&[0x28, 0x01]);
-    s.on_nwk(0x1000, f.as_slice(), 200);
+    s.on_nwk(0x1000, true, f.as_slice(), 200);
     assert_eq!(s.diag.n[k::PACKET_VALIDATE_DROPS], 2, "no whole auxiliary header");
     let h = nwk::Header::new(3, 0x0042, 0x1000, 5, 1);
     heard(&mut s, h, 1, &[0x01, 0x02]);
@@ -1081,7 +1081,7 @@ fn unsecured_aps_data_while_waiting_for_the_key_is_not_taken() {
     let mut f = crate::util::Buf::new();
     h.write(&mut f);
     f.bytes(&read_basic);
-    s.on_nwk(0x1000, f.as_slice(), 200);
+    s.on_nwk(0x1000, true, f.as_slice(), 200);
     assert!(s.hal.sent.is_empty());
 }
 
@@ -1452,4 +1452,15 @@ fn a_frame_lost_to_a_busy_channel_with_no_room_to_wait_for_a_retry_counts_as_a_f
     s.send_to(0x1002, &nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x3000, 5, 1), &[0x00], 2);
     let got = (s.hal.sent.len(), s.diag.n[k::RELAY_DROP_MAC_FAIL], s.diag.n[k::RELAY_DROP_QUEUE_FULL], s.routes[0].status);
     assert_eq!(got, (1, 0, 1, super::ROUTE_ACTIVE));
+}
+
+#[test]
+fn a_router_child_whose_link_fails_is_no_longer_a_child_and_an_end_device_child_stays() {
+    for (capability, kept) in [(super::CAP_FFD, false), (0x00, true), (super::CAP_FFD | 0x08, false), (0x08, true)] {
+        let mut s = stack();
+        let c = &mut s.children[0];
+        (c.used, c.joined, c.short, c.ext, c.capability) = (true, true, 0x2222, 0x00124B00_0000_2222, capability);
+        s.link_lost(0x2222, 0x0000);
+        assert_eq!(s.children[0].used, kept, "{capability:02X}");
+    }
 }

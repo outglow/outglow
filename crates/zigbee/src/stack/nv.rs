@@ -1,4 +1,4 @@
-use super::parent::Child;
+use super::parent::{Child, CHILD_ADDRESSES};
 use super::{Binding, BleMode, Nib, Stack, BINDINGS, BLE_WINDOW_MAX_MIN, CHILDREN, COUNTER_STEP, GROUPS};
 use crate::aes::Aes128;
 use crate::hal::{Hal, NvItem};
@@ -325,12 +325,14 @@ impl<H: Hal> Stack<H> {
             if r.u8() != Some(CHILDREN_VERSION) {
                 continue;
             }
+            let never = self.never_a_child();
             let part = &mut self.children[k * CHILDREN_PER_ITEM..((k + 1) * CHILDREN_PER_ITEM).min(CHILDREN)];
             for slot in part.iter_mut() {
                 let (Some(ext), Some(short), Some(capability), Some(timeout)) = (r.u64(), r.u16(), r.u8(), r.u8()) else {
                     break;
                 };
-                *slot = Child { used: true, ext, short, capability, joined: true, timeout, heard: now, ..Child::EMPTY };
+                let used = CHILD_ADDRESSES.contains(&short) && !never.contains(&ext);
+                *slot = Child { used, ext, short, capability, joined: true, timeout, heard: now, ..Child::EMPTY };
             }
         }
     }

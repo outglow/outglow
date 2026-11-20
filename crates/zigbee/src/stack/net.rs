@@ -81,7 +81,7 @@ impl<H: Hal> Stack<H> {
                 }
                 let to_us = matches!(h.dst, Addr::Short(d) if d == self.nib.short || d == mac::BROADCAST);
                 if let (true, Addr::Short(src)) = (to_us, h.src) {
-                    self.on_nwk(src, payload, lqi);
+                    self.on_nwk(src, !broadcast, payload, lqi);
                 }
             }
             _ => {}
@@ -283,7 +283,7 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    pub(crate) fn on_nwk(&mut self, mac_src: u16, p: &[u8], lqi: u8) {
+    pub(crate) fn on_nwk(&mut self, mac_src: u16, mac_unicast: bool, p: &[u8], lqi: u8) {
         let Some((mut h, hl)) = Header::parse(p) else {
             self.diag.add(k::PACKET_VALIDATE_DROPS);
             return;
@@ -370,10 +370,13 @@ impl<H: Hal> Stack<H> {
             if clash && nwk::is_broadcast(h.dst) && h.frame_type == nwk::FRAME_DATA {
                 return;
             }
+            let command = frame.get(hl + nwk::AUX_LEN).filter(|_| h.frame_type == nwk::FRAME_CMD && plen > 0);
+            let rejoining = command == Some(&nwk::CMD_REJOIN_REQUEST);
+            if rejoining && !self.rejoin_request_sound(&h, mac_src, mac_unicast) {
+                return;
+            }
             if h.end_device_initiator {
                 h.end_device_initiator = false;
-                let command = frame.get(hl + nwk::AUX_LEN).filter(|_| h.frame_type == nwk::FRAME_CMD && plen > 0);
-                let rejoining = command == Some(&nwk::CMD_REJOIN_REQUEST);
                 if mac_src == h.src && !rejoining && self.end_device_child(h.src).is_none() {
                     self.trace_rx(trace::RX_NOT_A_CHILD, &h, mac_src, 0);
                     self.tell_to_rejoin(h.src, false);
@@ -389,7 +392,9 @@ impl<H: Hal> Stack<H> {
         } else {
             if self.state == State::Up && h.frame_type == nwk::FRAME_CMD && h.dst == self.nib.short {
                 match p.get(hl) {
-                    Some(&nwk::CMD_REJOIN_REQUEST) => self.on_rejoin_request(&h, mac_src, &p[hl..], false),
+                    Some(&nwk::CMD_REJOIN_REQUEST) if self.rejoin_request_sound(&h, mac_src, mac_unicast) => {
+                        self.on_rejoin_request(&h, mac_src, &p[hl..], false)
+                    }
                     Some(&nwk::CMD_REJOIN_RESPONSE) if matches!(self.rejoin_wait, Some((false, ..))) => {
                         self.on_rejoin_response(&h, mac_src, &p[hl..])
                     }
@@ -776,6 +781,9 @@ impl<H: Hal> Stack<H> {
     }
 
     fn link_lost(&mut self, next: u16, dst: u16) {
+        if let Some(i) = self.child_index(next).filter(|&i| self.children[i].capability & CAP_FFD != 0) {
+            self.remove_child(i);
+        }
         if self.neighbor_index(next).is_none() || self.link_failed(next) {
             self.drop_routes_via(next);
         } else if let Some(i) = self.route_index(dst) {

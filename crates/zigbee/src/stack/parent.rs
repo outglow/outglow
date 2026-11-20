@@ -8,6 +8,7 @@ pub(crate) const CAP_FFD: u8 = 0x02;
 pub(crate) const CAP_RX_ON: u8 = 0x08;
 const CAP_ROUTER: u8 = 0x0A;
 const ADDRESS_DRAWS: usize = 8;
+pub(crate) const CHILD_ADDRESSES: core::ops::Range<u16> = 0x0001..0xFFF8;
 
 const INDIRECT_MS: u32 = 7_680;
 const DEFAULT_TIMEOUT: u8 = 8;
@@ -158,7 +159,18 @@ impl<H: Hal> Stack<H> {
             || self.addr_map.iter().any(|e| e.1 == a && e.0 != 0)
     }
 
+    pub(crate) fn never_a_child(&self) -> [u64; 2] {
+        [self.ext, self.nib.tc_ext]
+    }
+
+    pub(crate) fn rejoin_request_sound(&self, h: &Header, mac_src: u16, mac_unicast: bool) -> bool {
+        mac_unicast && h.dst == self.nib.short && mac_src == h.src && h.src != 0 && h.src_ext.is_some_and(|e| !self.never_a_child().contains(&e))
+    }
+
     pub(crate) fn on_association_request(&mut self, ext: u64, capability: u8) {
+        if self.never_a_child().contains(&ext) {
+            return;
+        }
         let now = self.hal.now_ms();
         let known = self.child_by_ext(ext);
         let mut slot = known.or_else(|| self.children.iter().position(|c| !c.used));
@@ -530,7 +542,7 @@ impl<H: Hal> Stack<H> {
         self.diag.add(super::diag::k::JOIN_INDICATION);
         let now = self.hal.now_ms();
         let taken = h.src == self.nib.short
-            || h.src >= 0xFFF8
+            || !CHILD_ADDRESSES.contains(&h.src)
             || self.child_index(h.src).is_some_and(|c| c != i)
             || self.neighbor_index(h.src).is_some_and(|n| ![0, ext].contains(&self.neighbors[n].ext));
         let short = if taken { self.new_address() } else { h.src };

@@ -477,3 +477,49 @@ fn a_sleepy_device_rejoining_on_a_taken_address_gets_its_answer_at_its_poll() {
     assert_eq!(on_air(&s), 1, "the poll from the old address takes the held response");
     assert_eq!(&s.hal.sent[0][5..7], &[0x00, 0x50]);
 }
+
+#[test]
+fn a_rejoin_request_counts_only_sent_straight_to_the_bulb_by_a_device_other_than_the_bulb_and_the_trust_center() {
+    let s = up_parent();
+    let own = s.ext;
+    let cases: [(u16, u16, bool, u16, Option<u64>, bool); 9] = [
+        (0x0042, 0x5000, true, 0x5000, Some(EXT), true),
+        (0x0042, 0x5000, false, 0x5000, Some(EXT), false),
+        (0xFFFD, 0x5000, true, 0x5000, Some(EXT), false),
+        (0x0042, 0x4444, true, 0x5000, Some(EXT), false),
+        (0x0042, 0x0000, true, 0x0000, Some(EXT), false),
+        (0x0042, 0x0001, true, 0x0001, Some(EXT), true),
+        (0x0042, 0x5000, true, 0x5000, Some(0x00124B00_0000_0001), false),
+        (0x0042, 0x5000, true, 0x5000, Some(own), false),
+        (0x0042, 0x5000, true, 0x5000, None, false),
+    ];
+    for (dst, mac_src, unicast, src, ext, sound) in cases {
+        let mut h = crate::nwk::Header::new(crate::nwk::FRAME_CMD, dst, src, 1, 1);
+        h.src_ext = ext;
+        assert_eq!(s.rejoin_request_sound(&h, mac_src, unicast), sound, "{dst:04X} {mac_src:04X} {unicast} {src:04X} {ext:X?}");
+    }
+}
+
+#[test]
+fn a_device_rejoining_from_an_address_no_child_may_have_gets_a_new_one() {
+    for (src, given) in [(0x0000u16, 0x0777u16), (0x0001, 0x0001), (0xFFF7, 0xFFF7), (0xFFF8, 0x0777)] {
+        let mut s = up_parent();
+        s.hal.random = std::vec![0x0777];
+        assert_eq!(rejoin(&mut s, src, 0x8E, false), Some((given, 0x00)), "{src:04X}");
+    }
+}
+
+#[test]
+fn neither_the_trust_center_nor_a_device_with_the_bulbs_own_address_is_taken_as_a_child_on_association() {
+    let mut s = up_parent();
+    s.permit_until = Some(100_000);
+    s.allow_children = true;
+    let own = s.ext;
+    for ext in [0x00124B00_0000_0001, own] {
+        s.on_association_request(ext, 0x8E);
+        assert!(s.children.iter().all(|c| !c.used), "{ext:X}");
+        assert!(s.indirect.iter().all(|e| !e.used), "nor answered");
+    }
+    s.on_association_request(EXT, 0x8E);
+    assert_eq!(s.children.iter().filter(|c| c.used).count(), 1);
+}

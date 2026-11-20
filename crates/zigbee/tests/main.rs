@@ -8,6 +8,7 @@ mod colour;
 mod conflicts;
 mod diagnostics;
 mod fragments;
+mod fuzz;
 mod frames;
 mod green_power;
 mod hal_defaults;

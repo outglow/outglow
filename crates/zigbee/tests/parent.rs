@@ -1,8 +1,10 @@
 use bulb_core::command::Command;
 use crate::sim::*;
 use zigbee::hal::TxStatus;
+use zigbee::mac::{self, Addr};
 use zigbee::nwk;
 use zigbee::stack::{State, CHILDREN, INDIRECT, INDIRECT_PER_CHILD};
+use zigbee::util::Buf;
 
 const ON_OFF: u16 = 0x0006;
 
@@ -1802,6 +1804,7 @@ fn a_refusal_waiting_for_a_device_that_is_no_child_does_not_count_against_a_chil
     net.link(0, stranger.id, 0);
     stranger.key = zed.key;
     stranger.short = 0x5A5A;
+    stranger.parent = sa;
     stranger.pan = PAN;
     net.air.borrow_mut().ports[stranger.id].short = 0x5A5A;
     net.air.borrow_mut().ports[stranger.id].pan = PAN;
@@ -1901,4 +1904,116 @@ fn the_devices_with_frames_waiting_are_published_once_each_and_an_unknown_one_by
     let (shorts, exts) = net.air.borrow().ports[id].pending.clone();
     assert!(exts.contains(&stranger.ext), "{exts:x?}");
     assert!(!shorts.contains(&(stranger.ext as u16)), "{shorts:x?}");
+}
+
+fn reads_basic(net: &mut Net, short: u16) -> bool {
+    (0..3).any(|_| {
+        net.coord.zcl_rx.clear();
+        let seq = net.coord.zcl(short, 0x0000, 0x00, 0x00, &[0x00, 0x00]);
+        net.run(5_000);
+        net.coord.last_zcl(short, 0x0000, 0x01).is_some_and(|r| r[1] == seq)
+    })
+}
+
+fn far_bulb_behind_near_one() -> (Net, usize, usize) {
+    let mut net = Net::new();
+    let a = net.join_node();
+    let b = net.join_node();
+    let pb = net.nodes[b].id;
+    net.link(0, pb, 0);
+    net.run(70_000);
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    net.coord.via.insert(sb, sa);
+    (net, a, b)
+}
+
+fn spoofed_rejoin(broadcast: bool) {
+    let (mut net, a, b) = far_bulb_behind_near_one();
+    let (pa, pb) = (net.nodes[a].id, net.nodes[b].id);
+    let (sa, sb) = (net.nodes[a].short(), net.nodes[b].short());
+    let mut z = Zed::router(&net.air, 0x4444, sb);
+    net.link(0, z.id, 0);
+    net.link(pa, z.id, 0);
+    net.run(1_000);
+    assert!(reads_basic(&mut net, sb), "the far bulb answers through the near one before");
+    let mut h = z.header(nwk::FRAME_CMD, if broadcast { 0xFFFD } else { sb });
+    h.src = 0x0000;
+    h.src_ext = Some(COORD_EXT);
+    z.mac_send(if broadcast { 0xFFFF } else { sb }, h, &[nwk::CMD_REJOIN_REQUEST, 0x8E]);
+    net.run(1_000);
+    net.link(0, z.id, 0);
+    net.link(pb, z.id, 0);
+    net.air.borrow_mut().now += 6 * 3_600_000;
+    net.run(120_000);
+    assert!(reads_basic(&mut net, sa), "the near bulb still answers");
+    assert!(reads_basic(&mut net, sb), "six hours after one rejoin request naming the coordinator, the far bulb still answers");
+}
+
+#[test]
+fn a_rejoin_request_naming_the_coordinator_sent_to_the_bulb_does_not_cut_it_off() {
+    spoofed_rejoin(false);
+}
+
+#[test]
+fn a_broadcast_rejoin_request_naming_the_coordinator_does_not_cut_the_bulb_off() {
+    spoofed_rejoin(true);
+}
+
+#[test]
+fn an_unsecured_rejoin_request_naming_the_coordinator_does_not_cut_the_bulb_off() {
+    let (mut net, _, b) = far_bulb_behind_near_one();
+    let pb = net.nodes[b].id;
+    let sb = net.nodes[b].short();
+    let outsider = net.air.borrow_mut().add_port(0x00AA_0000_0000_0001);
+    for p in 0..pb {
+        net.link(p, outsider, 0);
+    }
+    net.run(1_000);
+    assert!(reads_basic(&mut net, sb));
+    let mut f = Buf::new();
+    mac::Header { frame_type: mac::FRAME_DATA, security: false, pending: false, ack_request: true, seq: 1, dst_pan: PAN, dst: Addr::Short(sb), src_pan: PAN, src: Addr::Short(0x0000) }.write(&mut f);
+    let mut h = nwk::Header::new(nwk::FRAME_CMD, sb, 0x0000, 1, 9);
+    h.security = false;
+    h.src_ext = Some(COORD_EXT);
+    h.write(&mut f);
+    f.u8(nwk::CMD_REJOIN_REQUEST);
+    f.u8(0x8E);
+    net.air.borrow_mut().transmit(outsider, f.as_slice());
+    net.run(500);
+    assert!(reads_basic(&mut net, sb), "one keyless frame does not cut the far bulb off");
+}
+
+fn stored_children(net: &mut Net, n: usize, children: &[(u64, u16)]) {
+    let id = net.nodes[n].id;
+    let mut blob = vec![1u8];
+    for (ext, short) in children {
+        blob.extend_from_slice(&ext.to_le_bytes());
+        blob.extend_from_slice(&short.to_le_bytes());
+        blob.extend_from_slice(&[0x8E, 8]);
+    }
+    net.air.borrow_mut().ports[id].nv.insert(zigbee::hal::NvItem::children(0) as u8, blob);
+    net.power_cycle(n);
+}
+
+#[test]
+fn a_bulb_that_stored_the_coordinator_as_its_child_forgets_it_at_the_next_start_and_is_reached_again() {
+    let (mut net, _, b) = far_bulb_behind_near_one();
+    let sb = net.nodes[b].short();
+    stored_children(&mut net, b, &[(COORD_EXT, 0x0000)]);
+    assert_eq!(net.nodes[b].stack.child_count(), 0);
+    net.run(30_000);
+    assert!(reads_basic(&mut net, sb));
+}
+
+#[test]
+fn a_stored_child_with_an_address_or_identity_no_child_may_have_is_not_loaded() {
+    let (mut net, a) = open_network();
+    let own = net.air.borrow().ports[net.nodes[a].id].ext;
+    let other = 0x00124B00_0000_9000u64;
+    let cases: [(u64, u16, usize); 6] =
+        [(other, 0x0000, 0), (other, 0x0001, 1), (other, 0xFFF7, 1), (other, 0xFFF8, 0), (COORD_EXT, 0x2000, 0), (own, 0x2000, 0)];
+    for (ext, short, loaded) in cases {
+        stored_children(&mut net, a, &[(ext, short)]);
+        assert_eq!(net.nodes[a].stack.child_count(), loaded, "{ext:X} {short:04X}");
+    }
 }
