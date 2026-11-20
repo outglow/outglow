@@ -86,6 +86,7 @@ const MAX_CCA_ATTEMPTS: u32 = 5;
 const MAX_FRAME_RETRIES: u32 = 3;
 const BACKOFF_US: u32 = 320;
 const RX_GAP_US: u32 = 1200;
+const RX_GAP_WAIT_US: u32 = 4800;
 
 static RX_BUF: SharedBuf<RX_BUF_LEN> = SharedBuf::new([0; RX_BUF_LEN]);
 static TX_BUF: SharedBuf<132> = SharedBuf::new([0; 132]);
@@ -576,6 +577,16 @@ fn channel_clear() -> bool {
     sum / count <= CCA_THRESHOLD_DBM
 }
 
+fn rx_gap_heard() -> bool {
+    let t = tick();
+    while rx_quiet_ticks() < RX_GAP_US * reg::TICKS_PER_US {
+        if tick().wrapping_sub(t) > RX_GAP_WAIT_US * reg::TICKS_PER_US {
+            return false;
+        }
+    }
+    true
+}
+
 fn csma_transmit(random: &mut dyn FnMut() -> u32) -> bool {
     let mut be = MIN_BE;
     for _attempt in 0..MAX_CCA_ATTEMPTS {
@@ -585,9 +596,9 @@ fn csma_transmit(random: &mut dyn FnMut() -> u32) -> bool {
         }
         reg::delay_us((random() % (1 << be)) * BACKOFF_US);
         be = (be + 1).min(MAX_BE);
-        while rx_quiet_ticks() < RX_GAP_US * reg::TICKS_PER_US {}
+        let quiet = rx_gap_heard();
         let s = reg::irq_disable();
-        if channel_clear() && !rx_pending() {
+        if quiet && channel_clear() && !rx_pending() {
             ACK_SEEN.set(0);
             set_state(STATE_TX);
             reg::delay_us(TX_SETTLE_US);

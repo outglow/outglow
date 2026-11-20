@@ -893,7 +893,7 @@ fn the_backoff_doubles_from_8_to_32_slots_of_320_us() {
     assert!(!csma_transmit(&mut || 0x1f));
     let segs = segments(&sim::with(|c| c.log.clone()));
     let spans: Vec<u32> = segs[..5].iter().map(|s| s.last().copied().unwrap_or(0).wrapping_sub(s[0])).collect();
-    assert_eq!(spans, [7u32, 15, 31, 31, 31].iter().map(|n| n * 320 * 16 + 32).collect::<Vec<_>>());
+    assert_eq!(spans, [7u32, 15, 31, 31, 31].iter().map(|n| n * 320 * 16 + 48).collect::<Vec<_>>());
     assert_eq!(CCA_BUSY.get(), 5);
 }
 
@@ -1388,4 +1388,57 @@ pub fn set_counters(busy: u32, dropped: u32, peak: u8, sent: u8) {
     crate::radio::RADIO_DROPPED.set(dropped);
     crate::radio::RX_PEAK.set(peak);
     crate::radio::TX_SENT.set(sent);
+}
+
+#[test]
+fn traffic_every_millisecond_does_not_hold_a_transmission_past_the_watchdog() {
+    let _s = sim::session();
+    reset_radio_state();
+    let start = sim::with(|c| c.tick);
+    LAST_RX.set(start);
+    let mut last = start;
+    sim::with(|c| {
+        c.tick_step = 50 * 16;
+        c.poke8(RF_RSSI, 0x00);
+        c.poke8(reg::IRQ_ENABLE, 1);
+        c.on(move |_, op| {
+            if let Op::R32(0x740, t) = op {
+                if t.wrapping_sub(start) < 3_000_000 * 16 && t.wrapping_sub(last) >= 1_000 * 16 {
+                    last = t;
+                    LAST_RX.set(t);
+                }
+            }
+        })
+    });
+    assert!(!csma_transmit(&mut || 0));
+    let spent_ms = sim::with(|c| c.tick).wrapping_sub(start) / 16_000;
+    assert!(spent_ms < 2_000, "csma_transmit spent {spent_ms} ms with one frame heard per ms");
+    assert_eq!(CCA_BUSY.get(), MAX_CCA_ATTEMPTS);
+    assert_eq!(TX_SENT.get(), 0);
+}
+
+#[test]
+fn the_wait_for_a_quiet_gap_gives_up_after_4800_us() {
+    let _s = sim::session();
+    reset_radio_state();
+    let start = sim::with(|c| c.tick);
+    sim::with(|c| {
+        c.on(move |_, op| {
+            if let Op::R32(0x740, t) = op {
+                LAST_RX.set(t);
+            }
+        })
+    });
+    assert!(!rx_gap_heard());
+    let first = start.wrapping_add(16);
+    assert_eq!(sim::with(|c| c.tick).wrapping_sub(first), RX_GAP_WAIT_US * 16 + 32);
+}
+
+#[test]
+fn a_quiet_gap_reached_before_the_limit_is_heard() {
+    let _s = sim::session();
+    reset_radio_state();
+    let start = sim::with(|c| c.tick);
+    LAST_RX.set(start.wrapping_add(RX_GAP_WAIT_US * 16 - RX_GAP_US * 16));
+    assert!(rx_gap_heard());
 }
