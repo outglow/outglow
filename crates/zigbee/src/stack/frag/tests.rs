@@ -56,3 +56,18 @@ fn a_transfer_received_long_ago_does_not_hold_back_a_new_one_from_the_same_peer(
     assert_eq!(s.on_fragment(addressing(9), super::FIRST, 2, &[2; 64]), Some(()));
     assert!(s.frag_in.active && s.frag_in.got == 1, "24.9 days later it is a new transfer");
 }
+
+#[test]
+fn answers_queued_for_a_network_that_was_left_are_not_sent_in_the_next_one() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
+    s.state = crate::stack::State::Up;
+    s.send_fragmented(addressing(1), &[1; 100], false);
+    s.send_fragmented(addressing(2), &[2; 100], false);
+    s.leave_network(1_100);
+    s.network_up(5_000);
+    let sent = s.hal.sent.len();
+    for at in [6_000, 7_600, 9_200, 10_800, 12_400] {
+        s.frag_timers(at);
+    }
+    assert_eq!(s.hal.sent.len(), sent, "an answer for the old network goes out to address 0x0000 of the new one");
+}

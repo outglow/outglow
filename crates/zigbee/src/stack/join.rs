@@ -505,6 +505,9 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn leave_network(&mut self, now: u32) {
+        self.frag_in = super::frag::Incoming::EMPTY;
+        self.frag_out = super::frag::Outgoing::EMPTY;
+        self.frag_next = super::frag::Outgoing::EMPTY;
         self.log_event(super::diag::ev::LEFT, self.nib.short, 0);
         self.hal.nv_erase();
         self.ble_mode = super::BleMode::On;

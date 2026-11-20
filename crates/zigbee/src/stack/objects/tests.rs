@@ -71,8 +71,12 @@ fn the_remaining_time_of_a_transition_long_over_stays_zero_when_the_clock_wraps(
     s.color_until = Some(t + 2_000);
     s.timers(t + 999);
     assert_eq!(s.level_until, Some(t + 1_000), "the transition is still running");
+    s.hal.now = t;
+    assert_eq!(s.light_settings().remaining_tenths, 10, "a second to go");
     s.hal.now = t + 999;
     assert_eq!(s.light_settings().remaining_tenths, 0);
+    s.hal.now = t + 1_001;
+    assert_eq!(s.light_settings().remaining_tenths, 0, "over before the timers tick");
     s.timers(t + 1_000);
     assert_eq!((s.level_until, s.color_until), (None, Some(t + 2_000)), "the timers end the transition that is over");
     s.timers(t + 2_000);
