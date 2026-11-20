@@ -375,17 +375,19 @@ fn channel_map_minus_one(s: &mut BleSession) -> R<String> {
         s.wait_event(inst + 30, None)?;
         s.link_run(3.0)?;
         let tx = update_tx_events(s, "LL_CHANNEL_MAP_IND")?;
-        if tx.is_empty() || tx[0].event != inst - 1 || tx[0].missed {
+        if tx.is_empty() || tx[0].event != inst - 1 {
             let e = tx.first().map(|t| t.event.to_string()).unwrap_or_else(|| "None".into());
             return Err(Stop::Inconclusive(format!("the map PDU went out in event {e}, wanted {}", inst - 1)));
         }
+        let missed = tx[0].missed;
         let (wrong, got) = map_check(s, hop, &ALL_CHANNELS, &new, inst, inst + 30);
-        if got.contains(&inst) || s.lost_to_154(&[inst])?.is_empty() {
+        if !missed && (got.contains(&inst) || s.lost_to_154(&[inst])?.is_empty()) {
             break (inst, wrong, got);
         }
         if tries == 3 {
             return Err(Stop::Inconclusive(format!(
-                "in each of {tries} connections the bulb's radio was with 802.15.4 in the instant's event"
+                "in each of {tries} connections the bulb's radio was with 802.15.4 when the map PDU went out in event {} or in the instant's event",
+                inst - 1
             )));
         }
         s.drop_link(6000.0)?;
