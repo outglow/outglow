@@ -41,7 +41,7 @@ fn contents(f: &NorFlash) -> Vec<u8> {
 }
 
 fn power(f: &NorFlash, seconds: u64) -> bool {
-    let (mut c, factory) = PowerCycles::power_on(NorWords(f.clone()));
+    let (mut c, factory) = PowerCycles::power_on(NorWords(f.clone()), || {});
     for ms in (0..=seconds * 1000).step_by(500) {
         c.tick(ms);
     }
@@ -160,4 +160,40 @@ fn no_cut_brings_the_reset_nearer_small_sector() {
 fn no_cut_brings_the_reset_nearer_real_sector() {
     let rep = run(0x1000, &walk(2100), 23);
     assert_never_early(&rep, 2_000);
+}
+
+const SETTINGS: usize = BASE + 0x1000;
+
+fn settings_erased(f: &NorFlash) -> bool {
+    let mut b = vec![0u8; f.sector_size()];
+    f.read(SETTINGS, &mut b);
+    b.iter().all(|&x| x == 0xFF)
+}
+
+#[test]
+fn a_power_cut_anywhere_in_the_factory_reset_leaves_it_to_be_done_again() {
+    let f = NorFlash::new(BASE, 0x2000, 0x1000);
+    for secs in [1, 1, 1, 12, 12] {
+        assert!(!power(&f, secs));
+    }
+    f.poke(SETTINGS, &[0x5A; 16]);
+    let pre = f.snapshot();
+    f.clear_ops();
+    let mut settings = f.clone();
+    let (_, factory) = PowerCycles::power_on(NorWords(f.clone()), || settings.erase(SETTINGS));
+    assert!(factory);
+    let ops = f.ops();
+    assert!(ops.len() > 1, "{ops:?}");
+    let replay = pre.snapshot();
+    let mut rng = Rng(0x5EED);
+    for (j, op) in ops.iter().enumerate() {
+        for (label, cut) in cuts(&replay, op, &mut rng) {
+            let erased = settings_erased(&cut);
+            let (_, again) = PowerCycles::power_on(NorWords(cut), || {});
+            assert!(again || erased, "operation {j} ({op:?}), cut {label}: the reset is neither done nor retried");
+        }
+        replay.apply(op);
+    }
+    assert!(settings_erased(&replay));
+    assert!(!PowerCycles::power_on(NorWords(replay), || {}).1);
 }

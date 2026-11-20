@@ -26,7 +26,7 @@ pub struct PowerCycles<S> {
 }
 
 impl<S: WordStore> PowerCycles<S> {
-    pub fn power_on(store: S) -> (Self, bool) {
+    pub fn power_on(store: S, factory_reset: impl FnOnce()) -> (Self, bool) {
         let mut s = PowerCycles { store, slot: 0, open: false, step: 0, long_done: false };
         let slots = s.store.slots();
         let active = (1..slots).find(|&k| s.store.read(k) != 0);
@@ -44,6 +44,7 @@ impl<S: WordStore> PowerCycles<S> {
         let mut factory = false;
         let mut n = match bits(w) {
             Some(MAGIC_BITS) => {
+                factory_reset();
                 s.next();
                 factory = true;
                 0

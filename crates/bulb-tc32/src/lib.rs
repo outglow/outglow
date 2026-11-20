@@ -49,11 +49,8 @@ fn run() -> ! {
     let (mut cycles, factory_reset) = if warm {
         (PowerCycles::idle(board::FlashWords), false)
     } else {
-        PowerCycles::power_on(board::FlashWords)
+        PowerCycles::power_on(board::FlashWords, self::factory_reset)
     };
-    if factory_reset {
-        self::factory_reset();
-    }
     link::publish_start(cycles.step(), factory_reset, warm);
     let mut bulb = Bulb::boot(board::LedPwm::new(), board::SystemClock::new(), board::FlashStore::new(), zb::Link::take());
     if factory_reset {

@@ -30,7 +30,9 @@ impl WordStore for Words {
 }
 
 fn power(store: Words, seconds: u64) -> (Words, bool) {
-    let (mut c, factory) = PowerCycles::power_on(store);
+    let mut resets = 0;
+    let (mut c, factory) = PowerCycles::power_on(store, || resets += 1);
+    assert_eq!(resets, u32::from(factory));
     for ms in (0..=seconds * 1000).step_by(100) {
         c.tick(ms);
     }
@@ -145,10 +147,10 @@ fn a_sector_that_is_not_as_this_counter_leaves_it_starts_over() {
 
 #[test]
 fn the_step_counts_the_power_ons_of_the_sequence() {
-    let (c, _) = PowerCycles::power_on(Words::new(64));
+    let (c, _) = PowerCycles::power_on(Words::new(64), || {});
     assert_eq!(c.step(), 1);
     let (store, _) = sequence(&[1, 1]);
-    let (c, _) = PowerCycles::power_on(store);
+    let (c, _) = PowerCycles::power_on(store, || {});
     assert_eq!(c.step(), 3);
 }
 
