@@ -208,6 +208,55 @@ fn a_search_for_the_network_passes_over_beacons_of_another_network() {
 }
 
 #[test]
+fn a_search_after_silence_that_finds_the_network_under_a_newer_pan_asks_to_rejoin_and_unanswered_returns_to_its_own() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let port = net.nodes[n].id;
+    net.link(0, port, 0);
+    net.run_until(400_000, "searching", |net| net.nodes[n].stack.state() == State::Scan);
+    let other = Zed::new(&net.air, false);
+    net.link(port, other.id, 200);
+    let mut beacon = zigbee::util::Buf::new();
+    zigbee::mac::Beacon {
+        pan: 0x2B3C,
+        short: 0x7777,
+        permit_join: false,
+        pan_coordinator: false,
+        stack_profile: 2,
+        protocol_version: 2,
+        router_capacity: true,
+        end_device_capacity: true,
+        depth: 1,
+        ext_pan: EXT_PAN,
+        update_id: 1,
+    }
+    .write(1, &mut beacon);
+    let t = net.now();
+    for _ in 0..400 {
+        if net.nodes[n].stack.state() != State::Scan {
+            break;
+        }
+        let channel = net.air.borrow().ports[port].channel;
+        if channel == 15 {
+            net.air.borrow_mut().ports[other.id].channel = channel;
+            net.air.borrow_mut().ports[other.id].powered = true;
+            net.air.borrow_mut().transmit(other.id, beacon.as_slice());
+        }
+        net.run(20);
+    }
+    net.run_until(60_000, "up again", |net| net.nodes[n].stack.state() == State::Up);
+    let asked = net.sent_by(port, t).iter().filter(|f| f[0] & 7 == 1 && f[3..7] == [0x3C, 0x2B, 0x77, 0x77]).count();
+    assert_eq!(asked, 1, "a secured rejoin request to the router of the newer PAN");
+    net.run(3_000);
+    let s = &net.nodes[n].stack;
+    assert_eq!((s.channel(), s.pan_id(), net.air.borrow().ports[port].channel), (11, PAN, 11), "unanswered: back on its own network");
+    net.power_cycle(n);
+    net.run(1_000);
+    let s = &net.nodes[n].stack;
+    assert_eq!((s.channel(), s.pan_id()), (11, PAN), "and nothing of the newer PAN stored");
+}
+
+#[test]
 fn a_search_after_silence_that_finds_the_network_on_its_channel_does_not_rejoin() {
     let mut net = Net::new();
     let n = net.join_node();

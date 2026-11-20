@@ -220,6 +220,7 @@ fn beacons_are_taken_only_while_scanning_and_when_searching_only_those_of_the_ne
     s.state = State::Scan;
     s.searching = Some(0);
     s.nib.ext_pan = 9;
+    s.nib.pan = 0x1A62;
     beacon(&mut s, 1);
     assert!(order(&s).is_empty(), "another network");
     beacon(&mut s, 9);
@@ -425,4 +426,31 @@ fn a_pan_conflict_reported_just_before_leaving_does_not_quiet_the_next_network()
     s.pan_report_at = Some(s.hal.now + 60_000);
     s.network_up(s.hal.now);
     assert_eq!(s.pan_report_at, None);
+}
+
+#[test]
+fn when_searching_a_beacon_of_the_network_under_another_pan_is_taken_only_with_a_newer_update_id() {
+    for (pan, update_id, taken) in [
+        (0x1A62, 5, true),
+        (0x1A62, 4, true),
+        (0x2B00, 5, false),
+        (0x2B00, 4, false),
+        (0x2B00, 6, true),
+        (0x2B00, 5 + 0x7F, true),
+        (0x2B00, 5 + 0x80, false),
+    ] {
+        let mut s = stack();
+        s.state = State::Scan;
+        s.searching = Some(11);
+        s.nib.ext_pan = 1;
+        s.nib.pan = 0x1A62;
+        s.nib.update_id = 5;
+        let mut c = candidate(1, 200, true, 1).beacon;
+        (c.pan, c.update_id) = (pan, update_id);
+        let mut f = crate::util::Buf::new();
+        c.write(7, &mut f);
+        let (h, off) = mac::Header::parse(f.as_slice()).unwrap();
+        s.on_beacon(&h, &f.as_slice()[off..], 200);
+        assert_eq!(order(&s).len() == 1, taken, "{pan:04x} {update_id}");
+    }
 }

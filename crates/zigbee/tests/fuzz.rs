@@ -604,6 +604,7 @@ fn fuzz(seed: u64, steps: u64, jump_days: u64) {
     }
     for n in 0..3 {
         w.net.power_cycle(n);
+        w.net.coord.seen.clear();
         w.net.run(30_000);
         assert_eq!(w.net.nodes[n].stack.state(), State::Up, "seed {seed}: node {n} after reload");
         refresh(&mut w);
@@ -1401,4 +1402,72 @@ fn one_unsecured_rejoin_in_a_neighbours_name_leaves_its_router_relaying_every_fr
     inject(&mut w, 0, f);
     w.net.run(60 * 60_000);
     assert!(answers(&mut w, 1), "an hour after one unsecured rejoin request in b's name, b (behind a) answers the coordinator");
+}
+
+fn outsider_pan_then(answer: bool, update_id: u8) -> (State, u16, u16, bool) {
+    let mut w = world();
+    let zp = w.zport;
+    w.net.air.borrow_mut().ports[zp].powered = false;
+    assert_eq!(all_answer(&mut w), vec![true; 3]);
+    let sc = w.shorts[2];
+    w.net.set_power(1, false);
+    w.net.run(1_000);
+    for k in 0..5 {
+        let f = garbage_secured(sc, 0x1234, 0x55, k);
+        inject(&mut w, 2, f);
+        w.net.run(20);
+    }
+    let mut waited = false;
+    let mut scanned = false;
+    for _ in 0..60_000 {
+        w.net.run(1);
+        let st = w.net.nodes[2].stack.state();
+        if st == State::Scan && w.net.now() % 20 == 0 {
+            scanned = true;
+            let b = mac::Beacon { pan: 0x7777, short: 0x5555, permit_join: false, pan_coordinator: false, stack_profile: 2, protocol_version: 2, router_capacity: true, end_device_capacity: true, depth: 1, ext_pan: EXT_PAN, update_id };
+            let mut f = Buf::new();
+            b.write(1, &mut f);
+            inject(&mut w, 2, f.as_slice().to_vec());
+        }
+        if answer && st == State::Up && scanned && !waited && w.net.now() % 20 == 0 {
+            let mut h = nwk::Header::new(nwk::FRAME_CMD, sc, 0x5555, 1, 9);
+            h.security = false;
+            let mut f = Buf::new();
+            mac::Header { frame_type: mac::FRAME_DATA, security: false, pending: false, ack_request: true, seq: 7, dst_pan: 0x7777, dst: Addr::Short(sc), src_pan: 0x7777, src: Addr::Short(0x5555) }.write(&mut f);
+            h.write(&mut f);
+            f.bytes(&[nwk::CMD_REJOIN_RESPONSE, 0x66, 0x66, 0x00]);
+            inject(&mut w, 2, f.as_slice().to_vec());
+        }
+        waited |= st == State::WaitKey;
+        if waited && st != State::WaitKey {
+            break;
+        }
+    }
+    assert!(scanned);
+    assert_eq!(waited, answer && (1..0x80).contains(&update_id));
+    w.net.set_power(1, true);
+    w.net.power_cycle(1);
+    w.net.run(60_000);
+    let n = &w.net.nodes[2].stack;
+    let (st, pan, short) = (n.state(), n.pan_id(), n.short_address());
+    (st, pan, short, answers(&mut w, 2))
+}
+
+#[test]
+fn an_outsider_answering_an_unsecured_rejoin_from_another_pan_leaves_the_bulb_on_its_own_pan() {
+    let sc = world().shorts[2];
+    assert_eq!(outsider_pan_then(true, 1), (State::Up, PAN, sc, true));
+}
+
+#[test]
+fn an_outsider_beacon_from_another_pan_during_an_unsecured_rejoin_leaves_the_bulb_on_its_own_pan() {
+    let sc = world().shorts[2];
+    assert_eq!(outsider_pan_then(false, 0x7F), (State::Up, PAN, sc, true));
+}
+
+#[test]
+fn a_beacon_of_our_network_under_another_pan_without_a_newer_update_id_is_not_rejoined() {
+    let sc = world().shorts[2];
+    assert_eq!(outsider_pan_then(true, 0), (State::Up, PAN, sc, true));
+    assert_eq!(outsider_pan_then(true, 0x80), (State::Up, PAN, sc, true));
 }

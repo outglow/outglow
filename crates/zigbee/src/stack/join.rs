@@ -77,16 +77,28 @@ impl<H: Hal> Stack<H> {
         self.search_network(now);
     }
 
-    pub(crate) fn rejoin_next(&mut self, now: u32, secure: bool) -> bool {
+    pub(crate) fn rejoin_next(&mut self, now: u32, secure: bool) {
         let Some(c) = self.candidate_take() else {
-            return false;
+            self.restore_network();
+            return;
         };
         let parent = c.beacon.short;
+        self.nib.channel = c.channel;
+        self.nib.pan = c.beacon.pan;
+        self.nib.update_id = c.beacon.update_id;
+        self.hal.set_channel(c.channel);
+        self.hal.set_filter(c.beacon.pan, self.nib.short);
         let mut h = self.new_header(nwk::FRAME_CMD, parent, 1);
         h.security = secure;
         self.transmit_nwk(parent, &h, &[nwk::CMD_REJOIN_REQUEST, mac::CAPABILITY_ROUTER & !mac::CAPABILITY_ALLOCATE_ADDRESS]);
         self.rejoin_wait = Some((secure, now.wrapping_add(REJOIN_WAIT_MS), parent, c.beacon.depth));
-        true
+    }
+
+    fn restore_network(&mut self) {
+        if self.load_network() {
+            self.hal.set_channel(self.nib.channel);
+            self.hal.set_filter(self.nib.pan, self.nib.short);
+        }
     }
 
     pub(crate) fn on_rejoin_response(&mut self, h: &nwk::Header, mac_src: u16, p: &[u8]) {
@@ -165,26 +177,15 @@ impl<H: Hal> Stack<H> {
                         return;
                     }
                     self.searching = None;
-                    if let Some(c) = found {
-                        self.nib.channel = c.channel;
-                        self.nib.pan = c.beacon.pan;
-                        self.nib.update_id = c.beacon.update_id;
-                        self.store_network();
-                    } else {
-                        self.nib.channel = home;
-                    }
-                    self.hal.set_channel(self.nib.channel);
+                    self.nib.channel = home;
+                    self.hal.set_channel(home);
                     self.hal.set_filter(self.nib.pan, self.nib.short);
                     self.state = State::Up;
                     self.heard_at = now;
                     self.log_event(super::diag::ev::UP, self.nib.short, self.nib.parent);
-                    match self.rejoin.take() {
-                        Some(secure) => {
-                            self.rejoin_next(now, secure);
-                        }
-                        None if found.is_some_and(|c| c.channel != home) => {
-                            self.rejoin_next(now, true);
-                        }
+                    let moved = found.is_some_and(|c| c.channel != home || c.beacon.pan != self.nib.pan);
+                    match self.rejoin.take().or(moved.then_some(true)) {
+                        Some(secure) => self.rejoin_next(now, secure),
                         None => self.scan_found = [None; CANDIDATES],
                     }
                 } else if all || (self.scan_index == PRIMARY_CHANNELS && found.is_some()) {
@@ -273,7 +274,8 @@ impl<H: Hal> Stack<H> {
             return;
         }
         if self.searching.is_some() {
-            if b.ext_pan != self.nib.ext_pan {
+            let newer = (b.update_id.wrapping_sub(self.nib.update_id) as i8) > 0;
+            if b.ext_pan != self.nib.ext_pan || (b.pan != self.nib.pan && !newer) {
                 return;
             }
         } else if b.stack_profile != 2 || !b.permit_join || !b.router_capacity || b.pan == 0xFFFF {
