@@ -3,6 +3,7 @@ use ble::Identity;
 
 use crate::ble_radio;
 use crate::board::BOARD;
+use crate::cell::Shared;
 use crate::radio;
 use crate::flash;
 use crate::reg;
@@ -84,6 +85,47 @@ fn drop_backup() {
     }
 }
 
+fn record(data: &[u8]) -> ([u8; RECORD_BUF], usize) {
+    let len = data.len().min(RECORD_MAX);
+    let mut rec = [0u8; RECORD_BUF];
+    rec[1] = len as u8;
+    rec[2..2 + len].copy_from_slice(&data[..len]);
+    rec[2 + len] = checksum(&data[..len]);
+    (rec, 3 + len)
+}
+
+fn rewrite(rec: &[u8], backup: bool) {
+    if backup {
+        if !flash::blank(SPARE) {
+            flash::erase_sector(SPARE);
+        }
+        put(SPARE + BACKUP_LEN, rec);
+        flash::write(SPARE, &BACKUP);
+        flash::write(MAIN, &[0]);
+    }
+    flash::erase_sector(MAIN);
+    put(MAIN, rec);
+    drop_backup();
+}
+
+pub(crate) static TIDY: Shared<bool> = Shared::new(true);
+
+pub fn tidy() -> bool {
+    if !TIDY.get() {
+        return false;
+    }
+    TIDY.set(false);
+    let (last, free) = scan(MAIN, 0);
+    let Some((at, len)) = last.filter(|_| free + RECORD_BUF > SECTOR_SIZE) else {
+        return false;
+    };
+    let mut data = [0u8; RECORD_MAX];
+    flash::read(at, &mut data[..len]);
+    let (rec, n) = record(&data[..len]);
+    rewrite(&rec[..n], true);
+    true
+}
+
 pub fn erase_settings() {
     drop_backup();
     if !flash::blank(MAIN) {
@@ -158,29 +200,16 @@ impl Hal for BleHal {
     }
 
     fn nv_store(&mut self, data: &[u8]) {
-        let len = data.len().min(RECORD_MAX);
-        let mut rec = [0u8; RECORD_BUF];
-        rec[1] = len as u8;
-        rec[2..2 + len].copy_from_slice(&data[..len]);
-        rec[2 + len] = checksum(&data[..len]);
-        let rec = &rec[..3 + len];
+        let (rec, n) = record(data);
+        let rec = &rec[..n];
         let (last, free) = scan(MAIN, 0);
+        TIDY.set(true);
         if free + rec.len() <= SECTOR_SIZE && blank_at(MAIN + free, rec.len()) {
             put(MAIN + free, rec);
             drop_backup();
             return;
         }
-        if last.is_some() {
-            if !flash::blank(SPARE) {
-                flash::erase_sector(SPARE);
-            }
-            put(SPARE + BACKUP_LEN, rec);
-            flash::write(SPARE, &BACKUP);
-            flash::write(MAIN, &[0]);
-        }
-        flash::erase_sector(MAIN);
-        put(MAIN, rec);
-        drop_backup();
+        rewrite(rec, last.is_some());
     }
 
     fn ota_capacity(&mut self) -> u32 {

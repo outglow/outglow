@@ -214,3 +214,57 @@ fn a_record_of_no_bytes_is_no_item() {
     assert_eq!(nv.load(7, &mut [0u8; 4]), Some(4));
 }
 
+
+#[test]
+fn the_spare_sector_is_erased_once_the_log_is_three_quarters_full() {
+    let f = medium();
+    let mut nv = filled_to(&f, SIZE * 3 / 4 - 1);
+    f.poke(SECTORS[0] + 8, &[0]);
+    assert!(!nv.prepare());
+    assert_eq!((f.erases(), f.reads()), (0, 0));
+    let f = medium();
+    let mut nv = filled_to(&f, SIZE * 3 / 4);
+    f.poke(SECTORS[0] + 8, &[0]);
+    assert!(nv.prepare());
+    assert_eq!(f.ops(), [FlashOp::Erase { addr: SECTORS[0] }]);
+    f.clear_ops();
+    assert!(!nv.prepare());
+    assert_eq!((f.erases(), f.reads()), (0, 0), "a second call looks at nothing");
+    for _ in 0..8 {
+        nv.store(1, &[0x44; MAX_ITEM]);
+    }
+    assert_eq!(f.erases(), 0, "the move went into the erased sector");
+    assert_eq!(load(&open(&f), 1), Some(vec![0x44; MAX_ITEM]));
+}
+
+#[test]
+fn with_the_idle_hook_after_each_store_no_compaction_erases() {
+    let f = medium();
+    let mut nv = open(&f);
+    let (mut in_store, mut in_prepare) = (0, 0);
+    for k in 0..200u32 {
+        f.clear_ops();
+        nv.store(1 + (k % 3) as u8, &[k as u8; 100]);
+        in_store += f.erases();
+        f.clear_ops();
+        nv.prepare();
+        in_prepare += f.erases();
+    }
+    assert_eq!((in_store, in_prepare), (0, 4));
+    assert_eq!(load(&open(&f), 2), Some(vec![199; 100]));
+}
+
+#[test]
+fn after_forgetting_the_spare_is_known_to_be_blank() {
+    let f = medium();
+    let mut nv = open(&f);
+    nv.store(1, &[1]);
+    nv.store(2, &[2]);
+    nv.forget_all_but(2);
+    for _ in 0..20 {
+        nv.store(1, &[0x11; MAX_ITEM]);
+    }
+    f.clear_ops();
+    assert!(!nv.prepare());
+    assert_eq!((f.erases(), f.reads()), (0, 0));
+}

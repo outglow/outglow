@@ -30,6 +30,7 @@ enum Op {
     Store(u8, Vec<u8>),
     Pair((u8, Vec<u8>), (u8, Vec<u8>)),
     Forget(u8),
+    Prepare,
 }
 
 impl Op {
@@ -38,6 +39,9 @@ impl Op {
             Op::Store(id, d) => nv.store(*id, d),
             Op::Pair((a, da), (b, db)) => nv.store_pair((*a, da), (*b, db)),
             Op::Forget(keep) => nv.forget_all_but(*keep),
+            Op::Prepare => {
+                nv.prepare();
+            }
         }
     }
     fn after(&self, before: &Items) -> Items {
@@ -51,6 +55,7 @@ impl Op {
                 m.insert(*b, db.clone());
             }
             Op::Forget(keep) => m.retain(|id, _| id == keep),
+            Op::Prepare => {}
         }
         m
     }
@@ -71,8 +76,9 @@ fn next_op(rng: &mut Rng, counter: &mut u32) -> Op {
         let len = 1 + (rng.next() as usize) % 160;
         (0..len).map(|_| rng.byte()).collect()
     };
-    match rng.next() % 20 {
+    match rng.next() % 24 {
         0 => Op::Forget(COUNTERS),
+        20..=23 => Op::Prepare,
         1..=5 => {
             let c = item(rng, COUNTERS);
             let id = 1 + (rng.next() % (N as u64 - 1)) as u8;
@@ -140,7 +146,7 @@ fn nv_log_chained_cuts() {
                 bad = true;
                 lost.push(format!(
                     "chain {chain} op {i} {}: item {id} = {:?} B, had {:?} B, stored {:?} B (cut {label} in flash op {j}/{} {:?})",
-                    match &op { Op::Store(id, d) => format!("store {id} ({} B)", d.len()), Op::Pair((a, _), (b, _)) => format!("pair {a}+{b}"), Op::Forget(k) => format!("forget all but {k}") },
+                    match &op { Op::Store(id, d) => format!("store {id} ({} B)", d.len()), Op::Pair((a, _), (b, _)) => format!("pair {a}+{b}"), Op::Forget(k) => format!("forget all but {k}"), Op::Prepare => "prepare".into() },
                     g.map(|v| v.len()), b.map(|v| v.len()), a.map(|v| v.len()), fops.len(), match &fops[j] { bulb_sim::FlashOp::Program { addr, data } => format!("program {addr:#x} {} B", data.len()), bulb_sim::FlashOp::Erase { addr } => format!("erase {addr:#x}") }
                 ));
             }
@@ -192,6 +198,7 @@ fn light_log_chains(seed: u64, chains: u64, sizes: &[usize], erase_every: u64, c
         let ops = 300 + (rng.next() % 900) as usize;
         for i in 0..ops {
             let erase = rng.next() % erase_every == 0;
+            let prepare = !erase && rng.next() % 4 == 0;
             let r = rec(&mut rng);
             let pre = f.snapshot();
             let mut log = LightLog::new(f.clone(), [A, B], size);
@@ -200,13 +207,21 @@ fn light_log_chains(seed: u64, chains: u64, sizes: &[usize], erase_every: u64, c
                 break;
             }
             f.clear_ops();
-            if erase {
-                log.erase();
-            } else {
-                log.store(&r);
-            }
+            let after = match (erase, prepare) {
+                (true, _) => {
+                    log.erase();
+                    None
+                }
+                (false, true) => {
+                    log.prepare();
+                    model
+                }
+                (false, false) => {
+                    log.store(&r);
+                    Some(r)
+                }
+            };
             ops_done += 1;
-            let after = if erase { None } else { Some(r) };
             let fops = f.ops();
             if fops.is_empty() || rng.next() % cut_every != 0 {
                 model = after;
@@ -223,7 +238,7 @@ fn light_log_chains(seed: u64, chains: u64, sizes: &[usize], erase_every: u64, c
             cuts_done += 1;
             let got = LightLog::new(cut.clone(), [A, B], size).current();
             if got != model && got != after {
-                lost.push(format!("chain {chain} op {i} ({}): got {:02x?}, before {:02x?}, after {:02x?} (cut {label} in flash op {j}/{} {:?})", if erase { "erase" } else { "store" }, got, model, after, fops.len(), fops[j]));
+                lost.push(format!("chain {chain} op {i} ({}): got {:02x?}, before {:02x?}, after {:02x?} (cut {label} in flash op {j}/{} {:?})", match (erase, prepare) { (true, _) => "erase", (false, true) => "prepare", (false, false) => "store" }, got, model, after, fops.len(), fops[j]));
                 break;
             }
             f = cut;

@@ -53,6 +53,10 @@ fn reports_and_network_state_are_published() {
     assert_eq!(BULB_STATE.read(STATE_POWER_ON_BEHAVIOR), PowerOnBehavior::Previous.to_u8());
     assert_eq!(BULB_STATE.read(STATE_STARTUP_LEVEL), 9);
     assert_eq!(BULB_STATE.read(STATE_REPORTS), n.wrapping_add(1));
+    assert_eq!(BULB_STATE.read(STATE_REPORTED), BULB_STATE.read(STATE_DONE));
+    BULB_STATE.write(STATE_DONE, 0x42);
+    l.report(&r);
+    assert_eq!(BULB_STATE.read(STATE_REPORTED), 0x42, "a report carries the command it answers");
     publish_network(2, 0x1234, 15);
     assert_eq!([BULB_NET.read(0), BULB_NET.read(1), BULB_NET.read(2), BULB_NET.read(3)], [2, 15, 0x34, 0x12]);
     publish_start(3, true, false);

@@ -442,6 +442,14 @@ impl ConfigStore for FlashStore {
             flash::stored();
         }
     }
+
+    fn prepare(&mut self) {
+        if !self.0.prepare() {
+            if let Some(c) = self.1.as_mut() {
+                c.prepare();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

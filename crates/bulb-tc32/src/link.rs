@@ -13,6 +13,7 @@ const STATE_POWER_ON_BEHAVIOR: usize = 3;
 const STATE_STARTUP_LEVEL: usize = 4;
 const STATE_REPORTS: usize = 5;
 const STATE_REJECTED: usize = 6;
+const STATE_REPORTED: usize = 7;
 
 const NET_STATE: usize = 0;
 const NET_CHANNEL: usize = 1;
@@ -83,6 +84,7 @@ impl Radio for DebugLink {
         BULB_STATE.write(STATE_POWER_ON_BEHAVIOR, s.power_on_behavior.to_u8());
         BULB_STATE.write(STATE_STARTUP_LEVEL, s.startup_level);
         BULB_STATE.write(STATE_REPORTS, BULB_STATE.read(STATE_REPORTS).wrapping_add(1));
+        BULB_STATE.write(STATE_REPORTED, BULB_STATE.read(STATE_DONE));
     }
 }
 

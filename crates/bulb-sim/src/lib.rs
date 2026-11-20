@@ -226,6 +226,7 @@ struct NorInner {
     sector: usize,
     mem: Vec<u8>,
     ops: Vec<FlashOp>,
+    reads: usize,
 }
 
 pub const MAX_OPS: usize = 1_000_000;
@@ -237,18 +238,24 @@ pub struct NorFlash {
 
 impl NorFlash {
     pub fn new(base: usize, len: usize, sector: usize) -> Self {
-        NorFlash { inner: Rc::new(RefCell::new(NorInner { base, sector, mem: vec![0xFF; len], ops: Vec::new() })) }
+        NorFlash { inner: Rc::new(RefCell::new(NorInner { base, sector, mem: vec![0xFF; len], ops: Vec::new(), reads: 0 })) }
     }
     pub fn snapshot(&self) -> NorFlash {
         let mut i = self.inner.borrow().clone();
         i.ops.clear();
+        i.reads = 0;
         NorFlash { inner: Rc::new(RefCell::new(i)) }
     }
     pub fn ops(&self) -> Vec<FlashOp> {
         self.inner.borrow().ops.clone()
     }
     pub fn clear_ops(&self) {
-        self.inner.borrow_mut().ops.clear();
+        let mut i = self.inner.borrow_mut();
+        i.ops.clear();
+        i.reads = 0;
+    }
+    pub fn reads(&self) -> usize {
+        self.inner.borrow().reads
     }
     pub fn programs(&self) -> usize {
         self.inner.borrow().ops.iter().filter(|o| matches!(o, FlashOp::Program { .. })).count()
@@ -301,7 +308,8 @@ impl NorFlash {
 
 impl bulb_core::store::Flash for NorFlash {
     fn read(&self, addr: usize, buf: &mut [u8]) {
-        let i = self.inner.borrow();
+        let mut i = self.inner.borrow_mut();
+        i.reads += 1;
         let o = addr - i.base;
         buf.copy_from_slice(&i.mem[o..o + buf.len()]);
     }

@@ -28,11 +28,12 @@ pub struct NvLog<F, const N: usize> {
     feed: fn(),
     active: usize,
     free: usize,
+    spare_blank: bool,
 }
 
 impl<F: Flash, const N: usize> NvLog<F, N> {
     pub fn new(flash: F, sectors: [usize; 2], size: usize, feed: fn()) -> Self {
-        let mut nv = NvLog { flash, sectors, size, feed, active: 0, free: size };
+        let mut nv = NvLog { flash, sectors, size, feed, active: 0, free: size, spare_blank: false };
         nv.active = match (nv.generation(0), nv.generation(1)) {
             (Some(a), Some(b)) => {
                 if b.wrapping_sub(a) as i8 > 0 {
@@ -217,6 +218,20 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
         self.write(self.sectors[target], &[0xa5, next, !next, 0x5a]);
         self.active = target;
         self.free = off;
+        self.spare_blank = false;
+    }
+
+    pub fn prepare(&mut self) -> bool {
+        if self.spare_blank || self.free * 4 < self.size * 3 {
+            return false;
+        }
+        self.spare_blank = true;
+        let spare = self.sectors[1 - self.active];
+        let dirty = !self.blank(spare);
+        if dirty {
+            self.flash.erase(spare);
+        }
+        dirty
     }
 
     pub fn forget_all_but(&mut self, keep: u8) {
@@ -239,5 +254,6 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
         if !self.blank(self.sectors[old]) {
             self.flash.erase(self.sectors[old]);
         }
+        self.spare_blank = true;
     }
 }

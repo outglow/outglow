@@ -228,7 +228,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let tb = host_duty_table().map_err(Stop::Error)?;
     let ev = Rc::new(RefCell::new(Vec::new()));
     let node = Bulb::power_on(&image, &ev, a("FW_OFFSET") as i64)?;
-    let b = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev, bitten: None, expect_wd: false };
+    let b = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev, bitten: None, expect_wd: false, tagged: true };
     let tap = Rc::new(RefCell::new(Tap::default()));
     let mut r = Run { cx, b, tap, tb, k: 0, cur: (0, 0) };
     install(&mut r.b, &r.tap);
@@ -313,7 +313,7 @@ fn migrate(r: &mut Run, image: &[u8], fw_offset: usize) -> R<()> {
         let (addr, _) = syms(&elf).map_err(Stop::Error)?;
         let a = |n: &str| addr.iter().find(|(k, _)| k == n).map(|(_, v)| *v as usize).unwrap_or(0);
         let node = Bulb::power_on(&old, &r.b.ev, a("FW_OFFSET") as i64)?;
-        let mut ob = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev: r.b.ev.clone(), bitten: None, expect_wd: false };
+        let mut ob = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev: r.b.ev.clone(), bitten: None, expect_wd: false, tagged: false };
         ob.boot(400.0)?;
         ob.cmd1(&[OP_POWER_ON, POB_PREVIOUS])?;
         for k in 0..40u32 {

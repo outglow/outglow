@@ -34,11 +34,15 @@ pub trait ConfigStore {
         None
     }
     fn store_colour(&mut self, _data: &[u8]) {}
+    fn prepare(&mut self) {}
 }
 
 pub trait Radio {
     fn poll(&mut self) -> Option<crate::command::Command>;
     fn report(&mut self, state: &crate::command::StateReport);
+    fn housekeep(&mut self) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

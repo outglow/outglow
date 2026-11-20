@@ -628,3 +628,77 @@ fn a_record_torn_after_its_name_is_not_loaded_as_the_settings() {
     let got = load_on(&flash_copy());
     assert!(got == Some(old.clone()) || got == Some(new.clone()), "a cut after the name loads {got:02x?}");
 }
+
+#[test]
+fn the_idle_hook_starts_the_settings_over_once_another_record_may_not_fit() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    fill_to(SECTOR_SIZE - RECORD_BUF);
+    assert!(!tidy());
+    assert!(erases().is_empty());
+    hal.nv_store(&[0x33; 6]);
+    assert!(erases().is_empty());
+    let (last, free) = scan(MESH_SECTOR, 0);
+    assert_eq!(free, SECTOR_SIZE - RECORD_BUF + 9);
+    assert!(tidy());
+    assert_eq!(erases(), [MESH_SECTOR]);
+    assert_eq!(last.map(|(_, n)| n), Some(6));
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + 2, 6)), 9));
+    assert!(!backed_up());
+    let mut buf = [0u8; 8];
+    assert_eq!(hal.nv_load(&mut buf), Some(6));
+    assert_eq!(buf[..6], [0x33; 6]);
+    assert!(!tidy());
+    assert_eq!(erases(), [MESH_SECTOR], "nothing stored since: nothing to look at");
+}
+
+#[test]
+fn the_idle_hook_looks_again_only_after_a_store() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    assert!(!tidy());
+    fill_to(SECTOR_SIZE - RECORD_BUF + 1);
+    assert!(!tidy());
+    assert!(erases().is_empty());
+    hal.nv_store(&[]);
+    assert!(tidy());
+    assert_eq!(erases(), [MESH_SECTOR]);
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + 2, 0)), 3));
+}
+
+#[test]
+fn a_second_start_over_from_the_idle_hook_erases_the_used_spare_first() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    hal.nv_store(&[1; 4]);
+    fill(MESH_SECTOR, 7, SECTOR_SIZE - 2);
+    hal.nv_store(&[2; 4]);
+    assert_eq!(erases(), [MESH_SECTOR]);
+    sim::with(|c| c.flash_ops.clear());
+    fill(MESH_SECTOR, 7, SECTOR_SIZE - 6);
+    hal.nv_store(&[]);
+    assert!(erases().is_empty());
+    assert!(tidy());
+    assert_eq!(erases(), [SPARE, MESH_SECTOR]);
+}
+
+#[test]
+fn a_sector_full_of_broken_records_is_left_to_the_next_store() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    fill_to(SECTOR_SIZE - 3);
+    sim::with(|c| {
+        let mut off = 0;
+        while off + 3 <= SECTOR_SIZE && c.flash[MESH_SECTOR + off] == 0xa5 {
+            let len = c.flash[MESH_SECTOR + off + 1] as usize;
+            c.flash[MESH_SECTOR + off + 2 + len] ^= 0xff;
+            off += 3 + len;
+        }
+    });
+    assert_eq!(scan(MESH_SECTOR, 0), (None, SECTOR_SIZE - 3));
+    TIDY.set(true);
+    assert!(!tidy());
+    assert!(erases().is_empty());
+    let mut buf = [0u8; 8];
+    assert_eq!(hal.nv_load(&mut buf), None);
+}

@@ -479,6 +479,10 @@ impl Radio for &mut Link {
     fn report(&mut self, state: &StateReport) {
         (**self).report(state)
     }
+
+    fn housekeep(&mut self) -> bool {
+        (**self).housekeep()
+    }
 }
 
 impl Radio for Link {
@@ -546,6 +550,17 @@ impl Radio for Link {
     fn report(&mut self, state: &StateReport) {
         self.light = Some(*state);
         self.debug.report(state);
+    }
+
+    fn housekeep(&mut self) -> bool {
+        if self.light.is_some() || radio::has_frame() {
+            return false;
+        }
+        #[cfg(feature = "ble")]
+        if crate::ble::tidy() {
+            return false;
+        }
+        self.stack.as_mut().is_some_and(|s| !s.hal.nv.prepare())
     }
 }
 

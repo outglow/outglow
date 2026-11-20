@@ -18,6 +18,7 @@ pub struct LightLog<F> {
     free: usize,
     current: Option<usize>,
     check: fn(&[u8]) -> bool,
+    spare_blank: bool,
 }
 
 fn is_config(r: &[u8]) -> bool {
@@ -43,7 +44,7 @@ impl<F: Flash> LightLog<F> {
     }
 
     pub fn of_records(flash: F, sectors: [usize; 2], size: usize, check: fn(&[u8]) -> bool) -> Self {
-        let mut log = LightLog { flash, sectors, size, active: None, free: size, current: None, check };
+        let mut log = LightLog { flash, sectors, size, active: None, free: size, current: None, check, spare_blank: false };
         let gens = [log.generation(0), log.generation(1)];
         let newest = match gens {
             [Some(a), Some(b)] if (b.wrapping_sub(a) as i8) > 0 => Some((1, b)),
@@ -147,6 +148,28 @@ impl<F: Flash> LightLog<F> {
         self.active = Some((target, gen));
         self.free = 2 * SLOT;
         self.current = Some(base + SLOT);
+        self.spare_blank = false;
+    }
+
+    fn spare(&self) -> usize {
+        match (self.active, self.current) {
+            (Some((idx, _)), _) => 1 - idx,
+            (None, Some(_)) => 1,
+            (None, None) => 0,
+        }
+    }
+
+    pub fn prepare(&mut self) -> bool {
+        if self.spare_blank || self.free * 4 < self.size * 3 {
+            return false;
+        }
+        self.spare_blank = true;
+        let spare = self.sectors[self.spare()];
+        let dirty = !self.blank(spare);
+        if dirty {
+            self.flash.erase(spare);
+        }
+        dirty
     }
 
     fn next(&self) -> (usize, u8) {
@@ -165,6 +188,7 @@ impl<F: Flash> LightLog<F> {
         self.flash.program(base, &slot_of(&header(0)));
         self.active = Some((0, 0));
         self.free = SLOT;
+        self.spare_blank = false;
     }
 
     pub fn erase(&mut self) {

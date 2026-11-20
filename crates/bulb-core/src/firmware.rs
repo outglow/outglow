@@ -239,6 +239,9 @@ where
                 self.pwm.set_cold_duty(0);
             }
         }
+        if !self.light.in_transition() && self.identify_until.is_none() && self.radio.housekeep() {
+            self.store.prepare();
+        }
     }
 
     pub fn is_identifying(&self) -> bool {

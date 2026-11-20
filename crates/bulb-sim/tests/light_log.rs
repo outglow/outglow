@@ -128,3 +128,114 @@ fn a_newer_sector_without_a_whole_record_falls_back_to_the_older() {
     assert_eq!(open(&f).current(), Some(rec(10)));
 }
 
+
+fn churn(log: &mut LightLog<NorFlash>, n: usize) {
+    for _ in 0..n {
+        let r = if log.current() == Some(rec(1)) { rec(2) } else { rec(1) };
+        log.store(&r);
+    }
+}
+
+fn filled(f: &NorFlash, records: usize) -> LightLog<NorFlash> {
+    let mut log = open(f);
+    churn(&mut log, records);
+    f.clear_ops();
+    log
+}
+
+const THREE_QUARTERS: usize = SIZE * 3 / 4 / SLOT;
+
+#[test]
+fn with_the_idle_hook_run_after_each_change_no_store_erases() {
+    let (kept, left) = (medium(), medium());
+    let (mut log, mut plain) = (open(&kept), open(&left));
+    let (mut in_store, mut in_prepare) = (0, 0);
+    for k in 0..511usize {
+        let r = rec((k % 250) as u8 + 1);
+        kept.clear_ops();
+        log.store(&r);
+        in_store += kept.erases();
+        kept.clear_ops();
+        log.prepare();
+        in_prepare += kept.erases();
+        plain.store(&r);
+        assert_eq!(open(&kept).current(), Some(r));
+    }
+    assert_eq!((in_store, in_prepare), (0, 1));
+    assert_eq!(left.erases(), 1, "without the idle hook the second move erases in the store");
+    assert_eq!(open(&left).current(), open(&kept).current());
+}
+
+#[test]
+fn the_spare_sector_is_erased_once_the_active_one_is_three_quarters_full() {
+    let f = medium();
+    f.poke(B + 5, &[0]);
+    let mut log = filled(&f, THREE_QUARTERS - 2);
+    assert!(!log.prepare());
+    assert_eq!((f.erases(), f.reads()), (0, 0));
+    log.store(&rec(250));
+    f.clear_ops();
+    assert!(log.prepare());
+    assert_eq!(f.ops(), [FlashOp::Erase { addr: B }]);
+    f.clear_ops();
+    assert!(!log.prepare());
+    assert_eq!((f.erases(), f.reads()), (0, 0), "a second call looks at nothing");
+    assert_eq!(open(&f).current(), Some(rec(250)));
+}
+
+#[test]
+fn a_blank_spare_is_only_checked_and_a_move_makes_the_next_spare_unknown() {
+    let f = medium();
+    let mut log = filled(&f, THREE_QUARTERS - 1);
+    assert!(!log.prepare());
+    assert_eq!(f.erases(), 0);
+    assert!(f.reads() > 0);
+    churn(&mut log, SIZE / SLOT - THREE_QUARTERS + 1);
+    assert_eq!(f.erases(), 0);
+    assert_eq!(open(&f).current(), log.current());
+    churn(&mut log, THREE_QUARTERS - 2);
+    f.clear_ops();
+    assert!(log.prepare());
+    assert_eq!(f.ops(), [FlashOp::Erase { addr: A }]);
+}
+
+#[test]
+fn a_log_started_on_blank_flash_does_not_trust_the_spare_it_checked_before() {
+    let f = medium();
+    f.poke(B + 5, &[0]);
+    let mut log = open(&f);
+    assert!(!log.prepare());
+    assert_eq!(f.erases(), 0);
+    churn(&mut log, THREE_QUARTERS - 1);
+    f.clear_ops();
+    assert!(log.prepare());
+    assert_eq!(f.ops(), [FlashOp::Erase { addr: B }]);
+}
+#[test]
+fn before_the_first_record_the_first_sector_is_the_spare() {
+    let f = medium();
+    f.poke(A + 5, &[0]);
+    f.poke(B + 5, &[0]);
+    let mut log = open(&f);
+    assert!(log.prepare());
+    assert_eq!(f.ops(), [FlashOp::Erase { addr: A }]);
+    f.clear_ops();
+    log.store(&rec(10));
+    assert_eq!(f.erases(), 0);
+    assert_eq!(open(&f).current(), Some(rec(10)));
+}
+
+#[test]
+fn a_legacy_log_has_the_second_sector_as_its_spare() {
+    let f = medium();
+    f.poke(A + 3 * BLOCK_LEN, &rec(50));
+    f.poke(B + 5, &[0]);
+    let mut log = open(&f);
+    assert!(log.prepare());
+    assert_eq!(f.ops(), [FlashOp::Erase { addr: B }]);
+    assert_eq!(open(&f).current(), Some(rec(50)));
+    f.clear_ops();
+    log.store(&rec(60));
+    assert_eq!(f.erases(), 0);
+    assert_eq!(open(&f).current(), Some(rec(60)));
+}

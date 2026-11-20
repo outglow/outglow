@@ -9,6 +9,16 @@ use super::{SimCtx, SimDef};
 use crate::runner::repo_root;
 use crate::session::{Stop, R};
 
+const FACTORY_RESET_ERASES: f64 = 5.0;
+
+fn factory_reset_boot_ms() -> f64 {
+    FACTORY_RESET_BOOT_MS + FACTORY_RESET_ERASES * erase_ms()
+}
+
+pub fn erase_ms() -> f64 {
+    std::env::var("TC32EMU_FLASH_TSE_US").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) / 1000.0
+}
+
 pub fn def() -> SimDef {
     SimDef { name: "rust_fw", doc: "the Rust firmware alone: PWM, debug-link commands, flash, power cycles, watchdog", run }
 }
@@ -178,6 +188,7 @@ pub struct St {
     startup: u8,
     reports: u8,
     rejected: u8,
+    reported: u8,
 }
 
 impl St {
@@ -216,6 +227,7 @@ pub struct Bulb {
     pub ev: Rc<RefCell<Vec<String>>>,
     pub bitten: Option<f64>,
     pub expect_wd: bool,
+    pub tagged: bool,
 }
 
 fn emu(e: String) -> Stop {
@@ -283,7 +295,7 @@ impl Bulb {
 
     pub fn st(&self) -> St {
         let b = self.sram(self.state, 8);
-        St { done: b[0], on: b[1], level: b[2], pob: b[3], startup: b[4], reports: b[5], rejected: b[6] }
+        St { done: b[0], on: b[1], level: b[2], pob: b[3], startup: b[4], reports: b[5], rejected: b[6], reported: b[7] }
     }
 
     fn net(&self) -> Net {
@@ -307,14 +319,23 @@ impl Bulb {
         self.node.m.sram[o + 1..o + 8].copy_from_slice(&p);
         self.node.m.sram[o] = self.seq;
         let before = self.st();
-        let end = self.ms() + timeout_ms;
+        let mut end = self.ms() + timeout_ms + erase_ms();
+        let mut taken = false;
         while self.ms() < end {
             self.run(0.25)?;
             if self.bitten.is_some() {
                 return Ok(false);
             }
             let s = self.st();
-            if s.done == self.seq && (s.reports, s.rejected) != (before.reports, before.rejected) {
+            if !taken && s.done == self.seq {
+                taken = true;
+                end = self.ms() + timeout_ms;
+            }
+            let answered = match self.tagged {
+                true => s.reported == self.seq,
+                false => s.reports != before.reports,
+            };
+            if s.done == self.seq && (answered || s.rejected != before.rejected) {
                 return Ok(true);
             }
         }
@@ -442,7 +463,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
 
     o.say("first power-on (blank configuration sector)");
     let node = Bulb::power_on(&image, &ev, a("FW_OFFSET") as i64)?;
-    let mut b = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev: ev.clone(), bitten: None, expect_wd: false };
+    let mut b = Bulb { node, cmd: a("BULB_CMD"), state: a("BULB_STATE"), net_block: a("BULB_NET"), seq: 0, ev: ev.clone(), bitten: None, expect_wd: false, tagged: true };
     let booted = b.boot(400.0).err().map(|e| format!("{e:?}"));
     let detail = booted.clone().unwrap_or_else(|| format!("pc={:#x} reports={}", b.node.m.r[15], b.st().reports));
     if !o.check("boots into the main loop", booted.is_none() && b.st().reports >= 1, &detail) {
@@ -641,7 +662,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     o.check("the counter follows the sequence", steps == [1, 2, 3, 5, 7], &sshow);
     o.check("no reset before the sixth power-on", b.net().factory == 0 && b.st().startup == 33, "");
     b.cycle()?;
-    let took = b.boot(FACTORY_RESET_BOOT_MS)?;
+    let took = b.boot(factory_reset_boot_ms())?;
     let (n, s) = (b.net(), b.st());
     o.check(
         "the sixth power-on is a factory reset: settings back to the defaults",
@@ -686,10 +707,10 @@ fn run(cx: &mut SimCtx) -> R<()> {
     }
     let slots = log_slots(&b.node.m.flash.mem);
     b.cycle()?;
-    let booted = b.boot(FACTORY_RESET_BOOT_MS);
+    let booted = b.boot(factory_reset_boot_ms());
     let n = b.net();
     o.check(
-        &format!("a factory reset over a full light log sector starts within {FACTORY_RESET_BOOT_MS:.0} ms"),
+        &format!("a factory reset over a full light log sector starts within {:.0} ms", factory_reset_boot_ms()),
         booted.is_ok() && slots.contains(&full) && n.factory == 1 && b.st().level == 254,
         &format!("{k} changes, log slots used {slots:?}, {}, {}", booted.map_or_else(|e| format!("{e:?}"), |t| format!("main loop after {t:.0} ms")), n.py()),
     );

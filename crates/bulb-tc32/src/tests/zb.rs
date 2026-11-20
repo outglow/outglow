@@ -888,6 +888,46 @@ mod ble_switch {
         Radio::report(&mut r, &report(true, 9));
         assert_eq!(link.light.map(|l| l.level), Some(9));
     }
+
+    fn erases() -> Vec<usize> {
+        sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).map(|o| o.1).collect())
+    }
+
+    #[test]
+    fn the_link_housekeeps_only_with_no_report_or_frame_waiting_and_one_erase_at_a_time() {
+        let _s = sim::session();
+        let mut nv = nv::open();
+        for _ in 0..19 {
+            nv.store(NvItem::Network as u8, &[0x5a; 160]);
+        }
+        sim::with(|c| c.flash[nv::SECTORS[0] + 8] = 0);
+        let mut link = Link::new();
+        assert!(!Radio::housekeep(&mut link));
+        let _ = link.poll();
+        assert!(link.stack.is_some());
+        {
+            use ble::Hal as _;
+            let mut hal = crate::ble::BleHal::new();
+            (0..61).for_each(|k| hal.nv_store(&[k as u8; 64]));
+        }
+        sim::with(|c| c.flash_ops.clear());
+        let mut r: &mut Link = &mut link;
+        Radio::report(&mut r, &report(true, 5));
+        assert!(!Radio::housekeep(&mut r));
+        assert!(erases().is_empty(), "a report waits");
+        let _ = link.poll();
+        crate::radio::tests::queue(&[0x00, 0x80, 0x01, 0x34, 0x12], 0x9c, 0);
+        assert!(!Radio::housekeep(&mut link));
+        assert!(erases().is_empty(), "a frame waits");
+        crate::radio::tests::reset_radio_state();
+        assert!(!Radio::housekeep(&mut link));
+        assert_eq!(erases(), [crate::ble::MESH_SECTORS[0]]);
+        sim::with(|c| c.flash_ops.clear());
+        assert!(!Radio::housekeep(&mut link));
+        assert_eq!(erases(), [nv::SECTORS[0]]);
+        assert!(Radio::housekeep(&mut link));
+        assert_eq!(erases(), [nv::SECTORS[0]]);
+    }
 }
 
 #[cfg(feature = "ble")]

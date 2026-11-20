@@ -391,3 +391,26 @@ fn the_24_mhz_rc_calibration_waits_for_its_done_bit() {
     init();
     assert_eq!(sim::with(|c| c.log.iter().filter(|o| matches!(o, Op::AnaR(0xcf, _))).count()), 4);
 }
+
+#[test]
+fn the_light_logs_prepare_their_spare_sectors_one_erase_at_a_time() {
+    let _s = sim::session();
+    let erases = || sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).map(|o| o.1).collect::<Vec<_>>());
+    let rgb = crate::boards::BOARDS.iter().find(|b| b.rgb.is_some()).expect("a colour board");
+    sim::with(|c| {
+        c.flash[CONFIG_SECTORS[0] + 5] = 0;
+        c.flash[COLOUR_SECTORS[0] + 5] = 0;
+    });
+    let mut s = FlashStore::on(rgb);
+    s.prepare();
+    assert_eq!(erases(), [CONFIG_SECTORS[0]]);
+    s.prepare();
+    assert_eq!(erases(), [CONFIG_SECTORS[0], COLOUR_SECTORS[0]]);
+    s.prepare();
+    assert_eq!(erases().len(), 2);
+    sim::with(|c| c.flash[CONFIG_SECTORS[0] + 5] = 0);
+    let mut white = FlashStore::new();
+    white.prepare();
+    white.prepare();
+    assert_eq!(erases(), [CONFIG_SECTORS[0], COLOUR_SECTORS[0], CONFIG_SECTORS[0]]);
+}

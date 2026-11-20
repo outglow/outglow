@@ -30,6 +30,7 @@ enum Op {
     Store(u8, Vec<u8>),
     Pair((u8, Vec<u8>), (u8, Vec<u8>)),
     Forget(u8),
+    Prepare,
 }
 
 impl Op {
@@ -38,6 +39,9 @@ impl Op {
             Op::Store(id, d) => nv.store(*id, d),
             Op::Pair((a, da), (b, db)) => nv.store_pair((*a, da), (*b, db)),
             Op::Forget(keep) => nv.forget_all_but(*keep),
+            Op::Prepare => {
+                nv.prepare();
+            }
         }
     }
     fn after(&self, before: &Items) -> Items {
@@ -51,6 +55,7 @@ impl Op {
                 m.insert(*b, db.clone());
             }
             Op::Forget(keep) => m.retain(|id, _| id == keep),
+            Op::Prepare => {}
         }
         m
     }
@@ -71,8 +76,9 @@ fn next_op(rng: &mut Rng, counter: &mut u32) -> Op {
         let len = 1 + (rng.next() as usize) % 160;
         (0..len).map(|_| rng.byte()).collect()
     };
-    match rng.next() % 20 {
+    match rng.next() % 24 {
         0 => Op::Forget(COUNTERS),
+        20..=23 => Op::Prepare,
         1..=5 => {
             let c = item(rng, COUNTERS);
             let id = 1 + (rng.next() % (N as u64 - 1)) as u8;
@@ -184,12 +190,25 @@ fn light_log_every_cut_in_a_sector_switch_or_erase() {
         let ops = 100 + (rng.next() % 600) as usize;
         for _ in 0..ops {
             let erase = rng.next() % 40 == 0;
+            let prepare = !erase && rng.next() % 3 == 0;
             let r = rec(&mut rng);
             let pre = f.snapshot();
             let mut log = LightLog::new(f.clone(), [A, B], size);
             f.clear_ops();
-            if erase { log.erase() } else { log.store(&r) }
-            let after = if erase { None } else { Some(r) };
+            let after = match (erase, prepare) {
+                (true, _) => {
+                    log.erase();
+                    None
+                }
+                (false, true) => {
+                    log.prepare();
+                    model
+                }
+                (false, false) => {
+                    log.store(&r);
+                    Some(r)
+                }
+            };
             let fops = f.ops();
             if erase || (fops.iter().any(|o| matches!(o, bulb_sim::FlashOp::Erase { .. })) || fops.len() > 1) {
                 switches += 1;
