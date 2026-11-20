@@ -23,6 +23,7 @@ const RESET_SECTOR: usize = 0xCF000;
 const OP_HANG: u8 = 0xEE;
 const PWM_PERIOD: u32 = 48000;
 const CPI: i64 = 24;
+const FACTORY_RESET_BOOT_MS: f64 = 1000.0;
 
 pub const OP_ON: u8 = 1;
 pub const OP_OFF: u8 = 2;
@@ -260,12 +261,20 @@ impl Bulb {
         Ok(())
     }
 
-    pub fn boot(&mut self, timeout_ms: f64) -> R<()> {
-        let end = self.ms() + timeout_ms;
-        while self.ms() < end && self.st().reports == 0 {
+    pub fn boot(&mut self, timeout_ms: f64) -> R<f64> {
+        let start = self.ms();
+        while self.st().reports == 0 {
+            if self.ms() - start >= timeout_ms {
+                return Err(Stop::Error(format!(
+                    "the bulb did not reach its main loop within {timeout_ms:.0} ms of power-on (no light report, pc={:#x})",
+                    self.node.m.r[15]
+                )));
+            }
             self.run(1.0)?;
         }
-        self.run(1.0)
+        let took = self.ms() - start;
+        self.run(1.0)?;
+        Ok(took)
     }
 
     fn sram(&self, a: usize, n: usize) -> Vec<u8> {
@@ -632,12 +641,12 @@ fn run(cx: &mut SimCtx) -> R<()> {
     o.check("the counter follows the sequence", steps == [1, 2, 3, 5, 7], &sshow);
     o.check("no reset before the sixth power-on", b.net().factory == 0 && b.st().startup == 33, "");
     b.cycle()?;
-    b.boot(400.0)?;
+    let took = b.boot(FACTORY_RESET_BOOT_MS)?;
     let (n, s) = (b.net(), b.st());
     o.check(
         "the sixth power-on is a factory reset: settings back to the defaults",
         n.factory == 1 && (s.on, s.level, s.pob, s.startup) == (1, 254, POB_ON, 0xFF),
-        &format!("{} {}", n.py(), s.py()),
+        &format!("{} {}, main loop after {took:.0} ms", n.py(), s.py()),
     );
     let mut seen = std::collections::BTreeSet::new();
     let t_end = b.ms() + 2800.0;
@@ -662,7 +671,36 @@ fn run(cx: &mut SimCtx) -> R<()> {
             &format!("items now: {ishow}, counters before: {}", hx(&fc_before)));
     let n = b.session(1.0)?;
     o.check("the next power-on is an ordinary one", n.factory == 0, "");
+
+    o.say("factory reset with a full light log sector (the slowest start measured)");
+    b.session(31.0)?;
+    b.cmd1(&[OP_POWER_ON, POB_PREVIOUS])?;
+    let full = SECTOR_SIZE / SLOT;
+    let mut k = 0u32;
+    while log_slots(&b.node.m.flash.mem).iter().all(|&n| n < full) && k < 2 * full as u32 {
+        b.mv(20 + (k * 53 % 200) as u8, 0)?;
+        k += 1;
+    }
+    for s in [1.0, 1.0, 1.0, 12.0, 12.0] {
+        b.session(s)?;
+    }
+    let slots = log_slots(&b.node.m.flash.mem);
+    b.cycle()?;
+    let booted = b.boot(FACTORY_RESET_BOOT_MS);
+    let n = b.net();
+    o.check(
+        &format!("a factory reset over a full light log sector starts within {FACTORY_RESET_BOOT_MS:.0} ms"),
+        booted.is_ok() && slots.contains(&full) && n.factory == 1 && b.st().level == 254,
+        &format!("{k} changes, log slots used {slots:?}, {}, {}", booted.map_or_else(|e| format!("{e:?}"), |t| format!("main loop after {t:.0} ms")), n.py()),
+    );
     finish(&mut o)
+}
+
+fn log_slots(flash: &[u8]) -> Vec<usize> {
+    CONFIG_SECTORS
+        .iter()
+        .map(|&base| flash[base..base + SECTOR_SIZE].chunks(SLOT).filter(|c| c.iter().any(|&x| x != 0xFF)).count())
+        .collect()
 }
 
 fn finish(o: &mut Out) -> R<()> {
