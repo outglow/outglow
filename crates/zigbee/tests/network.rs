@@ -113,7 +113,7 @@ fn level_move_step_and_stop() {
     net.coord.zcl(short, LEVEL, 0x01, 0x04, &[100, 0, 0, 0, 0]);
     net.run(50);
     net.coord.zcl(short, LEVEL, 0x01, 0x02, &[0, 20, 10, 0, 0, 0]);
-    net.run(50);
+    net.run(1_050);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 120, transition_ms: 1000 }));
     net.coord.zcl(short, LEVEL, 0x01, 0x01, &[1, 10, 0, 0]);
     net.run(50);

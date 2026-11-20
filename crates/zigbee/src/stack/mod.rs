@@ -625,6 +625,11 @@ pub struct Stack<H: Hal> {
     pub(crate) rx_signal: (u8, i8),
     pub(crate) level_until: Option<u32>,
     pub(crate) color_until: Option<u32>,
+    pub(crate) level_from: u8,
+    pub(crate) level_since: u32,
+    pub(crate) ct_from: u16,
+    pub(crate) color_since: u32,
+    pub(crate) hue_move: Option<(u8, u32, i32)>,
     pub(crate) scenes_dirty: bool,
     pub(crate) tables_dirty: bool,
     pub(crate) reply_secured: bool,
@@ -751,6 +756,11 @@ impl<H: Hal> Stack<H> {
             rx_signal: (0, 0),
             level_until: None,
             color_until: None,
+            level_from: 0,
+            level_since: now,
+            ct_from: 0,
+            color_since: now,
+            hue_move: None,
             scenes_dirty: false,
             tables_dirty: false,
             reply_secured: false,
@@ -885,6 +895,9 @@ impl<H: Hal> Stack<H> {
             y: s.y,
         };
         self.light = l;
+        if !s.hue_moving && self.cmds.iter().all(Option::is_none) {
+            self.hue_move = None;
+        }
         if !self.light_known {
             self.light_known = true;
             self.xreports_take_values();
@@ -932,16 +945,40 @@ impl<H: Hal> Stack<H> {
 
     pub(crate) fn push_command(&mut self, c: Command) {
         let now = self.hal.now_ms();
+        let (level, ct, hue) = (self.level_now(now), self.ct_now(now), self.hue_now(now));
         match c {
-            Command::MoveToLevel { transition_ms, .. } => self.level_until = Some(now.wrapping_add(transition_ms)),
-            Command::MoveToColorTemperature { transition_ms, .. }
-            | Command::MoveToHueSaturation { transition_ms, .. }
-            | Command::MoveToXy { transition_ms, .. } => self.color_until = Some(now.wrapping_add(transition_ms)),
-            Command::StopTransition => self.level_until = None,
-            Command::StopColorTransition => self.color_until = None,
-            Command::Off | Command::On | Command::Toggle => {
+            Command::MoveToLevel { level: to, transition_ms } => {
+                self.level_from = if self.light.on { level } else { 0 };
+                self.level_since = now;
+                self.level_until = Some(now.wrapping_add(transition_ms));
+                match to {
+                    0 => self.light.on = false,
+                    to => (self.light.on, self.light.level) = (true, to),
+                }
+            }
+            Command::MoveToColorTemperature { mireds, transition_ms } => {
+                self.colour_fade(now, ct, hue, transition_ms);
+                (self.light.color_temp, self.light.color_mode) = (mireds, 2);
+            }
+            Command::MoveToHueSaturation { hue, sat, transition_ms, .. } => {
+                self.colour_fade(now, ct, hue, transition_ms);
+                (self.light.sat, self.light.color_mode) = (sat, 0);
+            }
+            Command::MoveToXy { x, y, transition_ms } => {
+                self.colour_fade(now, ct, hue, transition_ms);
+                (self.light.x, self.light.y, self.light.color_mode) = (x, y, 1);
+            }
+            Command::MoveHue { up, rate } => {
+                self.hue_move = Some((hue, now, if up { rate as i32 } else { -(rate as i32) }));
+                self.light.color_mode = 0;
+            }
+            Command::SetLevelWhileOff(to) => self.light.level = to,
+            Command::StopTransition => (self.level_until, self.light.level) = (None, level),
+            Command::StopColorTransition => (self.color_until, self.light.color_temp, self.light.hue, self.hue_move) = (None, ct, hue, None),
+            Command::Off | Command::On => {
                 self.level_until = None;
                 self.color_until = None;
+                self.light.on = c == Command::On;
             }
             _ => {}
         }
@@ -949,6 +986,32 @@ impl<H: Hal> Stack<H> {
             if slot.is_none() {
                 *slot = Some(c);
                 return;
+            }
+        }
+    }
+
+    fn colour_fade(&mut self, now: u32, ct: u16, hue: u8, transition_ms: u32) {
+        self.ct_from = ct;
+        self.color_since = now;
+        self.color_until = Some(now.wrapping_add(transition_ms));
+        self.light.hue = hue;
+        self.hue_move = None;
+    }
+
+    pub(crate) fn level_now(&self, now: u32) -> u8 {
+        fade(self.level_from as u16, self.light.level as u16, self.level_since, self.level_until, now) as u8
+    }
+
+    pub(crate) fn ct_now(&self, now: u32) -> u16 {
+        fade(self.ct_from, self.light.color_temp, self.color_since, self.color_until, now)
+    }
+
+    pub(crate) fn hue_now(&self, now: u32) -> u8 {
+        match self.hue_move {
+            None => self.light.hue,
+            Some((from, since, rate)) => {
+                let enhanced = ((from as i64) << 8) + rate as i64 * now.wrapping_sub(since) as i64 / 1000;
+                (enhanced.rem_euclid(1 << 16) >> 8).min(254) as u8
             }
         }
     }
@@ -1104,5 +1167,13 @@ impl<H: Hal> Stack<H> {
     pub(crate) fn next_nwk_seq(&mut self) -> u8 {
         self.nwk_seq = self.nwk_seq.wrapping_add(1);
         self.nwk_seq
+    }
+}
+
+fn fade(from: u16, to: u16, since: u32, until: Option<u32>, now: u32) -> u16 {
+    let span = until.map_or(0, |at| at.wrapping_sub(since));
+    match now.wrapping_sub(since) {
+        gone if gone >= span => to,
+        gone => (from as i64 + (to as i64 - from as i64) * gone as i64 / span as i64) as u16,
     }
 }

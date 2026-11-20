@@ -149,7 +149,7 @@ fn color_temperature_commands() {
     net.run(50);
     assert_eq!(net.nodes[n].color_temp, 153);
     net.coord.zcl(short, COLOR, 0x11, 0x4C, &[1, 100, 0, 20, 0, 0, 0, 200, 0]);
-    net.run(50);
+    net.run(2_050);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToColorTemperature { mireds: 200, transition_ms: 2000 }));
     net.coord.zcl(short, COLOR, 0x11, 0x4B, &[1, 50, 0, 0, 0, 0, 0]);
     net.run(50);
@@ -745,7 +745,7 @@ fn with_on_off_the_lowest_level_is_off_and_a_step_cut_short_takes_less_time() {
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 254, transition_ms: 2_000 }));
     level(&mut net, short, 51);
     net.coord.zcl(short, LEVEL, 0x11, 0x02, &[1, 200, 40, 0]);
-    net.run(50);
+    net.run(1_050);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 1, transition_ms: 1_000 }));
     net.coord.zcl(short, LEVEL, 0x11, 0x02, &[0, 30, 40, 0]);
     net.run(50);
@@ -1051,4 +1051,60 @@ fn write_attributes_undivided_writes_all_records_or_none() {
     net.run(50);
     assert_eq!(net.coord.last_zcl(short, LEVEL, 0x04).unwrap(), vec![0x18, seq, 0x04, 0x86, 0x00, 0x0F]);
     assert_eq!(read(&mut net, short, LEVEL, 0x0011), vec![0x00, 0x20, 77]);
+}
+
+#[test]
+fn a_step_of_the_colour_temperature_during_a_fade_counts_from_where_the_fade_is() {
+    let (mut net, n, short) = tunable();
+    net.coord.zcl(short, COLOR, 0x11, 0x0A, &[153, 0, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x0A, &[0xC5, 0x01, 100, 0]);
+    net.run(5_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x4C, &[1, 10, 0, 0, 0, 0, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToColorTemperature { mireds: 313, transition_ms: 0 }), "half way from 153 to 453");
+    net.coord.zcl(short, COLOR, 0x11, 0x0A, &[153, 0, 100, 0]);
+    net.run(5_000);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, COLOR, 0x11, 0x47, &[]);
+    net.coord.zcl(short, COLOR, 0x11, 0x4C, &[1, 10, 0, 0, 0, 0, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(
+        net.nodes[n].commands[before..],
+        [Command::StopColorTransition, Command::MoveToColorTemperature { mireds: 243, transition_ms: 0 }],
+        "stopped half way from 313 to 153"
+    );
+}
+
+#[test]
+fn a_scene_colour_of_only_x_and_y_is_recalled_as_a_colour_temperature_on_a_tunable_white() {
+    let (mut net, n, short) = tunable();
+    let add = |net: &mut Net, id: u8, colour: &[u8]| {
+        let mut p = vec![0, 0, id, 0, 0, 0, 0x00, 0x03, colour.len() as u8];
+        p.extend_from_slice(colour);
+        let seq = net.coord.zcl(short, SCENES, 0x01, 0x00, &p);
+        net.run(50);
+        assert_eq!(net.coord.last_zcl(short, SCENES, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x00, 0, 0, id]);
+    };
+    let recall = |net: &mut Net, id: u8| {
+        net.coord.zcl(short, SCENES, 0x11, 0x05, &[0, 0, id]);
+        net.run(50);
+        *net.nodes[n].commands.last().unwrap()
+    };
+    let ct = |mireds: u16| Command::MoveToColorTemperature { mireds, transition_ms: 0 };
+    add(&mut net, 1, &[0x64, 0x61, 0x72, 0x60]);
+    add(&mut net, 2, &[0, 0, 0, 0]);
+    add(&mut net, 3, &[0, 0x20, 0, 0x30]);
+    let mut longer = vec![0xB9, 0x75, 0x1D, 0x69];
+    longer.extend_from_slice(&[0; 9]);
+    add(&mut net, 4, &longer);
+    assert_eq!(recall(&mut net, 1), ct(250), "4000 K as zigbee2mqtt sends it");
+    assert_eq!(recall(&mut net, 2), ct(454), "red of the curve: the warmest");
+    assert_eq!(recall(&mut net, 3), ct(153), "blue of it: the coldest");
+    assert_eq!(recall(&mut net, 4), ct(370), "2700 K with a temperature of 0");
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x01, &[0, 0, 1]);
+    net.run(50);
+    let view = net.coord.last_zcl(short, SCENES, 0x01).unwrap();
+    assert_eq!(&view[..3], &[0x19, seq, 0x01]);
+    assert_eq!(&view[view.len() - 16..], &[0x00, 0x03, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 250, 0]);
 }

@@ -492,6 +492,7 @@ pub struct Node {
     pub sat: u8,
     pub x: u16,
     pub y: u16,
+    pub hue_moving: bool,
     pub commands: Vec<Command>,
     pub command_frames: Vec<usize>,
 }
@@ -511,18 +512,26 @@ impl Node {
                 }
             }
             Command::MoveToColorTemperature { mireds, .. } => {
+                self.hue_moving = false;
                 self.color_temp = mireds;
                 self.color_mode = bulb_core::colour::ColorMode::Temperature;
             }
             Command::MoveToHueSaturation { hue, sat, .. } => {
+                self.hue_moving = false;
                 (self.hue, self.sat) = (hue, sat);
                 self.color_mode = bulb_core::colour::ColorMode::HueSaturation;
             }
             Command::MoveToXy { x, y, .. } => {
+                self.hue_moving = false;
                 (self.x, self.y) = (x, y);
                 self.color_mode = bulb_core::colour::ColorMode::Xy;
             }
             Command::SetLevelWhileOff(level) => self.level = level,
+            Command::MoveHue { rate, .. } => {
+                self.hue_moving = rate != 0;
+                self.color_mode = bulb_core::colour::ColorMode::HueSaturation;
+            }
+            Command::StopColorTransition => self.hue_moving = false,
             _ => {}
         }
         self.commands.push(c);
@@ -543,7 +552,7 @@ impl Node {
             sat: self.sat,
             x: self.x,
             y: self.y,
-            hue_moving: false,
+            hue_moving: self.hue_moving,
             candle: false,
             shown: Default::default(),
         });
@@ -2209,7 +2218,7 @@ impl Net {
         let ext = (BULB_OUI << 40) + self.nodes.len() as u64 + 1;
         let id = self.air.borrow_mut().add_port(ext);
         let stack = Stack::new(SimHal { air: self.air.clone(), id, bx: std::boxed::Box::new(zigbee::BlackBox::EMPTY) }, self.identity);
-        self.nodes.push(Node { id, stack, on: true, level: 254, color_temp: bulb_core::CT_DEFAULT, color_mode: bulb_core::colour::ColorMode::Temperature, hue: 170, sat: 254, x: 0, y: 0, commands: vec![], command_frames: vec![] });
+        self.nodes.push(Node { id, stack, on: true, level: 254, color_temp: bulb_core::CT_DEFAULT, color_mode: bulb_core::colour::ColorMode::Temperature, hue: 170, sat: 254, x: 0, y: 0, hue_moving: false, commands: vec![], command_frames: vec![] });
         self.nodes.last_mut().unwrap().report();
         self.nodes.len() - 1
     }

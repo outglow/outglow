@@ -1240,7 +1240,12 @@ impl<H: Hal> Stack<H> {
                 let with_on_off = cmd >= 0x04;
                 let lowest = if with_on_off { 0 } else { MIN_LEVEL };
                 let to_level = |level: i32| if with_on_off && level <= MIN_LEVEL as i32 { 0 } else { level.clamp(MIN_LEVEL as i32, 254) as u8 };
-                let current = if self.light.on || !with_on_off { self.light.level as i32 } else { 0 };
+                let now = self.hal.now_ms();
+                let current = match (self.light.on, with_on_off) {
+                    (true, _) => self.level_now(now) as i32,
+                    (false, true) => 0,
+                    (false, false) => self.light.level as i32,
+                };
                 let command = match cmd & 3 {
                     0 => {
                         let level = to_level(r.u8()? as i32);
@@ -1275,7 +1280,7 @@ impl<H: Hal> Stack<H> {
                         self.on_off_set(level != 0);
                     }
                     if let (Command::MoveToLevel { level, transition_ms }, true) = (command, self.level_options & COUPLE_COLOR_TEMP != 0) {
-                        if level != 0 && self.identity.color_temperature {
+                        if level != 0 && self.identity.color_temperature && self.light.color_mode == 2 {
                             let (lo, hi) = (self.identity.ct_min as u32, self.identity.ct_max as u32);
                             let mireds = (hi - (level as u32 - 1) * (hi - lo) / 253) as u16;
                             self.push_command(Command::MoveToColorTemperature { mireds, transition_ms });
@@ -1499,16 +1504,21 @@ impl<H: Hal> Stack<H> {
                             scene.level = (*level).clamp(1, 254);
                             scene.omitted &= !SCENE_NO_LEVEL;
                         }
-                        (COLOR, d) if d.len() >= 13 => {
-                            scene.color_temp = u16::from_le_bytes([d[11], d[12]]);
+                        (COLOR, d) if d.len() >= 4 => {
+                            let mut f = [0u8; 13];
+                            f.iter_mut().zip(d).for_each(|(a, b)| *a = *b);
+                            let u = |i: usize| u16::from_le_bytes([f[i], f[i + 1]]);
+                            scene.color_temp = match u(11) {
+                                0 => bulb_core::colour::xy_mireds(u(0), u(2)).clamp(self.identity.ct_min, self.identity.ct_max),
+                                ct => ct,
+                            };
                             if self.identity.color {
-                                let u = |i: usize| u16::from_le_bytes([d[i], d[i + 1]]);
                                 let mode = match d.get(13) {
                                     Some(&m) if m <= 2 => m,
-                                    _ if scene.color_temp != 0 => 2,
+                                    _ if u(11) != 0 => 2,
                                     _ => 1,
                                 };
-                                scene.colour = super::SceneColour { mode, hue: (u(4) >> 8).min(254) as u8, sat: d[6], x: u(0), y: u(2) };
+                                scene.colour = super::SceneColour { mode, hue: (u(4) >> 8).min(254) as u8, sat: f[6], x: u(0), y: u(2) };
                             }
                             scene.omitted &= !SCENE_NO_COLOR;
                         }
@@ -1653,10 +1663,11 @@ impl<H: Hal> Stack<H> {
 
     fn zcl_color(&mut self, cmd: u8, mut r: Reader) -> Option<Option<u8>> {
         let (lo, hi) = (self.identity.ct_min, self.identity.ct_max);
-        let current = self.light.color_temp;
+        let now = self.hal.now_ms();
+        let current = self.ct_now(now);
         let time_ms = |tenths: u16| if tenths == 0xFFFF { 0 } else { tenths as u32 * 100 };
         let bounds = |min: u16, max: u16| (if min == 0 { lo } else { min.clamp(lo, hi) }, if max == 0 { hi } else { max.clamp(lo, hi) });
-        let l = self.light;
+        let l = super::LightState { hue: self.hue_now(now), ..self.light };
         let hue_sat = |hue: u8, sat: u8, direction: HueDirection, transition_ms: u32| Command::MoveToHueSaturation { hue, sat, direction, transition_ms };
         let at_rate = |distance: u32, rate: u32| distance * 1000 / rate.max(1);
         let command = match cmd {
@@ -1676,8 +1687,7 @@ impl<H: Hal> Stack<H> {
                 match mode {
                     0 => Command::StopColorTransition,
                     1 | 3 if rate == 0 => return Some(Some(INVALID_FIELD)),
-                    1 => hue_sat(l.hue.checked_sub(1).unwrap_or(254), l.sat, HueDirection::Up, at_rate(254, rate)),
-                    3 => hue_sat(if l.hue >= 254 { 0 } else { l.hue + 1 }, l.sat, HueDirection::Down, at_rate(254, rate)),
+                    1 | 3 => Command::MoveHue { up: mode == 1, rate: (rate << 8) as u16 },
                     _ => return Some(Some(INVALID_FIELD)),
                 }
             }

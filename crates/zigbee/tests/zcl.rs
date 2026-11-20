@@ -759,7 +759,9 @@ fn step_moves_by_its_size_in_a_time_scaled_to_how_far_it_gets() {
     let (mut net, n, short) = bulb_with(IDENTITY);
     level_to(&mut net, short, 100);
     assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x01, 30, 10, 0]), Some(MoveToLevel { level: 70, transition_ms: 1_000 }));
+    net.run(1_000);
     assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x00, 200, 10, 0]), Some(MoveToLevel { level: 254, transition_ms: 1_000 * 184 / 200 }));
+    net.run(1_000);
     assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x01, 0, 10, 0]), Some(MoveToLevel { level: 254, transition_ms: 0 }), "a step of nothing");
     assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x01, 54, 0xFF, 0xFF]), Some(MoveToLevel { level: 200, transition_ms: 0 }), "as fast as it can");
 }
@@ -821,7 +823,7 @@ fn a_scene_with_a_name_a_short_colour_set_and_an_explicit_colour_mode() {
     net.run(50);
     let colour = |mode: u8| vec![0x00, 0x03, 14, 0x10, 0x20, 0x30, 0x40, 0x00, 0x80, 100, 0, 0, 0, 0, 0x2C, 0x01, mode];
     let mut named = vec![0x34, 0x12, 1, 0, 0, 2, b'a', b'b', 0x08, 0x00, 1, 42];
-    named.extend_from_slice(&[0x00, 0x03, 4, 1, 2, 3, 4]);
+    named.extend_from_slice(&[0x00, 0x03, 3, 1, 2, 3]);
     net.coord.zcl(short, SCENES, 0x01, 0x00, &named);
     let mut hue = vec![0x34, 0x12, 2, 0, 0, 0];
     hue.extend_from_slice(&colour(0));
@@ -836,7 +838,7 @@ fn a_scene_with_a_name_a_short_colour_set_and_an_explicit_colour_mode() {
         net.run(50);
         net.nodes[n].commands[before..].to_vec()
     };
-    assert_eq!(recall(&mut net, 1), vec![Command::MoveToLevel { level: 42, transition_ms: 0 }], "the name skipped, the short colour set ignored");
+    assert_eq!(recall(&mut net, 1), vec![Command::MoveToLevel { level: 42, transition_ms: 0 }], "the name skipped, a colour set without y ignored");
     assert_eq!(recall(&mut net, 2), vec![Command::MoveToHueSaturation { hue: 128, sat: 100, direction: HueDirection::Shortest, transition_ms: 0 }]);
     assert_eq!(recall(&mut net, 3), vec![Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }], "a reserved mode: by the temperature");
 }
@@ -1007,4 +1009,71 @@ fn a_scene_added_with_an_unknown_colour_mode_takes_the_mode_its_fields_give() {
         let rsp = net.coord.last_zcl(short, 0x0005, 0x01).unwrap();
         assert_eq!((rsp[3], *rsp.last().unwrap()), (0x00, want), "mode {mode}, colour temperature {ct}");
     }
+}
+
+fn commands_since(net: &mut Net, n: usize, frames: &[(u16, u8, &[u8])]) -> Vec<bulb_core::command::Command> {
+    let before = net.nodes[n].commands.len();
+    for &(cluster, cmd, payload) in frames {
+        net.coord.zcl(net.nodes[n].short(), cluster, 0x11, cmd, payload);
+    }
+    net.run(200);
+    net.nodes[n].commands[before..].to_vec()
+}
+
+#[test]
+fn commands_in_one_poll_see_the_light_the_ones_before_left() {
+    use bulb_core::command::Command::{self, MoveToLevel, Off, On, SetLevelWhileOff};
+    let (mut net, n, _) = bulb_with(IDENTITY);
+    assert_eq!(commands_since(&mut net, n, &[(ON_OFF, 0x02, &[]), (ON_OFF, 0x02, &[]), (ON_OFF, 0x02, &[])]), vec![Off, On, Off], "three toggles");
+    assert!(!net.nodes[n].on);
+    let sent = commands_since(&mut net, n, &[(LEVEL, 0x04, &[50, 0, 0]), (LEVEL, 0x06, &[0, 10, 0, 0]), (LEVEL, 0x04, &[0, 0, 0]), (ON_OFF, 0x02, &[])]);
+    assert_eq!(sent, vec![MoveToLevel { level: 50, transition_ms: 0 }, MoveToLevel { level: 60, transition_ms: 0 }, MoveToLevel { level: 0, transition_ms: 0 }, On]);
+    commands_since(&mut net, n, &[(ON_OFF, 0x00, &[])]);
+    net.coord.zcl(net.nodes[n].short(), LEVEL, 0x10, 0x02, &[0x0F, 0x00, 0x18, 0x01]);
+    net.run(50);
+    let sent: Vec<Command> = commands_since(&mut net, n, &[(LEVEL, 0x02, &[0, 20, 0, 0]), (LEVEL, 0x02, &[0, 20, 0, 0])]);
+    assert_eq!(sent, vec![SetLevelWhileOff(80), SetLevelWhileOff(100)]);
+}
+
+#[test]
+fn a_step_during_a_fade_counts_from_where_the_light_is() {
+    use bulb_core::command::Command::{MoveToLevel, StopTransition};
+    let (mut net, n, _) = bulb_with(IDENTITY);
+    commands_since(&mut net, n, &[(LEVEL, 0x04, &[254, 0, 0])]);
+    commands_since(&mut net, n, &[(LEVEL, 0x00, &[1, 100, 0])]);
+    net.run(4_800);
+    assert_eq!(commands_since(&mut net, n, &[(LEVEL, 0x02, &[0, 20, 0, 0])]), vec![MoveToLevel { level: 148, transition_ms: 0 }], "half way from 254 to 1");
+    commands_since(&mut net, n, &[(LEVEL, 0x00, &[1, 100, 0])]);
+    net.run(4_800);
+    let sent = commands_since(&mut net, n, &[(LEVEL, 0x03, &[]), (LEVEL, 0x02, &[0, 20, 0, 0])]);
+    assert_eq!(sent, vec![StopTransition, MoveToLevel { level: 95, transition_ms: 0 }], "stopped half way from 148 to 1");
+    commands_since(&mut net, n, &[(ON_OFF, 0x00, &[])]);
+    commands_since(&mut net, n, &[(LEVEL, 0x04, &[201, 100, 0])]);
+    net.run(4_800);
+    assert_eq!(commands_since(&mut net, n, &[(LEVEL, 0x02, &[0, 20, 0, 0])]), vec![MoveToLevel { level: 120, transition_ms: 0 }], "half way up from off");
+}
+#[test]
+fn a_step_25_days_after_the_last_fade_does_not_divide_by_zero() {
+    use bulb_core::command::Command::MoveToLevel;
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    level_to(&mut net, short, 100);
+    net.air.borrow_mut().now += 0x8000_0000 + 1_000;
+    net.run(2_000);
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x00, 20, 0, 0]), Some(MoveToLevel { level: 120, transition_ms: 0 }));
+}
+
+#[test]
+fn a_step_25_days_after_an_off_counts_from_the_level() {
+    use bulb_core::command::Command::MoveToLevel;
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    level_to(&mut net, short, 100);
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[200, 100, 0]);
+    net.run(10_050);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x00, &[]);
+    net.run(50);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x01, &[]);
+    net.run(50);
+    net.air.borrow_mut().now += 0x8000_0000 + 1_000;
+    net.run(2_000);
+    assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x00, 20, 0, 0]), Some(MoveToLevel { level: 220, transition_ms: 0 }));
 }

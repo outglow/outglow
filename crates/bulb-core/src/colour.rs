@@ -129,6 +129,12 @@ pub fn xy_hue_sat(x: u16, y: u16) -> (u8, u8) {
     ((h >> 8) as u8, (s >> 8) as u8)
 }
 
+pub fn xy_mireds(x: u16, y: u16) -> u16 {
+    let n = ((x as f64 / 65536.0 - 0.332) / (0.1858 - y as f64 / 65536.0)).clamp(-1.0, 1.0);
+    let kelvin = ((437.0 * n + 3601.0) * n + 6861.0) * n + 5517.0;
+    (1_000_000.0 / kelvin + 0.5) as u16
+}
+
 pub fn channel(c: u16, max: u16) -> u16 {
     let c = c as u32;
     (max as u32 * ((c * c / 254) * 100) / 25400) as u16
@@ -191,6 +197,15 @@ impl ColourRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xy_on_the_white_curve_is_a_colour_temperature() {
+        assert_eq!(xy_mireds(24932, 24690), 250, "4000 K as zigbee2mqtt stores it");
+        assert_eq!(xy_mireds(30137, 26909), 370, "2700 K");
+        assert_eq!(xy_mireds(20547, 21209), 154, "6500 K");
+        assert_eq!(xy_mireds(0x2000, 0x3000), 61, "far off the curve on the blue side");
+        assert_eq!(xy_mireds(0, 0), 549, "and on the red side");
+    }
 
     #[test]
     fn hue_and_saturation_as_the_stock_firmware() {

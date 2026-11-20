@@ -1,6 +1,7 @@
 use bulb_core::command::{Command, HueDirection};
 use crate::sim::*;
 
+const LEVEL: u16 = 0x0008;
 const COLOR: u16 = 0x0300;
 const SCENES: u16 = 0x0005;
 const GROUPS: u16 = 0x0004;
@@ -82,7 +83,7 @@ fn hue_and_saturation_commands() {
     assert_eq!(last_command(&net, n), Command::MoveToHueSaturation { hue: 45, sat: 254, direction: HueDirection::Shortest, transition_ms: 2000 });
     net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 254]);
     net.run(50);
-    assert!(matches!(last_command(&net, n), Command::MoveToHueSaturation { direction: HueDirection::Up, transition_ms: 1000, .. }));
+    assert_eq!(last_command(&net, n), Command::MoveHue { up: true, rate: 254 << 8 }, "ZCL 5.2.2.3.5: on until stopped");
     net.coord.zcl(short, COLOR, 0x11, 0x01, &[0, 0]);
     net.run(50);
     assert_eq!(last_command(&net, n), Command::StopColorTransition);
@@ -271,12 +272,12 @@ fn hue_saturation_and_temperature_move_and_step_down_as_well_as_up() {
         net.run(50);
         last_command(&net, n)
     };
-    assert_eq!(send(0x01, &[3, 10]), hs(171, 254, HueDirection::Down, 25_400));
-    assert_eq!(send(0x02, &[3, 200, 5]), hs(226, 254, HueDirection::Down, 500));
-    assert_eq!(send(0x04, &[3, 127]), hs(226, 0, HueDirection::Shortest, 2_000));
-    assert_eq!(send(0x05, &[1, 50, 0]), hs(226, 50, HueDirection::Shortest, 0));
-    assert_eq!(send(0x05, &[1, 250, 0]), hs(226, 254, HueDirection::Shortest, 0));
-    assert_eq!(send(0x05, &[3, 100, 0]), hs(226, 154, HueDirection::Shortest, 0));
+    assert_eq!(send(0x01, &[3, 10]), Command::MoveHue { up: false, rate: 10 << 8 });
+    assert_eq!(send(0x02, &[3, 200, 5]), hs(224, 254, HueDirection::Down, 500));
+    assert_eq!(send(0x04, &[3, 127]), hs(224, 0, HueDirection::Shortest, 2_000));
+    assert_eq!(send(0x05, &[1, 50, 0]), hs(224, 50, HueDirection::Shortest, 0));
+    assert_eq!(send(0x05, &[1, 250, 0]), hs(224, 254, HueDirection::Shortest, 0));
+    assert_eq!(send(0x05, &[3, 100, 0]), hs(224, 154, HueDirection::Shortest, 0));
     assert_eq!(send(0x4C, &[3, 100, 0, 10, 0, 0, 0, 0, 0]), Command::MoveToColorTemperature { mireds: 233, transition_ms: 1_000 });
     assert_eq!(send(0x4C, &[3, 200, 0, 10, 0, 0, 0, 0, 0]), Command::MoveToColorTemperature { mireds: 153, transition_ms: 1_000 });
 }
@@ -289,4 +290,103 @@ fn hue_and_saturation_of_254_are_taken_and_255_refused() {
     assert_eq!(last_command(&net, n), Command::MoveToHueSaturation { hue: 254, sat: 254, direction: HueDirection::Shortest, transition_ms: 0 });
     assert_eq!(colour_status(&mut net, short, 0x06, &[255, 1, 0, 0]), 0x85);
     assert_eq!(colour_status(&mut net, short, 0x06, &[1, 255, 0, 0]), 0x85);
+}
+
+#[test]
+fn the_level_takes_the_colour_temperature_along_only_in_colour_temperature_mode() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, LEVEL, 0x00, 0x02, &[0x0F, 0x00, 0x18, 0x02]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[0, 254, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].color_mode, bulb_core::colour::ColorMode::HueSaturation);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[100, 0, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].commands[before..], [Command::MoveToLevel { level: 100, transition_ms: 0 }], "ZCL 5.2.2.1.1: coupled only in ColorMode 0x02");
+}
+
+#[test]
+fn colour_commands_in_one_poll_see_the_colour_the_ones_before_set() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, LEVEL, 0x00, 0x02, &[0x0F, 0x00, 0x18, 0x02]);
+    net.run(50);
+    let mut in_one_poll = |frames: &[(u16, u8, &[u8])]| {
+        let before = net.nodes[n].commands.len();
+        for &(cluster, cmd, payload) in frames {
+            net.coord.zcl(short, cluster, 0x11, cmd, payload);
+        }
+        net.run(200);
+        net.nodes[n].commands[before..].to_vec()
+    };
+    let level = |level: u8| Command::MoveToLevel { level, transition_ms: 0 };
+    let xy = |x: u16, y: u16| Command::MoveToXy { x, y, transition_ms: 0 };
+    let hs = |hue: u8, direction: HueDirection| Command::MoveToHueSaturation { hue, sat: 254, direction, transition_ms: 0 };
+    assert_eq!(in_one_poll(&[(COLOR, 0x07, &[0, 0x20, 0, 0x30, 0, 0]), (COLOR, 0x09, &[0, 1, 0, 2, 0, 0]), (LEVEL, 0x00, &[100, 0, 0])]),
+               vec![xy(0x2000, 0x3000), xy(0x2100, 0x3200), level(100)]);
+    assert_eq!(in_one_poll(&[(COLOR, 0x06, &[40, 254, 0, 0]), (COLOR, 0x02, &[1, 10, 0]), (LEVEL, 0x00, &[120, 0, 0])]),
+               vec![hs(40, HueDirection::Shortest), hs(50, HueDirection::Up), level(120)]);
+    assert_eq!(in_one_poll(&[(COLOR, 0x0A, &[0x2C, 0x01, 0, 0]), (LEVEL, 0x00, &[254, 0, 0])]),
+               vec![Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }, Command::MoveToColorTemperature { mireds: 153, transition_ms: 0 }, level(254)]);
+    assert_eq!(in_one_poll(&[(COLOR, 0x01, &[1, 10]), (LEVEL, 0x00, &[200, 0, 0])]), vec![Command::MoveHue { up: true, rate: 10 << 8 }, level(200)]);
+}
+
+#[test]
+fn a_scene_colour_of_only_x_and_y_is_recalled_as_that_xy() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    let mut add = vec![0x34, 0x12, 3, 0, 0, 0];
+    add.extend_from_slice(&[0x06, 0x00, 1, 1]);
+    add.extend_from_slice(&[0x08, 0x00, 1, 200]);
+    add.extend_from_slice(&[0x00, 0x03, 4, 0x00, 0x20, 0x00, 0x30]);
+    let seq = net.coord.zcl(short, SCENES, 0x01, 0x00, &add);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, SCENES, 0x00).unwrap(), vec![0x19, seq, 0x00, 0x00, 0x34, 0x12, 3]);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, SCENES, 0x01, 0x05, &[0x34, 0x12, 3]);
+    net.run(50);
+    assert_eq!(
+        net.nodes[n].commands[before..],
+        [Command::MoveToXy { x: 0x2000, y: 0x3000, transition_ms: 0 }, Command::MoveToLevel { level: 200, transition_ms: 0 }],
+        "ZCL 3.7.2.4.2.1: trailing attributes may be left out; zigbee2mqtt scene_add sends x and y alone"
+    );
+}
+
+#[test]
+fn colour_commands_during_a_move_hue_start_from_the_hue_it_has_reached() {
+    let (mut net, n, short) = colour_bulb();
+    let mut send = |frames: &[(u8, &[u8])], wait: u32| {
+        let before = net.nodes[n].commands.len();
+        for &(cmd, payload) in frames {
+            net.coord.zcl(short, COLOR, 0x11, cmd, payload);
+        }
+        net.run(wait);
+        net.nodes[n].commands[before..].to_vec()
+    };
+    let hs = |hue: u8, sat: u8, direction: HueDirection| Command::MoveToHueSaturation { hue, sat, direction, transition_ms: 0 };
+    send(&[(0x06, &[40, 254, 0, 0]), (0x01, &[1, 10])], 5_000);
+    assert_eq!(send(&[(0x03, &[100, 0, 0])], 50), vec![hs(90, 100, HueDirection::Shortest)], "40 and 10 a second for 5 s");
+    send(&[(0x00, &[10, 0, 0, 0]), (0x01, &[3, 10])], 5_000);
+    let sent = send(&[(0x01, &[0, 0]), (0x02, &[1, 4, 0])], 50);
+    assert_eq!(sent, vec![Command::StopColorTransition, hs(220, 100, HueDirection::Up)], "down from 10 past 0 to 216, stopped there");
+    send(&[(0x00, &[0, 0, 0, 0]), (0x01, &[3, 1])], 500);
+    assert_eq!(send(&[(0x03, &[50, 0, 0])], 50), vec![hs(254, 50, HueDirection::Shortest)], "just below 0 is 254");
+}
+
+#[test]
+fn a_hue_set_over_ble_during_a_move_hue_is_where_a_step_starts() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 10]);
+    net.run(2_000);
+    assert!(net.nodes[n].hue_moving);
+    net.nodes[n].hue = 100;
+    net.nodes[n].hue_moving = false;
+    net.nodes[n].report();
+    net.run(5_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x02, &[1, 10, 0]);
+    net.run(50);
+    assert_eq!(last_command(&net, n), Command::MoveToHueSaturation { hue: 110, sat: 254, direction: HueDirection::Up, transition_ms: 0 }, "the bulb's report says the hue no longer moves");
 }
