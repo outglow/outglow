@@ -1369,3 +1369,66 @@ fn toggles_past_a_full_queue_cancel_in_pairs() {
         assert_eq!(rig.is_on(), on, "{count} toggles");
     }
 }
+
+#[test]
+fn a_burst_that_turns_the_light_on_then_moves_two_sliders_leaves_it_on() {
+    let mut rig = logged_in(TUNABLE);
+    rig.command(OP_POWER, &[0]);
+    rig.run(300);
+    assert!(!rig.is_on());
+    let packets = commands(&mut rig, &[(OP_POWER, 1), (OP_BRIGHTNESS, 10), (OP_TEMPERATURE, 0), (OP_BRIGHTNESS, 20), (OP_TEMPERATURE, 127)]);
+    burst(&mut rig, &packets);
+    assert!(rig.is_on(), "the On at the head of the burst was dropped");
+}
+
+#[test]
+fn two_toggles_around_three_brightness_commands_leave_the_power_alone() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    let toggle = block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x06, 0x00, 0x02]);
+    let mut packets = vec![toggle.clone()];
+    packets.extend(commands(&mut rig, &[(OP_BRIGHTNESS, 10), (OP_BRIGHTNESS, 20), (OP_BRIGHTNESS, 30)]));
+    packets.push(toggle);
+    burst(&mut rig, &packets);
+    assert!(rig.is_on(), "two toggles, but the first was dropped as the oldest");
+}
+
+fn toggle(rig: &Rig) -> Vec<u8> {
+    block_packet(&rig.key.unwrap(), 0, &[0xff, 0xff, 0x01, 0x06, 0x00, 0x02])
+}
+
+#[test]
+fn two_toggles_cancel_and_free_a_place_for_the_commands_between_them() {
+    let mut rig = logged_in(TUNABLE);
+    let mut packets = vec![toggle(&rig)];
+    packets.extend(commands(&mut rig, &[(OP_BRIGHTNESS, 10), (OP_TEMPERATURE, 0), (OP_STATUS, 0x10)]));
+    packets.push(toggle(&rig));
+    burst(&mut rig, &packets);
+    assert_eq!((rig.is_on(), rig.level(), rig.bulb.state().color_temp), (true, 20, 153));
+}
+
+#[test]
+fn a_toggle_after_an_on_is_not_cancelled_by_a_toggle_before_it() {
+    let mut rig = logged_in(DIMMABLE);
+    let mut packets = vec![toggle(&rig)];
+    packets.extend(commands(&mut rig, &[(OP_POWER, 1)]));
+    packets.push(toggle(&rig));
+    burst(&mut rig, &packets);
+    assert!(!rig.is_on());
+}
+
+#[test]
+fn a_full_queue_of_colour_commands_drops_the_oldest_but_keeps_the_on() {
+    let mut rig = logged_in(COLOUR);
+    rig.command(OP_POWER, &[0]);
+    let key = rig.key.unwrap();
+    let mut packets = commands(&mut rig, &[(OP_POWER, 1), (OP_BRIGHTNESS, 10)]);
+    packets.push(block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x00, 0x03, 0x06, 100, 200, 0, 0]));
+    for (x, y) in [(0x4ccdu16, 0x5555u16), (0x2000, 0x3000)] {
+        let (x, y) = (x.to_le_bytes(), y.to_le_bytes());
+        packets.push(block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x00, 0x03, 0x07, x[0], x[1], y[0], y[1], 0, 0]));
+    }
+    burst(&mut rig, &packets);
+    let s = rig.bulb.state();
+    assert_eq!((s.on, s.x, s.y), (true, 0x2000, 0x3000));
+}

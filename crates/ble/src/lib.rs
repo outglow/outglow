@@ -165,23 +165,62 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn push_command(&mut self, c: Command) {
-        match self.cmds.iter_mut().find(|s| s.is_none()) {
-            Some(slot) => *slot = Some(c),
-            None => match (self.cmds[CMDS - 1], c) {
-                (Some(Command::Toggle), Command::Toggle) => self.cmds[CMDS - 1] = None,
-                (Some(newest), c) if core::mem::discriminant(&newest) == core::mem::discriminant(&c) => self.cmds[CMDS - 1] = Some(c),
-                (_, c) => {
-                    self.cmds.rotate_left(1);
-                    self.cmds[CMDS - 1] = Some(c);
-                }
-            },
+        if c == Command::Toggle {
+            let last = self.cmds.iter().rposition(|q| q.is_some_and(|q| kind(q) == Some(Kind::Power)));
+            if let Some(i) = last.filter(|&i| self.cmds[i] == Some(Command::Toggle)) {
+                self.remove_command(i);
+                return;
+            }
+        } else {
+            while let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| kind(c).is_some_and(|k| kind(q) == Some(k)))) {
+                self.remove_command(i);
+            }
         }
+        if self.cmds[CMDS - 1].is_some() {
+            if let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| kind(q) != Some(Kind::Power))) {
+                self.remove_command(i);
+            }
+        }
+        if let Some(slot) = self.cmds.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(c);
+        }
+    }
+
+    fn remove_command(&mut self, i: usize) {
+        self.cmds[i] = None;
+        self.cmds[i..].rotate_left(1);
     }
 
     fn take_command(&mut self) -> Option<Command> {
         let c = self.cmds[0].take();
         self.cmds.rotate_left(1);
         c
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Power,
+    Level,
+    Same(core::mem::Discriminant<Command>),
+}
+
+fn kind(c: Command) -> Option<Kind> {
+    match c {
+        Command::On | Command::Off | Command::Toggle => Some(Kind::Power),
+        Command::MoveToLevel { .. } | Command::SetLevelWhileOff(_) => Some(Kind::Level),
+        Command::MoveToXy { .. } => None,
+        Command::SetStartupLevel(_)
+        | Command::SetPowerOnBehavior(_)
+        | Command::Identify { .. }
+        | Command::ReadState
+        | Command::StopTransition
+        | Command::MoveToColorTemperature { .. }
+        | Command::SetStartupColorTemperature(_)
+        | Command::StopColorTransition
+        | Command::MoveToHueSaturation { .. }
+        | Command::MoveHue { .. }
+        | Command::Candle(_) => Some(Kind::Same(core::mem::discriminant(&c))),
     }
 }
 
