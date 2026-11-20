@@ -31,12 +31,12 @@ fn a_node_descriptor_that_failed_or_is_not_the_coordinators_leaves_the_key_step_
 #[test]
 fn a_parent_announce_response_takes_away_only_children_not_heard_lately() {
     let mut s = stack();
-    for (i, (ext, heard)) in [(0xA, 1_000), (0xB, 1_500)].into_iter().enumerate() {
+    for (i, (ext, heard, heard_up)) in [(0xA, 1_000, false), (0xB, 1_500, true)].into_iter().enumerate() {
         let c = &mut s.children[i];
         c.used = true;
         c.joined = true;
         c.ext = ext;
-        c.heard = heard;
+        (c.heard, c.heard_up) = (heard, heard_up);
     }
     s.hal.now = 1_000;
     let mut p = std::vec![0x00, 3];
@@ -89,4 +89,20 @@ fn the_depth_of_a_neighbour_is_known_only_for_the_coordinator_and_the_parent() {
     let entry = |k: usize| &r[4 + k * 22..4 + (k + 1) * 22];
     let got: Vec<(u8, u8)> = (0..3).map(|k| ((entry(k)[18] >> 4) & 7, entry(k)[20])).collect();
     assert_eq!(got, [(2, 0), (0, 1), (2, 0x0F)], "relation and depth: the coordinator, the parent one above us, the rest unknown");
+}
+
+#[test]
+fn a_child_heard_after_25_days_of_uptime_is_still_claimed_in_a_parent_announce() {
+    for uptime in [5_000u32, 0x8000_1000] {
+        let mut s = stack();
+        s.booted = 1_000;
+        s.hal.now = 1_000u32.wrapping_add(uptime);
+        let c = &mut s.children[0];
+        (c.used, c.joined, c.capability, c.ext, c.short) = (true, true, 0x80, 0xA, 0x2000);
+        c.hear(s.hal.now);
+        let mut p = std::vec![1u8];
+        p.extend_from_slice(&0xAu64.to_le_bytes());
+        let _ = s.on_parent_announce(0x1000, 7, Reader::new(&p));
+        assert!(!s.hal.sent.is_empty(), "uptime {uptime:#X} ms: no Parent_annce_rsp for a child heard just now");
+    }
 }

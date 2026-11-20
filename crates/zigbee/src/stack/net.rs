@@ -550,32 +550,15 @@ impl<H: Hal> Stack<H> {
                         self.route_drop(about);
                     }
                 }
-                let (sent, mac_failed) = match self.next_hop(h.dst).filter(|&n| !self.link_failed(n)) {
-                    Some(next) => {
-                        let ok = self.transmit_nwk(next, &h, payload) == TxStatus::Ok;
-                        if !ok {
-                            self.link_lost(next, h.dst);
-                        }
-                        (ok, !ok)
+                let next = self.next_hop(h.dst).filter(|&n| !self.link_failed(n));
+                match next.map(|next| (next, self.transmit_nwk(next, &h, payload))) {
+                    Some((_, TxStatus::Ok)) => self.diag.add(k::RELAYED_UCAST),
+                    Some((next, TxStatus::ChannelBusy)) => self.busy_drop(&h, next),
+                    Some((next, TxStatus::NoAck)) => {
+                        self.link_lost(next, h.dst);
+                        self.status_undelivered(&h, mac_src, payload, k::RELAY_DROP_MAC_FAIL);
                     }
-                    None => (false, false),
-                };
-                let drop = if mac_failed { k::RELAY_DROP_MAC_FAIL } else { k::RELAY_DROP_NO_ROUTE };
-                if sent {
-                    self.diag.add(k::RELAYED_UCAST);
-                } else if payload.get(1) == Some(&nwk::STATUS_MANY_TO_ONE_FAILURE) {
-                    if let Some(via) = self.random_router(mac_src, mac_src) {
-                        match self.transmit_nwk(via, &h, payload) {
-                            TxStatus::Ok => self.diag.add(k::RELAYED_UCAST),
-                            _ => self.diag.add(k::RELAY_DROP_MAC_FAIL),
-                        }
-                    } else {
-                        self.diag.add(drop);
-                        self.trace(trace::DROP, trace::DROP_UNREPORTED, &h, mac_src, 0);
-                    }
-                } else {
-                    self.diag.add(drop);
-                    self.trace(trace::DROP, trace::DROP_UNREPORTED, &h, mac_src, 0);
+                    None => self.status_undelivered(&h, mac_src, payload, k::RELAY_DROP_NO_ROUTE),
                 }
                 return;
             }
@@ -704,13 +687,18 @@ impl<H: Hal> Stack<H> {
                 }
             }
             let retries = if self.link_failed(next) { 0 } else { retries };
-            if self.transmit_nwk(next, h, payload) == TxStatus::Ok {
+            let status = self.transmit_nwk(next, h, payload);
+            if status == TxStatus::Ok {
                 if !originated {
                     self.diag.add(k::RELAYED_UCAST);
                 }
                 return;
             }
             if retries > 0 && self.hold_retry(h, payload, ROUTED, retries) {
+                return;
+            }
+            if status == TxStatus::ChannelBusy {
+                self.busy_drop(h, next);
                 return;
             }
             let lost = if retries > 0 { k::RELAY_DROP_QUEUE_FULL } else { k::RELAY_DROP_MAC_FAIL };
@@ -797,13 +785,18 @@ impl<H: Hal> Stack<H> {
     fn send_to(&mut self, next: u16, h: &Header, payload: &[u8], retries: u8) {
         let retries = if self.link_failed(next) { 0 } else { retries };
         let relayed = h.src != self.nib.short;
-        if self.transmit_nwk(next, h, payload) == TxStatus::Ok {
+        let status = self.transmit_nwk(next, h, payload);
+        if status == TxStatus::Ok {
             if relayed {
                 self.diag.add(k::RELAYED_UCAST);
             }
             return;
         }
         if retries > 0 && self.hold_retry(h, payload, next, retries) {
+            return;
+        }
+        if status == TxStatus::ChannelBusy {
+            self.busy_drop(h, next);
             return;
         }
         if relayed {
@@ -814,6 +807,30 @@ impl<H: Hal> Stack<H> {
         if !status {
             self.send_network_status(h.src, nwk::STATUS_SOURCE_ROUTE_FAILURE, h.dst);
         }
+    }
+
+    fn status_undelivered(&mut self, h: &Header, mac_src: u16, payload: &[u8], drop: usize) {
+        let detour = match payload.get(1) == Some(&nwk::STATUS_MANY_TO_ONE_FAILURE) {
+            true => self.random_router(mac_src, mac_src),
+            false => None,
+        };
+        match detour.map(|via| self.transmit_nwk(via, h, payload)) {
+            Some(TxStatus::Ok) => self.diag.add(k::RELAYED_UCAST),
+            Some(TxStatus::NoAck | TxStatus::ChannelBusy) => self.diag.add(k::RELAY_DROP_MAC_FAIL),
+            None => {
+                self.diag.add(drop);
+                self.trace(trace::DROP, trace::DROP_UNREPORTED, h, mac_src, 0);
+            }
+        }
+    }
+
+    fn busy_drop(&mut self, h: &Header, next: u16) {
+        if h.src != self.nib.short {
+            self.diag.add(k::RELAY_DROP_MAC_FAIL);
+        } else if h.frame_type == nwk::FRAME_DATA {
+            self.diag.add(k::APS_TX_UCAST_FAIL);
+        }
+        self.trace(trace::DROP, trace::DROP_CHANNEL_BUSY, h, next, 0);
     }
 
     fn hold_retry(&mut self, h: &Header, payload: &[u8], next: u16, retries: u8) -> bool {
@@ -1184,8 +1201,9 @@ impl<H: Hal> Stack<H> {
                 match p[1] {
                     nwk::STATUS_NO_ROUTE | nwk::STATUS_TREE_LINK_FAILURE | nwk::STATUS_LINK_FAILURE => self.route_drop(about),
                     nwk::STATUS_ADDRESS_CONFLICT => {
-                        if self.conflict.0 == about {
-                            self.conflict_due = None;
+                        match self.conflict.0 == about {
+                            true => self.conflict_due = None,
+                            false => self.address_conflict_report(),
                         }
                         let now = self.hal.now_ms();
                         self.conflict = (about, now.wrapping_add(CONFLICT_QUIET_MS));
@@ -1257,7 +1275,8 @@ impl<H: Hal> Stack<H> {
         if let Some(i) = self.child_by_ext(ext) {
             self.children[i].fc_next = counter.wrapping_add(1);
             self.children[i].fc_seq = key_seq;
-            self.children[i].heard = self.hal.now_ms();
+            let now = self.hal.now_ms();
+            self.children[i].hear(now);
             if self.children[i].capability & CAP_FFD == 0 {
                 return;
             }
@@ -1437,7 +1456,8 @@ impl<H: Hal> Stack<H> {
         let now = self.hal.now_ms();
         let later = |a: u32, b: u32| if (a.wrapping_sub(b) as i32) > 0 { a } else { b };
         let soon = now.wrapping_add(EARLY_LS_MIN_MS + self.hal.random() % EARLY_LS_SPREAD_MS);
-        let allowed = later(self.link_status_sent.wrapping_add(EARLY_LS_GAP_MS), self.booted.wrapping_add(RESUME_LINK_STATUS_MS));
+        let resumed = now.wrapping_add(RESUME_LINK_STATUS_MS.saturating_sub(now.wrapping_sub(self.booted)));
+        let allowed = later(self.link_status_sent.wrapping_add(EARLY_LS_GAP_MS), resumed);
         let at = later(allowed, soon);
         if (self.link_status_at.wrapping_sub(at) as i32) > 0 {
             self.link_status_at = at;

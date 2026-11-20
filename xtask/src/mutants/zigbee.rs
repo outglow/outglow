@@ -16,8 +16,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "DIAG: relayed frames not counted",
         file: "stack/net.rs",
-        old: "            if self.transmit_nwk(next, h, payload) == TxStatus::Ok {\n                if !originated {\n                    self.diag.add(k::RELAYED_UCAST);\n                }\n                return;\n            }\n            if retries > 0 && self.hold_retry(h, payload, ROUTED, retries) {",
-        new: "            if self.transmit_nwk(next, h, payload) == TxStatus::Ok {\n                return;\n            }\n            if retries > 0 && self.hold_retry(h, payload, ROUTED, retries) {",
+        old: "            if status == TxStatus::Ok {\n                if !originated {\n                    self.diag.add(k::RELAYED_UCAST);\n                }\n                return;\n            }\n            if retries > 0 && self.hold_retry(h, payload, ROUTED, retries) {",
+        new: "            if status == TxStatus::Ok {\n                return;\n            }\n            if retries > 0 && self.hold_retry(h, payload, ROUTED, retries) {",
     },
     Mutation {
         name: "DIAG: a relayed frame without a route not counted as lost",
@@ -1792,20 +1792,20 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: a many-to-one route failure without a route is not passed to another router",
         file: "stack/net.rs",
-        old: "                } else if payload.get(1) == Some(&nwk::STATUS_MANY_TO_ONE_FAILURE) {",
-        new: "                } else if false {",
+        old: "        let detour = match payload.get(1) == Some(&nwk::STATUS_MANY_TO_ONE_FAILURE) {",
+        new: "        let detour = match false {",
     },
     Mutation {
         name: "NWK: every status report without a route wanders on through other routers",
         file: "stack/net.rs",
-        old: "                } else if payload.get(1) == Some(&nwk::STATUS_MANY_TO_ONE_FAILURE) {",
-        new: "                } else if true {",
+        old: "        let detour = match payload.get(1) == Some(&nwk::STATUS_MANY_TO_ONE_FAILURE) {",
+        new: "        let detour = match true {",
     },
     Mutation {
         name: "NWK: a status report is passed back to the router it came from",
         file: "stack/net.rs",
-        old: "                    if let Some(via) = self.random_router(mac_src, mac_src) {",
-        new: "                    if let Some(via) = Some(mac_src) {",
+        old: "            true => self.random_router(mac_src, mac_src),",
+        new: "            true => Some(mac_src),",
     },
     Mutation {
         name: "NWK: source route failure names the relay that failed",
@@ -1858,8 +1858,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: a failed link is tried as often as a working one",
         file: "stack/net.rs",
-        old: "            let retries = if self.link_failed(next) { 0 } else { retries };\n            if self.transmit_nwk(next, h, payload) == TxStatus::Ok {",
-        new: "            if self.transmit_nwk(next, h, payload) == TxStatus::Ok {",
+        old: "            let retries = if self.link_failed(next) { 0 } else { retries };\n            let status = self.transmit_nwk(next, h, payload);",
+        new: "            let status = self.transmit_nwk(next, h, payload);",
     },
     Mutation {
         name: "NWK: a neighbor that does not know the link waits a whole Link Status period",
@@ -2596,8 +2596,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: an address conflict is reported although another router just did",
         file: "stack/net.rs",
-        old: "                        if self.conflict.0 == about {\n                            self.conflict_due = None;\n                        }\n",
-        new: "",
+        old: "                            true => self.conflict_due = None,\n",
+        new: "                            true => {}\n",
     },
     Mutation {
         name: "NWK: a conflict reported by another router is reported again when seen",
@@ -2682,5 +2682,11 @@ pub const MUTATIONS: &[Mutation] = &[
         file: "stack/mod.rs",
         old: "            && self.rejoin_wait.is_none()\n            && self.nib.tc_ext != NO_TRUST_CENTER\n",
         new: "            && self.rejoin_wait.is_none()\n",
+    },
+    Mutation {
+        name: "NWK: a frame lost to a busy channel counts against its link",
+        file: "stack/net.rs",
+        old: "            if status == TxStatus::ChannelBusy {\n                self.busy_drop(h, next);\n                return;\n            }\n            let lost",
+        new: "            let lost",
     },
 ];

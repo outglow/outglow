@@ -1311,3 +1311,86 @@ fn a_broadcast_table_filled_long_ago_takes_new_broadcasts() {
     let later = t + 9_000 + 0x8000_0000;
     assert_eq!(s.seen_before(0x7777, 1, later, false), Some(false), "24.9 days later the table is free");
 }
+
+#[test]
+fn an_early_link_status_still_comes_early_after_25_days_of_uptime() {
+    for uptime in [60_000u32, 0x8000_0000 + 60_000] {
+        let mut s = stack();
+        fill(&mut s);
+        s.booted = 1_000;
+        let now = 1_000u32.wrapping_add(uptime);
+        s.hal.now = now;
+        s.link_status_sent = now.wrapping_sub(10_000);
+        s.link_status_at = now.wrapping_add(5_000);
+        s.link_status_soon();
+        assert_eq!(s.link_status_at, now.wrapping_add(107), "uptime {uptime:#X} ms");
+    }
+}
+
+#[test]
+fn a_conflict_heard_about_another_address_does_not_replace_the_own_one_waiting_for_its_jitter() {
+    let mut s = up();
+    s.hal.random = [super::CONFLICT_JITTER_MS, 0x0777, 199].to_vec();
+    s.address_conflict(0x0042);
+    s.hal.now = 1_010;
+    let h = nwk::Header::new(nwk::FRAME_CMD, nwk::BROADCAST_RX_ON, 0x1000, 5, 9);
+    s.on_nwk_command(&h, 0x1000, &[nwk::CMD_NETWORK_STATUS, nwk::STATUS_ADDRESS_CONFLICT, 0x34, 0x12]);
+    s.hal.now = 1_000 + super::CONFLICT_JITTER_MS;
+    s.net_timers(s.hal.now);
+    assert_eq!(s.nib.short, 0x0777, "the bulb's own address, found in conflict first, is never given up");
+}
+
+#[test]
+fn a_frame_relayed_on_a_busy_channel_keeps_the_route_and_reports_no_link_failure() {
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1002, false, 0);
+    s.hal.busy = true;
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x1000, 5, 1);
+    s.relay(h, 0x1000, &[0x00, 0x01]);
+    for _ in 0..4 {
+        s.hal.now += 100;
+        s.net_timers(s.hal.now);
+    }
+    let statuses = s.hal.sent.iter().filter(|f| f.len() > 9 && f[9] & 3 == nwk::FRAME_CMD).count();
+    assert_eq!((s.routes[0].status, s.neighbors[2].failures), (super::ROUTE_ACTIVE, 0));
+    assert_eq!(statuses, 0, "a network status (link failure) went back to the source");
+}
+
+#[test]
+fn a_frame_lost_to_a_busy_channel_is_counted_by_whose_it_was_and_starts_no_route_discovery() {
+    let cases: [(u8, u16, u8, [u32; 4], u32); 4] = [
+        (nwk::FRAME_DATA, 0x3000, 0, [0, 1, 0, 0], 0),
+        (nwk::FRAME_DATA, 0x3000, 1, [0, 1, 0, 0], 0),
+        (nwk::FRAME_DATA, 0x0042, 1, [0, 0, 0, 0], 1),
+        (nwk::FRAME_CMD, 0x0042, 1, [0, 0, 0, 0], 0),
+    ];
+    for (frame_type, src, discover, counts, aps_failed) in cases {
+        let mut s = routed(true, &[]);
+        s.hal.busy = true;
+        let t = try_route(&mut s, frame_type, src, discover, &[0x7F], 0);
+        let at = (frame_type, src, discover);
+        assert_eq!((t.to, t.counts, t.held), (std::vec![0x1002], counts, false), "{at:?}");
+        assert_eq!((s.diag.n[k::APS_TX_UCAST_FAIL], s.routes[0].status), (aps_failed, super::ROUTE_ACTIVE), "{at:?}");
+    }
+}
+
+#[test]
+fn a_source_routed_frame_lost_to_a_busy_channel_is_not_reported_as_a_failed_route() {
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1002, false, 0);
+    s.hal.busy = true;
+    s.send_to(0x1002, &nwk::Header::new(nwk::FRAME_DATA, 0x5000, 0x3000, 5, 1), &[0x00], 0);
+    assert_eq!((s.hal.sent.len(), s.diag.n[k::RELAY_DROP_MAC_FAIL], s.routes[0].status), (1, 1, super::ROUTE_ACTIVE));
+}
+
+#[test]
+fn a_network_status_lost_to_a_busy_channel_keeps_its_route_and_takes_no_other_router() {
+    for status in [nwk::STATUS_NO_ROUTE, nwk::STATUS_MANY_TO_ONE_FAILURE] {
+        let mut s = relaying();
+        route(&mut s, 0, 0x5000, 0x1002, false, 0);
+        s.hal.busy = true;
+        relay_status(&mut s, 0x5000, status);
+        let got = (relay_counts(&s), s.hal.sent.len(), s.routes[0].status);
+        assert_eq!(got, ([0, 1, 0], 1, super::ROUTE_ACTIVE), "status {status:02X}");
+    }
+}

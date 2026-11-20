@@ -31,6 +31,7 @@ pub mod trace {
     pub const DROP_NO_ROUTE: u8 = 7;
     pub const DROP_ROUTE_RECORD: u8 = 8;
     pub const DROP_UNREPORTED: u8 = 9;
+    pub const DROP_CHANNEL_BUSY: u8 = 10;
     pub const HOLD: u8 = 4;
     pub const HELD_FAIL: u8 = 5;
     pub const FAIL_EXPIRED: u8 = 1;

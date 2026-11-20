@@ -488,8 +488,7 @@ impl<H: Hal> Stack<H> {
     }
 
     fn child_alive(&self, i: usize) -> bool {
-        let since = self.children[i].heard.wrapping_sub(self.booted);
-        since != 0 && since < 0x8000_0000
+        self.children[i].heard_up
     }
 
     pub(crate) fn parent_announce(&mut self) {

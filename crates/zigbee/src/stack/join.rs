@@ -370,7 +370,8 @@ impl<H: Hal> Stack<H> {
                         f.u8(self.nib.channel);
                         f.u16(short);
                         self.mac_transmit(f.as_slice());
-                        self.children[i].heard = self.hal.now_ms();
+                        let now = self.hal.now_ms();
+                        self.children[i].hear(now);
                     }
                 }
             }

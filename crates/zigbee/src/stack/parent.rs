@@ -34,6 +34,7 @@ pub(crate) struct Child {
     pub fc_next: u32,
     pub fc_seq: u8,
     pub heard: u32,
+    pub heard_up: bool,
     pub polled_at: u32,
     pub poll_ms: u32,
     pub more: bool,
@@ -51,10 +52,15 @@ impl Child {
         fc_next: 0,
         fc_seq: 0,
         heard: 0,
+        heard_up: false,
         polled_at: 0,
         poll_ms: 0,
         more: false,
     };
+
+    pub(crate) fn hear(&mut self, now: u32) {
+        (self.heard, self.heard_up) = (now, true);
+    }
 
     pub(crate) fn sleepy(&self) -> bool {
         self.capability & CAP_RX_ON == 0
@@ -171,7 +177,7 @@ impl<H: Hal> Stack<H> {
                     _ => self.new_address(),
                 };
                 self.children[i] =
-                    Child { used: true, ext, short, capability, heard: now, ..Child::EMPTY };
+                    Child { used: true, ext, short, capability, heard: now, heard_up: true, ..Child::EMPTY };
                 self.diag.add(super::diag::k::JOIN_INDICATION);
                 (short, 0x00)
             }
@@ -354,7 +360,7 @@ impl<H: Hal> Stack<H> {
         };
         if let Some(i) = child {
             let c = &mut self.children[i];
-            c.heard = now;
+            c.hear(now);
             if c.polled_at != 0 && !c.more {
                 c.poll_ms = now.wrapping_sub(c.polled_at).max(1);
             }
@@ -487,7 +493,8 @@ impl<H: Hal> Stack<H> {
         h.security = false;
         self.transmit_nwk(short, &h, inner);
         self.children[i].joined = true;
-        self.children[i].heard = self.hal.now_ms();
+        let now = self.hal.now_ms();
+        self.children[i].hear(now);
         self.store_children();
     }
 
@@ -533,10 +540,11 @@ impl<H: Hal> Stack<H> {
             }
             let (fc_next, fc_seq) = neighbor.map_or((0, 0), |n| (self.neighbors[n].fc_next, self.neighbors[n].fc_seq));
             self.children[i] =
-                Child { used: true, ext, short, capability, joined: secured, fc_next, fc_seq, heard: now, ..Child::EMPTY };
+                Child { used: true, ext, short, capability, joined: secured, fc_next, fc_seq, heard: now, heard_up: true, ..Child::EMPTY };
         } else if secured {
             let c = &mut self.children[i];
-            (c.short, c.capability, c.joined, c.timeout, c.heard) = (short, capability, true, DEFAULT_TIMEOUT, now);
+            (c.short, c.capability, c.joined, c.timeout) = (short, capability, true, DEFAULT_TIMEOUT);
+            c.hear(now);
         }
         if secured && capability & CAP_FFD == 0 {
             if let Some(n) = neighbor {
@@ -692,7 +700,7 @@ impl<H: Hal> Stack<H> {
             let short = self.children[i].short;
             self.distribute_key(short, ext);
             self.children[i].joined = true;
-            self.children[i].heard = now;
+            self.children[i].hear(now);
             self.store_children();
         }
     }

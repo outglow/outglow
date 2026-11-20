@@ -107,7 +107,7 @@ fn an_associating_device_is_heard_now_and_unauthenticated() {
     s.permit_until = Some(160_000);
     s.on_association_request(0x00124B00000000C3, 0x80);
     let c = s.children.iter().find(|c| c.used).copied().expect("a child");
-    assert_eq!((c.ext, c.heard, c.joined, c.capability), (0x00124B00000000C3, 100_000, false, 0x80));
+    assert_eq!((c.ext, c.heard, c.heard_up, c.joined, c.capability), (0x00124B00000000C3, 100_000, true, false, 0x80));
     s.parent_timers(100_000 + 5_000);
     assert!(s.children.iter().any(|c| c.used), "kept while it gets its key");
 }
@@ -211,7 +211,7 @@ fn a_secured_rejoin_renews_a_known_child_and_an_end_device_is_no_longer_a_neighb
     s.hal.now = 4_000;
     rejoin(&mut s, 0x2000, 0x88, true);
     let c = s.children[2];
-    assert_eq!((c.short, c.capability, c.joined, c.timeout, c.heard), (0x2000, 0x88, true, super::DEFAULT_TIMEOUT, 4_000));
+    assert_eq!((c.short, c.capability, c.joined, c.timeout, c.heard, c.heard_up), (0x2000, 0x88, true, super::DEFAULT_TIMEOUT, 4_000, true));
     assert!(!s.neighbors[0].used);
     let mut s = up_parent();
     let n = &mut s.neighbors[0];
@@ -223,7 +223,7 @@ fn a_secured_rejoin_renews_a_known_child_and_an_end_device_is_no_longer_a_neighb
     s.hal.now = 4_000;
     rejoin(&mut s, 0x3000, 0x8E, true);
     let c = s.children[0];
-    assert_eq!((c.used, c.ext, c.joined, c.fc_next, c.fc_seq, c.heard), (true, EXT, true, 77, 2, 4_000));
+    assert_eq!((c.used, c.ext, c.joined, c.fc_next, c.fc_seq, c.heard, c.heard_up), (true, EXT, true, 77, 2, 4_000, true));
     assert!(s.neighbors[0].used, "a router stays a neighbour");
 }
 
