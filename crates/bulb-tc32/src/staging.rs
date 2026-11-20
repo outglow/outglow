@@ -29,7 +29,7 @@ pub fn release(who: Owner) {
 }
 
 pub fn activate() -> bool {
-    if !rules::mark_bootable(&mut BoardFlash, BASE, SIZE, board::watchdog_feed) {
+    if !rules::mark_bootable(&mut BoardFlash, BASE, SIZE, board::BOARD.image_type, board::watchdog_feed) {
         return false;
     }
     board::reboot()

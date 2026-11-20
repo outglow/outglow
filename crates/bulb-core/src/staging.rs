@@ -4,6 +4,9 @@ pub const BOOT_MARK: usize = 8;
 pub const MARK: u8 = 0x4b;
 const MIN_SIZE: u32 = 0x40;
 const CHUNK: usize = 64;
+const IDENTITY: core::ops::Range<usize> = 0x12..0x16;
+const MANUFACTURER_CODE: u16 = 0x1141;
+const STOCK: [u8; 4] = [0; 4];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Owner {
@@ -46,11 +49,25 @@ fn crc32_update(mut crc: u32, byte: u8) -> u32 {
     (crc >> 4) ^ TABLE[(crc & 0x0f) as usize]
 }
 
-pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bool {
+fn identity(image_type: u16) -> [u8; 4] {
+    let [m0, m1] = MANUFACTURER_CODE.to_le_bytes();
+    let [t0, t1] = image_type.to_le_bytes();
+    [m0, m1, t0, t1]
+}
+
+fn for_this_board(head: &[u8], image_type: u16) -> bool {
+    [STOCK, identity(image_type)].iter().any(|id| head[IDENTITY] == id[..])
+}
+
+pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, image_type: u16, feed: fn()) -> bool {
     let mut head = [0u8; 0x20];
     flash.read(base, &mut head);
     let size = u32::from_le_bytes([head[0x18], head[0x19], head[0x1a], head[0x1b]]);
-    if head[BOOT_MARK] != 0xff || head[9..12] != *b"NLT" || !(MIN_SIZE..=area).contains(&size) {
+    if head[BOOT_MARK] != 0xff
+        || head[9..12] != *b"NLT"
+        || !(MIN_SIZE..=area).contains(&size)
+        || !for_this_board(&head, image_type)
+    {
         return false;
     }
     let body = size as usize - 4;
@@ -74,8 +91,8 @@ pub fn image_good<F: Flash>(flash: &F, base: usize, area: u32, feed: fn()) -> bo
     u32::from_le_bytes(stored) == crc
 }
 
-pub fn mark_bootable<F: Flash>(flash: &mut F, base: usize, area: u32, feed: fn()) -> bool {
-    if !image_good(flash, base, area, feed) {
+pub fn mark_bootable<F: Flash>(flash: &mut F, base: usize, area: u32, image_type: u16, feed: fn()) -> bool {
+    if !image_good(flash, base, area, image_type, feed) {
         return false;
     }
     flash.program(base + BOOT_MARK, &[MARK]);

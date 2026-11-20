@@ -202,6 +202,10 @@ fn a_complete_image_is_marked_bootable_and_the_chip_restarts() {
     broken[0x100] ^= 1;
     sim::with(|c| c.flash[staging::BASE + 0x100] = broken[0x100]);
     assert!(!hal.ota_activate());
+    let other = crate::tests::image_of(0x2000, crate::board::BOARD.image_type ^ 1);
+    sim::with(|c| c.flash[staging::BASE..staging::BASE + 0x2000].copy_from_slice(&other));
+    assert!(!hal.ota_activate());
+    assert_eq!(sim::flash8(staging::BASE + 8), 0xff);
     sim::with(|c| c.flash[staging::BASE..staging::BASE + 0x2000].copy_from_slice(&img));
     assert!(sim::reboots(move || {
         let _ = BleHal::new().ota_activate();

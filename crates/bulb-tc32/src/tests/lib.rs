@@ -25,8 +25,14 @@ pub fn crc32(data: &[u8]) -> u32 {
 }
 
 pub fn image(size: usize) -> Vec<u8> {
+    image_of(size, crate::board::BOARD.image_type)
+}
+
+pub fn image_of(size: usize, image_type: u16) -> Vec<u8> {
     let mut v: Vec<u8> = (0..size).map(|i| (i * 7 + 3) as u8).collect();
     v[8..12].copy_from_slice(b"\xffNLT");
+    v[0x12..0x14].copy_from_slice(&0x1141u16.to_le_bytes());
+    v[0x14..0x16].copy_from_slice(&image_type.to_le_bytes());
     v[0x18..0x1c].copy_from_slice(&(size as u32).to_le_bytes());
     let mut sum = v[..size - 4].to_vec();
     sum[8] = 0x4b;

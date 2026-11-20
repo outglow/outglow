@@ -8,11 +8,28 @@ use outglow_image::telink;
 
 const BASE: usize = 0x6000;
 const AREA: u32 = 0x6_4000;
+const DIMM: u16 = 0x0390;
+const OURS: [u8; 4] = [0x41, 0x11, 0x90, 0x03];
+const STOCK_HEAD: [u8; 0x18] = [
+    0x51, 0x80, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x4b, 0x4e, 0x4c, 0x54, 0x10, 0x03, 0x88, 0x00, 0xc6, 0x80, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+];
 
-fn image(len: usize, seed: u8) -> Vec<u8> {
+fn image_as(len: usize, seed: u8, id: [u8; 4]) -> Vec<u8> {
     let mut v: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect();
     v[6] = 0;
     v[BOOT_MARK..BOOT_MARK + 4].copy_from_slice(b"KNLT");
+    v[0x12..0x16].copy_from_slice(&id);
+    telink::finalize(&v)
+}
+
+fn image(len: usize, seed: u8) -> Vec<u8> {
+    image_as(len, seed, OURS)
+}
+
+fn stock(len: usize) -> Vec<u8> {
+    let mut v: Vec<u8> = (0..len).map(|i| (i as u8).wrapping_mul(7)).collect();
+    v[..STOCK_HEAD.len()].copy_from_slice(&STOCK_HEAD);
     telink::finalize(&v)
 }
 
@@ -30,7 +47,7 @@ fn no_feed() {}
 fn mark(f: &NorFlash) -> (bool, Vec<FlashOp>) {
     f.clear_ops();
     let mut h = f.clone();
-    let ok = mark_bootable(&mut h, BASE, AREA, no_feed);
+    let ok = mark_bootable(&mut h, BASE, AREA, DIMM, no_feed);
     (ok, f.ops())
 }
 
@@ -87,6 +104,46 @@ fn any_damage_leaves_the_image_unmarked() {
 }
 
 #[test]
+fn this_boards_image_and_any_stock_image_are_marked() {
+    for (what, img) in [("this board's image", image(0x2000, 4)), ("a stock image", stock(0x2000))] {
+        let f = staged(&img);
+        let (ok, ops) = mark(&f);
+        assert!(ok, "{what}");
+        assert_eq!(ops, vec![FlashOp::Program { addr: BASE + BOOT_MARK, data: vec![MARK] }], "{what}");
+    }
+    let tw = image_as(0x2000, 4, [0x41, 0x11, 0x91, 0x03]);
+    let f = staged(&tw);
+    f.clear_ops();
+    let mut h = f.clone();
+    assert!(mark_bootable(&mut h, BASE, AREA, 0x0391, no_feed), "a TW image on a TW board");
+}
+
+#[test]
+fn an_image_for_another_board_or_link_address_is_not_marked() {
+    let cases = [
+        ("TW image on a dimm board", [0x41, 0x11, 0x91, 0x03]),
+        ("LilyGO image linked for 0x0", [0x41, 0x11, 0xa5, 0x03]),
+        ("Telink SDK image of the LilyGO module", [0x41, 0x11, 0x00, 0x02]),
+        ("C firmware, dimm", [0x41, 0x11, 0x81, 0x03]),
+        ("C bootloader linked for 0x0", [0x41, 0x11, 0xff, 0x03]),
+        ("another manufacturer", [0x42, 0x11, 0x90, 0x03]),
+        ("another manufacturer, high byte", [0x41, 0x12, 0x90, 0x03]),
+        ("image type high byte", [0x41, 0x11, 0x90, 0x04]),
+        ("stock manufacturer, our type", [0x00, 0x00, 0x90, 0x03]),
+        ("our manufacturer, stock type", [0x41, 0x11, 0x00, 0x00]),
+        ("stock with a type", [0x00, 0x00, 0x00, 0x01]),
+        ("stock with a manufacturer", [0x01, 0x00, 0x00, 0x00]),
+        ("erased", [0xff; 4]),
+    ];
+    for (what, id) in cases {
+        let f = staged(&image_as(0x2000, 6, id));
+        let (ok, ops) = mark(&f);
+        assert!(!ok && ops.is_empty(), "{what}: marked");
+        assert!(!image_good(&f, BASE, AREA, DIMM, no_feed), "{what}");
+    }
+}
+
+#[test]
 fn the_check_takes_the_size_from_the_header_not_from_the_area() {
     let old = image(0x9000, 1);
     let new = image(0x4000, 2);
@@ -110,7 +167,7 @@ fn the_watchdog_is_fed_as_a_large_image_is_checked() {
     let img = image(AREA as usize - 4 - 15, 5);
     let f = staged(&img);
     FEEDS.with(|n| n.set(0));
-    assert!(image_good(&f, BASE, AREA, feed));
+    assert!(image_good(&f, BASE, AREA, DIMM, feed));
     let feeds = FEEDS.with(|n| n.get());
     assert_eq!(feeds as usize, (img.len() - 4) / 0x4000, "one feed every 16 KiB checked");
 }

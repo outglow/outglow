@@ -36,9 +36,10 @@ pub fn finalize(image: &[u8]) -> Vec<u8> {
     fw
 }
 
-fn small_image(seed: usize) -> Vec<u8> {
+fn small_image(seed: usize, id: &[u8]) -> Vec<u8> {
     let mut body: Vec<u8> = (0..6000).map(|i| ((i * 31 + seed) & 0xFF) as u8).collect();
     body[8..12].copy_from_slice(b"KNLT");
+    body[0x12..0x16].copy_from_slice(&id[0x12..0x16]);
     body[6..8].copy_from_slice(&[0, 0]);
     finalize(&body)
 }
@@ -93,6 +94,7 @@ fn zigbee_update(cx: &SimCtx, img: &crate::image::Image) -> R<(Vec<u8>, Vec<u8>)
 fn run(cx: &mut SimCtx) -> R<()> {
     let img = cx.image("bin", "target/tc32/bulb-tc32.bin");
     let (ota, expect) = zigbee_update(cx, &img)?;
+    let own = img.bytes().map_err(Stop::Error)?;
     let node = node_of(&img, cx.cpi)?;
     let mut b = Bench::new(node, "dut", true, None);
     let mut results: Vec<bool> = Vec::new();
@@ -114,7 +116,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     b.run(D, 6000.0)?;
 
     let mut tr = connect(&mut b)?;
-    let image = small_image(1);
+    let image = small_image(1, &own);
     send(&mut b, &mut tr, &image, None)?;
     let st = ok(tr.read(&mut b, OTA)?)?;
     check(cx, "BLE transfer of a small image: all blocks taken", st[0] == 3 && st[1] == 0, &hx(&st[..8.min(st.len())]));
@@ -139,7 +141,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
 
     b.w.coord.add_ota_file(ota).map_err(Stop::Error)?;
     let mut tr = connect(&mut b)?;
-    let image = small_image(2);
+    let image = small_image(2, &own);
     let n = send(&mut b, &mut tr, &image, Some(40))?;
     let blocks0 = blocks(&b);
     b.w.coord.image_notify(&mut b.w.air, short, 1);
@@ -163,7 +165,7 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let started = until(&mut b, 60000.0, 50.0, |b| blocks(b) - blocks0 >= 20)?;
     check(cx, "with the BLE transfer gone the Zigbee download starts", started, "");
     let mut tr = connect(&mut b)?;
-    for (_, pkt) in data_packets(&small_image(3), 23).iter().take(3) {
+    for (_, pkt) in data_packets(&small_image(3, &own), 23).iter().take(3) {
         ok(tr.write(&mut b, OTA, pkt)?)?;
     }
     let st = ok(tr.read(&mut b, OTA)?)?;
