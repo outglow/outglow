@@ -84,3 +84,12 @@ fn the_remaining_time_of_a_transition_long_over_stays_zero_when_the_clock_wraps(
     s.hal.now = t + 1_000 + 0x8000_0000 + 5_000;
     assert_eq!(s.light_settings().remaining_tenths, 0, "24.9 days after the transition ended");
 }
+
+#[test]
+fn an_identify_over_before_the_timers_tick_is_no_longer_identifying() {
+    let mut s = stack();
+    let t = s.hal.now;
+    s.identify_until = Some(t - 5);
+    s.on_zcl(0x0000, 1, 1, 0x0004, &[0x01, 7, 0x05, 0x34, 0x12], true);
+    assert!(!s.groups.contains(&0x1234), "Add Group If Identifying after the identify ended");
+}

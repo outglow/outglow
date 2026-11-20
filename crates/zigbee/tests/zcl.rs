@@ -1077,3 +1077,38 @@ fn a_step_25_days_after_an_off_counts_from_the_level() {
     net.run(2_000);
     assert_eq!(last_command(&mut net, n, short, LEVEL, 0x02, &[0x00, 20, 0, 0]), Some(MoveToLevel { level: 220, transition_ms: 0 }));
 }
+
+#[test]
+fn a_long_read_reporting_configuration_answers_whole_records_only() {
+    let (mut net, _, short) = bulb_with(IDENTITY);
+    let mut request = Vec::new();
+    for _ in 0..30 {
+        request.extend_from_slice(&[0x00, 0x00, 0x00]);
+    }
+    let seq = net.coord.zcl_fragmented(short, ON_OFF, 0x00, 0x08, &request, 50);
+    net.run(500);
+    let rsp = net.coord.last_zcl(short, ON_OFF, 0x09).expect("an answer");
+    assert_eq!(rsp[..3], [0x18, seq, 0x09]);
+    let records = &rsp[3..];
+    assert_eq!(records.len() % 9, 0, "every record whole: {} bytes, tail {:02x?}", records.len(), &records[records.len() - 4..]);
+}
+
+#[test]
+fn a_read_reporting_configuration_fills_the_frame_and_stops_at_the_first_record_that_does_not_fit() {
+    let on_off = [0x00, 0x00, 0x00];
+    let unknown = [0x00, 0xFF, 0xFF];
+    let cases: [(&[[u8; 3]], usize); 2] = [(&[unknown, on_off], 27 * 9 + 4), (&[on_off, unknown], 27 * 9)];
+    for (tail, want) in cases {
+        let (mut net, _, short) = bulb_with(IDENTITY);
+        let mut request = Vec::new();
+        for _ in 0..27 {
+            request.extend_from_slice(&on_off);
+        }
+        tail.iter().for_each(|r| request.extend_from_slice(r));
+        let seq = net.coord.zcl_fragmented(short, ON_OFF, 0x00, 0x08, &request, 50);
+        net.run(500);
+        let rsp = net.coord.last_zcl(short, ON_OFF, 0x09).expect("an answer");
+        assert_eq!(rsp[..3], [0x18, seq, 0x09]);
+        assert_eq!(rsp[3..].len(), want, "tail {tail:02x?}");
+    }
+}

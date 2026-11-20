@@ -464,3 +464,49 @@ fn bindings_come_back_after_a_power_cycle_as_they_were() {
     net.run(500);
     assert_eq!(ask(&mut net, short, MGMT_BIND_REQ, &[0]).unwrap(), before);
 }
+
+#[test]
+fn a_second_binding_of_unknown_address_is_asked_for_while_the_first_stays_unanswered() {
+    let (mut net, n, short) = bulb();
+    let me = ext_of(&net, n);
+    let gone = 0x00124B00000000E1u64;
+    let other = 0x00124B00000000E2u64;
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(gone, 3))), Some(vec![0x00]));
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(other, 3))), Some(vec![0x00]));
+    let t = net.now();
+    for level in [10u8, 60, 110, 160, 210, 20] {
+        net.coord.zcl(short, LEVEL, 0x11, 0x04, &[level, 0, 0, 0, 0]);
+        net.run(12_000);
+    }
+    let asked: Vec<Vec<u8>> = net
+        .nwk_sent_by(net.nodes[n].id, t)
+        .into_iter()
+        .filter(|(_, h, p)| h.dst == 0xFFFD && p.len() > 16 && p[2..6] == [0, 0, 0, 0])
+        .map(|(_, _, p)| p[9..17].to_vec())
+        .collect();
+    assert!(asked.contains(&gone.to_le_bytes().to_vec()), "{asked:02x?}");
+    assert!(asked.contains(&other.to_le_bytes().to_vec()), "the second binding is never asked for: {asked:02x?}");
+}
+
+#[test]
+fn unknown_bindings_of_two_clusters_are_both_asked_for() {
+    let (mut net, n, short) = bulb();
+    let me = ext_of(&net, n);
+    let gone = 0x00124B00000000E1u64;
+    let other = 0x00124B00000000E2u64;
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, ON_OFF, &unicast_dst(gone, 3))), Some(vec![0x00]));
+    assert_eq!(ask(&mut net, short, BIND_REQ, &bind_payload(me, 1, LEVEL, &unicast_dst(other, 3))), Some(vec![0x00]));
+    let t = net.now();
+    net.coord.zcl(short, ON_OFF, 0x10, 0x06, &[0x00, 0x00, 0x00, 0x10, 1, 0, 11, 0]);
+    net.run(100);
+    net.coord.zcl(short, LEVEL, 0x10, 0x06, &[0x00, 0x00, 0x00, 0x20, 1, 0, 11, 0, 1]);
+    net.run(120_000);
+    let asked: Vec<Vec<u8>> = net
+        .nwk_sent_by(net.nodes[n].id, t)
+        .into_iter()
+        .filter(|(_, h, p)| h.dst == 0xFFFD && p.len() > 16 && p[2..6] == [0, 0, 0, 0])
+        .map(|(_, _, p)| p[9..17].to_vec())
+        .collect();
+    assert!(asked.contains(&gone.to_le_bytes().to_vec()), "{asked:02x?}");
+    assert!(asked.contains(&other.to_le_bytes().to_vec()), "the level binding is never asked for: {asked:02x?}");
+}

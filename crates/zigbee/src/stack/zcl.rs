@@ -6,7 +6,7 @@ use super::{diag, objects};
 use super::sense::{self, OCCUPANCY, SENSE};
 use super::{BleMode, Scene, Stack, BLE_WINDOW_DEFAULT_MIN, BLE_WINDOW_MAX_MIN, GROUPS, REPORT_COLOR_TEMP, REPORT_LEVEL, REPORT_ON_OFF};
 use crate::hal::Hal;
-use crate::util::{due, le, pack, Buf, Long, Reader};
+use crate::util::{due, le, pack, Buf, Buffer, Long, Reader};
 
 pub(crate) const BASIC: u16 = 0x0000;
 pub(crate) const IDENTIFY: u16 = 0x0003;
@@ -464,8 +464,7 @@ impl<H: Hal> Stack<H> {
             (BASIC, 0x000A | 0x000B) => out.u8(0),
             (BASIC, 0x4000) => string(out, self.identity.sw_build),
             (IDENTIFY, 0x0000) => {
-                let now = self.hal.now_ms();
-                out.u16(self.identify_until.map_or(0, |t| (t.wrapping_sub(now) / 1000) as u16));
+                out.u16(self.identify_left().map_or(0, |left| (left / 1000) as u16));
             }
             (GROUPS_CLUSTER, 0x0000) => out.u8(0),
             (ON_OFF, 0x0000) => out.u8(self.light.on as u8),
@@ -576,6 +575,11 @@ impl<H: Hal> Stack<H> {
                 self.store_settings();
             }
         }
+    }
+
+    fn identify_left(&mut self) -> Option<u32> {
+        let now = self.hal.now_ms();
+        self.identify_until.filter(|&until| !due(now, until)).map(|until| until.wrapping_sub(now))
     }
 
     fn identify(&mut self, seconds: u16) {
@@ -797,18 +801,25 @@ impl<H: Hal> Stack<H> {
 
     fn send_to_bindings(&mut self, ep: u8, cluster: u16, frame: &[u8]) {
         let now = self.hal.now_ms();
-        for b in self.bindings {
+        let mut unknown = None;
+        for (i, b) in self.bindings.into_iter().enumerate() {
+            let short = (!b.group).then(|| self.resolve(b.dst));
+            if b.used && short == Some(None) {
+                unknown = unknown.into_iter().chain([(i <= self.addr_asked_slot as usize, i, b.dst)]).min();
+            }
             if !b.used || b.cluster != cluster || b.src_ep != ep {
                 continue;
             }
-            if b.group {
-                self.aps_group(b.dst as u16, cluster, PROFILE_HA, ep, frame);
-            } else if let Some(short) = self.resolve(b.dst) {
-                self.aps_data(short, b.dst_ep, cluster, PROFILE_HA, ep, frame);
-            } else if now.wrapping_sub(self.addr_asked_at) >= super::ADDR_QUERY_MS {
-                self.addr_asked_at = now;
-                self.zdo_nwk_addr_request(b.dst);
+            match short {
+                None => self.aps_group(b.dst as u16, cluster, PROFILE_HA, ep, frame),
+                Some(Some(short)) => self.aps_data(short, b.dst_ep, cluster, PROFILE_HA, ep, frame),
+                Some(None) => {}
             }
+        }
+        if let Some((_, i, dst)) = unknown.filter(|_| now.wrapping_sub(self.addr_asked_at) >= super::ADDR_QUERY_MS) {
+            self.addr_asked_at = now;
+            self.addr_asked_slot = i as u8;
+            self.zdo_nwk_addr_request(dst);
         }
     }
 
@@ -957,25 +968,30 @@ impl<H: Hal> Stack<H> {
                         ),
                         _ => None,
                     };
+                    let mut record: Buffer<13> = Buffer::new();
                     match (config, ty) {
                         (Some((min_s, max_s, change)), Some(ty)) => {
-                            rsp.u8(SUCCESS);
-                            rsp.u8(0);
-                            rsp.u16(id);
-                            rsp.u8(ty);
-                            rsp.u16(min_s);
-                            rsp.u16(max_s);
+                            record.u8(SUCCESS);
+                            record.u8(0);
+                            record.u16(id);
+                            record.u8(ty);
+                            record.u16(min_s);
+                            record.u16(max_s);
                             if is_analog(ty) {
                                 let n = value_len(ty, &Reader::new(&[])).unwrap_or(2);
-                                rsp.bytes(&change.to_le_bytes()[..n.min(4)]);
+                                record.bytes(&change.to_le_bytes()[..n.min(4)]);
                             }
                         }
                         (_, ty) => {
-                            rsp.u8(if ty.is_some() { UNREPORTABLE_ATTRIBUTE } else { UNSUPPORTED_ATTRIBUTE });
-                            rsp.u8(direction);
-                            rsp.u16(id);
+                            record.u8(if ty.is_some() { UNREPORTABLE_ATTRIBUTE } else { UNSUPPORTED_ATTRIBUTE });
+                            record.u8(direction);
+                            record.u16(id);
                         }
                     }
+                    if record.len() > rsp.room() {
+                        break;
+                    }
+                    rsp.bytes(record.as_slice());
                 }
                 None
             }
@@ -1052,10 +1068,9 @@ impl<H: Hal> Stack<H> {
                 SUCCESS
             }
             (IDENTIFY, 0x01) => {
-                if let Some(until) = self.identify_until {
-                    let now = self.hal.now_ms();
+                if let Some(left) = self.identify_left() {
                     header(rsp, 0x00);
-                    rsp.u16((until.wrapping_sub(now) / 1000) as u16);
+                    rsp.u16((left / 1000) as u16);
                 }
                 SUCCESS
             }
@@ -1095,7 +1110,7 @@ impl<H: Hal> Stack<H> {
             (GROUPS_CLUSTER, 0x00 | 0x05) => {
                 let group = r.u16()?;
                 if cmd == 0x05 {
-                    return Some(Some(if self.identify_until.is_none() { SUCCESS } else { self.group_add(group) }));
+                    return Some(Some(if self.identify_left().is_none() { SUCCESS } else { self.group_add(group) }));
                 }
                 let status = self.group_add(group);
                 header(rsp, 0x00);
