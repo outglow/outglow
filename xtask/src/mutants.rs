@@ -45,7 +45,8 @@ pub struct Args {
     #[arg(long)]
     fail_fast: bool,
     #[doc = " Seconds one test run may take; a run that takes longer is killed and"]
-    #[doc = " counted as caught (the suite did not pass). 0 = no limit"]
+    #[doc = " counted as caught once its tests were running (the suite did not pass),"]
+    #[doc = " as unviable while still building. 0 = no limit"]
     #[arg(long, default_value_t = 900)]
     timeout: u64,
 }
@@ -251,8 +252,10 @@ fn verdict(out: &str, success: bool, timed_out: bool) -> Verdict {
         Verdict::Unviable("does not compile".into())
     } else if let Some(first) = failed.first() {
         Verdict::Caught(format!("{} test(s), e.g. {first}", failed.len()))
-    } else if timed_out {
+    } else if timed_out && ran_tests {
         Verdict::Caught("the tests did not finish in time".into())
+    } else if timed_out {
+        Verdict::Unviable("the build did not finish in time".into())
     } else if !success && ran_tests {
         Verdict::Caught("a test process failed without a test result".into())
     } else if !success {

@@ -130,7 +130,8 @@ fn the_verdict_of_a_test_run() {
     assert_eq!(v("test a ... FAILED\ntest b::c ... FAILED  \ntest d ... ok\n", false, false), "caught 2 test(s), e.g. a");
     assert_eq!(v("error: could not compile `x`", false, false), "unviable does not compile");
     assert_eq!(v("test a ... FAILED\nerror[E1]", false, false), "unviable does not compile");
-    assert_eq!(v("", false, true), "caught the tests did not finish in time");
+    assert_eq!(v(ran, false, true), "caught the tests did not finish in time");
+    assert_eq!(v("   Compiling zigbee\n", false, true), "unviable the build did not finish in time");
     assert_eq!(v(ran, false, false), "caught a test process failed without a test result");
     assert_eq!(v("", false, false), "unviable cargo failed before running a test: no output");
     let lost = "error: failed to load manifest for workspace member\n  failed to read crates/memcap/Cargo.toml\n";
