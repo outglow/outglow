@@ -919,3 +919,192 @@ fn a_zigbee_trace_of_a_transmission_gets_the_radio_figures() {
         }
     }
 }
+
+struct FuzzRng(u64);
+
+impl FuzzRng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n.max(1)
+    }
+}
+
+fn staged_marked_and_bad() -> Option<String> {
+    let base = staging::BASE;
+    let f = sim::with(|c| c.flash[base..base + staging::SIZE as usize].to_vec());
+    if f[8] == 0xff {
+        return None;
+    }
+    if f[8] != 0x4b {
+        return Some(format!("a torn mark {:#x}", f[8]));
+    }
+    let size = u32::from_le_bytes([f[0x18], f[0x19], f[0x1a], f[0x1b]]) as usize;
+    if &f[9..12] != b"NLT" || !(0x40..=staging::SIZE as usize).contains(&size) {
+        return Some(format!("marked, header bad, size {size:#x}"));
+    }
+    let id = &f[0x12..0x16];
+    let ours = [0x41, 0x11, crate::board::BOARD.image_type as u8, (crate::board::BOARD.image_type >> 8) as u8];
+    if id != ours && id != [0, 0, 0, 0] {
+        return Some(format!("marked, image of another board {id:02x?}"));
+    }
+    let crc = crate::tests::crc32(&f[..size - 4]);
+    if f[size - 4..size] != crc.to_le_bytes() {
+        return Some("marked, the CRC in flash is wrong".into());
+    }
+    None
+}
+
+fn cut_at(writes: usize) -> std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>> {
+    let n = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let shot: std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>> = Default::default();
+    let s2 = shot.clone();
+    sim::with(|c| {
+        c.on(move |chip, op| {
+            if matches!(op, Op::W8(a, _) if a == crate::reg::MSPI_DATA) {
+                n.set(n.get() + 1);
+                if n.get() == writes {
+                    *s2.borrow_mut() = Some(chip.flash.clone());
+                }
+            }
+        })
+    });
+    shot
+}
+
+fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
+    let mut r = FuzzRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+    let mut zhal = Tc32Hal::new();
+    let mut bhal = crate::ble::BleHal::new();
+    use ble::Hal as _;
+    let ty = crate::board::BOARD.image_type;
+    let mut images: Vec<Vec<u8>> = (0..4)
+        .map(|k| {
+            let span = if r.below(4) == 0 { 0x3000 } else { 0x300 };
+            let size = 0x40 + r.below(span) as usize;
+            let mut v = crate::tests::image_of(size, if k == 3 { ty ^ 1 } else { ty });
+            if k == 2 {
+                v[0x12..0x16].fill(0);
+                let mut sum = v[..size - 4].to_vec();
+                sum[8] = 0x4b;
+                let crc = crate::tests::crc32(&sum);
+                v[size - 4..].copy_from_slice(&crc.to_le_bytes());
+            }
+            v
+        })
+        .collect();
+    let bad = images[0].clone();
+    let mut broken = bad.clone();
+    let i = 0x20 + r.below((broken.len() - 0x24) as u64) as usize;
+    broken[i] ^= 1;
+    images.push(broken);
+    let (mut zimg, mut zoff, mut bimg, mut boff) = (0usize, 0usize, 0usize, 0usize);
+    let (mut cuts, mut marks, mut ops) = (0, 0, 0);
+    for _ in 0..60 + r.below(200) {
+        ops += 1;
+        let cut = r.below(3) == 0;
+        let shot = cut.then(|| cut_at(1 + r.below(400) as usize));
+        let choice = r.below(12);
+        let rebooted = sim::reboots(|| match choice {
+            0 => {
+                zimg = r.below(images.len() as u64) as usize;
+                zoff = 0;
+                let _ = zhal.ota_begin(images[zimg].len() as u32);
+            }
+            1 => {
+                let _ = zhal.ota_resume(zoff as u32);
+            }
+            2 | 3 => {
+                let img = &images[zimg];
+                let n = (if r.below(3) == 0 { 0x10000 } else { 1 + r.below(200) as usize }).min(img.len() - zoff.min(img.len()));
+                if n > 0 {
+                    let mut chunk = img[zoff..zoff + n].to_vec();
+                    if zoff <= 8 && zoff + n > 8 {
+                        chunk[8 - zoff] = 0xff;
+                    }
+                    zhal.ota_write(zoff as u32, &chunk);
+                    zoff += n;
+                }
+            }
+            4 => zhal.ota_activate(),
+            5 => {
+                if r.below(2) == 0 {
+                    bimg = r.below(images.len() as u64) as usize;
+                    boff = 0;
+                }
+                let _ = bhal.ota_capacity();
+            }
+            6 => bhal.ota_erase((r.below(staging::SIZE as u64 + 0x2000) as u32) & !0xfff),
+            7 | 8 => {
+                let img = &images[bimg];
+                let n = (if r.below(3) == 0 { 0x1000 - boff % 0x1000 } else { 1 + r.below(64) as usize }).min(img.len() - boff.min(img.len()));
+                if n > 0 {
+                    if boff % 0x1000 == 0 {
+                        bhal.ota_erase(boff as u32);
+                    }
+                    let mut chunk = img[boff..boff + n].to_vec();
+                    if boff <= 8 && boff + n > 8 {
+                        chunk[8 - boff] = 0xff;
+                    }
+                    bhal.ota_write(boff as u32, &chunk);
+                    boff += n;
+                }
+            }
+            9 => {
+                let _ = bhal.ota_activate();
+            }
+            10 => staging::release(Owner::Zigbee),
+            _ => staging::release(Owner::Ble),
+        });
+        sim::with(|c| c.hook = None);
+        let snap = shot.and_then(|s| s.borrow_mut().take());
+        if let Some(fl) = snap {
+            sim::with(|c| c.flash = fl);
+            cuts += 1;
+        }
+        if let Some(e) = staged_marked_and_bad() {
+            return Err(format!("seed {seed} op {ops} (choice {choice}, cut {cut}, rebooted {rebooted}): {e}"));
+        }
+        if rebooted || snap_taken(cut) {
+            if sim::flash8(staging::BASE + 8) == 0x4b {
+                marks += 1;
+                sim::with(|c| c.flash[staging::BASE..staging::BASE + 0x1000].fill(0xff));
+            }
+            crate::tests::reset_statics();
+            zhal = Tc32Hal::new();
+            bhal = crate::ble::BleHal::new();
+        }
+    }
+    Ok((ops, cuts, marks))
+}
+
+fn snap_taken(cut: bool) -> bool {
+    cut
+}
+
+#[test]
+fn fuzz_staging_owners_and_power_cuts() {
+    let cases: u64 = std::env::var("FUZZ_CASES").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
+    let start: u64 = std::env::var("FUZZ_START").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let (mut o, mut c, mut m, mut fails) = (0, 0, 0, Vec::new());
+    for seed in start..start + cases {
+        let _s = sim::session();
+        match staging_case(seed) {
+            Ok((a, b, d)) => {
+                o += a;
+                c += b;
+                m += d;
+            }
+            Err(e) => fails.push(e),
+        }
+    }
+    eprintln!("{cases} staging cases, {} failed; {o} operations, {c} power cuts, {m} images marked", fails.len());
+    for f in fails.iter().take(20) {
+        eprintln!("  {f}");
+    }
+    assert!(fails.is_empty());
+}
