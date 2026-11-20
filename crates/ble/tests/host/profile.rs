@@ -1517,3 +1517,120 @@ fn toggle_brightness_toggle_keeps_the_light_as_it_was_with_the_new_brightness() 
         assert_eq!(rig.level(), 64, "on {was_on}");
     }
 }
+
+#[test]
+fn random_bursts_of_switches_and_brightness_end_as_if_run_one_by_one() {
+    use bulb_core::Command::{Off, On};
+    let mut seed = 0x2545_f491u32;
+    let mut next = |n: u32| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        (seed >> 16) % n
+    };
+    let mut failures = vec![];
+    for round in 0..600 {
+        let was_on = next(2) == 1;
+        let len = 1 + next(10) as usize;
+        let ops: Vec<u32> = (0..len).map(|_| next(6)).collect();
+        let mut rig = logged_in(DIMMABLE);
+        let key = rig.key.unwrap();
+        rig.bulb.handle(if was_on { On } else { Off });
+        rig.bulb.handle(bulb_core::Command::SetLevelWhileOff(200));
+        rig.run(300);
+        let (mut on, mut level) = (was_on, rig.level());
+        let mut packets = vec![];
+        for (i, &op) in ops.iter().enumerate() {
+            let l = 10 + i as u8 * 20 + op as u8;
+            let payload: Vec<u8> = match op {
+                0 => vec![0xff, 0xff, 0x01, 0x06, 0x00, 0x00],
+                1 => vec![0xff, 0xff, 0x01, 0x06, 0x00, 0x01],
+                2 | 3 => vec![0xff, 0xff, 0x01, 0x06, 0x00, 0x02],
+                4 => vec![0xff, 0xff, 0x01, 0x08, 0x00, 0x00, l, 0, 0],
+                _ => vec![0xff, 0xff, 0x01, 0x08, 0x00, 0x10, (i % 2) as u8],
+            };
+            match op {
+                0 => on = false,
+                1 => on = true,
+                2 | 3 => on = !on,
+                4 => level = l,
+                _ => {}
+            }
+            packets.push(block_packet(&key, 0, &payload));
+        }
+        burst(&mut rig, &packets);
+        rig.run(1000);
+        if (rig.is_on(), rig.level()) != (on, level) {
+            failures.push((round, was_on, ops.clone(), (rig.is_on(), rig.level()), (on, level)));
+        }
+    }
+    assert!(failures.is_empty(), "{} failures, first {:?}", failures.len(), &failures[..failures.len().min(6)]);
+}
+
+#[test]
+fn random_bursts_keep_the_last_of_every_setting() {
+    use bulb_core::Command::{Off, On};
+    let mut seed = 0x1234_5678u32;
+    let mut next = |n: u32| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        (seed >> 16) % n
+    };
+    let mut failures = vec![];
+    for round in 0..600 {
+        let was_on = next(2) == 1;
+        let len = 1 + next(9) as usize;
+        let ops: Vec<u32> = (0..len).map(|_| next(5)).collect();
+        let mut rig = logged_in(TUNABLE);
+        let key = rig.key.unwrap();
+        rig.bulb.handle(if was_on { On } else { Off });
+        rig.bulb.handle(bulb_core::Command::SetLevelWhileOff(200));
+        rig.run(300);
+        let s0 = rig.bulb.state();
+        let (mut on, mut level, mut candle, mut ct) = (was_on, s0.level, s0.candle, s0.color_temp);
+        let mut packets = vec![];
+        for (i, &op) in ops.iter().enumerate() {
+            let l = 10 + i as u8 * 20 + op as u8;
+            let m = 200 + i as u16 * 20;
+            let payload: Vec<u8> = match op {
+                0 => vec![0xff, 0xff, 0x01, 0x06, 0x00, 0x00],
+                1 => vec![0xff, 0xff, 0x01, 0x06, 0x00, 0x01],
+                2 => vec![0xff, 0xff, 0x01, 0x06, 0x00, 0x02],
+                3 => vec![0xff, 0xff, 0x01, 0x08, 0x00, 0x00, l, 0, 0],
+                4 => vec![0xff, 0xff, 0x01, 0x00, 0x03, 0x0a, m.to_le_bytes()[0], m.to_le_bytes()[1], 0, 0],
+                _ => vec![0xff, 0xff, 0x01, 0x08, 0x00, 0x10, (i % 2) as u8],
+            };
+            match op {
+                0 => on = false,
+                1 => on = true,
+                2 => on = !on,
+                3 => level = l,
+                4 => ct = m,
+                _ => candle = i % 2 == 1,
+            }
+            packets.push(block_packet(&key, 0, &payload));
+        }
+        let before = rig.world.borrow().commands.len();
+        burst(&mut rig, &packets);
+        rig.run(1000);
+        let s = rig.bulb.state();
+        if (s.on, s.level, s.candle, s.color_temp) != (on, level, candle, ct) {
+            failures.push((round, was_on, ops.clone(), (s.on, s.level, s.candle, s.color_temp), (on, level, candle, ct), rig.world.borrow().commands[before..].to_vec()));
+        }
+    }
+    assert!(failures.is_empty(), "{} failures, first {:#?}", failures.len(), &failures[..failures.len().min(4)]);
+}
+
+#[test]
+fn a_switch_replacing_a_queued_toggle_keeps_the_brightness_before_it_dark_when_the_light_is_off() {
+    use bulb_core::Command::{Off, ReadState, SetLevelWhileOff};
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    rig.bulb.handle(Off);
+    rig.run(300);
+    let before = rig.world.borrow().commands.len();
+    let payloads = [&[0xff, 0xff, 0x01, 0x06, 0x00, 0x02][..], &[0xff, 0xff, 0x01, 0x08, 0x00, 0x00, 64, 0, 0], &[0xff, 0xff, 0x01, 0x06, 0x00, 0x00]];
+    let packets: Vec<Vec<u8>> = payloads.iter().map(|p| block_packet(&key, 0, p)).collect();
+    burst(&mut rig, &packets);
+    rig.run(1000);
+    assert_eq!(rig.world.borrow().commands[before..], [SetLevelWhileOff(64), Off, ReadState]);
+    assert!(!rig.is_on());
+    assert_eq!(rig.level(), 64);
+}

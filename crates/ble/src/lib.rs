@@ -173,15 +173,15 @@ impl<H: Hal> Ble<H> {
             let last = self.cmds.iter().rposition(|q| q.is_some_and(|q| kind(q) == Some(Kind::Power)));
             if let Some(i) = last.filter(|&i| self.cmds[i] == Some(Command::Toggle)) {
                 self.remove_command(i);
-                let on = self.will_be_on();
-                for slot in self.cmds.iter_mut() {
-                    *slot = slot.map(|q| level_as(q, on));
-                }
+                self.relevel();
                 return;
             }
         } else {
             while let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| kind(c).is_some_and(|k| kind(q) == Some(k)))) {
                 self.remove_command(i);
+            }
+            if kind(c) == Some(Kind::Power) {
+                self.relevel();
             }
         }
         if self.cmds[CMDS - 1].is_some() {
@@ -195,6 +195,13 @@ impl<H: Hal> Ble<H> {
         }
         if let Some(slot) = self.cmds.iter_mut().find(|s| s.is_none()) {
             *slot = Some(c);
+        }
+    }
+
+    fn relevel(&mut self) {
+        let on = self.will_be_on();
+        for slot in self.cmds.iter_mut() {
+            *slot = slot.map(|q| level_as(q, on));
         }
     }
 

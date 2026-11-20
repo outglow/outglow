@@ -470,3 +470,43 @@ fn a_move_to_colour_0_0_that_bulb_core_ignores_leaves_the_move_hue_running() {
     net.run(4_000);
     assert_eq!(read(&mut net, short, &[0x0000]), vec![0x00, 0x00, 0x00, 0x20, 90], "CurrentHue, 40 + 10/s for 5 s");
 }
+
+fn read_now(net: &mut Net, n: usize, short: u16, ids: &[u16]) -> Vec<u8> {
+    let p: Vec<u8> = ids.iter().flat_map(|i| i.to_le_bytes()).collect();
+    let seq = net.coord.zcl(short, COLOR, 0x00, 0x00, &p);
+    net.air.borrow_mut().now += 1;
+    assert_eq!(net.nodes[n].stack.poll(), None);
+    net.run(50);
+    let rsp = net.coord.last_zcl(short, COLOR, 0x01).unwrap();
+    assert_eq!(&rsp[..3], &[0x18, seq, 0x01]);
+    rsp[3..].to_vec()
+}
+
+#[test]
+fn a_move_to_colour_0_0_still_queued_leaves_the_colour_and_its_mode_as_they_were() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x30, 0x00, 0x20, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(50);
+    let before = read(&mut net, short, &[0x0003, 0x0004, 0x0008]);
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0, 0, 0, 0, 0, 0]);
+    net.air.borrow_mut().now += 1;
+    assert_eq!(net.nodes[n].stack.poll(), Some(Command::MoveToXy { x: 0, y: 0, transition_ms: 0 }));
+    assert_eq!(read_now(&mut net, n, short, &[0x0003, 0x0004, 0x0008]), before);
+}
+
+#[test]
+fn a_move_to_colour_the_bulb_has_not_reported_yet_ends_the_move_hue() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 10]);
+    net.run(1_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0x00, 0x30, 0x00, 0x20, 0, 0]);
+    net.air.borrow_mut().now += 1;
+    assert_eq!(net.nodes[n].stack.poll(), Some(Command::MoveToXy { x: 0x3000, y: 0x2000, transition_ms: 0 }));
+    net.air.borrow_mut().now += 3_000;
+    let hue = read_now(&mut net, n, short, &[0x0000]);
+    assert!(matches!(hue[..], [0x00, 0x00, 0x00, 0x20, 49..=51]), "ZCL 8 5.2.2.3: a new colour stops the hue at 40 + 10/s for 1 s; got {hue:?}");
+}

@@ -1223,3 +1223,34 @@ fn off_then_timed_on_keeps_the_timer() {
     net.run(5_000);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::Off), "timer lost");
 }
+
+#[test]
+fn a_toggle_heard_while_a_recall_is_still_queued_sees_the_recalled_on() {
+    let (mut net, n, short) = tunable();
+    level(&mut net, short, 100);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0x00, 0x01]);
+    net.run(50);
+    assert!(!net.nodes[n].on);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x41, &[]);
+    net.air.borrow_mut().now += 1;
+    let first = net.nodes[n].stack.poll();
+    assert_eq!(first, Some(Command::MoveToColorTemperature { mireds: bulb_core::CT_DEFAULT, transition_ms: 0 }));
+    net.nodes[n].report();
+    net.coord.zcl(short, ON_OFF, 0x11, 0x02, &[]);
+    let mut rest = vec![];
+    while let Some(c) = net.nodes[n].stack.poll() {
+        rest.push(c);
+        if let Command::MoveToLevel { level, .. } = c {
+            net.nodes[n].on = true;
+            net.nodes[n].level = level;
+        }
+        match c {
+            Command::On => net.nodes[n].on = true,
+            Command::Off => net.nodes[n].on = false,
+            _ => {}
+        }
+        net.nodes[n].report();
+    }
+    net.run(50);
+    assert!(!net.nodes[n].on, "recall turns the light on, the toggle after it turns it off; commands {rest:?}");
+}
