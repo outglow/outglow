@@ -242,7 +242,7 @@ fn a_block_of_another_kind_or_out_of_place_or_of_the_wrong_length_ends_the_trans
 }
 
 #[test]
-fn a_second_long_answer_while_the_first_is_still_going_out_is_dropped() {
+fn a_second_long_answer_while_the_first_is_still_going_out_follows_it() {
     let mut net = Net::new();
     let n = net.join_node();
     let short = net.nodes[n].short();
@@ -250,10 +250,10 @@ fn a_second_long_answer_while_the_first_is_still_going_out_is_dropped() {
     net.coord.drop_fragments = 1;
     let first = net.coord.zcl(short, BASIC, 0x00, 0x00, &request);
     net.run(100);
-    net.coord.zcl(short, BASIC, 0x00, 0x00, &request);
+    let second = net.coord.zcl(short, BASIC, 0x00, 0x00, &request);
     net.run(5_000);
     let answers: Vec<u8> = net.coord.zcl_rx.iter().filter(|(s, c, f)| *s == short && *c == BASIC && f[2] == 0x01).map(|f| f.2[1]).collect();
-    assert_eq!(answers, vec![first]);
+    assert_eq!(answers, vec![first, second]);
 }
 
 #[test]
@@ -345,4 +345,18 @@ fn a_last_block_may_fill_the_largest_transfer_but_not_go_past_it_and_may_not_be_
         net.run(100);
         assert_eq!(!acked(&net, n, t).is_empty(), taken, "last block of {last}");
     }
+}
+
+#[test]
+fn two_long_answers_asked_for_back_to_back_both_arrive() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let (request, _) = long_read(25);
+    let first = net.coord.zcl(short, BASIC, 0x00, 0x00, &request);
+    let second = net.coord.zcl(short, BASIC, 0x00, 0x00, &request);
+    net.run(10_000);
+    let answered = |seq: u8| net.coord.zcl_rx.iter().any(|(s, c, f)| *s == short && *c == BASIC && f.get(1) == Some(&seq) && f.get(2) == Some(&0x01));
+    assert!(answered(first), "the first long answer");
+    assert!(answered(second), "the second long answer");
 }

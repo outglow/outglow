@@ -58,3 +58,15 @@ fn the_sensing_clusters_and_long_attributes_are_where_they_belong() {
     let plain = Stack::new(Scripted { random: Vec::new(), now: 0, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
     assert!(!plain.sense_cluster(1, OCCUPANCY) && !plain.sense_long(SENSE, A_LINES));
 }
+
+#[test]
+fn activity_is_reported_again_as_soon_as_probes_are_switched_back_on_however_long_after() {
+    let mut s = sensing(Vec::new(), false);
+    s.sense.activity_rate = 1;
+    s.sense.next_activity = 100_000;
+    s.sense_write(SENSE, super::A_RATE, &[0]);
+    let later = 100_000 + 0x8000_0000 + 1_000;
+    s.hal.now = later;
+    s.sense_write(SENSE, super::A_RATE, &[5]);
+    assert_eq!(s.sense.next_activity, later);
+}

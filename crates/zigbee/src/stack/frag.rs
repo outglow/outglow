@@ -75,6 +75,16 @@ impl Outgoing {
         }
     }
 
+    fn load(&mut self, a: Addressing, payload: &[u8], secure: bool) {
+        self.active = true;
+        self.secure = secure;
+        self.a = a;
+        self.len = payload.len();
+        self.buf[..payload.len()].copy_from_slice(payload);
+        self.block = 0;
+        self.tries = 0;
+    }
+
     fn blocks(&self) -> u8 {
         self.len.div_ceil(self.block_len()) as u8
     }
@@ -83,11 +93,8 @@ impl Outgoing {
 impl<H: Hal> Stack<H> {
     pub(crate) fn on_fragment(&mut self, a: Addressing, kind: u8, block: u8, data: &[u8]) -> Option<()> {
         let now = self.hal.now_ms();
+        self.frag_in_expire(now);
         let rx = &mut self.frag_in;
-        if (rx.active || rx.done) && due(now, rx.expires) {
-            rx.active = false;
-            rx.done = false;
-        }
         let index = match kind {
             FIRST => {
                 if !((rx.active || rx.done) && rx.a == a) {
@@ -154,19 +161,31 @@ impl<H: Hal> Stack<H> {
         Some(())
     }
 
-    pub(crate) fn send_fragmented(&mut self, a: Addressing, payload: &[u8], secure: bool) {
-        if self.frag_out.active {
-            return;
+    fn frag_in_expire(&mut self, now: u32) {
+        let rx = &mut self.frag_in;
+        if (rx.active || rx.done) && due(now, rx.expires) {
+            rx.active = false;
+            rx.done = false;
         }
-        let tx = &mut self.frag_out;
-        tx.active = true;
-        tx.secure = secure;
-        tx.a = a;
-        tx.len = payload.len();
-        tx.buf[..payload.len()].copy_from_slice(payload);
-        tx.block = 0;
-        tx.tries = 0;
-        self.send_block();
+    }
+
+    pub(crate) fn send_fragmented(&mut self, a: Addressing, payload: &[u8], secure: bool) {
+        if !self.frag_out.active {
+            self.frag_out.load(a, payload, secure);
+            self.send_block();
+        } else if !self.frag_next.active {
+            self.frag_next.load(a, payload, secure);
+        } else {
+            self.diag.add(super::diag::k::APS_TX_UCAST_FAIL);
+        }
+    }
+
+    fn frag_finished(&mut self) {
+        self.frag_out.active = false;
+        core::mem::swap(&mut self.frag_out, &mut self.frag_next);
+        if self.frag_out.active {
+            self.send_block();
+        }
     }
 
     fn send_block(&mut self) {
@@ -210,17 +229,18 @@ impl<H: Hal> Stack<H> {
         tx.block += 1;
         tx.tries = 0;
         if tx.block >= tx.blocks() {
-            tx.active = false;
+            self.frag_finished();
         } else {
             self.send_block();
         }
     }
 
     pub(crate) fn frag_timers(&mut self, now: u32) {
+        self.frag_in_expire(now);
         if self.frag_out.active && due(now, self.frag_out.at) {
             self.frag_out.tries += 1;
             if self.frag_out.tries > RETRIES {
-                self.frag_out.active = false;
+                self.frag_finished();
                 self.diag.add(super::diag::k::APS_TX_UCAST_FAIL);
             } else {
                 self.diag.add(super::diag::k::APS_TX_UCAST_RETRY);

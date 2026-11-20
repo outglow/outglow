@@ -38,3 +38,45 @@ fn a_single_value_is_reported_for_a_change_either_way_of_at_least_the_reportable
         assert_eq!(reported(&mut s, XReport { last: last.to_bits(), change: step.to_bits(), ..r }), want, "{children} {last} {step}");
     }
 }
+
+#[test]
+fn a_binding_whose_address_is_unknown_is_asked_for_again_however_long_after_the_last_question() {
+    let mut s = stack();
+    s.state = crate::stack::State::Up;
+    s.nib.short = 0x0042;
+    s.bindings[0] = crate::stack::Binding { used: true, src_ep: 1, cluster: 0x0006, group: false, dst: 0x00124B00_0000_7777, dst_ep: 1 };
+    let t = s.hal.now;
+    let sent = s.hal.sent.len();
+    s.send_report(1, 0x0006, false, 0, 0x10, 1);
+    assert!(s.hal.sent.len() > sent, "the first NWK_addr_req");
+    s.hal.now = t + 9_999;
+    let sent = s.hal.sent.len();
+    s.send_report(1, 0x0006, false, 0, 0x10, 1);
+    assert_eq!(s.hal.sent.len(), sent, "not again within ten seconds");
+    s.hal.now = t + 10_000;
+    s.send_report(1, 0x0006, false, 0, 0x10, 1);
+    assert!(s.hal.sent.len() > sent, "again after ten seconds");
+    let t = t + 10_000;
+    s.hal.now = t + 10_000 + 0x8000_0000;
+    let sent = s.hal.sent.len();
+    s.send_report(1, 0x0006, false, 0, 0x10, 1);
+    assert!(s.hal.sent.len() > sent, "24.9 days later the address is asked for again");
+}
+
+#[test]
+fn the_remaining_time_of_a_transition_long_over_stays_zero_when_the_clock_wraps() {
+    let mut s = stack();
+    let t = s.hal.now;
+    s.level_until = Some(t + 1_000);
+    s.color_until = Some(t + 2_000);
+    s.timers(t + 999);
+    assert_eq!(s.level_until, Some(t + 1_000), "the transition is still running");
+    s.hal.now = t + 999;
+    assert_eq!(s.light_settings().remaining_tenths, 0);
+    s.timers(t + 1_000);
+    assert_eq!((s.level_until, s.color_until), (None, Some(t + 2_000)), "the timers end the transition that is over");
+    s.timers(t + 2_000);
+    assert_eq!(s.color_until, None);
+    s.hal.now = t + 1_000 + 0x8000_0000 + 5_000;
+    assert_eq!(s.light_settings().remaining_tenths, 0, "24.9 days after the transition ended");
+}

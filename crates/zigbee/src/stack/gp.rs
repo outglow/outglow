@@ -461,7 +461,7 @@ impl<H: Hal> Stack<H> {
         if f.security != 3 && f.body.first().is_some_and(|cmd| *cmd >= GPD_TO_DEVICE) {
             return None;
         }
-        if self.gp_seen.iter().any(|s| s.0 == f.gpd && s.1 == f.counter && !due(now, s.2)) {
+        if self.gp_seen.iter().flatten().any(|s| s.0 == f.gpd && s.1 == f.counter && !due(now, s.2)) {
             return None;
         }
         let commissioning = self.gp_commissioning(now);
@@ -647,6 +647,10 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn gp_timers(&mut self, now: u32) {
+        self.gp_commissioning(now);
+        for seen in self.gp_seen.iter_mut() {
+            *seen = seen.filter(|s| !due(now, s.2));
+        }
         if let Some(q) = self.gp_tx {
             if due(now, q.expires) {
                 self.gp_tx = None;
@@ -738,7 +742,7 @@ impl<H: Hal> Stack<H> {
 
     fn gp_remember(&mut self, gpd: Gpd, counter: u32, now: u32) {
         self.gp_seen.rotate_right(1);
-        self.gp_seen[0] = (gpd, counter, now.wrapping_add(DUPLICATE_MS));
+        self.gp_seen[0] = Some((gpd, counter, now.wrapping_add(DUPLICATE_MS)));
     }
 
     #[allow(clippy::too_many_arguments)]

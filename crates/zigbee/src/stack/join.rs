@@ -135,7 +135,9 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn timers(&mut self, now: u32) {
-        let touchlink = self.touchlink.filter(|t| self.searching.is_none() && !due(now, t.until));
+        self.touchlink = self.touchlink.filter(|t| !due(now, t.until));
+        self.transition_timers(now);
+        let touchlink = self.touchlink.filter(|_| self.searching.is_none());
         match self.state {
             State::Up => self.run_timers(now),
             _ if !due(now, self.timer) => {}
@@ -443,6 +445,7 @@ impl<H: Hal> Stack<H> {
         self.key = Aes128::with_engine(&self.nib.key, H::AES);
         self.state = State::Up;
         self.heard_at = now;
+        self.pan_report_at = None;
         self.stats.joins = self.stats.joins.wrapping_add(1);
         self.log_event(super::diag::ev::UP, self.nib.short, self.nib.parent);
         self.scan_found = [None; CANDIDATES];

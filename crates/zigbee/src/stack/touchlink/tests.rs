@@ -105,3 +105,19 @@ fn a_network_start_without_a_pan_makes_one_up_below_0xfff1_and_takes_none_of_0xf
         assert_eq!((tail[0], u16::from_le_bytes([tail[11], tail[12]])), (status, chosen), "{pan:04X}");
     }
 }
+
+#[test]
+fn a_bulb_looking_for_a_network_keeps_scanning_however_long_after_an_unfinished_touchlink() {
+    let mut s = stack(Vec::new());
+    s.state = State::Down;
+    in_transaction(&mut s);
+    s.timer = 9_001;
+    s.timers(9_001);
+    assert_eq!(s.state, State::Scan, "the transaction is over, the bulb scans");
+    let now = 9_000 + 0x8000_0001;
+    s.hal.now = now;
+    s.state = State::Down;
+    s.timer = now;
+    s.timers(now);
+    assert_eq!(s.state, State::Scan, "24.9 days later it still scans");
+}

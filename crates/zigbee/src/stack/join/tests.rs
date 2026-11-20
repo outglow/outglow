@@ -418,3 +418,11 @@ fn a_pan_conflict_heard_long_after_the_last_report_is_reported_again() {
     beacon(&mut s);
     assert_eq!(s.pan_report_at, Some(s.hal.now + 60_000), "24.9 days later the conflict is reported again");
 }
+
+#[test]
+fn a_pan_conflict_reported_just_before_leaving_does_not_quiet_the_next_network() {
+    let mut s = stack();
+    s.pan_report_at = Some(s.hal.now + 60_000);
+    s.network_up(s.hal.now);
+    assert_eq!(s.pan_report_at, None);
+}

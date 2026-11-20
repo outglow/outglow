@@ -1502,7 +1502,7 @@ impl<H: Hal> Stack<H> {
                 d.used = false;
             }
         }
-        for e in self.seen.iter_mut() {
+        for e in self.seen.iter_mut().chain(self.aps_dups.iter_mut()) {
             if due(now, e.expires) {
                 e.used = false;
             }

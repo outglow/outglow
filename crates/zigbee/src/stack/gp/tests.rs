@@ -65,3 +65,32 @@ fn a_device_announced_at_an_alias_in_use_is_answered_once_after_a_jitter() {
         assert!(s.gp_pending[1].is_some_and(|p| p.to == Forward::Announce && p.alias == 0x2345));
     }
 }
+
+#[test]
+fn a_commissioning_window_that_ran_out_does_not_open_again_when_the_clock_wraps() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
+    s.state = State::Up;
+    s.gp_mode = Some(Commissioning { until: 61_000, sink: 0x0000, unicast: true, exit_on_pairing: false });
+    s.gp_timers(60_999);
+    assert!(s.gp_mode.is_some(), "the window is still open");
+    s.gp_timers(61_000);
+    assert!(s.gp_mode.is_none(), "the timers close the window");
+    s.gp_timers(61_000 + 3_600_000);
+    assert!(s.gp_commissioning(61_000 + 0x8000_0000 + 1).is_none(), "24.9 days after the window closed");
+}
+
+#[test]
+fn a_device_frame_remembered_long_ago_is_taken_again_when_the_clock_wraps() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
+    s.state = State::Up;
+    s.gp_seen[0] = Some((Gpd::Src(0x0171_2345), 0x31, 3_000));
+    s.gp_timers(2_999);
+    assert!(s.gp_seen[0].is_some(), "still remembered");
+    s.gp_timers(3_000);
+    assert!(s.gp_seen[0].is_none(), "the timers forget an expired frame");
+    let later = 3_000 + 0x8000_0000;
+    s.hal.now = later;
+    s.gp_mode = Some(Commissioning { until: later + 60_000, sink: 0x0000, unicast: true, exit_on_pairing: false });
+    let _ = s.on_gpdf(0x31, Addr::None, &[0x0C, 0x45, 0x23, 0x71, 0x01, 0xE0, 0x02, 0x00, 0x00], 200, 0);
+    assert!(s.gp_pending.iter().any(|p| p.is_some()), "24.9 days later the same counter is a new frame");
+}

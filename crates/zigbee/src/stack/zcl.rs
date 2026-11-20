@@ -805,8 +805,8 @@ impl<H: Hal> Stack<H> {
                 self.aps_group(b.dst as u16, cluster, PROFILE_HA, ep, frame);
             } else if let Some(short) = self.resolve(b.dst) {
                 self.aps_data(short, b.dst_ep, cluster, PROFILE_HA, ep, frame);
-            } else if due(now, self.addr_query_at) {
-                self.addr_query_at = now.wrapping_add(10_000);
+            } else if now.wrapping_sub(self.addr_asked_at) >= super::ADDR_QUERY_MS {
+                self.addr_asked_at = now;
                 self.zdo_nwk_addr_request(b.dst);
             }
         }
@@ -1417,12 +1417,21 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    fn remaining_tenths(&mut self, until: u32) -> u16 {
-        let left = until.wrapping_sub(self.hal.now_ms());
-        if left >= 0x8000_0000 {
-            0
-        } else {
-            (left / 100).min(0xFFFE) as u16
+    fn remaining_tenths(&mut self, until: Option<u32>) -> u16 {
+        let now = self.hal.now_ms();
+        until.map_or(0, |at| {
+            let left = at.wrapping_sub(now);
+            if left >= 0x8000_0000 {
+                0
+            } else {
+                (left / 100).min(0xFFFE) as u16
+            }
+        })
+    }
+
+    pub(crate) fn transition_timers(&mut self, now: u32) {
+        for until in [&mut self.level_until, &mut self.color_until] {
+            *until = until.filter(|at| !due(now, *at));
         }
     }
 

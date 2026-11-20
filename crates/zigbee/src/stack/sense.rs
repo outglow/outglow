@@ -476,6 +476,7 @@ impl<H: Hal> Stack<H> {
     fn sense_switched(&mut self, now: u32, on: bool) {
         self.sense.core.start(now);
         self.sense.last_report = now;
+        self.sense.next_activity = now;
         if !on && self.sense.reported != 0 {
             self.sense.reported = 0;
             self.sense_report(0);

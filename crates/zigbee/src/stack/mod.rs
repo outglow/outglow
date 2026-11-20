@@ -56,6 +56,7 @@ pub(crate) const MAX_NWK_PAYLOAD: usize = 90;
 pub(crate) const LINK_STATUS_MS: u32 = 15_000;
 pub(crate) const AGE_LIMIT: u8 = 3;
 const SILENCE_MS: u32 = 180_000;
+const ADDR_QUERY_MS: u32 = 10_000;
 const KEY_MISSED_MS: u32 = 30_000;
 const COUNTER_STEP: u32 = 1024;
 
@@ -583,7 +584,7 @@ pub struct Stack<H: Hal> {
     pub(crate) bindings: [Binding; BINDINGS],
     pub(crate) addr_map: [(u64, u16); ADDR_MAP],
     pub(crate) addr_next: u8,
-    pub(crate) addr_query_at: u32,
+    pub(crate) addr_asked_at: u32,
     pub(crate) children: [parent::Child; CHILDREN],
     pub(crate) children_stored: [u32; nv::CHILDREN_PARTS],
     pub(crate) polled: [u16; CHILDREN],
@@ -595,7 +596,7 @@ pub struct Stack<H: Hal> {
     pub(crate) proxies: [gp::ProxyEntry; gp::PROXIES],
     pub(crate) gp_mode: Option<gp::Commissioning>,
     pub(crate) gp_tx: Option<gp::Queued>,
-    pub(crate) gp_seen: [(gp::Gpd, u32, u32); 4],
+    pub(crate) gp_seen: [Option<(gp::Gpd, u32, u32)>; 4],
     pub(crate) gp_keys: gp::Keys,
     pub(crate) gp_pending: [Option<gp::Pending>; 2],
     pub(crate) gp_first: bool,
@@ -609,6 +610,7 @@ pub struct Stack<H: Hal> {
     pub(crate) touchlink: Option<touchlink::Transaction>,
     pub(crate) frag_in: frag::Incoming,
     pub(crate) frag_out: frag::Outgoing,
+    pub(crate) frag_next: frag::Outgoing,
     pub(crate) reports: [Report; REPORTS],
     pub(crate) scenes: [Scene; SCENES],
     pub(crate) scene_current: (u16, u8),
@@ -621,8 +623,8 @@ pub struct Stack<H: Hal> {
     pub(crate) off_wait: u16,
     pub(crate) on_tick_at: u32,
     pub(crate) rx_signal: (u8, i8),
-    pub(crate) level_until: u32,
-    pub(crate) color_until: u32,
+    pub(crate) level_until: Option<u32>,
+    pub(crate) color_until: Option<u32>,
     pub(crate) scenes_dirty: bool,
     pub(crate) tables_dirty: bool,
     pub(crate) reply_secured: bool,
@@ -708,7 +710,7 @@ impl<H: Hal> Stack<H> {
             bindings: [Binding::EMPTY; BINDINGS],
             addr_map: [(0, 0xFFFF); ADDR_MAP],
             addr_next: 0,
-            addr_query_at: now,
+            addr_asked_at: now.wrapping_sub(ADDR_QUERY_MS),
             children: [parent::Child::EMPTY; CHILDREN],
             children_stored: [nv::NO_CHILDREN; nv::CHILDREN_PARTS],
             polled: [0; CHILDREN],
@@ -720,7 +722,7 @@ impl<H: Hal> Stack<H> {
             proxies: [gp::ProxyEntry::EMPTY; gp::PROXIES],
             gp_mode: None,
             gp_tx: None,
-            gp_seen: [(gp::Gpd::Src(0), 0, now); 4],
+            gp_seen: [None; 4],
             gp_keys: gp::Keys::DEFAULT,
             gp_pending: [None; 2],
             gp_first: false,
@@ -734,6 +736,7 @@ impl<H: Hal> Stack<H> {
             touchlink: None,
             frag_in: frag::Incoming::EMPTY,
             frag_out: frag::Outgoing::EMPTY,
+            frag_next: frag::Outgoing::EMPTY,
             reports: REPORT_DEFAULTS.map(|(min_s, max_s, change)| Report { min_s, max_s, change, last_value: 0, last_sent: now }),
             scenes: [Scene::EMPTY; SCENES],
             scene_current: (0, 0),
@@ -746,8 +749,8 @@ impl<H: Hal> Stack<H> {
             off_wait: 0,
             on_tick_at: now,
             rx_signal: (0, 0),
-            level_until: now,
-            color_until: now,
+            level_until: None,
+            color_until: None,
             scenes_dirty: false,
             tables_dirty: false,
             reply_secured: false,
@@ -930,15 +933,15 @@ impl<H: Hal> Stack<H> {
     pub(crate) fn push_command(&mut self, c: Command) {
         let now = self.hal.now_ms();
         match c {
-            Command::MoveToLevel { transition_ms, .. } => self.level_until = now.wrapping_add(transition_ms),
+            Command::MoveToLevel { transition_ms, .. } => self.level_until = Some(now.wrapping_add(transition_ms)),
             Command::MoveToColorTemperature { transition_ms, .. }
             | Command::MoveToHueSaturation { transition_ms, .. }
-            | Command::MoveToXy { transition_ms, .. } => self.color_until = now.wrapping_add(transition_ms),
-            Command::StopTransition => self.level_until = now,
-            Command::StopColorTransition => self.color_until = now,
+            | Command::MoveToXy { transition_ms, .. } => self.color_until = Some(now.wrapping_add(transition_ms)),
+            Command::StopTransition => self.level_until = None,
+            Command::StopColorTransition => self.color_until = None,
             Command::Off | Command::On | Command::Toggle => {
-                self.level_until = now;
-                self.color_until = now;
+                self.level_until = None;
+                self.color_until = None;
             }
             _ => {}
         }
