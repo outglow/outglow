@@ -34,6 +34,7 @@ pub(super) struct Algo {
     pub refresh: u8,
     pub bshift: u32,
     pub own: bool,
+    pub by_route: bool,
 }
 
 impl Algo {
@@ -45,7 +46,7 @@ impl Algo {
                 r as u32 * LINK_STATUS_MS / 60_000,
                 1u32 << self.bshift,
                 if self.own { " +own" } else { "" }
-            ),
+            ) + if self.by_route { " off route" } else { "" },
             (s, _) => format!(" direct every {s:>3} s"),
         };
         let base: String = match self.floor {
@@ -118,8 +119,9 @@ impl LinkEst {
         }
     }
 
-    fn refresh(&mut self, reported: Option<f64>) {
-        if let Some(q) = reported.filter(|_| self.algo.refresh != 0 && self.quiet >= self.algo.refresh && self.est.measured()) {
+    fn refresh(&mut self, reported: Option<f64>, on_route: bool) {
+        let idle = self.quiet >= self.algo.refresh && !(self.algo.by_route && on_route);
+        if let Some(q) = reported.filter(|_| self.algo.refresh != 0 && idle && self.est.measured()) {
             self.est.refresh(q);
         }
     }
@@ -371,7 +373,7 @@ pub(super) fn simulate(algo: Algo, seed: u64, hours: f64, fades: bool) -> Outcom
                         true => Some(mine.q).filter(|_| b != 0 && mine.heard >= 8),
                         false => h.est[b][a].as_ref().filter(|e| e.heard >= 8).map(|e| e.q),
                     };
-                    h.est[a][b].as_mut().unwrap().refresh(reported);
+                    h.est[a][b].as_mut().unwrap().refresh(reported, route[a] == Some(b));
                 }
             }
         }

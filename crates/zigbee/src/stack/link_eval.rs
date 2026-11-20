@@ -742,7 +742,7 @@ mod home;
 #[ignore = "a comparison to read, not a check"]
 fn link_eval_home() {
     use home::{Algo, Floor};
-    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0, refresh: 0, bshift: 4, own: false };
+    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0, refresh: 0, bshift: 4, own: false, by_route: false };
     let mut algos = std::vec![
         Algo { floor: Floor::Oracle, ..firmware },
         Algo { floor: Floor::LqiOnly, ..firmware },
@@ -766,6 +766,13 @@ fn link_eval_home() {
             algos.push(Algo { refresh, bshift, ..firmware });
         }
         algos.push(Algo { refresh, bshift: 4, own: true, ..firmware });
+    }
+    for own in [false, true] {
+        for bshift in [4u32, 5] {
+            algos.push(Algo { refresh: 1, bshift, own, by_route: true, ..firmware });
+            algos.push(Algo { refresh: 4, bshift, own, by_route: true, ..firmware });
+            algos.push(Algo { refresh: 4, bshift, own, ..firmware });
+        }
     }
     let seeds = std::env::var("HOME_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
     let hours = std::env::var("HOME_HOURS").ok().and_then(|s| s.parse().ok()).unwrap_or(6.0);
