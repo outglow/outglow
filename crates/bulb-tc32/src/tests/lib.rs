@@ -11,6 +11,8 @@ pub fn reset_statics() {
     staging::release(staging::Owner::Ble);
     zb::BLE_NEXT.set(None);
     zb::LOOP_MAX_US.set(0);
+    #[cfg(feature = "ble")]
+    crate::ble::TIDY.set(true);
 }
 
 pub fn crc32(data: &[u8]) -> u32 {
