@@ -1277,3 +1277,95 @@ fn a_white_bulb_passes_on_no_colour_command_from_the_apps_tunnel() {
     let commands = rig.world.borrow().commands.clone();
     assert_eq!(commands.iter().filter(|c| !matches!(c, bulb_core::Command::ReadState)).collect::<Vec<_>>(), [&bulb_core::Command::MoveToColorTemperature { mireds: 300, transition_ms: 0 }], "only the colour temperature");
 }
+
+#[test]
+fn a_new_session_may_start_its_numbers_where_the_last_one_started() {
+    let mut rig = connected(DIMMABLE);
+    assert!(rig.login(b"unpaired", &Rig::secure_password()));
+    let first = rig.numbered_command_packet(0x101, 0xffff, OP_POWER, &[0]);
+    rig.write(COMMAND, &first);
+    rig.run(300);
+    assert!(!rig.is_on(), "first session: off");
+    rig.central().terminate();
+    rig.run(300);
+    rig.connect();
+    assert!(rig.login(b"unpaired", &Rig::secure_password()));
+    let again = rig.numbered_command_packet(0x101, 0xffff, OP_POWER, &[1]);
+    rig.write(COMMAND, &again);
+    rig.run(300);
+    assert!(rig.is_on(), "second session, new key, same first number: on");
+}
+
+#[test]
+fn a_new_login_on_the_same_connection_takes_the_last_number_again() {
+    let mut rig = connected(DIMMABLE);
+    assert!(rig.login(b"unpaired", &Rig::secure_password()));
+    let first = rig.numbered_command_packet(0x101, 0xffff, OP_POWER, &[0]);
+    rig.write(COMMAND, &first);
+    rig.run(300);
+    assert!(!rig.is_on());
+    assert!(rig.login(b"unpaired", &Rig::secure_password()));
+    let again = rig.numbered_command_packet(0x101, 0xffff, OP_POWER, &[1]);
+    rig.write(COMMAND, &again);
+    rig.run(300);
+    assert!(rig.is_on());
+}
+
+#[test]
+fn a_first_command_numbered_zero_is_taken() {
+    let mut rig = connected(DIMMABLE);
+    assert!(rig.login(b"unpaired", &Rig::secure_password()));
+    let p = rig.numbered_command_packet(0, 0xffff, OP_POWER, &[0]);
+    rig.write(COMMAND, &p);
+    rig.run(300);
+    assert!(!rig.is_on(), "sequence number 0 on a fresh boot");
+}
+
+fn burst(rig: &mut Rig, packets: &[Vec<u8>]) {
+    for p in packets {
+        rig.central().send_att(&[&[0x52, COMMAND as u8, 0x00][..], p].concat());
+    }
+    rig.run(600);
+}
+
+fn commands(rig: &mut Rig, sent: &[(u8, u8)]) -> Vec<Vec<u8>> {
+    sent.iter().map(|&(op, v)| rig.command_packet(0xffff, op, &[v])).collect()
+}
+
+#[test]
+fn the_last_of_a_burst_of_brightness_commands_is_the_one_that_stays() {
+    let mut rig = logged_in(DIMMABLE);
+    let packets = commands(&mut rig, &[(OP_BRIGHTNESS, 10), (OP_BRIGHTNESS, 20), (OP_BRIGHTNESS, 30), (OP_BRIGHTNESS, 40), (OP_BRIGHTNESS, 50), (OP_BRIGHTNESS, 60)]);
+    burst(&mut rig, &packets);
+    assert_eq!(rig.level(), 120, "brightness of the last command");
+}
+
+#[test]
+fn a_burst_that_turns_the_light_on_and_dims_it_leaves_it_on_at_the_last_brightness() {
+    let mut rig = logged_in(DIMMABLE);
+    rig.command(OP_POWER, &[0]);
+    let packets = commands(&mut rig, &[(OP_POWER, 1), (OP_BRIGHTNESS, 10), (OP_BRIGHTNESS, 20), (OP_BRIGHTNESS, 30), (OP_BRIGHTNESS, 40), (OP_BRIGHTNESS, 50)]);
+    burst(&mut rig, &packets);
+    assert_eq!((rig.is_on(), rig.level()), (true, 100));
+}
+
+#[test]
+fn a_command_of_another_kind_after_a_full_queue_keeps_the_newest_queued_one() {
+    let mut rig = logged_in(DIMMABLE);
+    let packets = commands(&mut rig, &[(OP_BRIGHTNESS, 10), (OP_BRIGHTNESS, 20), (OP_BRIGHTNESS, 30), (OP_BRIGHTNESS, 40), (OP_POWER, 0)]);
+    burst(&mut rig, &packets);
+    assert!(!rig.is_on());
+    rig.command(OP_POWER, &[1]);
+    assert_eq!(rig.level(), 80);
+}
+
+#[test]
+fn toggles_past_a_full_queue_cancel_in_pairs() {
+    for (count, on) in [(5, false), (6, true), (7, false)] {
+        let mut rig = logged_in(DIMMABLE);
+        let key = rig.key.unwrap();
+        let packets: Vec<Vec<u8>> = (0..count).map(|_| block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x06, 0x00, 0x02])).collect();
+        burst(&mut rig, &packets);
+        assert_eq!(rig.is_on(), on, "{count} toggles");
+    }
+}

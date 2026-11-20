@@ -165,8 +165,16 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn push_command(&mut self, c: Command) {
-        if let Some(slot) = self.cmds.iter_mut().find(|s| s.is_none()) {
-            *slot = Some(c);
+        match self.cmds.iter_mut().find(|s| s.is_none()) {
+            Some(slot) => *slot = Some(c),
+            None => match (self.cmds[CMDS - 1], c) {
+                (Some(Command::Toggle), Command::Toggle) => self.cmds[CMDS - 1] = None,
+                (Some(newest), c) if core::mem::discriminant(&newest) == core::mem::discriminant(&c) => self.cmds[CMDS - 1] = Some(c),
+                (_, c) => {
+                    self.cmds.rotate_left(1);
+                    self.cmds[CMDS - 1] = Some(c);
+                }
+            },
         }
     }
 

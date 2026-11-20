@@ -916,8 +916,12 @@ impl Rig {
 
     pub fn command_packet(&mut self, dst: u16, op: u8, params: &[u8]) -> Vec<u8> {
         self.sn += 1;
+        self.numbered_command_packet(self.sn, dst, op, params)
+    }
+
+    pub fn numbered_command_packet(&self, sn: u32, dst: u16, op: u8, params: &[u8]) -> Vec<u8> {
         let key = self.key.expect("logged in");
-        let sn = &self.sn.to_le_bytes()[..3];
+        let sn = &sn.to_le_bytes()[..3];
         let mut nonce = [0u8; 8];
         nonce[..4].copy_from_slice(&self.world.borrow().address[..4]);
         nonce[4] = 1;

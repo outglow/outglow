@@ -47,7 +47,7 @@ pub(crate) struct Mesh {
     pending_fields: [[u8; 16]; 3],
     pending_mask: u8,
     notify_sn: u32,
-    last_sn: [u8; 3],
+    last_sn: Option<[u8; 3]>,
     pub(crate) status_due: bool,
     app_format: bool,
     app_status_at: Option<u32>,
@@ -83,7 +83,7 @@ impl Mesh {
             pending_fields: [[0; 16]; 3],
             pending_mask: 0,
             notify_sn: 0x100,
-            last_sn: [0; 3],
+            last_sn: None,
             status_due: false,
             app_format: false,
             app_status_at: None,
@@ -562,10 +562,11 @@ impl<H: Hal> Ble<H> {
         if mic[..2] != packet[3..5] {
             return;
         }
-        if packet[..3] == self.mesh.last_sn {
+        let mut sn = [0u8; 3];
+        sn.copy_from_slice(&packet[..3]);
+        if self.mesh.last_sn.replace(sn) == Some(sn) {
             return;
         }
-        self.mesh.last_sn.copy_from_slice(&packet[..3]);
         let payload = &packet[5..];
         self.mesh.att_command = [0; 20];
         self.mesh.att_command[..15].copy_from_slice(payload);
@@ -574,7 +575,6 @@ impl<H: Hal> Ble<H> {
         let op = payload[2];
         let mut params = [0u8; 10];
         params.copy_from_slice(&payload[5..]);
-        let sn = self.mesh.last_sn;
         if to_me || dst == 0xffff {
             self.mesh_command(op, &params, false);
         }
@@ -594,6 +594,7 @@ impl<H: Hal> Ble<H> {
                 m.login_block(&m.secure_password, random, proof).or_else(|| m.login_block(&padded(DEFAULT_PASSWORD), random, proof))
             };
             self.mesh.att_pair = [0; 20];
+            self.mesh.last_sn = None;
             let Some(block) = block else {
                 self.mesh.session = None;
                 self.mesh.att_pair[0] = 0x0e;
