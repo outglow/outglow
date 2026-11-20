@@ -352,6 +352,7 @@ impl Hal for SimHal {
         let mut air = self.air.borrow_mut();
         if air.ports[self.id].busy > 0 {
             air.ports[self.id].busy -= 1;
+            air.ports[self.id].last_attempts = 0;
             return TxStatus::ChannelBusy;
         }
         air.transmit(self.id, mpdu)
