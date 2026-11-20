@@ -742,7 +742,7 @@ mod home;
 #[ignore = "a comparison to read, not a check"]
 fn link_eval_home() {
     use home::{Algo, Floor};
-    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0, refresh: 0, bshift: 4, own: false, by_route: false };
+    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0, refresh: 0, bshift: 4, own: false, by_route: false, lqi_refresh: false };
     let mut algos = std::vec![
         Algo { floor: Floor::Oracle, ..firmware },
         Algo { floor: Floor::LqiOnly, ..firmware },
@@ -766,6 +766,10 @@ fn link_eval_home() {
             algos.push(Algo { refresh, bshift, ..firmware });
         }
         algos.push(Algo { refresh, bshift: 4, own: true, ..firmware });
+    }
+    for refresh in [1u8, 4] {
+        algos.push(Algo { refresh, by_route: true, lqi_refresh: true, ..firmware });
+        algos.push(Algo { refresh, lqi_refresh: true, ..firmware });
     }
     for own in [false, true] {
         for bshift in [4u32, 5] {

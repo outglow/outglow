@@ -35,6 +35,7 @@ pub(super) struct Algo {
     pub bshift: u32,
     pub own: bool,
     pub by_route: bool,
+    pub lqi_refresh: bool,
 }
 
 impl Algo {
@@ -46,7 +47,7 @@ impl Algo {
                 r as u32 * LINK_STATUS_MS / 60_000,
                 1u32 << self.bshift,
                 if self.own { " +own" } else { "" }
-            ) + if self.by_route { " off route" } else { "" },
+            ) + if self.by_route { " off route" } else { "" } + if self.lqi_refresh { " from LQI" } else { "" },
             (s, _) => format!(" direct every {s:>3} s"),
         };
         let base: String = match self.floor {
@@ -121,6 +122,8 @@ impl LinkEst {
 
     fn refresh(&mut self, reported: Option<f64>, on_route: bool) {
         let idle = self.quiet >= self.algo.refresh && !(self.algo.by_route && on_route);
+        let lqi = (self.lqi_cost.max(self.out_cost) as f64).powf(-0.25);
+        let reported = if self.algo.lqi_refresh { Some(lqi) } else { reported };
         if let Some(q) = reported.filter(|_| self.algo.refresh != 0 && idle && self.est.measured()) {
             self.est.refresh(q);
         }
