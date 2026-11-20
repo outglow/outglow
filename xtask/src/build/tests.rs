@@ -356,6 +356,14 @@ fn a_broken_tool_or_image_stops_the_build() {
     r.tools.elf = tc32_elf(&[0; 32]);
     let e = r.build(&[]).0.unwrap_err().to_string();
     assert_eq!(e, "the finished image fails its own check: no KNLT marker at 0x08");
+    let mut r = Rig::new("large");
+    let mut large = code();
+    large.resize(ota::IMAGE_LIMIT + 1, 0);
+    r.tools.elf = tc32_elf(&large);
+    let e = r.build(&[]).0.unwrap_err().to_string();
+    let out = r.t.path("target/tc32/bulb-tc32.ota");
+    assert!(e.starts_with(&format!("{}: the OTA file is ", out.display())) && e.contains("a bulb takes at most 409600 B"), "{e}");
+    assert!(!out.exists());
 }
 
 #[test]

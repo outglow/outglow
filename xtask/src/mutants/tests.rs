@@ -210,7 +210,7 @@ fn the_path_dependencies_are_mirrored_too() {
     let sp = Space { cargo: bad.into_os_string(), ..sp };
     assert_eq!(all(&sp).err().unwrap(), "cargo metadata failed");
     let sp = Space { root: r.t.path("nonexistent"), cargo: fake.clone(), ..sp };
-    assert_eq!(all(&sp).err().unwrap(), "running cargo metadata");
+    assert_eq!(all(&sp).err().unwrap(), format!("resolving {}", r.t.path("nonexistent").display()));
     let e = cargo_test(&fake, "demo", &r.t.path("nonexistent"), &r.t.0, None).err().unwrap().to_string();
     assert_eq!(e, "starting cargo test");
 }

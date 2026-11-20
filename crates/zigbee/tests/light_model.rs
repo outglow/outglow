@@ -932,3 +932,28 @@ fn a_temperature_step_after_xy_and_a_temperature_move_heard_together_counts_from
     let (one_by_one, together) = replay(2, &chunks);
     assert_eq!(together.color_temp, one_by_one.color_temp);
 }
+
+#[test]
+fn a_stop_heard_the_millisecond_a_fade_to_off_ends_before_the_bulb_ticks_leaves_the_light_off() {
+    let mut rig = Rig::new(0);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x04, &[200, 0, 0]);
+    rig.run(100);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x04, &[0, 10, 0]);
+    rig.drain();
+    rig.run(999);
+    rig.net.air.borrow_mut().now += 1;
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x03, &[]);
+    rig.net.coord.poll();
+    rig.poll_once();
+    let seq = rig.net.coord.zcl(rig.short, ON_OFF, 0x00, 0x00, &[0x00, 0x00]);
+    for _ in 0..50 {
+        rig.net.air.borrow_mut().now += 1;
+        rig.net.coord.poll();
+        assert_eq!(rig.net.nodes[rig.n].stack.poll(), None);
+    }
+    assert_eq!(rig.net.coord.last_zcl(rig.short, ON_OFF, 0x01).unwrap(), [0x18, seq, 0x01, 0x00, 0x00, 0x00, 0x10, 0], "before the bulb's report");
+    rig.run(100);
+    let s = rig.bulb.state();
+    assert_eq!((s.on, s.level), (false, 200));
+    assert_eq!(consistent(&mut rig, 0, "after the stop"), None);
+}

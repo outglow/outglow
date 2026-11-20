@@ -87,5 +87,6 @@ mod tests {
         assert_eq!((s.load(&mut [0; 8]), s.load_colour(&mut [0; 8])), (Some(8), None));
         s.store(&[1]);
         s.store_colour(&[1]);
+        s.prepare();
     }
 }

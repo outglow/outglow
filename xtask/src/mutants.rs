@@ -178,8 +178,7 @@ fn run_list(
                 let (next, stop, verdicts, crates) = (&next, &stop, &verdicts, &crates);
                 s.spawn(move || -> Result<()> {
                     let dir = scratch.join(format!("w{w}"));
-                    let ws = dir.join("ws");
-                    mirror_workspace(sp, crates, &ws).with_context(|| format!("mirroring the workspace to {}", ws.display()))?;
+                    let ws = mirrored(sp, crates, &dir)?;
                     loop {
                         if stop.load(Ordering::SeqCst) {
                             return Ok(());
@@ -271,8 +270,7 @@ fn last_error(out: &str) -> &str {
 
 fn baseline(sp: &Space, crates: &[String], krate: &str, scratch: &Path, timeout: Option<Duration>) -> Result<()> {
     let dir = scratch.join("w0");
-    let ws = dir.join("ws");
-    mirror_workspace(sp, crates, &ws).with_context(|| format!("mirroring the workspace to {}", ws.display()))?;
+    let ws = mirrored(sp, crates, &dir)?;
     let (out, success, timed_out) = cargo_test(&sp.cargo, krate, &ws, &dir, timeout)?;
     match verdict(&out, success, timed_out) {
         Verdict::Missed => Ok(()),
@@ -283,10 +281,17 @@ fn baseline(sp: &Space, crates: &[String], krate: &str, scratch: &Path, timeout:
     }
 }
 
+fn mirrored(sp: &Space, crates: &[String], dir: &Path) -> Result<PathBuf> {
+    let ws = dir.join("ws");
+    mirror_workspace(sp, crates, &ws).with_context(|| format!("mirroring the workspace to {}", ws.display()))?;
+    Ok(ws)
+}
+
 fn path_closure(sp: &Space) -> Result<Vec<String>> {
+    let root = sp.root.canonicalize().with_context(|| format!("resolving {}", sp.root.display()))?;
     let out = Command::new(&sp.cargo)
         .args(["metadata", "--format-version", "1", "--no-deps"])
-        .current_dir(&sp.root)
+        .current_dir(&root)
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
         .output()
@@ -295,7 +300,6 @@ fn path_closure(sp: &Space) -> Result<Vec<String>> {
         bail!("cargo metadata failed");
     }
     let meta: serde_json::Value = serde_json::from_slice(&out.stdout).context("reading the output of cargo metadata")?;
-    let root = sp.root.canonicalize().with_context(|| format!("resolving {}", sp.root.display()))?;
     let mut deps: std::collections::BTreeMap<PathBuf, Vec<PathBuf>> = Default::default();
     for p in meta["packages"].as_array().into_iter().flatten() {
         let dir = p["manifest_path"].as_str().map(Path::new).and_then(Path::parent).map(Path::to_path_buf).unwrap_or_default();
