@@ -957,3 +957,80 @@ fn a_stop_heard_the_millisecond_a_fade_to_off_ends_before_the_bulb_ticks_leaves_
     assert_eq!((s.on, s.level), (false, 200));
     assert_eq!(consistent(&mut rig, 0, "after the stop"), None);
 }
+
+#[test]
+fn a_step_down_while_brightening_out_of_an_off_effect_counts_from_the_level_shown() {
+    let mut rig = Rig::new(0);
+    rig.run(500);
+    rig.net.coord.zcl(rig.short, ON_OFF, 0x01, 0x40, &[0, 0]);
+    rig.run(300);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x05, &[0, 40]);
+    rig.run(100);
+    let shown = rig.bulb.state().shown.level;
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x06, &[1, 39, 1, 0]);
+    rig.run(1000);
+    let s = rig.bulb.state();
+    assert!(s.on && s.level.abs_diff(shown - 39) <= 2, "shown {shown} before the step, then on {} level {} ({:?})", s.on, s.level, rig.log);
+}
+
+fn off_effect_then_together(first: &[(u16, u8, &[u8])], wait: u32, then: &[(u16, u8, &[u8])]) -> (u8, bool, u8) {
+    let mut rig = Rig::new(0);
+    rig.run(500);
+    let before = rig.bulb.state().level;
+    for (cluster, cmd, p) in first {
+        rig.net.coord.zcl(rig.short, *cluster, 0x01, *cmd, p);
+    }
+    rig.run(wait);
+    for (cluster, cmd, p) in then {
+        rig.net.coord.zcl(rig.short, *cluster, 0x01, *cmd, p);
+    }
+    rig.drain();
+    rig.run(1000);
+    let s = rig.bulb.state();
+    (before, s.on, s.level)
+}
+
+const BRIGHTEN: (u16, u8, &[u8]) = (LEVEL, 0x05, &[0, 40]);
+const DIM_39: (u16, u8, &[u8]) = (LEVEL, 0x06, &[1, 39, 1, 0]);
+
+#[test]
+fn a_step_down_heard_with_an_off_effect_and_a_move_up_counts_from_the_level_shown() {
+    let (before, on, level) = off_effect_then_together(&[], 0, &[(ON_OFF, 0x40, &[0, 0]), BRIGHTEN, DIM_39]);
+    assert!(on && level.abs_diff(before - 39) <= 1, "{before} then on {on} level {level}");
+}
+
+#[test]
+fn a_step_down_after_an_off_that_cut_an_off_effect_short_counts_from_off() {
+    let (_, on, _) = off_effect_then_together(&[(ON_OFF, 0x40, &[0, 2])], 300, &[(ON_OFF, 0x00, &[]), BRIGHTEN, DIM_39]);
+    assert!(!on);
+}
+
+#[test]
+fn a_step_down_after_the_app_cut_an_off_effect_short_counts_from_off() {
+    let mut rig = Rig::new(0);
+    rig.run(500);
+    rig.net.coord.zcl(rig.short, ON_OFF, 0x01, 0x40, &[0, 2]);
+    rig.run(300);
+    rig.ble.push_back(Command::Off);
+    rig.run(100);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x05, &[0, 40]);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x06, &[1, 39, 1, 0]);
+    rig.drain();
+    rig.run(1000);
+    assert!(!rig.bulb.state().on, "{:?}", rig.log);
+}
+
+#[test]
+fn a_step_down_while_brightening_out_of_an_app_fade_to_off_counts_from_the_level_shown() {
+    let mut rig = Rig::new(0);
+    rig.run(500);
+    rig.ble.push_back(Command::FadeOff { transition_ms: 12_800 });
+    rig.run(300);
+    let shown = rig.bulb.state().shown.level;
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x05, &[0, 40]);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x06, &[1, 39, 1, 0]);
+    rig.drain();
+    rig.run(1000);
+    let s = rig.bulb.state();
+    assert!(s.on && s.level.abs_diff(shown - 39) <= 2, "shown {shown} before the step, then on {} level {} ({:?})", s.on, s.level, rig.log);
+}

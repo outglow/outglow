@@ -629,6 +629,7 @@ pub struct Stack<H: Hal> {
     pub(crate) on_tick_at: u32,
     pub(crate) rx_signal: (u8, i8),
     pub(crate) level_until: Option<u32>,
+    pub(crate) level_off_until: Option<u32>,
     pub(crate) color_until: Option<u32>,
     pub(crate) level_from: u8,
     pub(crate) level_to: u8,
@@ -766,6 +767,7 @@ impl<H: Hal> Stack<H> {
             on_tick_at: now,
             rx_signal: (0, 0),
             level_until: None,
+            level_off_until: None,
             color_until: None,
             level_from: 0,
             level_to: 0,
@@ -914,11 +916,16 @@ impl<H: Hal> Stack<H> {
         let queued = |f: fn(&Command) -> bool| self.cmds.iter().flatten().any(f);
         let now = self.hal.now_ms();
         let level = s.level_fade.filter(|_| s.on);
-        if !queued(|c| matches!(c, Command::MoveToLevel { .. } | Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle | Command::StopTransition)) && level.map(|f| f.to) != self.level_until.map(|_| self.level_to) {
+        let settled = !queued(|c| matches!(c, Command::MoveToLevel { .. } | Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle | Command::StopTransition));
+        if settled && level.map(|f| f.to) != self.level_until.map(|_| self.level_to) {
             self.level_until = level.map(|f| now.wrapping_add(f.left_ms));
             if let Some(f) = level {
                 (self.level_from, self.level_to, self.level_since) = (f.at, f.to, now);
             }
+        }
+        if let (true, false) = (settled, s.on) {
+            self.level_off_until = s.level_fade.map(|f| now.wrapping_add(f.left_ms));
+            (self.level_from, self.level_since) = (s.level_fade.map_or(0, |f| f.at), now);
         }
         let hue = if s.hue_moving { self.colour_target.1 } else { s.hue as u16 };
         let aim = colour_aim(s.color_mode, s.color_temp, hue, s.sat, s.x, s.y);
@@ -992,7 +999,10 @@ impl<H: Hal> Stack<H> {
         let (level, ct, hue, sat) = (self.level_now(now), self.ct_now(now), self.hue_now(now), self.sat_now(now));
         match c {
             Command::MoveToLevel { level: to, transition_ms } => {
-                self.level_from = if self.light.on { level } else { 0 };
+                self.level_from = match (self.light.on, self.level_off_until.take()) {
+                    (true, _) => level,
+                    (false, until) => fade(self.level_from as u16, 0, self.level_since, until, now) as u8,
+                };
                 self.level_since = now;
                 self.level_until = (transition_ms != 0 && (self.light.on || to != 0)).then(|| now.wrapping_add(transition_ms));
                 self.level_to = to;
@@ -1008,7 +1018,8 @@ impl<H: Hal> Stack<H> {
                     (reached, _) => Some(reached.max(1)),
                 };
             }
-            Command::FadeOff { .. } | Command::Off | Command::On => self.level_until = None,
+            Command::FadeOff { transition_ms } => (self.level_until, self.level_from, self.level_since, self.level_off_until) = (None, level, now, Some(now.wrapping_add(transition_ms))),
+            Command::Off | Command::On => (self.level_until, self.level_off_until) = (None, None),
             Command::StopColorTransition => (self.color_until, self.hue_move, self.stopped_colour) = (None, None, (ct, hue, sat)),
             _ => {}
         }
