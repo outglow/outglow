@@ -31,6 +31,7 @@ impl PowerOnBehavior {
 pub enum Command {
     On,
     Off,
+    FadeOff { transition_ms: u32 },
     Toggle,
     MoveToLevel { level: u8, transition_ms: u32 },
     SetStartupLevel(u8),

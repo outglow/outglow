@@ -627,6 +627,7 @@ pub struct Stack<H: Hal> {
     pub(crate) level_until: Option<u32>,
     pub(crate) color_until: Option<u32>,
     pub(crate) level_from: u8,
+    pub(crate) level_to: u8,
     pub(crate) level_since: u32,
     pub(crate) ct_from: u16,
     pub(crate) color_since: u32,
@@ -759,6 +760,7 @@ impl<H: Hal> Stack<H> {
             level_until: None,
             color_until: None,
             level_from: 0,
+            level_to: 0,
             level_since: now,
             ct_from: 0,
             color_since: now,
@@ -897,7 +899,7 @@ impl<H: Hal> Stack<H> {
             y: s.y,
         };
         self.light = l;
-        if !s.hue_moving && self.cmds.iter().all(Option::is_none) {
+        if !s.hue_moving && self.cmds.iter().flatten().all(|c| matches!(c, Command::Identify { .. })) {
             self.hue_move = None;
         }
         if !self.light_known {
@@ -953,8 +955,9 @@ impl<H: Hal> Stack<H> {
                 self.level_from = if self.light.on { level } else { 0 };
                 self.level_since = now;
                 self.level_until = Some(now.wrapping_add(transition_ms));
+                self.level_to = to;
                 match to {
-                    0 => self.light.on = false,
+                    0 => self.light.on &= transition_ms != 0,
                     to => (self.light.on, self.light.level) = (true, to),
                 }
             }
@@ -966,6 +969,7 @@ impl<H: Hal> Stack<H> {
                 self.colour_fade(now, ct, hue, transition_ms);
                 (self.light.sat, self.light.color_mode) = (sat, 0);
             }
+            Command::MoveToXy { x: 0, y: 0, .. } => {}
             Command::MoveToXy { x, y, transition_ms } => {
                 self.colour_fade(now, ct, hue, transition_ms);
                 (self.light.x, self.light.y, self.light.color_mode) = (x, y, 1);
@@ -977,6 +981,7 @@ impl<H: Hal> Stack<H> {
             Command::SetLevelWhileOff(to) => self.light.level = to,
             Command::StopTransition => (self.level_until, self.light.level) = (None, level),
             Command::StopColorTransition => (self.color_until, self.light.color_temp, self.light.hue, self.hue_move) = (None, ct, hue, None),
+            Command::FadeOff { .. } => (self.level_until, self.light.on) = (None, false),
             Command::Off | Command::On => {
                 self.level_until = None;
                 self.color_until = None;
@@ -1001,7 +1006,10 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn level_now(&self, now: u32) -> u8 {
-        fade(self.level_from as u16, self.light.level as u16, self.level_since, self.level_until, now) as u8
+        match self.level_until {
+            None => self.light.level,
+            until => fade(self.level_from as u16, self.level_to as u16, self.level_since, until, now) as u8,
+        }
     }
 
     pub(crate) fn ct_now(&self, now: u32) -> u16 {

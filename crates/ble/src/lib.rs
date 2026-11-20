@@ -211,7 +211,7 @@ enum Kind {
 
 fn kind(c: Command) -> Option<Kind> {
     match c {
-        Command::On | Command::Off | Command::Toggle => Some(Kind::Power),
+        Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle => Some(Kind::Power),
         Command::MoveToLevel { .. } | Command::SetLevelWhileOff(_) => Some(Kind::Level),
         Command::MoveToXy { .. } => None,
         Command::SetStartupLevel(_)

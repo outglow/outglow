@@ -96,7 +96,7 @@ where
     }
 
     fn persist_last(&mut self) {
-        self.config.last_on = self.light.is_on();
+        self.config.last_on = self.light.stays_on();
         self.config.last_level = self.light.level();
         self.config.last_color_temp = self.light.color_temp();
         self.store.store(&self.config.encode());
@@ -139,6 +139,7 @@ where
         match cmd {
             Command::On => self.light.turn_on_previous(&mut self.pwm, now, t),
             Command::Off => self.light.turn_off(&mut self.pwm, now, t),
+            Command::FadeOff { transition_ms } => self.light.turn_off(&mut self.pwm, now, transition_ms),
             Command::Toggle => {
                 if self.light.is_on() {
                     self.light.turn_off(&mut self.pwm, now, t);

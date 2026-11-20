@@ -494,19 +494,25 @@ pub struct Node {
     pub x: u16,
     pub y: u16,
     pub hue_moving: bool,
+    pub off_at: Option<u32>,
     pub commands: Vec<Command>,
     pub command_frames: Vec<usize>,
 }
 
 impl Node {
     fn apply(&mut self, c: Command) {
+        if matches!(c, Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle | Command::MoveToLevel { .. } | Command::StopTransition) {
+            self.off_at = None;
+        }
         match c {
             Command::On => self.on = true,
-            Command::Off => self.on = false,
+            Command::Off | Command::FadeOff { .. } => self.on = false,
             Command::Toggle => self.on = !self.on,
-            Command::MoveToLevel { level, .. } => {
+            Command::MoveToLevel { level, transition_ms } => {
                 if level == 0 {
-                    self.on = false;
+                    self.on &= transition_ms != 0;
+                    let now = self.stack.hal.air.borrow().now;
+                    self.off_at = self.on.then_some(now + transition_ms);
                 } else {
                     self.on = true;
                     self.level = level;
@@ -522,6 +528,7 @@ impl Node {
                 (self.hue, self.sat) = (hue, sat);
                 self.color_mode = bulb_core::colour::ColorMode::HueSaturation;
             }
+            Command::MoveToXy { x: 0, y: 0, .. } => {}
             Command::MoveToXy { x, y, .. } => {
                 self.hue_moving = false;
                 (self.x, self.y) = (x, y);
@@ -537,7 +544,18 @@ impl Node {
         }
         self.commands.push(c);
         self.command_frames.push(self.stack.hal.air.borrow().log.len());
-        self.report();
+        if !matches!(c, Command::Identify { .. }) {
+            self.report();
+        }
+    }
+
+    fn tick(&mut self) {
+        let now = self.stack.hal.air.borrow().now;
+        if self.off_at.is_some_and(|at| now >= at) {
+            self.off_at = None;
+            self.on = false;
+            self.report();
+        }
     }
 
     pub fn report(&mut self) {
@@ -2219,7 +2237,7 @@ impl Net {
         let ext = (BULB_OUI << 40) + self.nodes.len() as u64 + 1;
         let id = self.air.borrow_mut().add_port(ext);
         let stack = Stack::new(SimHal { air: self.air.clone(), id, bx: std::boxed::Box::new(zigbee::BlackBox::EMPTY) }, self.identity);
-        self.nodes.push(Node { id, stack, on: true, level: 254, color_temp: bulb_core::CT_DEFAULT, color_mode: bulb_core::colour::ColorMode::Temperature, hue: 170, sat: 254, x: 0, y: 0, hue_moving: false, commands: vec![], command_frames: vec![] });
+        self.nodes.push(Node { id, stack, on: true, level: 254, color_temp: bulb_core::CT_DEFAULT, color_mode: bulb_core::colour::ColorMode::Temperature, hue: 170, sat: 254, x: 0, y: 0, hue_moving: false, off_at: None, commands: vec![], command_frames: vec![] });
         self.nodes.last_mut().unwrap().report();
         self.nodes.len() - 1
     }
@@ -2261,6 +2279,7 @@ impl Net {
                 while let Some(c) = node.stack.poll() {
                     node.apply(c);
                 }
+                node.tick();
             }
         }
     }

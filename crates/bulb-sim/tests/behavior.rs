@@ -315,3 +315,78 @@ fn a_level_set_while_off_is_used_at_the_next_turn_on() {
     assert!(h.is_on());
     assert_eq!(h.level(), 120);
 }
+
+#[test]
+fn a_dim_to_level_0_stays_on_until_the_level_is_reached_then_reports_off() {
+    let mut h = Harness::new();
+    set_pob(&mut h, PowerOnBehavior::Previous);
+    h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
+    h.command(Command::MoveToLevel { level: 0, transition_ms: 1000 });
+    assert!(h.is_on() && h.state().on, "ZCL 8 3.10.2.3.6: OnOff goes Off only at the minimum level");
+    assert_eq!(h.state().level, 200);
+    let reports = h.radio.reports.borrow().len();
+    h.run_for(990, 1);
+    assert!(h.is_on());
+    assert!((1..10).contains(&h.level()), "{}", h.level());
+    assert_eq!(h.radio.reports.borrow().len(), reports);
+    h.run_for(10, 1);
+    assert!(!h.is_on() && h.level() == 0);
+    assert_eq!(h.radio.reports.borrow().len(), reports + 1);
+    assert!(!h.radio.last_report().unwrap().on);
+    h.command(Command::On);
+    assert_eq!(h.level(), 200, "the level to come back to");
+    h.command(Command::MoveToLevel { level: 254, transition_ms: 1000 });
+    h.run_for(1000, 10);
+    assert!(h.is_on() && h.level() == 254, "a fade up ends on");
+}
+
+#[test]
+fn a_power_cut_during_a_dim_to_level_0_comes_back_off_and_after_a_stop_on() {
+    let mut h = Harness::new();
+    set_pob(&mut h, PowerOnBehavior::Previous);
+    h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
+    h.command(Command::MoveToLevel { level: 0, transition_ms: 1000 });
+    h.run_for(500, 10);
+    h.power_cycle();
+    assert!(!h.is_on(), "the light was on its way off");
+    h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
+    h.command(Command::MoveToLevel { level: 0, transition_ms: 1000 });
+    h.run_for(500, 10);
+    h.command(Command::StopTransition);
+    assert!(h.is_on());
+    h.power_cycle();
+    assert!(h.is_on(), "stopped half way, it stays on");
+    assert!((95..=105).contains(&h.level()), "{}", h.level());
+}
+
+#[test]
+fn a_toggle_during_a_dim_to_level_0_turns_the_light_off() {
+    let mut h = Harness::new();
+    h.command(Command::MoveToLevel { level: 0, transition_ms: 1000 });
+    h.run_for(500, 10);
+    h.command(Command::Toggle);
+    assert!(!h.is_on() && h.level() == 0);
+}
+
+#[test]
+fn a_dim_to_level_0_of_a_light_that_is_off_keeps_it_off() {
+    let mut h = Harness::new();
+    h.command(Command::Off);
+    h.command(Command::MoveToLevel { level: 0, transition_ms: 1000 });
+    assert!(!h.is_on() && !h.state().on);
+}
+
+#[test]
+fn a_fade_off_is_off_at_once_and_dark_at_the_end() {
+    let mut h = Harness::new();
+    h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
+    h.command(Command::FadeOff { transition_ms: 1000 });
+    assert!(!h.is_on() && !h.state().on);
+    h.run_for(500, 10);
+    assert!(!h.is_on());
+    assert!((90..=110).contains(&h.level()), "{}", h.level());
+    h.run_for(500, 10);
+    assert_eq!(h.level(), 0);
+    h.command(Command::On);
+    assert_eq!(h.level(), 200);
+}

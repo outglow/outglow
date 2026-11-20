@@ -1,6 +1,7 @@
 use bulb_core::command::{Command, HueDirection};
 use crate::sim::*;
 
+const IDENTIFY: u16 = 0x0003;
 const LEVEL: u16 = 0x0008;
 const COLOR: u16 = 0x0300;
 const SCENES: u16 = 0x0005;
@@ -389,4 +390,83 @@ fn a_hue_set_over_ble_during_a_move_hue_is_where_a_step_starts() {
     net.coord.zcl(short, COLOR, 0x11, 0x02, &[1, 10, 0]);
     net.run(50);
     assert_eq!(last_command(&net, n), Command::MoveToHueSaturation { hue: 110, sat: 254, direction: HueDirection::Up, transition_ms: 0 }, "the bulb's report says the hue no longer moves");
+}
+
+#[test]
+fn a_scene_stored_during_a_move_hue_keeps_the_hue_reached() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 10]);
+    net.run(5_000);
+    net.coord.zcl(short, SCENES, 0x01, 0x04, &[0x34, 0x12, 7]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[200, 254, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, SCENES, 0x01, 0x05, &[0x34, 0x12, 7]);
+    net.run(50);
+    let hs = net.nodes[n].commands.iter().rev().find_map(|c| match c {
+        Command::MoveToHueSaturation { hue, .. } => Some(*hue),
+        _ => None,
+    });
+    assert!(matches!(hs, Some(89..=91)), "ZCL 8 3.7.2.4.3: Store Scene keeps the current hue, 40 + 10/s for 5 s; got {hs:?}");
+}
+
+#[test]
+fn a_hue_set_over_ble_with_only_an_identify_queued_still_ends_the_move_hue() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 10]);
+    net.run(2_000);
+    assert!(net.nodes[n].hue_moving);
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[100, 0, 0]);
+    net.coord.zcl(short, IDENTIFY, 0x11, 0x00, &[2, 0]);
+    let mut seen = vec![];
+    for _ in 0..200 {
+        net.air.borrow_mut().now += 1;
+        net.coord.poll();
+        let node = &mut net.nodes[n];
+        while let Some(c) = node.stack.poll() {
+            seen.push(c);
+            match c {
+                Command::MoveToLevel { level, .. } => {
+                    node.level = level;
+                    node.report();
+                    node.hue = 100;
+                    node.hue_moving = false;
+                    node.report();
+                }
+                Command::Identify { .. } => {}
+                _ => node.report(),
+            }
+        }
+    }
+    assert_eq!(seen, vec![Command::MoveToLevel { level: 100, transition_ms: 0 }, Command::Identify { times: 2 }]);
+    net.run(5_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x02, &[1, 10, 0]);
+    net.run(50);
+    assert_eq!(
+        last_command(&net, n),
+        Command::MoveToHueSaturation { hue: 110, sat: 254, direction: HueDirection::Up, transition_ms: 0 },
+        "bulb-core sends no report after an Identify, so the report that said the hue stopped is the last one"
+    );
+}
+
+#[test]
+fn a_move_to_colour_0_0_that_bulb_core_ignores_leaves_the_move_hue_running() {
+    let (mut net, n, short) = colour_bulb();
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 10]);
+    net.run(1_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x07, &[0, 0, 0, 0, 0, 0]);
+    net.run(50);
+    assert!(net.nodes[n].hue_moving);
+    net.run(4_000);
+    assert_eq!(read(&mut net, short, &[0x0000]), vec![0x00, 0x00, 0x00, 0x20, 90], "CurrentHue, 40 + 10/s for 5 s");
 }

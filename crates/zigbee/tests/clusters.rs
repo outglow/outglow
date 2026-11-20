@@ -323,7 +323,7 @@ fn off_with_effect_keeps_the_look_for_on_with_recall_global_scene() {
     assert_eq!(read(&mut net, short, ON_OFF, 0x4000), vec![0x00, 0x10, 1], "GlobalSceneControl");
     net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0x00, 0x00]);
     net.run(50);
-    assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 0, transition_ms: 800 }));
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::FadeOff { transition_ms: 800 }));
     assert!(!net.nodes[n].on);
     assert_eq!(read(&mut net, short, ON_OFF, 0x4000), vec![0x00, 0x10, 0]);
     net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0x00, 0x00]);
@@ -562,8 +562,8 @@ fn off_with_effect_fades_as_the_variant_says() {
     let short = net.nodes[n].short();
     for (effect, variant, want) in [
         (0u8, 1u8, Command::Off),
-        (0, 2, Command::MoveToLevel { level: 0, transition_ms: 12_800 }),
-        (1, 0, Command::MoveToLevel { level: 0, transition_ms: 1_500 }),
+        (0, 2, Command::FadeOff { transition_ms: 12_800 }),
+        (1, 0, Command::FadeOff { transition_ms: 1_500 }),
     ] {
         level(&mut net, short, 200);
         net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[effect, variant]);
@@ -684,8 +684,10 @@ fn level_commands_and_scenes_that_switch_the_light_end_the_timed_on_period_or_th
     assert!(tenths(&mut net, short, 0x4001) > 280);
     net.coord.zcl(short, LEVEL, 0x11, 0x04, &[0, 5, 0]);
     net.run(50);
-    assert!(!net.nodes[n].on);
+    assert!(net.nodes[n].on, "on until the level reaches the minimum");
     assert_eq!(tenths(&mut net, short, 0x4001), 0, "OnTime after Move to Level (with On/Off) 0");
+    net.run(500);
+    assert!(!net.nodes[n].on);
     net.coord.zcl(short, ON_OFF, 0x11, 0x01, &[]);
     net.run(40_000);
     assert!(net.nodes[n].on);
@@ -725,6 +727,8 @@ fn with_on_off_the_lowest_level_is_off_and_a_step_cut_short_takes_less_time() {
     net.coord.zcl(short, LEVEL, 0x11, 0x04, &[1, 10, 0]);
     net.run(50);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::MoveToLevel { level: 0, transition_ms: 1_000 }));
+    assert_eq!(read(&mut net, short, ON_OFF, 0x0000), vec![0x00, 0x10, 1], "ZCL 8 3.10.2.3.6: on until the level reaches the minimum");
+    net.run(1_000);
     assert!(!net.nodes[n].on);
     assert_eq!(read(&mut net, short, ON_OFF, 0x0000), vec![0x00, 0x10, 0]);
     net.coord.zcl(short, LEVEL, 0x11, 0x04, &[2, 0, 0]);
@@ -811,6 +815,7 @@ fn a_scene_changes_only_the_clusters_it_has_field_sets_for() {
     net.run(50);
     assert_eq!(net.nodes[n].commands.len(), before);
     assert_eq!(net.coord.last_zcl(short, SCENES, 0x0B).unwrap(), vec![0x18, seq, 0x0B, 0x05, 0x00]);
+    net.run(2_000);
     net.coord.zcl(short, SCENES, 0x11, 0x04, &[0x34, 0x12, 4]);
     net.run(50);
     assert_eq!(view(&mut net, 4), vec![0x06, 0x00, 1, 1, 0x08, 0x00, 1, 90, 0x00, 0x03, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x90, 0x01]);
@@ -1107,4 +1112,44 @@ fn a_scene_colour_of_only_x_and_y_is_recalled_as_a_colour_temperature_on_a_tunab
     let view = net.coord.last_zcl(short, SCENES, 0x01).unwrap();
     assert_eq!(&view[..3], &[0x19, seq, 0x01]);
     assert_eq!(&view[view.len() - 16..], &[0x00, 0x03, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 250, 0]);
+}
+
+#[test]
+fn a_scene_stored_during_a_fade_keeps_the_level_and_colour_temperature_reached() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_TW;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, GROUPS, 0x01, 0x00, &[0x34, 0x12, 0]);
+    level(&mut net, short, 254);
+    net.coord.zcl(short, COLOR, 0x11, 0x0A, &[200, 0, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[54, 100, 0]);
+    net.coord.zcl(short, COLOR, 0x11, 0x0A, &[0xC8, 0x01, 100, 0]);
+    net.run(5_000);
+    net.coord.zcl(short, SCENES, 0x01, 0x04, &[0x34, 0x12, 7]);
+    net.run(50);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0, 0]);
+    net.run(50);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, SCENES, 0x01, 0x05, &[0x34, 0x12, 7]);
+    net.run(50);
+    let recalled = &net.nodes[n].commands[before..];
+    assert!(
+        matches!(recalled, [Command::MoveToColorTemperature { mireds: 325..=329, .. }, Command::MoveToLevel { level: 150..=155, .. }]),
+        "ZCL 8 3.7.2.4.4: Store Scene keeps the current values, half way from 254 to 54 and from 200 to 454 mireds; got {recalled:?}"
+    );
+    level(&mut net, short, 254);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, LEVEL, 0x11, 0x00, &[54, 100, 0]);
+    net.run(5_000);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0, 1]);
+    net.run(50);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x41, &[]);
+    net.run(50);
+    assert!(
+        matches!(net.nodes[n].commands.last(), Some(Command::MoveToLevel { level: 150..=155, .. })),
+        "ZCL 8 3.8.2.3.4.3: Off With Effect keeps the current settings in the global scene; got {:?}",
+        &net.nodes[n].commands[before..]
+    );
 }

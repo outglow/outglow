@@ -486,7 +486,10 @@ impl<H: Hal> Stack<H> {
             (COLOR, 0x0010) => out.u8(0),
             (COLOR, 0x0007) => out.u16(self.light.color_temp),
             (COLOR, 0x0008 | 0x4001) => out.u8(self.light.color_mode),
-            (COLOR, 0x0000) => out.u8(self.light.hue),
+            (COLOR, 0x0000) => {
+                let now = self.hal.now_ms();
+                out.u8(self.hue_now(now));
+            }
             (COLOR, 0x0001) => out.u8(self.light.sat),
             (COLOR, 0x0003) => out.u16(self.light.x),
             (COLOR, 0x0004) => out.u16(self.light.y),
@@ -1206,14 +1209,13 @@ impl<H: Hal> Stack<H> {
                 };
                 if self.global_scene_control {
                     self.global_scene_control = false;
-                    let l = self.light;
-                    let colour = self.scene_colour();
-                    self.scene_put(Scene { used: true, group: 0, id: 0, on: l.on, level: l.level, color_temp: l.color_temp, colour, transition: 0, tenths: 0, omitted: 0 });
+                    let (level, color_temp, colour) = self.scene_look();
+                    self.scene_put(Scene { used: true, group: 0, id: 0, on: self.light.on, level, color_temp, colour, transition: 0, tenths: 0, omitted: 0 });
                 }
                 self.scene_valid = false;
                 self.on_time = 0;
                 if self.light.on && fade_ms != 0 {
-                    self.push_command(Command::MoveToLevel { level: 0, transition_ms: fade_ms });
+                    self.push_command(Command::FadeOff { transition_ms: fade_ms });
                 } else {
                     self.push_command(Command::Off);
                 }
@@ -1326,9 +1328,11 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    fn scene_colour(&self) -> super::SceneColour {
+    fn scene_look(&mut self) -> (u8, u16, super::SceneColour) {
+        let now = self.hal.now_ms();
         let l = &self.light;
-        super::SceneColour { mode: l.color_mode, hue: l.hue, sat: l.sat, x: l.x, y: l.y }
+        let colour = super::SceneColour { mode: l.color_mode, hue: self.hue_now(now), sat: l.sat, x: l.x, y: l.y };
+        (self.level_now(now).max(MIN_LEVEL), self.ct_now(now), colour)
     }
 
     fn scenes_remove(&mut self, which: impl Fn(&Scene) -> bool) {
@@ -1611,14 +1615,14 @@ impl<H: Hal> Stack<H> {
             0x04 if !enhanced => {
                 let id = r.u8()?;
                 let (transition, tenths) = self.scene_index(group, id).map_or((0, 0), |i| (self.scenes[i].transition, self.scenes[i].tenths));
-                let colour = self.scene_colour();
+                let (level, color_temp, colour) = self.scene_look();
                 let status = self.scene_put(Scene {
                     used: true,
                     group,
                     id,
                     on: self.light.on,
-                    level: self.light.level,
-                    color_temp: self.light.color_temp,
+                    level,
+                    color_temp,
                     colour,
                     transition,
                     tenths,

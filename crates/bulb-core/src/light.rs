@@ -267,6 +267,10 @@ impl Light {
         self.on
     }
 
+    pub fn stays_on(&self) -> bool {
+        self.on && self.target_centi != 0
+    }
+
     pub fn level(&self) -> u8 {
         self.level
     }
@@ -310,7 +314,9 @@ impl Light {
 
     pub fn move_to_level<P: Pwm>(&mut self, pwm: &mut P, now_ms: u64, level: u8, transition_ms: u32) {
         if level == 0 {
-            self.turn_off(pwm, now_ms, transition_ms);
+            self.start_fade(now_ms, 0, transition_ms);
+            self.on &= self.is_fading();
+            self.render(pwm);
         } else {
             self.turn_on(pwm, now_ms, level, transition_ms);
         }
@@ -389,6 +395,7 @@ impl Light {
                 let delta = (self.target_centi - self.start_centi) as i64;
                 (self.start_centi as i64 + delta * elapsed / span) as i32
             };
+            self.on &= self.target_centi != 0 || self.is_fading();
         }
         if self.ct != self.ct_target {
             self.ct = if now_ms >= self.ct_end_ms {

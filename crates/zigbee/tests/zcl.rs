@@ -1,3 +1,4 @@
+use bulb_core::command::Command;
 use crate::sim::*;
 use zigbee::stack::Identity;
 
@@ -1111,4 +1112,56 @@ fn a_read_reporting_configuration_fills_the_frame_and_stops_at_the_first_record_
         assert_eq!(rsp[..3], [0x18, seq, 0x09]);
         assert_eq!(rsp[3..].len(), want, "tail {tail:02x?}");
     }
+}
+
+fn dimming_to_off_with_on_off(net: &mut Net, n: usize, short: u16) {
+    net.coord.zcl(short, LEVEL, 0x11, 0x04, &[254, 0, 0, 0, 0]);
+    net.run(50);
+    net.coord.zcl(short, LEVEL, 0x11, 0x05, &[1, 40, 0, 0]);
+    net.run(1_000);
+    assert!(matches!(*net.nodes[n].commands.last().unwrap(), Command::MoveToLevel { level: 0, .. }));
+}
+
+#[test]
+fn a_stop_ends_a_move_with_on_off_down_as_zigbee2mqtt_sends_it() {
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    dimming_to_off_with_on_off(&mut net, n, short);
+    net.coord.zcl(short, LEVEL, 0x11, 0x03, &[0, 0]);
+    net.run(50);
+    assert_eq!(
+        *net.nodes[n].commands.last().unwrap(),
+        Command::StopTransition,
+        "ZCL 8 3.10.2.3.4: Stop ends any Move in process, the dependency on On/Off comes from the command being stopped"
+    );
+}
+
+#[test]
+fn a_step_up_during_a_move_with_on_off_down_is_taken() {
+    let (mut net, n, short) = bulb_with(IDENTITY);
+    dimming_to_off_with_on_off(&mut net, n, short);
+    let before = net.nodes[n].commands.len();
+    net.coord.zcl(short, LEVEL, 0x11, 0x02, &[0, 20, 0, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].commands.len(), before + 1, "ZCL 8 3.10.2.3.6: OnOff goes Off only once the level reaches the minimum");
+}
+
+#[test]
+fn in_one_poll_a_dim_to_off_leaves_the_light_on_and_an_off_with_effect_leaves_it_off() {
+    let (mut net, n, _) = bulb_with(IDENTITY);
+    let dim: &[u8] = &[0, 10, 0];
+    assert_eq!(
+        commands_since(&mut net, n, &[(LEVEL, 0x04, dim), (ON_OFF, 0x02, &[])]),
+        vec![Command::MoveToLevel { level: 0, transition_ms: 1_000 }, Command::Off],
+        "ZCL 8 3.10.2.3.6: on until the minimum level, so the toggle turns it off"
+    );
+    assert_eq!(
+        commands_since(&mut net, n, &[(LEVEL, 0x04, dim), (ON_OFF, 0x02, &[])]),
+        vec![Command::MoveToLevel { level: 0, transition_ms: 1_000 }, Command::On],
+        "a light that is off stays off"
+    );
+    assert_eq!(
+        commands_since(&mut net, n, &[(ON_OFF, 0x40, &[0, 0]), (ON_OFF, 0x02, &[])]),
+        vec![Command::FadeOff { transition_ms: 800 }, Command::On],
+        "ZCL 8 3.8.2.3.4.3: Off With Effect is off at once"
+    );
 }
