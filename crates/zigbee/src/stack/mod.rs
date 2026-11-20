@@ -632,6 +632,8 @@ pub struct Stack<H: Hal> {
     pub(crate) level_from: u8,
     pub(crate) level_to: u8,
     pub(crate) stopped_level: Option<u8>,
+    pub(crate) level_target: u8,
+    pub(crate) colour_target: (u16, u8, u8),
     pub(crate) stopped_colour: (u16, u8, u8),
     pub(crate) level_since: u32,
     pub(crate) ct_from: u16,
@@ -768,6 +770,8 @@ impl<H: Hal> Stack<H> {
             level_from: 0,
             level_to: 0,
             stopped_level: None,
+            level_target: 0,
+            colour_target: (0, 0, 0),
             stopped_colour: (0, 0, 0),
             level_since: now,
             ct_from: 0,
@@ -908,6 +912,14 @@ impl<H: Hal> Stack<H> {
             y: s.y,
         };
         let was_on = self.light.on;
+        let queued = |f: fn(&Command) -> bool| self.cmds.iter().flatten().any(f);
+        if !queued(|c| matches!(c, Command::MoveToLevel { .. })) && s.level != self.level_target {
+            self.level_until = None;
+        }
+        let hue = if s.hue_moving { self.colour_target.1 } else { s.hue };
+        if !queued(|c| matches!(c, Command::MoveToColorTemperature { .. } | Command::MoveToHueSaturation { .. } | Command::MoveToXy { .. })) && (s.color_temp, hue, s.sat) != self.colour_target {
+            self.color_until = None;
+        }
         self.light = l;
         let now = self.hal.now_ms();
         for c in self.cmds.into_iter().flatten() {
@@ -993,6 +1005,11 @@ impl<H: Hal> Stack<H> {
             _ => {}
         }
         self.predict(c, hue, sat);
+        match c {
+            Command::MoveToLevel { .. } => self.level_target = self.light.level,
+            Command::MoveToColorTemperature { .. } | Command::MoveToHueSaturation { .. } | Command::MoveToXy { .. } | Command::MoveHue { .. } => self.colour_target = (self.light.color_temp, self.light.hue, self.light.sat),
+            _ => {}
+        }
         if matches!(c, Command::SetPowerOnBehavior(_) | Command::SetStartupLevel(_) | Command::SetStartupColorTemperature(_) | Command::Identify { .. }) {
             let same = core::mem::discriminant(&c);
             if let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| core::mem::discriminant(&q) == same)) {

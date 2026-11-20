@@ -841,3 +841,29 @@ fn a_startup_temperature_written_behind_a_queued_command_reads_back_before_the_b
     assert_eq!(read, [0x10, 0x40, 0x00, 0x21, 0x2C, 0x01]);
     assert_eq!(rig.bulb.state().startup_color_temp, 300);
 }
+
+fn after_app_jump(app: bool) -> (u8, u16) {
+    let mut rig = Rig::new(1);
+    rig.net.coord.zcl(rig.short, COLOR, 0x01, 0x0A, &[153, 0, 0, 0]);
+    rig.run(100);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x00, &[20, 30, 0]);
+    rig.net.coord.zcl(rig.short, COLOR, 0x01, 0x0A, &[0xC6, 0x01, 30, 0]);
+    rig.run(1500);
+    if app {
+        rig.ble.push_back(Command::MoveToLevel { level: 200, transition_ms: 0 });
+        rig.ble.push_back(Command::MoveToColorTemperature { mireds: 200, transition_ms: 0 });
+    } else {
+        rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x00, &[200, 0, 0]);
+        rig.net.coord.zcl(rig.short, COLOR, 0x01, 0x0A, &[200, 0, 0, 0]);
+    }
+    rig.run(10);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x02, &[0, 10, 0, 0]);
+    rig.net.coord.zcl(rig.short, COLOR, 0x01, 0x4C, &[1, 10, 0, 0, 0, 0, 0, 0, 0]);
+    rig.run(100);
+    (rig.bulb.state().level, rig.bulb.state().color_temp)
+}
+
+#[test]
+fn a_step_after_the_app_set_the_light_during_a_zigbee_fade_counts_from_the_app_value() {
+    assert_eq!(after_app_jump(true), after_app_jump(false));
+}
