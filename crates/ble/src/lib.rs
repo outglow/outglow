@@ -177,7 +177,11 @@ impl<H: Hal> Ble<H> {
             }
         }
         if self.cmds[CMDS - 1].is_some() {
-            if let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| kind(q) != Some(Kind::Power))) {
+            if c == Command::ReadState {
+                return;
+            }
+            let read = self.cmds.iter().position(|q| *q == Some(Command::ReadState));
+            if let Some(i) = read.or_else(|| self.cmds.iter().position(|q| q.is_some_and(|q| kind(q) != Some(Kind::Power)))) {
                 self.remove_command(i);
             }
         }

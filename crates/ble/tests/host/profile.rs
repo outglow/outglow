@@ -1432,3 +1432,41 @@ fn a_full_queue_of_colour_commands_drops_the_oldest_but_keeps_the_on() {
     let s = rig.bulb.state();
     assert_eq!((s.on, s.x, s.y), (true, 0x2000, 0x3000));
 }
+
+#[test]
+fn a_state_read_in_a_full_burst_does_not_push_out_a_brightness() {
+    let mut rig = logged_in(TUNABLE);
+    let key = rig.key.unwrap();
+    let mut packets = commands(&mut rig, &[(OP_POWER, 1), (OP_BRIGHTNESS, 10), (OP_TEMPERATURE, 0)]);
+    packets.push(block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x08, 0x00, 0x10, 0x01]));
+    packets.push(block_packet(&key, 2, &[0x0a]));
+    burst(&mut rig, &packets);
+    assert_eq!(rig.level(), 20, "the read state pushed out the brightness");
+    let (s, _) = rig.app_statuses();
+    assert!(!s.is_empty(), "the app still gets its status");
+}
+
+#[test]
+fn an_on_after_an_off_and_a_toggle_wins() {
+    let mut rig = logged_in(DIMMABLE);
+    let key = rig.key.unwrap();
+    let mut packets = commands(&mut rig, &[(OP_POWER, 0)]);
+    packets.push(block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x06, 0x00, 0x02]));
+    packets.extend(commands(&mut rig, &[(OP_POWER, 1)]));
+    burst(&mut rig, &packets);
+    assert!(rig.is_on());
+}
+
+#[test]
+fn a_full_burst_drops_a_queued_state_read_before_a_brightness() {
+    let mut rig = logged_in(TUNABLE);
+    let key = rig.key.unwrap();
+    let mut packets = commands(&mut rig, &[(OP_POWER, 1), (OP_BRIGHTNESS, 10)]);
+    packets.push(block_packet(&key, 2, &[0x0a]));
+    packets.extend(commands(&mut rig, &[(OP_TEMPERATURE, 0)]));
+    packets.push(block_packet(&key, 0, &[0xff, 0xff, 0x01, 0x08, 0x00, 0x10, 0x01]));
+    burst(&mut rig, &packets);
+    assert_eq!(rig.level(), 20);
+    let (s, _) = rig.app_statuses();
+    assert!(!s.is_empty(), "the app still gets its status");
+}
