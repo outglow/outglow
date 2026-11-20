@@ -1497,3 +1497,23 @@ fn brightness_in_the_same_connection_event_as_a_switch_follows_the_switch() {
         assert_eq!(rig.level(), 64);
     }
 }
+
+#[test]
+fn toggle_brightness_toggle_keeps_the_light_as_it_was_with_the_new_brightness() {
+    use bulb_core::Command::{Off, On};
+    for was_on in [false, true] {
+        let mut rig = logged_in(DIMMABLE);
+        let key = rig.key.unwrap();
+        rig.bulb.handle(if was_on { On } else { Off });
+        rig.run(300);
+        let before = rig.world.borrow().commands.len();
+        for payload in [&[0xff, 0xff, 0x01, 0x06, 0x00, 0x02][..], &[0xff, 0xff, 0x01, 0x08, 0x00, 0x00, 64, 0, 0], &[0xff, 0xff, 0x01, 0x06, 0x00, 0x02]] {
+            let mut pdu = vec![0x52, 0x15, 0x00];
+            pdu.extend_from_slice(&block_packet(&key, 0, payload));
+            rig.central().send_att(&pdu);
+        }
+        rig.run(1000);
+        assert_eq!(rig.is_on(), was_on, "on {was_on}, toggle, level, toggle: {:?}", &rig.world.borrow().commands[before..]);
+        assert_eq!(rig.level(), 64, "on {was_on}");
+    }
+}

@@ -898,7 +898,8 @@ impl<H: Hal> Stack<H> {
             x: s.x,
             y: s.y,
         };
-        if self.light.on && !s.on {
+        let switching = self.cmds.iter().flatten().any(|c| matches!(c, Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle | Command::MoveToLevel { .. }));
+        if self.light.on && !s.on && !switching {
             self.on_time = 0;
         }
         self.light = l;

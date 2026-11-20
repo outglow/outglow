@@ -173,6 +173,10 @@ impl<H: Hal> Ble<H> {
             let last = self.cmds.iter().rposition(|q| q.is_some_and(|q| kind(q) == Some(Kind::Power)));
             if let Some(i) = last.filter(|&i| self.cmds[i] == Some(Command::Toggle)) {
                 self.remove_command(i);
+                let on = self.will_be_on();
+                for slot in self.cmds.iter_mut() {
+                    *slot = slot.map(|q| level_as(q, on));
+                }
                 return;
             }
         } else {
@@ -230,6 +234,16 @@ fn kind(c: Command) -> Option<Kind> {
         | Command::MoveHue { .. }
         | Command::Candle(_) => Some(Kind::Same(core::mem::discriminant(&c))),
     }
+}
+
+pub(crate) fn level_as(c: Command, on: bool) -> Command {
+    if let (Command::MoveToLevel { level, .. }, false) = (c, on) {
+        return Command::SetLevelWhileOff(level);
+    }
+    if let (Command::SetLevelWhileOff(level), true) = (c, on) {
+        return Command::MoveToLevel { level, transition_ms: 0 };
+    }
+    c
 }
 
 fn powered(on: bool, c: Command) -> bool {

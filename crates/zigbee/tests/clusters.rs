@@ -1210,3 +1210,16 @@ fn stop_with_on_off_after_an_off_with_effect_is_not_sent_to_the_light() {
     net.run(50);
     assert_ne!(net.nodes[n].commands.last(), Some(&Command::StopTransition), "the fading-out light gets a Stop, which bulb-core turns into On at the reached level");
 }
+
+#[test]
+fn off_then_timed_on_keeps_the_timer() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, ON_OFF, 0x11, 0x00, &[]);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x42, &[0x00, 30, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::On));
+    net.run(5_000);
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::Off), "timer lost");
+}
