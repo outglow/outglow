@@ -925,7 +925,8 @@ mod ble_switch {
         sim::with(|c| c.flash_ops.clear());
         assert!(!Radio::housekeep(&mut link));
         assert_eq!(erases(), [nv::SECTORS[0]]);
-        assert!(Radio::housekeep(&mut link));
+        let mut r: &mut Link = &mut link;
+        assert!(Radio::housekeep(&mut r));
         assert_eq!(erases(), [nv::SECTORS[0]]);
     }
 }
