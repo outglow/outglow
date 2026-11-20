@@ -495,6 +495,9 @@ pub struct Node {
     pub y: u16,
     pub hue_moving: bool,
     pub off_at: Option<u32>,
+    pub level_fade: Option<(u8, u8, u32, u32)>,
+    pub ct_fade: Option<u32>,
+    pub colour_fade: Option<u32>,
     pub commands: Vec<Command>,
     pub command_frames: Vec<usize>,
 }
@@ -503,20 +506,32 @@ impl Node {
     fn apply(&mut self, c: Command) {
         if matches!(c, Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle | Command::MoveToLevel { .. } | Command::StopTransition) {
             self.off_at = None;
+            self.level_fade = None;
+        }
+        let now = self.stack.hal.air.borrow().now;
+        match c {
+            Command::MoveToXy { x: 0, y: 0, .. } => {}
+            Command::MoveToColorTemperature { transition_ms, .. } => self.ct_fade = (transition_ms != 0).then_some(now.wrapping_add(transition_ms)),
+            Command::MoveToHueSaturation { transition_ms, .. } | Command::MoveToXy { transition_ms, .. } => {
+                self.colour_fade = (transition_ms != 0).then_some(now.wrapping_add(transition_ms));
+            }
+            Command::StopColorTransition => (self.ct_fade, self.colour_fade) = (None, None),
+            _ => {}
         }
         match c {
             Command::On => self.on = true,
             Command::Off | Command::FadeOff { .. } => self.on = false,
             Command::Toggle => self.on = !self.on,
             Command::MoveToLevel { level, transition_ms } => {
+                let from = if self.on { self.level } else { 0 };
                 if level == 0 {
                     self.on &= transition_ms != 0;
-                    let now = self.stack.hal.air.borrow().now;
                     self.off_at = self.on.then_some(now.wrapping_add(transition_ms));
                 } else {
                     self.on = true;
                     self.level = level;
                 }
+                self.level_fade = (self.on && transition_ms != 0).then_some((from, level, now, now.wrapping_add(transition_ms)));
             }
             Command::MoveToColorTemperature { mireds, .. } => {
                 self.hue_moving = false;
@@ -559,6 +574,15 @@ impl Node {
     }
 
     pub fn report(&mut self) {
+        let now = self.stack.hal.air.borrow().now;
+        let left = |until: u32| Some(until.wrapping_sub(now)).filter(|l| *l as i32 > 0);
+        let level_fade = self.level_fade.and_then(|(from, to, since, until)| {
+            let left_ms = left(until)?;
+            let at = from as i64 + (to as i64 - from as i64) * now.wrapping_sub(since) as i64 / until.wrapping_sub(since) as i64;
+            Some(bulb_core::command::LevelFade { at: at as u8, to, left_ms })
+        });
+        let ct_fade_ms = self.ct_fade.and_then(left);
+        let colour_fading = self.colour_fade.and_then(left).is_some();
         self.stack.set_light(&StateReport {
             on: self.on,
             level: self.level,
@@ -572,8 +596,11 @@ impl Node {
             x: self.x,
             y: self.y,
             hue_moving: self.hue_moving,
+            level_fade,
+            ct_fade_ms,
+            colour_fading,
             candle: false,
-            shown: Default::default(),
+            shown: bulb_core::command::Shown { level: self.level, mireds: self.color_temp, hue: self.hue, sat: self.sat },
         });
     }
 
@@ -2251,7 +2278,7 @@ impl Net {
         let ext = (BULB_OUI << 40) + self.nodes.len() as u64 + 1;
         let id = self.air.borrow_mut().add_port(ext);
         let stack = Stack::new(SimHal { air: self.air.clone(), id, bx: std::boxed::Box::new(zigbee::BlackBox::EMPTY) }, self.identity);
-        self.nodes.push(Node { id, stack, on: true, level: 254, color_temp: bulb_core::CT_DEFAULT, color_mode: bulb_core::colour::ColorMode::Temperature, hue: 170, sat: 254, x: 0, y: 0, hue_moving: false, off_at: None, commands: vec![], command_frames: vec![] });
+        self.nodes.push(Node { id, stack, on: true, level: 254, color_temp: bulb_core::CT_DEFAULT, color_mode: bulb_core::colour::ColorMode::Temperature, hue: 170, sat: 254, x: 0, y: 0, hue_moving: false, off_at: None, level_fade: None, ct_fade: None, colour_fade: None, commands: vec![], command_frames: vec![] });
         self.nodes.last_mut().unwrap().report();
         self.nodes.len() - 1
     }

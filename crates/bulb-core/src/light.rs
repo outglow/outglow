@@ -114,7 +114,7 @@ impl Light {
         self.render(pwm);
     }
 
-    fn colour_moving(&self) -> bool {
+    pub fn colour_moving(&self) -> bool {
         (self.hue, self.sat) != self.hs_to || (self.x, self.y) != self.xy_to
     }
 
@@ -220,6 +220,18 @@ impl Light {
 
     pub fn in_transition(&self) -> bool {
         self.is_fading() || self.ct != self.ct_target || self.colour_moving()
+    }
+
+    pub fn level_fade(&self, now_ms: u64) -> Option<crate::command::LevelFade> {
+        self.is_fading().then(|| crate::command::LevelFade {
+            at: self.current_level(),
+            to: (self.target_centi / CENTI) as u8,
+            left_ms: self.end_ms.saturating_sub(now_ms) as u32,
+        })
+    }
+
+    pub fn ct_fade_ms(&self, now_ms: u64) -> Option<u32> {
+        (self.ct != self.ct_target).then_some(self.ct_end_ms.saturating_sub(now_ms) as u32)
     }
 
     pub fn shown(&self) -> crate::command::Shown {
@@ -818,6 +830,37 @@ mod tests {
         l.tick(&mut p, 2000);
         assert_eq!(l.shown().mireds, 433);
         assert!(!l.in_transition());
+    }
+
+    #[test]
+    fn a_level_fade_tells_where_it_is_where_it_goes_and_what_is_left() {
+        let mut p = TestPwm(0);
+        let mut l = Light::new();
+        let fade = |at, to, left_ms| Some(crate::command::LevelFade { at, to, left_ms });
+        l.turn_on(&mut p, 0, 200, 1000);
+        assert_eq!(l.level_fade(0), fade(0, 200, 1000));
+        l.tick(&mut p, 400);
+        assert_eq!(l.level_fade(400), fade(80, 200, 600));
+        assert_eq!(l.level_fade(1300), fade(80, 200, 0));
+        l.tick(&mut p, 1000);
+        assert_eq!(l.level_fade(1000), None);
+        l.turn_off(&mut p, 1000, 500);
+        assert_eq!(l.level_fade(1100), fade(200, 0, 400));
+    }
+
+    #[test]
+    fn a_colour_temperature_fade_tells_what_is_left() {
+        let mut p = TwPwm(0, 0, (153, 454));
+        let mut l = Light::new();
+        l.turn_on(&mut p, 0, 254, 0);
+        assert_eq!(l.ct_fade_ms(0), None);
+        l.move_to_color_temp(&mut p, 1000, 433, 1000);
+        assert_eq!(l.ct_fade_ms(1000), Some(1000));
+        l.tick(&mut p, 1500);
+        assert_eq!(l.ct_fade_ms(1500), Some(500));
+        assert_eq!(l.ct_fade_ms(2600), Some(0));
+        l.tick(&mut p, 2000);
+        assert_eq!(l.ct_fade_ms(2000), None);
     }
 
     #[test]

@@ -720,6 +720,9 @@ mod ble_switch {
             x: 0,
             y: 0,
             hue_moving: false,
+            level_fade: None,
+            ct_fade_ms: None,
+            colour_fading: false,
             candle: false,
             shown: Shown::default(),
         }

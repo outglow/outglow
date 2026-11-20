@@ -867,3 +867,68 @@ fn after_app_jump(app: bool) -> (u8, u16) {
 fn a_step_after_the_app_set_the_light_during_a_zigbee_fade_counts_from_the_app_value() {
     assert_eq!(after_app_jump(true), after_app_jump(false));
 }
+
+fn app_back_on_during_fade_to_off(app: Option<Command>) -> (bool, u8) {
+    let mut rig = Rig::new(0);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x04, &[200, 0, 0]);
+    rig.run(100);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x04, &[0, 40, 0]);
+    rig.run(1000);
+    match app {
+        Some(c) => rig.ble.push_back(c),
+        None => {
+            rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x04, &[200, 0, 0]);
+        }
+    }
+    rig.run(2000);
+    rig.net.coord.zcl(rig.short, LEVEL, 0x01, 0x02, &[0, 10, 0, 0]);
+    rig.run(100);
+    let s = rig.bulb.state();
+    (s.on, s.level)
+}
+
+#[test]
+fn a_step_after_the_app_relit_the_light_during_a_zigbee_fade_to_off_counts_from_the_app_value() {
+    let zigbee = app_back_on_during_fade_to_off(None);
+    assert_eq!(app_back_on_during_fade_to_off(Some(Command::MoveToLevel { level: 200, transition_ms: 0 })), zigbee);
+}
+
+#[test]
+fn a_step_after_the_app_switched_on_during_a_zigbee_fade_to_off_counts_from_the_app_value() {
+    let zigbee = app_back_on_during_fade_to_off(None);
+    assert_eq!(app_back_on_during_fade_to_off(Some(Command::On)), zigbee);
+}
+
+fn replay(kind: u8, chunks: &[(Vec<Ev>, u64, u32)]) -> (StateReport, StateReport) {
+    let mut a = Rig::new(kind);
+    let mut b = Rig::new(kind);
+    for (evs, polls, wait) in chunks {
+        for e in evs {
+            send(&mut a, e);
+            a.drain();
+        }
+        for e in evs {
+            send(&mut b, e);
+        }
+        for _ in 0..*polls {
+            b.poll_once();
+        }
+        b.drain();
+        for _ in 0..*wait {
+            a.step_by(1);
+            b.step_by(1);
+        }
+    }
+    (a.bulb.state(), b.bulb.state())
+}
+
+#[test]
+fn a_temperature_step_after_xy_and_a_temperature_move_heard_together_counts_from_the_same_temperature() {
+    let z = |group: bool, cmd: u8, p: &[u8]| Ev::Zcl { group, cluster: COLOR, cmd, p: p.to_vec() };
+    let chunks = vec![
+        (vec![z(false, 0x09, &[223, 44, 252, 113, 3, 0]), z(true, 0x01, &[0, 200, 1, 1]), z(false, 0x4B, &[3, 10, 0, 0, 0, 0, 0, 1, 1])], 1, 0),
+        (vec![z(false, 0x4C, &[3, 108, 0, 15, 0, 0, 0, 0, 0])], 1, 1),
+    ];
+    let (one_by_one, together) = replay(2, &chunks);
+    assert_eq!(together.color_temp, one_by_one.color_temp);
+}

@@ -21,6 +21,7 @@ mod touchlink;
 mod zcl;
 mod zdo;
 
+use bulb_core::colour::ColorMode;
 use bulb_core::command::{Command, StateReport};
 
 pub use diag::{ev, LoggedEvent, MacCounters, NeighborCounts, DIAG_COUNTERS_MAX, EVENTS_LEN as DIAG_EVENTS_LEN};
@@ -632,8 +633,7 @@ pub struct Stack<H: Hal> {
     pub(crate) level_from: u8,
     pub(crate) level_to: u8,
     pub(crate) stopped_level: Option<u8>,
-    pub(crate) level_target: u8,
-    pub(crate) colour_target: (u16, u8, u8),
+    pub(crate) colour_target: (ColorMode, u16, u16),
     pub(crate) stopped_colour: (u16, u8, u8),
     pub(crate) level_since: u32,
     pub(crate) ct_from: u16,
@@ -770,8 +770,7 @@ impl<H: Hal> Stack<H> {
             level_from: 0,
             level_to: 0,
             stopped_level: None,
-            level_target: 0,
-            colour_target: (0, 0, 0),
+            colour_target: (ColorMode::Temperature, 0, 0),
             stopped_colour: (0, 0, 0),
             level_since: now,
             ct_from: 0,
@@ -913,15 +912,24 @@ impl<H: Hal> Stack<H> {
         };
         let was_on = self.light.on;
         let queued = |f: fn(&Command) -> bool| self.cmds.iter().flatten().any(f);
-        if !queued(|c| matches!(c, Command::MoveToLevel { .. })) && s.level != self.level_target {
-            self.level_until = None;
+        let now = self.hal.now_ms();
+        let level = s.level_fade.filter(|_| s.on);
+        if !queued(|c| matches!(c, Command::MoveToLevel { .. } | Command::On | Command::Off | Command::FadeOff { .. } | Command::Toggle | Command::StopTransition)) && level.map(|f| f.to) != self.level_until.map(|_| self.level_to) {
+            self.level_until = level.map(|f| now.wrapping_add(f.left_ms));
+            if let Some(f) = level {
+                (self.level_from, self.level_to, self.level_since) = (f.at, f.to, now);
+            }
         }
-        let hue = if s.hue_moving { self.colour_target.1 } else { s.hue };
-        if !queued(|c| matches!(c, Command::MoveToColorTemperature { .. } | Command::MoveToHueSaturation { .. } | Command::MoveToXy { .. })) && (s.color_temp, hue, s.sat) != self.colour_target {
+        let hue = if s.hue_moving { self.colour_target.1 } else { s.hue as u16 };
+        let aim = colour_aim(s.color_mode, s.color_temp, hue, s.sat, s.x, s.y);
+        let fading = s.ct_fade_ms.is_some() || s.colour_fading;
+        if !queued(|c| matches!(c, Command::MoveToColorTemperature { .. } | Command::MoveToHueSaturation { .. } | Command::MoveToXy { .. } | Command::MoveHue { .. } | Command::StopColorTransition)) && fading.then_some(aim) != self.color_until.map(|_| self.colour_target) {
             self.color_until = None;
+            if let ((ColorMode::Temperature, ..), Some(left)) = (aim, s.ct_fade_ms) {
+                (self.ct_from, self.sat_from, self.color_since, self.color_until, self.colour_target) = (s.shown.mireds, s.sat, now, Some(now.wrapping_add(left)), aim);
+            }
         }
         self.light = l;
-        let now = self.hal.now_ms();
         for c in self.cmds.into_iter().flatten() {
             self.predict(c, self.hue_now(now), self.sat_now(now));
         }
@@ -986,7 +994,7 @@ impl<H: Hal> Stack<H> {
             Command::MoveToLevel { level: to, transition_ms } => {
                 self.level_from = if self.light.on { level } else { 0 };
                 self.level_since = now;
-                self.level_until = (transition_ms != 0).then(|| now.wrapping_add(transition_ms));
+                self.level_until = (transition_ms != 0 && (self.light.on || to != 0)).then(|| now.wrapping_add(transition_ms));
                 self.level_to = to;
             }
             Command::MoveToColorTemperature { transition_ms, .. } | Command::MoveToHueSaturation { transition_ms, .. } => self.colour_fade(now, ct, sat, transition_ms),
@@ -1006,8 +1014,10 @@ impl<H: Hal> Stack<H> {
         }
         self.predict(c, hue, sat);
         match c {
-            Command::MoveToLevel { .. } => self.level_target = self.light.level,
-            Command::MoveToColorTemperature { .. } | Command::MoveToHueSaturation { .. } | Command::MoveToXy { .. } | Command::MoveHue { .. } => self.colour_target = (self.light.color_temp, self.light.hue, self.light.sat),
+            Command::MoveToColorTemperature { .. } | Command::MoveToHueSaturation { .. } | Command::MoveToXy { .. } | Command::MoveHue { .. } => {
+                let l = &self.light;
+                self.colour_target = colour_aim(ColorMode::from_u8(l.color_mode), l.color_temp, l.hue as u16, l.sat, l.x, l.y);
+            }
             _ => {}
         }
         if matches!(c, Command::SetPowerOnBehavior(_) | Command::SetStartupLevel(_) | Command::SetStartupColorTemperature(_) | Command::Identify { .. }) {
@@ -1238,6 +1248,14 @@ impl<H: Hal> Stack<H> {
     pub(crate) fn next_nwk_seq(&mut self) -> u8 {
         self.nwk_seq = self.nwk_seq.wrapping_add(1);
         self.nwk_seq
+    }
+}
+
+fn colour_aim(mode: ColorMode, ct: u16, hue: u16, sat: u8, x: u16, y: u16) -> (ColorMode, u16, u16) {
+    match mode {
+        ColorMode::HueSaturation => (mode, hue, sat as u16),
+        ColorMode::Xy => (mode, x, y),
+        ColorMode::Temperature => (mode, ct, 0),
     }
 }
 

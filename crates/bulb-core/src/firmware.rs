@@ -107,6 +107,7 @@ where
     }
 
     pub fn state(&self) -> StateReport {
+        let now = self.now();
         StateReport {
             on: self.light.is_on(),
             level: self.light.level(),
@@ -120,6 +121,9 @@ where
             x: self.light.colour().2,
             y: self.light.colour().3,
             hue_moving: self.light.hue_moving(),
+            level_fade: self.light.level_fade(now),
+            ct_fade_ms: self.light.ct_fade_ms(now),
+            colour_fading: self.light.colour_moving(),
             candle: self.light.candle(),
             shown: self.light.shown(),
         }

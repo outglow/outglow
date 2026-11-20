@@ -58,6 +58,13 @@ pub struct Shown {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelFade {
+    pub at: u8,
+    pub to: u8,
+    pub left_ms: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StateReport {
     pub on: bool,
     pub level: u8,
@@ -71,6 +78,9 @@ pub struct StateReport {
     pub x: u16,
     pub y: u16,
     pub hue_moving: bool,
+    pub level_fade: Option<LevelFade>,
+    pub ct_fade_ms: Option<u32>,
+    pub colour_fading: bool,
     pub candle: bool,
     pub shown: Shown,
 }
