@@ -1256,7 +1256,7 @@ impl<H: Hal> Stack<H> {
                 SUCCESS
             }
             (LEVEL, 0x00..=0x07) => {
-                let with_on_off = cmd >= 0x04;
+                let with_on_off = cmd >= 0x04 && cmd != 0x07;
                 let lowest = if with_on_off { 0 } else { MIN_LEVEL };
                 let to_level = |level: i32| if with_on_off && level <= MIN_LEVEL as i32 { 0 } else { level.clamp(MIN_LEVEL as i32, 254) as u8 };
                 let now = self.hal.now_ms();

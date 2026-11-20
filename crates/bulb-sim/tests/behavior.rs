@@ -402,3 +402,16 @@ fn a_dim_to_level_0_reports_off_when_the_level_ends_even_during_a_longer_colour_
     assert!(!h.is_on());
     assert!(!h.radio.last_report().unwrap().on, "the stack would still see OnOff=1 and nothing reported until the CT fade ends");
 }
+
+#[test]
+fn stop_during_a_fade_off_keeps_the_light_off() {
+    let mut h = Harness::new();
+    h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
+    h.command(Command::FadeOff { transition_ms: 800 });
+    h.run_for(300, 50);
+    assert!(!h.is_on());
+    h.command(Command::StopTransition);
+    h.run_for(2_000, 50);
+    assert!(!h.is_on(), "Stop turned the switched-off light back on at level {}", h.level());
+    assert_eq!(h.level(), 0, "PWM still lit at {}", h.level());
+}

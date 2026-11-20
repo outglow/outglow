@@ -164,6 +164,10 @@ impl<H: Hal> Ble<H> {
         self.take_command()
     }
 
+    pub(crate) fn will_be_on(&self) -> bool {
+        self.cmds.iter().flatten().fold(self.light.on, |on, &c| powered(on, c))
+    }
+
     pub(crate) fn push_command(&mut self, c: Command) {
         if c == Command::Toggle {
             let last = self.cmds.iter().rposition(|q| q.is_some_and(|q| kind(q) == Some(Kind::Power)));
@@ -225,6 +229,28 @@ fn kind(c: Command) -> Option<Kind> {
         | Command::MoveToHueSaturation { .. }
         | Command::MoveHue { .. }
         | Command::Candle(_) => Some(Kind::Same(core::mem::discriminant(&c))),
+    }
+}
+
+fn powered(on: bool, c: Command) -> bool {
+    match c {
+        Command::On => true,
+        Command::Off | Command::FadeOff { .. } => false,
+        Command::Toggle => !on,
+        Command::MoveToLevel { .. }
+        | Command::SetLevelWhileOff(_)
+        | Command::MoveToXy { .. }
+        | Command::SetStartupLevel(_)
+        | Command::SetPowerOnBehavior(_)
+        | Command::Identify { .. }
+        | Command::ReadState
+        | Command::StopTransition
+        | Command::MoveToColorTemperature { .. }
+        | Command::SetStartupColorTemperature(_)
+        | Command::StopColorTransition
+        | Command::MoveToHueSaturation { .. }
+        | Command::MoveHue { .. }
+        | Command::Candle(_) => on,
     }
 }
 

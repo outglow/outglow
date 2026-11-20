@@ -1177,3 +1177,36 @@ fn a_scene_stored_during_a_fade_keeps_the_level_and_colour_temperature_reached()
         &net.nodes[n].commands[before..]
     );
 }
+
+#[test]
+fn a_local_off_cancels_the_timed_off() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, ON_OFF, 0x11, 0x42, &[0x00, 50, 0, 0, 0]);
+    net.run(50);
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::On));
+    net.run(1_000);
+    net.nodes[n].on = false;
+    net.nodes[n].report();
+    net.run(10_000);
+    net.nodes[n].on = true;
+    net.nodes[n].report();
+    let before = net.nodes[n].commands.len();
+    net.run(10_000);
+    assert_eq!(net.nodes[n].commands.len(), before, "the light the app turned on again is turned off by the old timer: {:?}", &net.nodes[n].commands[before..]);
+}
+
+#[test]
+fn stop_with_on_off_after_an_off_with_effect_is_not_sent_to_the_light() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    level(&mut net, short, 200);
+    net.coord.zcl(short, ON_OFF, 0x11, 0x40, &[0, 0]);
+    net.run(100);
+    assert_eq!(net.nodes[n].commands.last(), Some(&Command::FadeOff { transition_ms: 800 }));
+    net.coord.zcl(short, LEVEL, 0x11, 0x07, &[]);
+    net.run(50);
+    assert_ne!(net.nodes[n].commands.last(), Some(&Command::StopTransition), "the fading-out light gets a Stop, which bulb-core turns into On at the reached level");
+}

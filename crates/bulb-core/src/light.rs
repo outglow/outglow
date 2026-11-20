@@ -331,7 +331,7 @@ impl Light {
     }
 
     pub fn stop<P: Pwm>(&mut self, pwm: &mut P) {
-        if !self.is_fading() {
+        if !self.on || !self.is_fading() {
             return;
         }
         let reached = self.current_level();
@@ -904,11 +904,27 @@ mod tests {
         l.turn_on(&mut p, 0, 254, 0);
         l.stop(&mut p);
         assert!(l.is_on());
-        l.turn_off(&mut p, 0, 1000);
+        l.move_to_level(&mut p, 0, 0, 1000);
         l.tick(&mut p, 999);
         assert_eq!(l.current_level(), 0);
-        assert!(l.is_fading());
+        assert!(l.is_on() && l.is_fading());
         l.stop(&mut p);
+        assert!(!l.is_on() && !l.is_fading());
+        assert_eq!(p.0, 0);
+    }
+
+    #[test]
+    fn a_stop_leaves_the_fade_of_an_off_running() {
+        let mut p = TestPwm(0);
+        let mut l = Light::default();
+        l.turn_on(&mut p, 0, 254, 0);
+        l.turn_off(&mut p, 0, 1000);
+        l.tick(&mut p, 500);
+        let reached = p.0;
+        l.stop(&mut p);
+        assert!(!l.is_on() && l.is_fading());
+        assert_eq!(p.0, reached);
+        l.tick(&mut p, 1000);
         assert!(!l.is_on() && !l.is_fading());
         assert_eq!(p.0, 0);
     }

@@ -898,6 +898,9 @@ impl<H: Hal> Stack<H> {
             x: s.x,
             y: s.y,
         };
+        if self.light.on && !s.on {
+            self.on_time = 0;
+        }
         self.light = l;
         if !s.hue_moving && self.cmds.iter().flatten().all(|c| matches!(c, Command::Identify { .. })) {
             self.hue_move = None;

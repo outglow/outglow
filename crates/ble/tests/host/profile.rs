@@ -1470,3 +1470,30 @@ fn a_full_burst_drops_a_queued_state_read_before_a_brightness() {
     let (s, _) = rig.app_statuses();
     assert!(!s.is_empty(), "the app still gets its status");
 }
+
+#[test]
+fn brightness_in_the_same_connection_event_as_a_switch_follows_the_switch() {
+    use bulb_core::Command::{MoveToLevel, Off, On, SetLevelWhileOff, Toggle};
+    for (was_on, switch, then) in [
+        (true, 0x00, SetLevelWhileOff(64)),
+        (false, 0x01, MoveToLevel { level: 64, transition_ms: 0 }),
+        (true, 0x02, SetLevelWhileOff(64)),
+        (false, 0x02, MoveToLevel { level: 64, transition_ms: 0 }),
+    ] {
+        let mut rig = logged_in(DIMMABLE);
+        let key = rig.key.unwrap();
+        rig.bulb.handle(if was_on { On } else { Off });
+        rig.run(300);
+        let before = rig.world.borrow().commands.len();
+        for payload in [&[0xff, 0xff, 0x01, 0x06, 0x00, switch][..], &[0xff, 0xff, 0x01, 0x08, 0x00, 0x00, 64, 0, 0]] {
+            let mut pdu = vec![0x52, 0x15, 0x00];
+            pdu.extend_from_slice(&block_packet(&key, 0, payload));
+            rig.central().send_att(&pdu);
+        }
+        rig.run(1000);
+        let switched = [Off, On, Toggle][switch as usize];
+        assert_eq!(rig.world.borrow().commands[before..before + 2], [switched, then], "on {was_on}, switch {switch}");
+        assert_eq!(rig.is_on(), !was_on || switch == 0x01, "on {was_on}, switch {switch}");
+        assert_eq!(rig.level(), 64);
+    }
+}

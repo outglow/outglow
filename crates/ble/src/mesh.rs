@@ -405,7 +405,7 @@ impl<H: Hal> Ble<H> {
 
     fn set_level(&mut self, level: u8, transition_ms: u32) {
         let level = level.clamp(1, 254);
-        self.push_command(if self.light.on { Command::MoveToLevel { level, transition_ms } } else { Command::SetLevelWhileOff(level) });
+        self.push_command(if self.will_be_on() { Command::MoveToLevel { level, transition_ms } } else { Command::SetLevelWhileOff(level) });
     }
 
     fn factory_mesh(&mut self, from_air: bool) {
