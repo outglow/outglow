@@ -1093,12 +1093,44 @@ fn a_cheaper_copy_of_a_route_request_heard_is_passed_on() {
 }
 
 #[test]
-fn a_busy_channel_is_a_failed_transmission() {
+fn a_busy_channel_is_a_failed_transmission_but_not_a_failure_of_the_link() {
+    let mut s = relaying();
+    route(&mut s, 0, 0x5000, 0x1002, false, 0);
+    s.hal.busy = true;
+    s.neighbors[1].failures = 2;
+    let h = nwk::Header::new(nwk::FRAME_DATA, 0x1001, 0x0042, 5, 1);
+    for _ in 0..super::LINK_FAILURES + 1 {
+        assert_eq!(s.transmit_nwk(0x1001, &h, &[0x00]), crate::hal::TxStatus::ChannelBusy);
+    }
+    assert_eq!(s.neighbors[1].failures, 2);
+    for _ in 0..super::LINK_FAILURES {
+        s.transmit_nwk(0x1002, &h, &[0x00]);
+    }
+    assert_eq!(s.neighbors[2].failures, 0);
+    assert!(!s.link_failed(0x1002));
+    assert_eq!(s.routes[0].status, super::ROUTE_ACTIVE);
+    s.hal.busy = false;
+    s.hal.deaf = [0x1001].to_vec();
+    assert_eq!(s.transmit_nwk(0x1001, &h, &[0x00]), crate::hal::TxStatus::NoAck);
+    assert_eq!(s.neighbors[1].failures, 3);
+    assert!(s.link_failed(0x1001));
+    s.hal.deaf.clear();
+    assert_eq!(s.transmit_nwk(0x1001, &h, &[0x00]), crate::hal::TxStatus::Ok);
+    assert_eq!(s.neighbors[1].failures, 0);
+}
+
+#[test]
+fn a_broadcast_lost_to_a_busy_channel_goes_out_again_with_its_retry() {
     let mut s = relaying();
     s.hal.busy = true;
-    let h = nwk::Header::new(nwk::FRAME_DATA, 0x1001, 0x0042, 5, 1);
-    assert_eq!(s.transmit_nwk(0x1001, &h, &[0x00]), crate::hal::TxStatus::ChannelBusy);
-    assert_eq!(s.neighbors[1].failures, 1);
+    let h = nwk::Header::new(nwk::FRAME_DATA, nwk::BROADCAST_ALL, 0x0042, 5, 1);
+    s.originate_broadcast(&h, &[0x00]);
+    assert_eq!(s.hal.sent.len(), 1);
+    s.hal.busy = false;
+    let at = s.bcast.iter().find(|e| e.used).map(|e| e.at).expect("a queued retry");
+    s.net_timers(at);
+    assert_eq!(s.hal.sent.len(), 2);
+    assert_eq!(s.hal.sent[1][9..17], s.hal.sent[0][9..17], "the same NWK frame");
 }
 
 #[test]

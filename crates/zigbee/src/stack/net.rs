@@ -152,7 +152,11 @@ impl<H: Hal> Stack<H> {
         if mac_dst != mac::BROADCAST {
             if let Some(i) = self.neighbor_index(mac_dst) {
                 let n = &mut self.neighbors[i];
-                n.failures = if status == TxStatus::Ok { 0 } else { n.failures.saturating_add(1) };
+                n.failures = match status {
+                    TxStatus::Ok => 0,
+                    TxStatus::NoAck => n.failures.saturating_add(1),
+                    TxStatus::ChannelBusy => n.failures,
+                };
             }
         }
         status
