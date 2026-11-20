@@ -241,10 +241,34 @@ fn identify_starts_and_stops_the_blinking() {
     net.run(2_000);
     let seq = net.coord.zcl(short, IDENTIFY, 0x01, 0x01, &[]);
     net.run(50);
-    assert_eq!(net.coord.last_zcl(short, IDENTIFY, 0x00).unwrap(), vec![0x19, seq, 0x00, 2, 0]);
+    assert_eq!(net.coord.last_zcl(short, IDENTIFY, 0x00).unwrap(), vec![0x19, seq, 0x00, 3, 0]);
     net.coord.zcl(short, IDENTIFY, 0x11, 0x00, &[0, 0]);
     net.run(50);
     assert_eq!(net.nodes[n].commands.last(), Some(&Command::Identify { times: 0 }));
+}
+
+#[test]
+fn identify_query_right_after_identify_reports_the_second_still_left() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, IDENTIFY, 0x11, 0x00, &[1, 0]);
+    net.run(50);
+    let seq = net.coord.zcl(short, IDENTIFY, 0x01, 0x01, &[]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, IDENTIFY, 0x00).unwrap(), vec![0x19, seq, 0x00, 1, 0]);
+}
+
+#[test]
+fn identify_time_reads_back_as_written() {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    net.coord.zcl(short, IDENTIFY, 0x10, 0x02, &[0x00, 0x00, 0x21, 10, 0]);
+    net.run(50);
+    let seq = net.coord.zcl(short, IDENTIFY, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(50);
+    assert_eq!(net.coord.last_zcl(short, IDENTIFY, 0x01).unwrap(), vec![0x18, seq, 0x01, 0, 0, 0, 0x21, 10, 0]);
 }
 
 #[test]
@@ -840,7 +864,7 @@ fn who_is_identifying_in_a_group_or_has_scenes_is_answered_however_it_is_asked()
     let seq = net.coord.zcl(0xFFFF, IDENTIFY, 0x01, 0x01, &[]);
     net.run(500);
     assert_eq!(answers(&net, IDENTIFY, 0x00), 1);
-    assert_eq!(net.coord.last_zcl(short, IDENTIFY, 0x00).unwrap(), vec![0x19, seq, 0x00, 178, 0]);
+    assert_eq!(net.coord.last_zcl(short, IDENTIFY, 0x00).unwrap(), vec![0x19, seq, 0x00, 179, 0]);
     let seq = net.coord.zcl(0xFFFD, GROUPS, 0x01, 0x02, &[0]);
     net.run(500);
     assert_eq!(net.coord.last_zcl(short, GROUPS, 0x02).unwrap(), vec![0x19, seq, 0x02, 7, 1, 0x34, 0x12]);

@@ -233,7 +233,7 @@ fn the_commands_each_cluster_receives_and_generates() {
 #[test]
 fn the_manufacturer_commands_are_the_diagnostics_clear_and_no_others() {
     let (mut net, _, short) = bulb_with(IDENTITY_BLE);
-    for (cluster, received) in [(DIAG, vec![1, 0x00]), (SETTINGS, vec![1, 0x00])] {
+    for (cluster, received) in [(DIAG, vec![1, 0x00]), (SETTINGS, vec![1])] {
         let seq = net.coord.zcl_mfr(short, cluster, 0x00, MFR, 0x11, &[0, 0xFF]);
         net.run(100);
         let rsp = net.coord.last_zcl_mfr(short, cluster, 0x12).unwrap();
@@ -475,7 +475,7 @@ fn the_identify_time_counts_down_to_zero_and_stays_there() {
     let (mut net, _, short) = bulb_with(IDENTITY);
     net.coord.zcl(short, IDENTIFY, 0x01, 0x00, &[3, 0]);
     net.run(1_100);
-    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 1, 0])]);
+    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 2, 0])]);
     net.run(2_500);
     assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 0, 0])]);
     net.run(60_000);
@@ -518,7 +518,7 @@ fn writing_the_identify_time_starts_identifying() {
     let (mut net, n, short) = bulb_with(IDENTITY);
     assert_eq!(global(&mut net, short, IDENTIFY, 0x02, &[0x00, 0x00, 0x21, 5, 0]), Some(vec![0x04, 0x00]));
     assert_eq!(net.nodes[n].commands.last(), Some(&bulb_core::command::Command::Identify { times: 5 }));
-    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 4, 0])]);
+    assert_eq!(read(&mut net, short, IDENTIFY, &[0x0000]), vec![ok(0, &[0x21, 5, 0])]);
 }
 
 fn discover(net: &mut Net, short: u16, ep: u8, cluster: u16, mfr: bool, start: u16, max: u8) -> Vec<u8> {

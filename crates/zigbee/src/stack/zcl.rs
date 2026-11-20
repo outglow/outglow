@@ -198,6 +198,10 @@ fn writable(cluster: u16, id: u16) -> bool {
     )
 }
 
+fn seconds_left(ms: u32) -> u16 {
+    ms.div_ceil(1000) as u16
+}
+
 fn commands(cluster: u16, generated: bool) -> &'static [u8] {
     match (cluster, generated) {
         (BASIC, false) => &[0x00],
@@ -464,7 +468,7 @@ impl<H: Hal> Stack<H> {
             (BASIC, 0x000A | 0x000B) => out.u8(0),
             (BASIC, 0x4000) => string(out, self.identity.sw_build),
             (IDENTIFY, 0x0000) => {
-                out.u16(self.identify_left().map_or(0, |left| (left / 1000) as u16));
+                out.u16(self.identify_left().map_or(0, seconds_left));
             }
             (GROUPS_CLUSTER, 0x0000) => out.u8(0),
             (ON_OFF, 0x0000) => out.u8(self.light.on as u8),
@@ -1040,9 +1044,7 @@ impl<H: Hal> Stack<H> {
                 rsp.u8(1);
                 let mut left = max;
                 let list: &[u8] = match (c.mfr, c.ep == ENDPOINT) {
-                    #[cfg(feature = "sense")]
-                    (Some(_), _) if cluster == SENSE => &[],
-                    (Some(_), _) if cmd == DISCOVER_COMMANDS_RECEIVED => &[diag::CMD_CLEAR],
+                    (Some(_), _) if cluster == DIAGNOSTICS && cmd == DISCOVER_COMMANDS_RECEIVED => &[diag::CMD_CLEAR],
                     (Some(_), _) | (None, false) => &[],
                     (None, true) if cluster == COLOR && self.identity.color && cmd == DISCOVER_COMMANDS_RECEIVED => &COLOR_COMMANDS_FULL,
                     (None, true) => commands(cluster, cmd == DISCOVER_COMMANDS_GENERATED),
@@ -1073,7 +1075,7 @@ impl<H: Hal> Stack<H> {
             (IDENTIFY, 0x01) => {
                 if let Some(left) = self.identify_left() {
                     header(rsp, 0x00);
-                    rsp.u16((left / 1000) as u16);
+                    rsp.u16(seconds_left(left));
                 }
                 SUCCESS
             }

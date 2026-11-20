@@ -179,3 +179,12 @@ fn the_mode_goes_back_to_on_by_writing_zero_and_stays_so_over_a_restart() {
     assert_eq!(net.nodes[n].stack.ble_mode(), BleMode::On);
     assert_eq!(read(&mut net, short, 0x0000), vec![0x00, 0x30, 0]);
 }
+
+#[test]
+fn the_cluster_lists_no_received_command_it_would_refuse() {
+    let (mut net, _, short) = ble_bulb();
+    let seq = net.coord.zcl_mfr(short, SETTINGS, 0x00, CODE, 0x11, &[0x00, 20]);
+    net.run(50);
+    let rsp = net.coord.last_zcl_mfr(short, SETTINGS, 0x12).unwrap();
+    assert_eq!(rsp, vec![FC_RSP_MFR, 0x41, 0x11, seq, 0x12, 1]);
+}
