@@ -134,6 +134,10 @@ impl Candidate {
     fn spec(p: f64) -> u8 {
         ideal(p.clamp(0.0, 1.0))
     }
+    fn refresh(&mut self, p: f64) {
+        self.p = (p.clamp(0.0, 1.0) * 65535.0) as u32;
+        self.cost = Self::spec(p);
+    }
     fn one(&mut self, got: bool) {
         let k = self.k;
         if self.n < k.warmup {
@@ -738,7 +742,7 @@ mod home;
 #[ignore = "a comparison to read, not a check"]
 fn link_eval_home() {
     use home::{Algo, Floor};
-    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0 };
+    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0, refresh: 0, bshift: 4, own: false };
     let mut algos = std::vec![
         Algo { floor: Floor::Oracle, ..firmware },
         Algo { floor: Floor::LqiOnly, ..firmware },
@@ -756,6 +760,12 @@ fn link_eval_home() {
         for explore_s in [15, 30, 60, 300] {
             algos.push(Algo { shift, margin: if shift == 4 { 0.12 } else { 0.06 }, explore_s, ..firmware });
         }
+    }
+    for refresh in [4u8, 20, 40] {
+        for bshift in [3u32, 4, 5] {
+            algos.push(Algo { refresh, bshift, ..firmware });
+        }
+        algos.push(Algo { refresh, bshift: 4, own: true, ..firmware });
     }
     let seeds = std::env::var("HOME_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
     let hours = std::env::var("HOME_HOURS").ok().and_then(|s| s.parse().ok()).unwrap_or(6.0);

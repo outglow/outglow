@@ -31,13 +31,22 @@ pub(super) struct Algo {
     pub expire: u8,
     pub floor: Floor,
     pub explore_s: u32,
+    pub refresh: u8,
+    pub bshift: u32,
+    pub own: bool,
 }
 
 impl Algo {
     pub(super) fn name(&self) -> String {
-        let explore = match self.explore_s {
-            0 => String::new(),
-            s => format!(" direct every {s:>3} s"),
+        let explore = match (self.explore_s, self.refresh) {
+            (0, 0) => String::new(),
+            (0, r) => format!(
+                " idle {:>2} min: link status 1/{}{}",
+                r as u32 * LINK_STATUS_MS / 60_000,
+                1u32 << self.bshift,
+                if self.own { " +own" } else { "" }
+            ),
+            (s, _) => format!(" direct every {s:>3} s"),
         };
         let base: String = match self.floor {
             Floor::LqiOnly => "LQI and link status only".into(),
@@ -62,6 +71,8 @@ struct LinkEst {
     sampled: bool,
     quiet: u8,
     truth: u8,
+    heard: u8,
+    q: f64,
 }
 
 impl LinkEst {
@@ -86,18 +97,31 @@ impl LinkEst {
     }
 
     fn tick(&mut self) {
-        if self.algo.expire == 0 {
-            return;
-        }
         if self.sampled {
             self.quiet = 0;
         } else {
             self.quiet = self.quiet.saturating_add(1);
-            if self.quiet >= self.algo.expire && self.est.measured() {
+            if self.algo.expire != 0 && self.quiet >= self.algo.expire && self.est.measured() {
                 self.est = Self::fresh(self.algo);
             }
         }
         self.sampled = false;
+    }
+
+    fn heard(&mut self, got: bool) {
+        let x = got as u8 as f64;
+        if self.heard < 8 {
+            self.heard += 1;
+            self.q += (x - self.q) / self.heard as f64;
+        } else {
+            self.q += (x - self.q) / (1u32 << self.algo.bshift) as f64;
+        }
+    }
+
+    fn refresh(&mut self, reported: Option<f64>) {
+        if let Some(q) = reported.filter(|_| self.algo.refresh != 0 && self.quiet >= self.algo.refresh && self.est.measured()) {
+            self.est.refresh(q);
+        }
     }
 }
 
@@ -229,6 +253,8 @@ impl Home {
                 sampled: false,
                 quiet: 0,
                 truth: ideal(true_p(a, b, &pooled)),
+                heard: 0,
+                q: 0.0,
             });
         }
         Home { usable, channel, est, windows }
@@ -318,9 +344,34 @@ pub(super) fn simulate(algo: Algo, seed: u64, hours: f64, fades: bool) -> Outcom
             route = new;
         }
         if t % LINK_STATUS_MS as u64 == 0 {
+            for a in 0..NODES {
+                for b in 0..NODES {
+                    if !h.usable[a][b] {
+                        continue;
+                    }
+                    let d = if fade[b][a] > 0 { FADE_DEPTH } else { 1.0 };
+                    let ch = if h.channel[b][a].is_some() { b } else { a };
+                    let (x, y) = if ch == b { (b, a) } else { (a, b) };
+                    let got = h.channel[x][y].as_mut().unwrap().attempt(&mut rng, mult[b] * d);
+                    h.est[a][b].as_mut().unwrap().heard(got);
+                }
+            }
             for row in h.est.iter_mut() {
                 for e in row.iter_mut().flatten() {
                     e.tick();
+                }
+            }
+            for a in 0..NODES {
+                for b in 0..NODES {
+                    if !h.usable[a][b] {
+                        continue;
+                    }
+                    let mine = h.est[a][b].as_ref().unwrap();
+                    let reported = match mine.algo.own {
+                        true => Some(mine.q).filter(|_| b != 0 && mine.heard >= 8),
+                        false => h.est[b][a].as_ref().filter(|e| e.heard >= 8).map(|e| e.q),
+                    };
+                    h.est[a][b].as_mut().unwrap().refresh(reported);
                 }
             }
         }
