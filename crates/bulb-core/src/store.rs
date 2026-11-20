@@ -124,6 +124,9 @@ impl<F: Flash> LightLog<F> {
         if self.current() == Some(*data) {
             return;
         }
+        if self.active.is_none() && self.current.is_none() {
+            self.start();
+        }
         if let Some((idx, _)) = self.active {
             if self.free + SLOT <= self.size {
                 let at = self.sectors[idx] + self.free;
@@ -133,10 +136,7 @@ impl<F: Flash> LightLog<F> {
                 return;
             }
         }
-        let (target, gen) = match self.active {
-            Some((idx, g)) => (1 - idx, g.wrapping_add(1)),
-            None => (if self.current.is_some() { 1 } else { 0 }, 0),
-        };
+        let (target, gen) = self.active.map_or((1, 0), |(idx, g)| (1 - idx, g.wrapping_add(1)));
         let base = self.sectors[target];
         if !self.blank(base) {
             self.flash.erase(base);
@@ -146,6 +146,16 @@ impl<F: Flash> LightLog<F> {
         self.active = Some((target, gen));
         self.free = 2 * SLOT;
         self.current = Some(base + SLOT);
+    }
+
+    fn start(&mut self) {
+        let base = self.sectors[0];
+        if !self.blank(base) {
+            self.flash.erase(base);
+        }
+        self.flash.program(base, &slot_of(&header(0)));
+        self.active = Some((0, 0));
+        self.free = SLOT;
     }
 
     pub fn erase(&mut self) {

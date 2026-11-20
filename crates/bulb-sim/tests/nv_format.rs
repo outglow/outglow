@@ -116,7 +116,7 @@ fn empty_or_oversized_items_are_not_stored() {
 }
 
 #[test]
-fn a_pair_is_written_in_one_run() {
+fn a_pair_is_written_in_one_run_then_its_ids_from_the_last() {
     let pair = |a: &[u8], b: &[u8]| {
         let f = medium();
         let mut nv = filled_to(&f, 8);
@@ -127,18 +127,20 @@ fn a_pair_is_written_in_one_run() {
         runs
     };
     let runs = pair(&[0x33; MAX_ITEM], &[0x44; 8]);
-    assert_eq!(runs.iter().map(|r| r.1).sum::<usize>(), 174);
-    assert_eq!(runs.len(), 6, "174 bytes in 32-byte programs: {runs:?}");
-    assert_eq!(pair(&[0x33; 8], &[0x44; MAX_ITEM]).len(), 6);
-    assert_eq!(pair(&[0x33; MAX_ITEM], &[0x44; MAX_ITEM]).iter().map(|r| r.1).sum::<usize>(), 326);
+    assert_eq!(runs.iter().map(|r| r.1).sum::<usize>(), 175);
+    assert_eq!(runs.len(), 8, "173 bytes in 32-byte programs and two ids: {runs:?}");
+    assert_eq!(runs[0], (SECTORS[1] + 9, 32));
+    assert_eq!(runs[6..], [(SECTORS[1] + 8 + 163, 1), (SECTORS[1] + 8, 1)]);
+    assert_eq!(pair(&[0x33; 8], &[0x44; MAX_ITEM])[6..], [(SECTORS[1] + 8 + 11, 1), (SECTORS[1] + 8, 1)]);
+    assert_eq!(pair(&[0x33; MAX_ITEM], &[0x44; MAX_ITEM]).iter().map(|r| r.1).sum::<usize>(), 327);
 }
 
 #[test]
-fn a_pair_that_exactly_fills_the_sector_is_one_program() {
+fn a_pair_that_exactly_fills_the_sector_stays_in_it() {
     let f = medium();
     let mut nv = filled_to(&f, SIZE - 22);
     nv.store_pair((3, &[3; 8]), (4, &[4; 8]));
-    assert_eq!(programs_at(&f), [(SECTORS[1] + SIZE - 22, 22)]);
+    assert_eq!(programs_at(&f), [(SECTORS[1] + SIZE - 21, 21), (SECTORS[1] + SIZE - 11, 1), (SECTORS[1] + SIZE - 22, 1)]);
     let f = medium();
     let mut nv = filled_to(&f, SIZE - 21);
     nv.store_pair((3, &[3; 8]), (4, &[4; 8]));
@@ -179,7 +181,7 @@ fn reopening_continues_the_log_in_place() {
     let mut nv = open(&f);
     f.clear_ops();
     nv.store(2, &[2]);
-    assert_eq!(programs_at(&f), [(SECTORS[1] + 8, 4)]);
+    assert_eq!(programs_at(&f), [(SECTORS[1] + 9, 3), (SECTORS[1] + 8, 1)]);
     assert_eq!(f.erases(), 0);
 }
 

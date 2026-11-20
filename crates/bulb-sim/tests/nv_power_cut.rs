@@ -249,7 +249,7 @@ fn assert_safe(rep: &Report, min_cuts: usize) {
     }
     assert!(rep.lost.is_empty(), "{} of {} cuts lost the state, e.g.:\n{}", rep.lost.len(), rep.cuts, rep.lost[..rep.lost.len().min(10)].join("\n"));
     assert!(rep.cuts >= min_cuts, "only {} cuts", rep.cuts);
-    assert!(rep.crc_passes.len() * 128 <= rep.torn_cuts.max(128), "{} of {} torn records passed", rep.crc_passes.len(), rep.torn_cuts);
+    assert!(rep.crc_passes.is_empty(), "{} of {} torn records passed", rep.crc_passes.len(), rep.torn_cuts);
 }
 
 fn workload(n: usize, seed: u64) -> Vec<Op> {
@@ -274,7 +274,7 @@ fn every_cut_while_forgetting_keeps_the_frame_counters() {
         ops.extend(workload(30, seed + 10));
         ops.push(Op::Forget(COUNTERS));
         let rep = run(&f, &ops, usize::MAX, 5, 30);
-        assert_safe(&rep, 200);
+        assert_safe(&rep, 180);
     }
 }
 

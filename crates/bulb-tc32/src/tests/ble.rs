@@ -519,3 +519,112 @@ fn the_second_settings_sector_is_used_by_nothing_else_and_lies_past_the_image_an
     }
     assert_eq!(BARE_512K.mesh_spare, 0x7_5000);
 }
+
+fn spi_writes_of(f: impl FnOnce()) -> usize {
+    let n = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let m = n.clone();
+    sim::with(|c| c.on(move |_, op| if matches!(op, Op::W8(a, _) if a == crate::reg::MSPI_DATA) { m.set(m.get() + 1) }));
+    f();
+    sim::with(|c| c.hook = None);
+    n.get()
+}
+
+fn cut_after(writes: usize, f: impl FnOnce()) -> bool {
+    let n = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let shot: std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>> = Default::default();
+    let (m, s2) = (n.clone(), shot.clone());
+    sim::with(|c| {
+        c.on(move |chip, op| {
+            if matches!(op, Op::W8(a, _) if a == crate::reg::MSPI_DATA) {
+                m.set(m.get() + 1);
+                if m.get() == writes {
+                    *s2.borrow_mut() = Some(chip.flash.clone());
+                }
+            }
+        })
+    });
+    f();
+    sim::with(|c| c.hook = None);
+    let taken = shot.borrow_mut().take();
+    match taken {
+        Some(fl) => {
+            sim::with(|c| c.flash = fl);
+            true
+        }
+        None => false,
+    }
+}
+
+#[test]
+fn mesh_settings_chained_cuts() {
+    let _s = sim::session();
+    let chains: u64 = std::env::var("CHAINS").ok().and_then(|s| s.parse().ok()).unwrap_or(16);
+    let (mut cuts, mut stores, mut bad) = (0usize, 0usize, Vec::new());
+    for chain in 0..chains {
+        let mut rng = 0x1234_5678_9abc_def1u64 ^ chain.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        sim::with(|c| {
+            c.flash[MAIN..MAIN + SECTOR_SIZE].fill(0xff);
+            c.flash[SPARE..SPARE + SECTOR_SIZE].fill(0xff);
+        });
+        let mut model: Option<Vec<u8>> = None;
+        for i in 0..400 {
+            let len = (next() % 70) as usize;
+            let data: Vec<u8> = (0..len).map(|_| next() as u8).collect();
+            let want = data[..len.min(RECORD_MAX)].to_vec();
+            sim::with(|c| { c.log.clear(); c.flash_ops.clear(); });
+            let pre = flash_copy();
+            let total = spi_writes_of(|| BleHal::new().nv_store(&data));
+            stores += 1;
+            if next() % 3 != 0 || total == 0 {
+                let got = load_on(&flash_copy());
+                if got.as_ref() != Some(&want) {
+                    bad.push(format!("chain {chain} store {i}: without a cut loads {got:02x?}"));
+                    break;
+                }
+                model = Some(want);
+                continue;
+            }
+            sim::with(|c| c.flash.copy_from_slice(&pre));
+            let at = 1 + (next() as usize) % total;
+            let was_cut = cut_after(at, || BleHal::new().nv_store(&data));
+            cuts += was_cut as usize;
+            let after_cut = flash_copy();
+            let got = load_on(&after_cut);
+            if got != model && got.as_ref() != Some(&want) {
+                bad.push(format!("chain {chain} store {i} ({len} B): cut after SPI write {at}/{total} loads {:02x?}, before {:02x?}", got.as_ref().map(|g| g.len()), model.as_ref().map(|m| m.len())));
+                break;
+            }
+            model = got;
+        }
+    }
+    eprintln!("mesh settings: {chains} chains, {stores} stores, {cuts} cuts carried on from, {} bad", bad.len());
+    for b in bad.iter().take(10) {
+        eprintln!("  {b}");
+    }
+    assert!(bad.is_empty());
+}
+
+#[test]
+fn a_record_torn_after_its_name_is_not_loaded_as_the_settings() {
+    let _s = sim::session();
+    let mut old = vec![0u8; 52];
+    old[0] = 0xa7;
+    old[1..9].copy_from_slice(b"unpaired");
+    old[17..21].copy_from_slice(b"1234");
+    BleHal::new().nv_store(&old);
+    let mut new = vec![0x5au8; 52];
+    new[0] = 0xa7;
+    new[1..9].copy_from_slice(b"EgloMesh");
+    new[9..16].fill(0);
+    new[16] = checksum(&new[..16]).rotate_left(1);
+    assert_eq!(checksum(&[&new[..17], &[0xff; 35][..]].concat()), 0xff);
+    assert!(cut_after(5 + 2 + 17, || BleHal::new().nv_store(&new)));
+    let got = load_on(&flash_copy());
+    assert!(got == Some(old.clone()) || got == Some(new.clone()), "a cut after the name loads {got:02x?}");
+}

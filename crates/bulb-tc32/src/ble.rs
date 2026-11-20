@@ -73,6 +73,11 @@ fn scan(sector: usize, start: usize) -> (Option<(usize, usize)>, usize) {
     (last, off)
 }
 
+fn put(at: usize, rec: &[u8]) {
+    flash::write(at + 1, &rec[1..]);
+    flash::write(at, &[0xa5]);
+}
+
 fn drop_backup() {
     if backed_up() {
         flash::write(SPARE, &[0]);
@@ -155,14 +160,13 @@ impl Hal for BleHal {
     fn nv_store(&mut self, data: &[u8]) {
         let len = data.len().min(RECORD_MAX);
         let mut rec = [0u8; RECORD_BUF];
-        rec[0] = 0xa5;
         rec[1] = len as u8;
         rec[2..2 + len].copy_from_slice(&data[..len]);
         rec[2 + len] = checksum(&data[..len]);
         let rec = &rec[..3 + len];
         let (last, free) = scan(MAIN, 0);
         if free + rec.len() <= SECTOR_SIZE && blank_at(MAIN + free, rec.len()) {
-            flash::write(MAIN + free, rec);
+            put(MAIN + free, rec);
             drop_backup();
             return;
         }
@@ -170,12 +174,12 @@ impl Hal for BleHal {
             if !flash::blank(SPARE) {
                 flash::erase_sector(SPARE);
             }
-            flash::write(SPARE + BACKUP_LEN, rec);
+            put(SPARE + BACKUP_LEN, rec);
             flash::write(SPARE, &BACKUP);
             flash::write(MAIN, &[0]);
         }
         flash::erase_sector(MAIN);
-        flash::write(MAIN, rec);
+        put(MAIN, rec);
         drop_backup();
     }
 

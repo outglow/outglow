@@ -150,12 +150,18 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
 
     fn append(&mut self, sector: usize, off: usize, id: u8, data: &[u8]) -> usize {
         let mut rec = [0u8; MAX_ITEM + 3];
-        rec[0] = id;
+        let n = Self::record(&mut rec, id, data);
+        self.write(sector + off + 1, &rec[1..n]);
+        self.write(sector + off, &[id]);
+        off + n
+    }
+
+    fn record(rec: &mut [u8], id: u8, data: &[u8]) -> usize {
+        rec[0] = 0xff;
         rec[1] = data.len() as u8;
         rec[2..2 + data.len()].copy_from_slice(data);
         rec[2 + data.len()] = crc8(id, data);
-        self.write(sector + off, &rec[..3 + data.len()]);
-        off + 3 + data.len()
+        3 + data.len()
     }
 
     pub fn store_pair(&mut self, a: (u8, &[u8]), b: (u8, &[u8])) {
@@ -166,15 +172,12 @@ impl<F: Flash, const N: usize> NvLog<F, N> {
             return;
         }
         let mut rec = [0u8; 2 * (MAX_ITEM + 3)];
-        let mut n = 0;
-        for (id, data) in [a, b] {
-            rec[n] = id;
-            rec[n + 1] = data.len() as u8;
-            rec[n + 2..n + 2 + data.len()].copy_from_slice(data);
-            rec[n + 2 + data.len()] = crc8(id, data);
-            n += 3 + data.len();
-        }
-        self.write(self.sectors[self.active] + self.free, &rec[..n]);
+        let at = self.sectors[self.active] + self.free;
+        let second = Self::record(&mut rec, a.0, a.1);
+        let n = second + Self::record(&mut rec[second..], b.0, b.1);
+        self.write(at + 1, &rec[1..n]);
+        self.write(at + second, &[b.0]);
+        self.write(at, &[a.0]);
         self.free += n;
     }
 
