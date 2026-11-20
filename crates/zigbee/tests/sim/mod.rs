@@ -619,6 +619,8 @@ pub struct Coord {
     pub source_route: HashMap<u16, Vec<u16>>,
     pub join_key: [u8; 16],
     pub refuse_rejoin: bool,
+    pub known_rejoins_only: bool,
+    pub refuse_tc_rejoins: bool,
     pub ext_pan: u64,
     pub tc_ext: u64,
     pub aps_ext: u64,
@@ -701,6 +703,8 @@ impl Coord {
             source_route: HashMap::new(),
             join_key: TCLK,
             refuse_rejoin: false,
+            known_rejoins_only: false,
+            refuse_tc_rejoins: false,
             ext_pan: EXT_PAN,
             tc_ext: COORD_EXT,
             aps_ext: COORD_EXT,
@@ -1372,6 +1376,9 @@ impl Coord {
             return;
         }
         let known = self.devices.iter().find(|d| d.ext == ext).map(|d| (d.tclk, d.verified));
+        if self.known_rejoins_only && b[11] == 0x03 && (known.is_none() || self.refuse_tc_rejoins) {
+            return;
+        }
         self.devices.retain(|d| d.ext != ext);
         let (link, verified) = known.unwrap_or((self.join_key, false));
         self.devices.push(Device {

@@ -98,6 +98,13 @@ fn an_unauthenticated_child_goes_after_thirty_seconds_and_a_joined_end_device_af
     assert!(s.children[1].used);
     s.parent_timers(500 + limit + 1);
     assert!(!s.children[1].used);
+    child(&mut s, 2, 0x0C00, 0, 0);
+    s.children[2].heard = 500;
+    s.children[2].capability = 0x8E;
+    s.parent_timers(500 + 60_000);
+    assert!(s.children[2].used);
+    s.parent_timers(500 + 60_001);
+    assert!(!s.children[2].used, "a router child silent for four link status periods");
 }
 
 #[test]
@@ -162,6 +169,44 @@ fn an_unsecured_rejoin_of_a_neighbour_is_taken_only_for_a_router_with_its_addres
         n.ext = EXT;
         assert_eq!(rejoin(&mut s, src, asked, false), Some(answer), "{src:04X} {asked:02X}");
     }
+}
+
+#[test]
+fn an_unsecured_rejoin_of_a_neighbour_heard_with_the_network_key_in_use_is_refused() {
+    for (fc_next, fc_seq, status) in [(0, 1, 0x00), (9, 0, 0x00), (9, 1, 0x02)] {
+        let mut s = up_parent();
+        s.nib.key_seq = 1;
+        let n = &mut s.neighbors[0];
+        n.used = true;
+        n.short = 0x3000;
+        n.ext = EXT;
+        n.fc_next = fc_next;
+        n.fc_seq = fc_seq;
+        assert_eq!(rejoin(&mut s, 0x3000, 0x8E, false), Some((0x3000, status)), "{fc_next} {fc_seq}");
+        assert_eq!(s.children.iter().any(|c| c.used), status == 0x00);
+    }
+}
+
+#[test]
+fn an_unsecured_rejoin_of_a_router_with_its_receiver_off_is_refused() {
+    for (asked, taken) in [(0x02, false), (0x82, false), (0x8E, true), (0x80, true), (0x0A, true)] {
+        let mut s = up_parent();
+        rejoin(&mut s, 0x3000, asked, false);
+        assert_eq!(s.children.iter().any(|c| c.used), taken, "{asked:02X}");
+    }
+}
+
+#[test]
+fn a_key_tunnelled_to_a_child_does_not_make_it_joined_or_heard() {
+    let mut s = up_parent();
+    child(&mut s, 0, 0x0A00, 0, 0);
+    s.children[0].ext = EXT;
+    s.children[0].capability = 0x88;
+    s.children[0].joined = false;
+    s.children[0].heard = 500;
+    s.on_tunnel(EXT, &[0x21, 0x00]);
+    assert_eq!((s.children[0].joined, s.children[0].heard), (false, 500));
+    assert_eq!(s.hal.sent.len(), 1, "the key goes on");
 }
 
 #[test]

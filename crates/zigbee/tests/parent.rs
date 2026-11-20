@@ -17,6 +17,7 @@ fn more_sleepy_children(net: &mut Net, a: usize, n: usize) -> Vec<Zed> {
             let mut zed = Zed::new(&net.air, true);
             net.link(0, zed.id, 0);
             assert!(zed.join(net, sa), "the end device gets its address and the network key");
+            net.run(20);
             zed
         })
         .collect()
@@ -1262,7 +1263,7 @@ fn a_rejoin_request_in_the_clear_does_not_make_the_bulb_forget_a_router() {
     let (_, _, status) = ask_to_rejoin(&mut net, &mut ghost, x.short, 0x80, false).expect("an answer");
     assert_eq!(status, 0x02);
     let (_, _, status) = ask_to_rejoin(&mut net, &mut ghost, x.short, 0x8E, false).expect("an answer");
-    assert_eq!(status, 0x00);
+    assert_eq!(status, 0x02, "a router heard with the network key in use needs no Trust Center rejoin");
     net.run(7_000);
     let replays = net.nodes[a].stack.stats.replays;
     net.air.borrow_mut().transmit(x.id, &recorded);

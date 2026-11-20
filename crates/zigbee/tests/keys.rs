@@ -184,10 +184,12 @@ fn in_a_trust_center_rejoin_a_key_sent_in_the_name_of_another_device_is_refused(
     let n = net.join_node();
     net.coord.permit_join = false;
     net.set_power(n, false);
+    let key = net.coord.key;
     net.coord.key = [0x77; 16];
     net.coord.key_seq = 1;
     net.run(5_000);
     net.coord.aps_ext = 0x00124B00_0000_9999;
+    let short = net.nodes[n].short();
     net.power_cycle(n);
     net.set_power(n, true);
     net.run_until(200_000, "Trust Center rejoin", |net| !net.coord.rejoins.is_empty());
@@ -209,8 +211,15 @@ fn in_a_trust_center_rejoin_a_key_sent_in_the_name_of_another_device_is_refused(
     }
     .write(1, &mut beacon);
     net.air.borrow_mut().transmit(0, beacon.as_slice());
-    net.run_until(30_000, "down again", |net| net.nodes[n].stack.state() != zigbee::stack::State::WaitKey);
-    assert_ne!(net.nodes[n].stack.state(), zigbee::stack::State::Up);
+    net.run_until(30_000, "back on its stored network", |net| net.nodes[n].stack.state() != zigbee::stack::State::WaitKey);
+    assert_eq!((net.nodes[n].stack.state(), net.nodes[n].stack.short_address()), (zigbee::stack::State::Up, short));
+    net.coord.aps_ext = COORD_EXT;
+    net.coord.key = key;
+    net.coord.key_seq = 0;
+    net.coord.zcl_rx.clear();
+    net.coord.zcl(short, 0x0006, 0x00, 0x00, &[0x00, 0x00]);
+    net.run(100);
+    assert!(net.coord.last_zcl(short, 0x0006, 0x01).is_some(), "with the key it had");
 }
 
 fn fc_failures(net: &mut Net, short: u16) -> u16 {

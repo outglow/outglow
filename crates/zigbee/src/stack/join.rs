@@ -116,12 +116,20 @@ impl<H: Hal> Stack<H> {
         self.nib.depth = depth.saturating_add(1).min(15);
         self.link_proven(parent);
         self.hal.set_filter(self.nib.pan, short);
-        self.store_network();
         if secure {
+            self.store_network();
             self.announce_at = Some(now.wrapping_add(50));
         } else {
             self.state = State::WaitKey;
             self.timer = now.wrapping_add(KEY_WAIT_MS);
+        }
+    }
+
+    fn back_home(&mut self, now: u32) {
+        if self.load_network() {
+            self.resume(now);
+        } else {
+            self.down(now);
         }
     }
 
@@ -209,7 +217,7 @@ impl<H: Hal> Stack<H> {
             }
             State::AssocWait => self.join_next(now),
             State::WaitKey if self.steering == STEERING_JOINING => self.join_next(now),
-            State::WaitKey => self.down(now),
+            State::WaitKey => self.back_home(now),
         }
     }
 

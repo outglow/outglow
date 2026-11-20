@@ -334,6 +334,7 @@ impl<H: Hal> Stack<H> {
                 self.trace_rx(trace::RX_BAD_MIC, &h, mac_src, 0);
                 return;
             };
+            self.unknown_key_frames = 0;
             if aux.key_seq != self.nib.key_seq && !self.nib.alt_old {
                 self.switch_network_key();
             }
@@ -627,7 +628,7 @@ impl<H: Hal> Stack<H> {
     }
 
     fn next_hop(&self, dst: u16) -> Option<u16> {
-        if self.child_index(dst).is_some() {
+        if self.child_index(dst).is_some_and(|i| self.children[i].joined) {
             return Some(dst);
         }
         if let Some(i) = self.route_index(dst) {
@@ -680,7 +681,7 @@ impl<H: Hal> Stack<H> {
 
     fn route_try(&mut self, h: &Header, payload: &[u8], retries: u8) {
         let originated = h.src == self.nib.short;
-        if self.child_index(h.dst).is_some_and(|i| !self.children[i].joined) {
+        if self.child_index(h.dst).is_some_and(|i| !self.children[i].joined) && self.next_hop(h.dst).is_none() {
             self.trace(trace::DROP, trace::DROP_UNAUTHENTICATED_CHILD, h, h.dst, 0);
             return;
         }
@@ -1290,6 +1291,10 @@ impl<H: Hal> Stack<H> {
             self.children[i].fc_seq = key_seq;
             let now = self.hal.now_ms();
             self.children[i].hear(now);
+            if !self.children[i].joined {
+                self.children[i].joined = true;
+                self.store_children();
+            }
             if self.children[i].capability & CAP_FFD == 0 {
                 return;
             }
@@ -1428,9 +1433,7 @@ impl<H: Hal> Stack<H> {
             return;
         };
         if let Some(c) = self.child_index(src) {
-            if self.children[c].joined {
-                self.remove_child(c);
-            }
+            self.remove_child(c);
         }
         self.neighbors[i].age = 0;
         self.neighbors[i].confirmed = true;

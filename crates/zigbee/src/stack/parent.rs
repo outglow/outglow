@@ -13,6 +13,7 @@ pub(crate) const CHILD_ADDRESSES: core::ops::Range<u16> = 0x0001..0xFFF8;
 const INDIRECT_MS: u32 = 7_680;
 const DEFAULT_TIMEOUT: u8 = 8;
 const UNAUTHENTICATED_MS: u32 = 30_000;
+const ROUTER_CHILD_MS: u32 = (super::AGE_LIMIT as u32 + 1) * super::LINK_STATUS_MS;
 
 const KEY_DELAY_MS: u32 = 50;
 
@@ -68,9 +69,10 @@ impl Child {
     }
 
     fn timeout_ms(&self) -> u32 {
-        match self.timeout {
-            0 => 10_000,
-            n => (1u32 << n.min(14)) * 60_000,
+        match (self.capability & CAP_FFD, self.timeout) {
+            (CAP_FFD, _) => ROUTER_CHILD_MS,
+            (_, 0) => 10_000,
+            (_, n) => (1u32 << n.min(14)) * 60_000,
         }
     }
 }
@@ -504,10 +506,6 @@ impl<H: Hal> Stack<H> {
         let mut h = Header::new(nwk::FRAME_DATA, short, self.nib.short, 1, seq);
         h.security = false;
         self.transmit_nwk(short, &h, inner);
-        self.children[i].joined = true;
-        let now = self.hal.now_ms();
-        self.children[i].hear(now);
-        self.store_children();
     }
 
     pub(crate) fn on_rejoin_request(&mut self, h: &Header, mac_src: u16, p: &[u8], secured: bool) {
@@ -522,11 +520,13 @@ impl<H: Hal> Stack<H> {
         let neighbor = self.neighbor_by_ext(ext);
         if !secured {
             let kind = CAP_ROUTER;
-            let differs = match (known, neighbor) {
-                (Some(i), _) => self.children[i].short != h.src || (self.children[i].capability ^ capability) & kind != 0,
-                (None, Some(n)) => self.neighbors[n].short != h.src || capability & CAP_FFD == 0,
-                (None, None) => false,
-            };
+            let current = |n: &super::Neighbor| n.fc_next != 0 && n.fc_seq == self.nib.key_seq;
+            let differs = capability & kind == CAP_FFD
+                || match (known, neighbor) {
+                    (Some(i), _) => self.children[i].short != h.src || (self.children[i].capability ^ capability) & kind != 0,
+                    (None, Some(n)) => self.neighbors[n].short != h.src || capability & CAP_FFD == 0 || current(&self.neighbors[n]),
+                    (None, None) => false,
+                };
             if differs {
                 self.rejoin_refuse(h, mac_src, ext, capability, secured, STATUS_ACCESS_DENIED);
                 return;
@@ -743,9 +743,7 @@ impl<H: Hal> Stack<H> {
                 continue;
             }
             let silent = now.wrapping_sub(c.heard);
-            if !c.joined && silent > UNAUTHENTICATED_MS {
-                self.remove_child(i);
-            } else if c.joined && c.capability & CAP_FFD == 0 && silent > c.timeout_ms() {
+            if silent > if c.joined { c.timeout_ms() } else { UNAUTHENTICATED_MS } {
                 self.remove_child(i);
             }
         }

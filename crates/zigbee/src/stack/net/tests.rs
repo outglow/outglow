@@ -1072,6 +1072,18 @@ fn a_link_status_from_a_device_that_is_no_neighbour_or_without_options_is_ignore
 }
 
 #[test]
+fn a_link_status_from_a_neighbour_takes_it_off_the_children_joined_or_not() {
+    for joined in [false, true] {
+        let mut s = relaying();
+        s.children[1].used = true;
+        s.children[1].short = 0x1003;
+        s.children[1].joined = joined;
+        s.on_link_status(0x1003, &[nwk::CMD_LINK_STATUS, 0x60]);
+        assert!(!s.children[1].used, "{joined}");
+    }
+}
+
+#[test]
 fn unsecured_aps_data_while_waiting_for_the_key_is_not_taken() {
     let read_basic = [0x00, 0x01, 0x00, 0x00, 0x04, 0x01, 0x01, 0x05, 0x00, 0x07, 0x00, 0x05, 0x00];
     let mut s = relaying();
@@ -1155,6 +1167,26 @@ fn a_frame_for_a_child_not_yet_joined_is_not_passed_on() {
     s.children[1].joined = false;
     let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
     assert_eq!((t.to, t.counts), (Vec::new(), [0, 0, 0, 0]));
+}
+
+#[test]
+fn a_child_not_yet_joined_hides_neither_a_route_nor_a_neighbour_with_its_address() {
+    for neighbour in [false, true] {
+        let mut s = if neighbour { relaying() } else { routed(false, &[]) };
+        s.neighbors[5].short = 0x5000;
+        s.neighbors[5].age = if neighbour { 0 } else { AGE_LIMIT + 1 };
+        s.children[1].used = true;
+        s.children[1].short = 0x5000;
+        s.children[1].capability = super::super::parent::CAP_FFD | super::super::parent::CAP_RX_ON;
+        s.children[1].joined = false;
+        let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+        let next = if neighbour { 0x5000 } else { 0x1002 };
+        assert_eq!((t.to, t.counts), (std::vec![next], [1, 0, 0, 0]), "{neighbour}");
+        s.children[1].joined = true;
+        s.hal.sent.clear();
+        let t = try_route(&mut s, nwk::FRAME_DATA, 0x3000, 0, &[0x00], 2);
+        assert_eq!(t.to, std::vec![0x5000], "{neighbour}: a joined child is its own next hop");
+    }
 }
 
 #[test]
