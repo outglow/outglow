@@ -170,18 +170,28 @@ fn rec(rng: &mut Rng) -> [u8; BLOCK_LEN] {
 
 #[test]
 fn light_log_chained_cuts() {
+    let chains: u64 = std::env::var("CHAINS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+    light_log_chains(0xBEEF_0000, chains, &[0x40, 0x80, 0x1000], 50, 3);
+}
+
+#[test]
+fn light_log_cut_in_every_operation_of_a_small_log() {
+    let chains: u64 = std::env::var("CHAINS").ok().and_then(|s| s.parse().ok()).unwrap_or(150);
+    light_log_chains(0xD0B1_0000, chains, &[0x40], 4, 1);
+}
+
+fn light_log_chains(seed: u64, chains: u64, sizes: &[usize], erase_every: u64, cut_every: u64) {
     const A: usize = 0xF_0000;
     const B: usize = 0xF_4000;
-    let chains: u64 = std::env::var("CHAINS").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
     let (mut cuts_done, mut ops_done, mut lost) = (0usize, 0usize, Vec::new());
     for chain in 0..chains {
-        let mut rng = Rng(0xBEEF_0000 + chain * 104_729);
-        let size = [0x40usize, 0x80, 0x1000][(chain % 3) as usize];
+        let mut rng = Rng(seed + chain * 104_729);
+        let size = sizes[chain as usize % sizes.len()];
         let mut f = NorFlash::new(A, B + size - A, size);
         let mut model: Option<[u8; BLOCK_LEN]> = None;
         let ops = 300 + (rng.next() % 900) as usize;
         for i in 0..ops {
-            let erase = rng.next() % 50 == 0;
+            let erase = rng.next() % erase_every == 0;
             let r = rec(&mut rng);
             let pre = f.snapshot();
             let mut log = LightLog::new(f.clone(), [A, B], size);
@@ -198,7 +208,7 @@ fn light_log_chained_cuts() {
             ops_done += 1;
             let after = if erase { None } else { Some(r) };
             let fops = f.ops();
-            if fops.is_empty() || rng.next() % 3 != 0 {
+            if fops.is_empty() || rng.next() % cut_every != 0 {
                 model = after;
                 continue;
             }

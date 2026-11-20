@@ -250,3 +250,34 @@ fn a_cut_anywhere_in_erasing_the_light_log_loads_the_newest_record_or_nothing() 
         assert_eq!(LightLog::new(f.clone(), [A, B], 0x40).current(), None);
     }
 }
+
+#[test]
+fn an_erase_cut_after_the_new_header_and_then_cut_again_keeps_the_newest_record_or_nothing() {
+    const A: usize = 0xF_0000;
+    const B: usize = 0xF_4000;
+    let recs: Vec<[u8; BLOCK_LEN]> = (1..=3u8).map(|l| Config { last_level: l * 10, ..Config::default() }.encode()).collect();
+    let f = NorFlash::new(A, B + 0x40 - A, 0x40);
+    let mut log = LightLog::new(f.clone(), [A, B], 0x40);
+    for r in &recs {
+        log.store(r);
+    }
+    let pre = f.snapshot();
+    f.clear_ops();
+    log.erase();
+    let ops = f.ops();
+    pre.apply(&ops[0]);
+    let mut log = LightLog::new(pre.clone(), [A, B], 0x40);
+    assert_eq!(log.current(), Some(recs[2]), "after a cut once the new header is in, the newest record");
+    let before = pre.snapshot();
+    pre.clear_ops();
+    log.erase();
+    let ops = pre.ops();
+    let mut rng = Rng(0x2C07);
+    for (j, o) in ops.iter().enumerate() {
+        for (label, cut) in cuts(&before, o, &mut rng) {
+            let got = LightLog::new(cut, [A, B], 0x40).current();
+            assert!(got.is_none() || got == Some(recs[2]), "a second erase cut {label} in flash op {j}/{} loads {got:02x?}, not the newest (level 30) or nothing", ops.len());
+        }
+        before.apply(o);
+    }
+}

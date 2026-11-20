@@ -45,18 +45,21 @@ impl<F: Flash> LightLog<F> {
     pub fn of_records(flash: F, sectors: [usize; 2], size: usize, check: fn(&[u8]) -> bool) -> Self {
         let mut log = LightLog { flash, sectors, size, active: None, free: size, current: None, check };
         let gens = [log.generation(0), log.generation(1)];
-        log.active = match gens {
+        let newest = match gens {
             [Some(a), Some(b)] if (b.wrapping_sub(a) as i8) > 0 => Some((1, b)),
             [Some(a), _] => Some((0, a)),
             [None, Some(b)] => Some((1, b)),
             [None, None] => None,
         };
-        match log.active {
-            Some((idx, _)) => {
-                let (last, free) = log.scan(idx);
-                log.free = free;
+        match newest {
+            Some((idx, gen)) => {
                 let other = 1 - idx;
-                log.current = last.or_else(|| gens[other].and_then(|_| log.scan(other).0));
+                let mine = log.scan(idx);
+                let older = gens[other].filter(|_| mine.0.is_none()).map(|g| (other, g, log.scan(other))).filter(|(_, _, (last, _))| last.is_some());
+                let (idx, gen, (last, free)) = older.unwrap_or((idx, gen, mine));
+                log.active = Some((idx, gen));
+                log.free = free;
+                log.current = last;
             }
             None => log.current = log.legacy(),
         }
