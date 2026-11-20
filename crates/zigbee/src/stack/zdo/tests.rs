@@ -75,3 +75,18 @@ fn a_node_descriptor_nobody_asked_for_changes_nothing() {
     let _ = s.on_zdo_response(0x0000, NODE_DESC_REQ | RESPONSE, Reader::new(&p));
     assert_eq!((s.tclk_step, s.nib.tclk_state), (0, 1));
 }
+
+#[test]
+fn the_depth_of_a_neighbour_is_known_only_for_the_coordinator_and_the_parent() {
+    let mut s = stack();
+    (s.nib.parent, s.nib.depth) = (0x1111, 2);
+    for (i, short) in [0x0000u16, 0x1111, 0x2222].into_iter().enumerate() {
+        (s.neighbors[i].used, s.neighbors[i].short) = (true, short);
+    }
+    let mut rsp = Buf::new();
+    let _ = s.zdo_request(MGMT_LQI_REQ, Reader::new(&[0]), true, &mut rsp);
+    let r = rsp.as_slice();
+    let entry = |k: usize| &r[4 + k * 22..4 + (k + 1) * 22];
+    let got: Vec<(u8, u8)> = (0..3).map(|k| ((entry(k)[18] >> 4) & 7, entry(k)[20])).collect();
+    assert_eq!(got, [(2, 0), (0, 1), (2, 0x0F)], "relation and depth: the coordinator, the parent one above us, the rest unknown");
+}

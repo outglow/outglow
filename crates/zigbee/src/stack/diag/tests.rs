@@ -184,7 +184,7 @@ fn a_black_box_row_has_the_coordinators_link_measured_and_the_stale_neighbours()
     let mut out = [0u8; 64];
     let mut rows = Vec::new();
     for p in 0..super::blackbox::BOX_PAGES as u16 {
-        let n = s.hal.bx.as_mut().unwrap().page(p, 1_000, &[0; crate::stack::NEIGHBORS], &mut out);
+        let n = s.hal.bx.as_mut().unwrap().page(p, 1_000, &[(0, 0xFF); crate::stack::NEIGHBORS], &mut out);
         rows.extend_from_slice(&out[..n]);
     }
     let at = super::blackbox::BOX_LEN - super::blackbox::ROWS * super::blackbox::ROW_ENTRY;
@@ -207,7 +207,7 @@ fn a_hop_that_is_no_address_is_not_measured_even_by_a_neighbour_listed_under_it(
     let mut out = [0u8; 64];
     let mut rows = Vec::new();
     for p in 0..super::blackbox::BOX_PAGES as u16 {
-        let n = s.hal.bx.as_mut().unwrap().page(p, 1_000, &[0; crate::stack::NEIGHBORS], &mut out);
+        let n = s.hal.bx.as_mut().unwrap().page(p, 1_000, &[(0, 0xFF); crate::stack::NEIGHBORS], &mut out);
         rows.extend_from_slice(&out[..n]);
     }
     let at = super::blackbox::BOX_LEN - super::blackbox::ROWS * super::blackbox::ROW_ENTRY;

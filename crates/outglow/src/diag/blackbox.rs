@@ -27,6 +27,8 @@ pub struct Header {
 pub struct Link {
     pub address: String,
     pub frames: Vec<(u8, bool)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heard: Option<u8>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -214,7 +216,8 @@ pub fn decode(b: &[u8]) -> Result<BlackBox> {
             .map(|i| (e[4 + i / 2] >> (4 * (i % 2))) & 0x0F)
             .map(|f| (f & 7, f & 8 != 0))
             .collect();
-        links.push(Link { address: addr(short), frames });
+        let heard = (h.version >= 2 && e[3] <= 100).then_some(e[3]);
+        links.push(Link { address: addr(short), frames, heard });
     }
     let mut ring = Vec::new();
     let id_shift = kind::ID_COMMAND.trailing_zeros();
@@ -317,6 +320,9 @@ pub fn report(bx: &BlackBox, missing: &[usize]) -> String {
             att.len(),
             100.0 * p
         );
+        if let Some(h) = l.heard {
+            let _ = writeln!(w, "      link status heard {h}%");
+        }
         let _ = writeln!(w, "      {seq}");
     }
     let _ = writeln!(w, "== frames sent, newest first");
@@ -397,7 +403,8 @@ mod tests {
         assert_eq!(b.len(), zigbee::stack::blackbox::BOX_LEN);
         assert_eq!(total_len(&b), Some(zigbee::stack::blackbox::BOX_LEN));
         let bx = decode(&b).unwrap();
-        assert_eq!(bx.header.version, zigbee::stack::blackbox::VERSION);
+        assert_eq!(bx.header.version, 1);
+        assert!(bx.links.iter().all(|l| l.heard.is_none()), "byte 3 of a link was always 0 before version 2");
         let ours = serde_json::to_value(&bx).unwrap();
         let python: serde_json::Value = serde_json::from_str(DECODED).unwrap();
         assert_eq!(ours, python);
@@ -512,9 +519,29 @@ mod tests {
         e[4] = (2 | 8) | 3 << 4;
         e[5] = 1 | 8;
         let bx = decode(&b).unwrap();
-        assert_eq!(bx.links, [Link { address: "0x1001".into(), frames: vec![(2, true), (3, false), (1, true)] }]);
+        assert_eq!(bx.links, [Link { address: "0x1001".into(), frames: vec![(2, true), (3, false), (1, true)], heard: None }]);
         let r = report(&bx, &[]);
         assert!(r.contains("   0x1001:  3 frames,   6 attempts, delivered 33%, runs of losses {1: 1, 3: 1}\n      2x1\n"), "{r}");
+    }
+
+    #[test]
+    fn version_2_keeps_the_share_of_link_status_heard_after_the_count() {
+        let link = |version: u8, heard: u8| {
+            let mut b = vec![0u8; HEADER + 36];
+            (b[0], b[1], b[2]) = (version, 1, 36);
+            let e = &mut b[HEADER..];
+            e[0..2].copy_from_slice(&0x1001u16.to_le_bytes());
+            (e[2], e[3], e[4]) = (1, heard, 1 | 8);
+            decode(&b).unwrap()
+        };
+        let bx = link(2, 87);
+        assert_eq!(bx.links[0].heard, Some(87));
+        assert!(report(&bx, &[]).contains("      link status heard 87%\n      1\n"));
+        assert_eq!(link(2, 100).links[0].heard, Some(100));
+        assert_eq!(link(2, 0xFF).links[0].heard, None, "not known yet");
+        assert_eq!(link(2, 101).links[0].heard, None);
+        assert_eq!(link(1, 87).links[0].heard, None, "version 1 kept nothing there");
+        assert!(!report(&link(1, 87), &[]).contains("link status heard"));
     }
 
     #[test]

@@ -782,7 +782,7 @@ fn the_black_box_keeps_the_unicasts_per_neighbor_the_frames_sent_and_rows() {
     }
     let total = u16::from_le_bytes([b[20], b[21]]) as usize;
     assert_eq!(b.len(), total, "the whole blob");
-    assert_eq!(b[0], 1, "version");
+    assert_eq!(b[0], 2, "version");
     let (neighbors, link_entry, ring_cap, ring_len, ring_entry) = (b[1] as usize, b[2] as usize, b[3] as usize, b[4] as usize, b[5] as usize);
     let rows_cap = u16::from_le_bytes([b[6], b[7]]) as usize;
     let rows_len = u16::from_le_bytes([b[8], b[9]]) as usize;
@@ -791,6 +791,7 @@ fn the_black_box_keeps_the_unicasts_per_neighbor_the_frames_sent_and_rows() {
     let links = &b[24..24 + neighbors * link_entry];
     let coord = links.chunks(link_entry).find(|e| u16::from_le_bytes([e[0], e[1]]) == 0x0000).expect("the coordinator's slot");
     let len = coord[2] as usize;
+    assert!(coord[3] <= 100, "the share of the coordinator's link status heard: {}", coord[3]);
     assert!(len >= 30, "unicasts kept: {len}");
     let frames: Vec<u8> = (0..len).map(|i| (coord[4 + i / 2] >> (4 * (i % 2))) & 0x0F).collect();
     assert!(frames.iter().all(|f| (1..=4).contains(&(f & 7))), "attempts 1..4: {frames:?}");

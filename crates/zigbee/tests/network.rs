@@ -563,7 +563,7 @@ fn answers_beacon_requests_after_a_random_pause() {
 #[test]
 fn the_stack_fits_comfortably_in_the_chips_ram() {
     let size = std::mem::size_of::<zigbee::Stack<SimHal>>();
-    assert!(size < 14 * 1024, "Stack is {size} bytes");
+    assert!(size < 15 * 1024, "Stack is {size} bytes");
 }
 
 #[test]

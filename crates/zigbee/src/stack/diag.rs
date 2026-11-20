@@ -621,6 +621,7 @@ impl<H: Hal> Stack<H> {
                     n.retries = n.retries.saturating_add(attempts.saturating_sub(1) as u16);
                     n.delivery_sample(attempts, status == TxStatus::Ok);
                     let now = self.hal.now_ms();
+                    n.acked_at = now;
                     if let Some(b) = self.hal.black_box() {
                         b.link_frame(now, i, attempts, status == TxStatus::Ok);
                     }
@@ -778,15 +779,15 @@ impl<H: Hal> Stack<H> {
                 8
             }
             Octets::BoxPage(p) => {
-                let mut shorts = [0xFFFFu16; super::NEIGHBORS];
-                for (s, n) in shorts.iter_mut().zip(self.neighbors.iter()) {
+                let mut links = [(0xFFFFu16, super::UNKNOWN_HEARD); super::NEIGHBORS];
+                for (s, n) in links.iter_mut().zip(self.neighbors.iter()) {
                     if n.used {
-                        *s = n.short;
+                        *s = (n.short, n.heard_percent());
                     }
                 }
                 let now = self.hal.now_ms();
                 match self.hal.black_box() {
-                    Some(b) => b.page(p, now, &shorts, out),
+                    Some(b) => b.page(p, now, &links, out),
                     None => 0,
                 }
             }

@@ -28,6 +28,7 @@ const PARENT_ANNCE: u16 = 0x001F;
 const BIND_REQ: u16 = 0x0021;
 const UNBIND_REQ: u16 = 0x0022;
 const MGMT_LQI_REQ: u16 = 0x0031;
+const UNKNOWN_DEPTH: u8 = 0x0F;
 const MGMT_RTG_REQ: u16 = 0x0032;
 const MGMT_BIND_REQ: u16 = 0x0033;
 const MGMT_LEAVE_REQ: u16 = 0x0034;
@@ -293,7 +294,12 @@ impl<H: Hal> Stack<H> {
                     let (ext, short, device, rx_on, relation, depth, lqi) = if index < neighbors {
                         let n = self.neighbors.iter().filter(|n| n.used).nth(index)?;
                         let relation = if n.short == self.nib.parent { 0 } else { 2 };
-                        (n.ext, n.short, if n.short == 0 { 0 } else { 1 }, 1, relation, if n.short == 0 { 0 } else { self.nib.depth }, n.lqi)
+                        let depth = match (n.short == 0, n.short == self.nib.parent) {
+                            (true, _) => 0,
+                            (false, true) => self.nib.depth.saturating_sub(1),
+                            (false, false) => UNKNOWN_DEPTH,
+                        };
+                        (n.ext, n.short, if n.short == 0 { 0 } else { 1 }, 1, relation, depth, n.lqi)
                     } else {
                         let c = self.children.iter().filter(listed).nth(index - neighbors)?;
                         (c.ext, c.short, 2, if c.sleepy() { 0 } else { 1 }, 1, self.nib.depth + 1, 255)

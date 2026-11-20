@@ -194,11 +194,35 @@ pub(crate) struct Neighbor {
     pub attempts: u8,
     pub cost: u8,
     pub confirmed: bool,
+    pub acked_at: u32,
+    pub ls_at: u32,
+    pub ls_seen: bool,
+    pub ls_gaps: [u16; 2],
+    pub ls_cycles: u8,
+    pub heard: u16,
+    pub heard_n: u8,
+    pub heard_hits: u8,
 }
 
 pub(crate) const DELIVERY_SAMPLES: u8 = 16;
 const DELIVERY_SHIFT: u32 = 7;
 const DELIVERY_MARGIN: u16 = 3932;
+pub(crate) const HEARD_SAMPLES: u8 = 8;
+const HEARD_SHIFT: u32 = 4;
+const LS_WINDOW: u8 = 16;
+pub(crate) const LS_MIN_GAP_MS: u32 = LINK_STATUS_MS * 3 / 4;
+const _: () = assert!(LINK_STATUS_MS <= u16::MAX as u32, "a gap kept in a u16 of milliseconds");
+const LS_MISSED_MAX: u32 = 16;
+pub(crate) const ACTIVE_MS: u32 = 60_000;
+pub(crate) const UNKNOWN_HEARD: u8 = 0xFF;
+
+fn toward(p: u16, got: bool, shift: u32) -> u16 {
+    let p = p as i32;
+    let d = if got { 65535 } else { 0 } - p;
+    let half = 1 << (shift - 1);
+    let step = if d >= 0 { (d + half) >> shift } else { -((-d + half) >> shift) };
+    (p + step) as u16
+}
 
 impl Neighbor {
     pub(crate) fn delivery_sample(&mut self, attempts: u8, ok: bool) {
@@ -211,11 +235,7 @@ impl Neighbor {
                     self.delivery = (self.delivered as u32 * 65535 / DELIVERY_SAMPLES as u32) as u16;
                 }
             } else {
-                let p = self.delivery as i32;
-                let d = if got { 65535 } else { 0 } - p;
-                let half = 1 << (DELIVERY_SHIFT - 1);
-                let step = if d >= 0 { (d + half) >> DELIVERY_SHIFT } else { -((-d + half) >> DELIVERY_SHIFT) };
-                self.delivery = (p + step) as u16;
+                self.delivery = toward(self.delivery, got, DELIVERY_SHIFT);
             }
             if self.measured() {
                 let p = self.delivery;
@@ -243,6 +263,60 @@ impl Neighbor {
             self.cost
         } else {
             nwk::cost_from_lqi(self.lqi).max(self.out_cost)
+        }
+    }
+
+    fn heard_sample(&mut self, got: bool) {
+        if self.heard_n < HEARD_SAMPLES {
+            self.heard_n += 1;
+            self.heard_hits += got as u8;
+            if self.heard_n == HEARD_SAMPLES {
+                self.heard = (self.heard_hits as u32 * 65535 / HEARD_SAMPLES as u32) as u16;
+            }
+        } else {
+            self.heard = toward(self.heard, got, HEARD_SHIFT);
+        }
+    }
+
+    pub(crate) fn heard_known(&self) -> bool {
+        self.heard_n >= HEARD_SAMPLES
+    }
+
+    pub(crate) fn heard_percent(&self) -> u8 {
+        match self.heard_known() {
+            true => ((self.heard as u32 * 100 + 32767) / 65535) as u8,
+            false => UNKNOWN_HEARD,
+        }
+    }
+
+    pub(crate) fn link_status_period(&self) -> u32 {
+        self.ls_gaps.iter().copied().filter(|&g| g != 0).min().map_or(LINK_STATUS_MS, u32::from)
+    }
+
+    pub(crate) fn link_status_heard(&mut self, now: u32, idle: bool) {
+        let gap = now.wrapping_sub(self.ls_at);
+        let seen = self.ls_seen;
+        (self.ls_seen, self.ls_at) = (true, now);
+        if !seen {
+            return;
+        }
+        if (LS_MIN_GAP_MS..=LINK_STATUS_MS).contains(&gap) {
+            let g = self.ls_gaps[0];
+            self.ls_gaps[0] = if g == 0 { gap as u16 } else { g.min(gap as u16) };
+        }
+        self.ls_cycles += 1;
+        if self.ls_cycles == LS_WINDOW {
+            (self.ls_cycles, self.ls_gaps) = (0, [0, self.ls_gaps[0]]);
+        }
+        let period = self.link_status_period();
+        let cycles = (gap + period / 2) / period;
+        if cycles == 0 {
+            return;
+        }
+        (1..cycles.min(LS_MISSED_MAX)).for_each(|_| self.heard_sample(false));
+        self.heard_sample(true);
+        if idle && self.heard_known() && self.measured() {
+            (self.delivery, self.cost) = (self.heard, nwk::cost_from_delivery(self.heard));
         }
     }
 }
@@ -273,6 +347,14 @@ impl Neighbor {
             attempts: 0,
             cost: 0,
             confirmed: false,
+            acked_at: 0,
+            ls_at: 0,
+            ls_seen: false,
+            ls_gaps: [0; 2],
+            ls_cycles: 0,
+            heard: 0,
+            heard_n: 0,
+            heard_hits: 0,
         };
 }
 
@@ -718,7 +800,7 @@ impl<H: Hal> Stack<H> {
     }
 
     pub fn new_in(slot: &mut Option<Self>, hal: H, identity: Identity) -> &mut Self {
-        let s = slot.insert(Self::blank(hal, identity));
+        let s = slot.get_or_insert_with(|| Self::blank(hal, identity));
         let now = s.timer;
         s.restore(now);
         s

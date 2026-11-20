@@ -1163,3 +1163,72 @@ fn a_network_status_passed_on_drops_its_route_only_when_the_hop_does_not_answer(
         assert_eq!(s.routes[0].status == super::ROUTE_ACTIVE, kept, "deaf {deaf}");
     }
 }
+
+fn listened(s: &mut Stack<Scripted>, short: u16, options: u8, times: u32) {
+    for _ in 0..times {
+        s.hal.now += crate::stack::LINK_STATUS_MS;
+        s.on_link_status(short, &[nwk::CMD_LINK_STATUS, options]);
+    }
+}
+
+fn measured_neighbor(s: &mut Stack<Scripted>, i: usize, short: u16) {
+    let n = &mut s.neighbors[i];
+    (n.used, n.short, n.ext) = (true, short, 0x00124B00_0000_0000 + short as u64);
+    n.delivery_sample(16, false);
+}
+
+#[test]
+fn an_idle_link_to_a_router_takes_its_cost_from_the_last_frame_of_each_link_status_heard() {
+    let mut s = stack();
+    measured_neighbor(&mut s, 0, 0x1000);
+    listened(&mut s, 0x1000, 0x20, 12);
+    assert_eq!((s.neighbors[0].heard_n, s.neighbors[0].link_cost()), (0, 7), "a first frame of several is not a whole link status");
+    listened(&mut s, 0x1000, 0x60, 9);
+    assert_eq!((s.neighbors[0].heard_n, s.neighbors[0].link_cost()), (8, 1));
+}
+
+#[test]
+fn the_coordinator_the_next_hop_of_a_route_and_a_link_acknowledged_lately_keep_their_measured_cost() {
+    let mut s = stack();
+    s.hal.now = 1_000_000;
+    measured_neighbor(&mut s, 0, 0x0000);
+    measured_neighbor(&mut s, 1, 0x1001);
+    measured_neighbor(&mut s, 2, 0x1002);
+    measured_neighbor(&mut s, 3, 0x1003);
+    route(&mut s, 0, 0x0000, 0x1001, true, 0);
+    route(&mut s, 1, 0x3000, 0x1003, false, 0);
+    s.routes[1].status = super::ROUTE_DISCOVERY;
+    for _ in 0..9 {
+        s.neighbors[2].acked_at = s.hal.now;
+        for short in [0x0000, 0x1001, 0x1002, 0x1003] {
+            s.hal.now += 1;
+            s.on_link_status(short, &[nwk::CMD_LINK_STATUS, 0x60]);
+        }
+        s.hal.now += crate::stack::LINK_STATUS_MS - 4;
+    }
+    let costs: Vec<u8> = s.neighbors[..4].iter().map(|n| n.link_cost()).collect();
+    assert_eq!(costs, [7, 7, 7, 1], "only the link that is not a route's next hop and was not acknowledged within a minute");
+    assert!(s.neighbors[..4].iter().all(|n| n.heard_n == 8), "all are counted");
+    s.neighbors[2].acked_at = s.hal.now - super::super::ACTIVE_MS;
+    s.on_link_status(0x1002, &[nwk::CMD_LINK_STATUS, 0x60]);
+    assert_eq!(s.neighbors[2].link_cost(), 1, "a minute after its last acknowledgement");
+}
+
+#[test]
+fn a_full_table_keeps_the_next_hop_of_a_route_even_when_it_is_the_oldest() {
+    let mut s = stack();
+    fill(&mut s);
+    s.neighbors[5].age = 9;
+    s.neighbors[9].age = 8;
+    route(&mut s, 0, 0x0000, 0x1005, true, 0);
+    s.neighbor_heard(0x2222, 0x00124B00_0000_2222, 200, 7, 0);
+    assert_eq!((s.neighbors[5].short, s.neighbors[9].short), (0x1005, 0x2222));
+    let mut all = stack();
+    fill(&mut all);
+    all.neighbors[7].age = 3;
+    for i in 0..NEIGHBORS {
+        route(&mut all, i, 0x3000 + i as u16, 0x1000 + i as u16, false, 0);
+    }
+    all.neighbor_heard(0x2222, 0x00124B00_0000_2222, 200, 7, 0);
+    assert_eq!(all.neighbors[7].short, 0x2222, "the oldest when every one carries a route");
+}

@@ -19,7 +19,7 @@ pub const BOX_LEN: usize = ROWS_AT + ROWS * ROW_ENTRY;
 pub const BOX_PAGE: usize = 64;
 pub const BOX_PAGES: usize = BOX_LEN.div_ceil(BOX_PAGE);
 pub const BOX_FIRST: u16 = 0x6000;
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 
 pub mod kind {
     pub const SECURED: u8 = 1 << 2;
@@ -165,7 +165,7 @@ impl BlackBox {
         self.row_len = (self.row_len + 1).min(ROWS as u16);
     }
 
-    fn byte_at(&self, off: usize, shorts: &[u16; NEIGHBORS]) -> u8 {
+    fn byte_at(&self, off: usize, links: &[(u16, u8); NEIGHBORS]) -> u8 {
         let (ring_head, ring_len, row_head, row_len, link_head, link_len, now) = self.frozen;
         if off < HEADER {
             let mut h = [0u8; HEADER];
@@ -189,10 +189,10 @@ impl BlackBox {
             let (slot, o) = ((off - LINKS_AT) / LINK_ENTRY, (off - LINKS_AT) % LINK_ENTRY);
             let len = link_len[slot] as usize;
             return match o {
-                0 => shorts[slot] as u8,
-                1 => (shorts[slot] >> 8) as u8,
+                0 => links[slot].0 as u8,
+                1 => (links[slot].0 >> 8) as u8,
                 2 => len as u8,
-                3 => 0,
+                3 => links[slot].1,
                 _ => {
                     let nib = |i: usize| -> u8 {
                         if i >= len {
@@ -224,7 +224,7 @@ impl BlackBox {
         self.rows[at][o]
     }
 
-    pub(crate) fn page(&mut self, page: u16, now: u32, shorts: &[u16; NEIGHBORS], out: &mut [u8; 64]) -> usize {
+    pub(crate) fn page(&mut self, page: u16, now: u32, links: &[(u16, u8); NEIGHBORS], out: &mut [u8; 64]) -> usize {
         if page == 0 {
             self.frozen = (self.ring_head, self.ring_len, self.row_head, self.row_len, self.link_head, self.link_len, now);
             self.hold_until = Some(now.wrapping_add(HOLD_MS));
@@ -235,7 +235,7 @@ impl BlackBox {
             self.hold_until = None;
         }
         for (i, o) in out[..n].iter_mut().enumerate() {
-            *o = self.byte_at(from + i, shorts);
+            *o = self.byte_at(from + i, links);
         }
         n
     }

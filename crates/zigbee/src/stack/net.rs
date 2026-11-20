@@ -1271,13 +1271,12 @@ impl<H: Hal> Stack<H> {
                 }
                 self.diag.add(k::NEIGHBOR_ADDED);
                 let slot = free.unwrap_or_else(|| {
-                    let mut best = 0;
-                    for (i, n) in self.neighbors.iter().enumerate() {
-                        if n.age > self.neighbors[best].age {
-                            best = i;
-                        }
-                    }
-                    best
+                    self.neighbors
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .max_by_key(|(_, n)| (!self.routes_through(n.short), n.age))
+                        .map_or(0, |(i, _)| i)
                 });
                 let age = if out_cost != 0 { 0 } else { AGE_LIMIT };
                 if let Some(b) = self.hal.black_box() {
@@ -1399,6 +1398,13 @@ impl<H: Hal> Stack<H> {
         }
         self.neighbors[i].age = 0;
         self.neighbors[i].confirmed = true;
+        if options & 0x40 != 0 {
+            let now = self.hal.now_ms();
+            let idle = src != 0x0000
+                && !self.routes_through(src)
+                && now.wrapping_sub(self.neighbors[i].acked_at) >= super::ACTIVE_MS;
+            self.neighbors[i].link_status_heard(now, idle);
+        }
         let mut r = Reader::new(&p[2..]);
         let mut listed = false;
         for _ in 0..options & 0x1F {
@@ -1417,6 +1423,10 @@ impl<H: Hal> Stack<H> {
         if (complete && !listed) || (listed && !self.neighbors[i].listed) {
             self.link_status_soon();
         }
+    }
+
+    pub(crate) fn routes_through(&self, short: u16) -> bool {
+        self.routes.iter().any(|r| r.status == ROUTE_ACTIVE && r.next == short)
     }
 
     fn link_status_soon(&mut self) {
