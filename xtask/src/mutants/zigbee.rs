@@ -70,8 +70,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "DIAG: any manufacturer code reads our attributes",
         file: "stack/zcl.rs",
-        old: "        let ours = manufacturer == Some(self.identity.manufacturer_code) && cluster == DIAGNOSTICS && ep == ENDPOINT;",
-        new: "        let ours = manufacturer.is_some() && cluster == DIAGNOSTICS && ep == ENDPOINT;",
+        old: "        let diag_mfr = manufacturer == Some(self.identity.manufacturer_code) && cluster == DIAGNOSTICS && ep == ENDPOINT;",
+        new: "        let diag_mfr = manufacturer.is_some() && cluster == DIAGNOSTICS && ep == ENDPOINT;",
     },
     Mutation {
         name: "DIAG: the clear command ignored",
@@ -100,8 +100,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "objects: a BLE window out of range taken",
         file: "stack/objects.rs",
-        old: "                f >= o.min && f <= o.max && f == (f as u16) as f32",
-        new: "                f >= o.min",
+        old: "        f >= o.min && f <= o.max && f == (f as u16) as f32\n",
+        new: "        f >= o.min\n",
     },
     Mutation {
         name: "objects: a report goes to the bindings of every endpoint",
@@ -124,8 +124,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "settings: endpoint 8 sets the window but not the mode",
         file: "stack/objects.rs",
-        old: "                    self.ble_mode = super::BleMode::Window;\n",
-        new: "",
+        old: "            self.ble_mode = super::BleMode::Window;\n            self.ble_window = minutes;\n",
+        new: "            self.ble_window = minutes;\n",
     },
     Mutation {
         name: "GP: stale frame counters accepted",
@@ -142,7 +142,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: the device's repeats are forwarded one by one",
         file: "stack/gp.rs",
-        old: "        if self.gp_seen.iter().any(|s| s.0 == f.gpd && s.1 == f.counter && !due(now, s.2)) {\n            return None;\n        }",
+        old: "        if self.gp_seen.iter().flatten().any(|s| s.0 == f.gpd && s.1 == f.counter && !due(now, s.2)) {\n            return None;\n        }\n",
         new: "",
     },
     Mutation {
@@ -208,7 +208,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "fragments: no retransmission",
         file: "stack/frag.rs",
-        old: "                // a block sent again for want of its acknowledgement: an APS retry\n                self.diag.add(super::diag::k::APS_TX_UCAST_RETRY);\n                self.send_block();\n",
+        old: "                self.diag.add(super::diag::k::APS_TX_UCAST_RETRY);\n                self.send_block();\n",
         new: "                self.diag.add(super::diag::k::APS_TX_UCAST_RETRY);\n",
     },
     Mutation {
@@ -244,8 +244,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "colour: 16-bit reportable change read as 8 bits",
         file: "stack/zcl.rs",
-        old: "value_len(ty, &r).and_then(|n| r.take(n)).map(|v| v.iter().rev().fold(0u32, |a, b| a << 8 | *b as u32))",
-        new: "value_len(ty, &r).and_then(|n| r.take(n)).map(|v| v[0] as u32 * 0)",
+        old: "value_len(ty, &r).and_then(|n| r.take(n)).map(le)",
+        new: "value_len(ty, &r).and_then(|n| r.take(n)).map(|v| le(&v[..1]))",
     },
     Mutation {
         name: "touchlink: scans answered from any distance",
@@ -292,7 +292,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: remove-device needs more than the device",
         file: "stack/gp.rs",
-        old: "        if options & 0x10 != 0 {\n            // remove the device: nothing follows\n            let i = found?;\n            self.proxies[i] = ProxyEntry::EMPTY;\n            self.store_proxy(i);\n            return Some(SUCCESS);\n        }",
+        old: "        if options & 0x10 != 0 {\n            let i = found?;\n            self.proxies[i] = ProxyEntry::EMPTY;\n            self.store_proxy(i);\n            return Some(SUCCESS);\n        }\n",
         new: "",
     },
     Mutation {
@@ -328,8 +328,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: link byte without the halving",
         file: "stack/gp.rs",
-        old: "    ((rssi + 110) / 2) as u8 | (lqi >> 6) << 6",
-        new: "    (rssi + 110).clamp(0, 63) as u8 | (lqi >> 6) << 6",
+        old: "pack(&[(((rssi + 110) / 2) as u16, 0)",
+        new: "pack(&[((rssi + 110).clamp(0, 63) as u16, 0)",
     },
     Mutation {
         name: "GP: no tunnelling delay",
@@ -424,7 +424,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: PAN conflict reported for every beacon",
         file: "stack/join.rs",
-        old: "        if !due(now, self.pan_report_at) || self.manager == self.nib.short {",
+        old: "        if self.pan_report_at.is_some() || self.manager == self.nib.short {",
         new: "        if self.manager == self.nib.short {",
     },
     Mutation {
@@ -466,8 +466,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "ZCL: the command's override of the option is ignored",
         file: "stack/zcl.rs",
-        old: "    (attribute & !mask | over & mask) & EXECUTE_IF_OFF != 0",
-        new: "    attribute & EXECUTE_IF_OFF != 0",
+        old: "    (if mask & EXECUTE_IF_OFF != 0 { over } else { attribute }) & EXECUTE_IF_OFF != 0",
+        new: "    let _ = (mask, over);\n    attribute & EXECUTE_IF_OFF != 0",
     },
     Mutation {
         name: "ZCL: global scene stored at every Off with Effect",
@@ -568,7 +568,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "touchlink: the search for a network runs on during a transaction",
         file: "stack/join.rs",
-        old: "            if let Some(t) = self.touchlink.filter(|t| !due(now, t.until)) {\n                self.timer = t.until;\n                return;\n            }",
+        old: "            State::Down | State::Scan if touchlink.is_some() => self.timer = touchlink.map_or(self.timer, |t| t.until),\n",
         new: "",
     },
     Mutation {
@@ -586,14 +586,14 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "APS: encrypted data replayed",
         file: "stack/aps.rs",
-        old: "        if counter < self.tc_fc_next {\n            self.stats.replays = self.stats.replays.wrapping_add(1);\n            self.diag.add(k::APS_FC_FAILURE);\n            return None;\n        }\n        let sc_calc = (sc & !7) | 5;\n        let mut aad = [0u8; 12 + 13];",
-        new: "        let sc_calc = (sc & !7) | 5;\n        let mut aad = [0u8; 12 + 13];",
+        old: "        if counter < self.tc_fc_next {\n            self.stats.replays = self.stats.replays.wrapping_add(1);\n            self.diag.add(k::APS_FC_FAILURE);\n            return None;\n        }\n        let sc_calc = pack(&[(sc & !7, 0), (5, 0)]);",
+        new: "        let sc_calc = pack(&[(sc & !7, 0), (5, 0)]);",
     },
     Mutation {
         name: "APS: encrypted data from anyone",
         file: "stack/aps.rs",
-        old: "        if ext != self.nib.tc_ext || h.src != 0x0000 {\n            // the only link key this node holds is the Trust Center's\n            self.diag.add(k::APS_UNAUTHORIZED_KEY);\n            return None;\n        }\n        if (sc >> 3) & 3 != 0 {",
-        new: "        if (sc >> 3) & 3 != 0 {",
+        old: "        if ext != self.nib.tc_ext || h.src != 0x0000 {\n            self.diag.add(k::APS_UNAUTHORIZED_KEY);\n            return None;\n        }\n",
+        new: "",
     },
     Mutation {
         name: "OTA: another file continues the interrupted one",
@@ -604,7 +604,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "rejoin: a refusal is taken for an admission",
         file: "stack/join.rs",
-        old: "        if p[3] != 0 || short >= 0xFFF8 {\n            // refused: on to the next router that could be the parent\n            self.rejoin_next(now, secure);\n            return;\n        }\n",
+        old: "        if p[3] != 0 || short >= 0xFFF8 {\n            self.rejoin_next(now, secure);\n            return;\n        }\n",
         new: "",
     },
     Mutation {
@@ -634,7 +634,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "ZCL: colour never follows the level",
         file: "stack/zcl.rs",
-        old: "                        if level != 0 && self.identity.color_temperature {",
+        old: "                        if level != 0 && self.identity.color_temperature && self.light.color_mode == 2 {",
         new: "                        if false {",
     },
     Mutation {
@@ -646,8 +646,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "ZCL: coupling bit writable on the dimmable bulb",
         file: "stack/zcl.rs",
-        old: "            (LEVEL, 0x000F) if self.identity.color_temperature => v & !(EXECUTE_IF_OFF | COUPLE_COLOR_TEMP) as u16 == 0,",
-        new: "            (LEVEL, 0x000F) => v & !(EXECUTE_IF_OFF | COUPLE_COLOR_TEMP) as u16 == 0,",
+        old: "            (LEVEL, 0x000F) if self.identity.color_temperature => v & !LEVEL_OPTIONS_CT as u16 == 0,",
+        new: "            (LEVEL, 0x000F) => v & !LEVEL_OPTIONS_CT as u16 == 0,",
     },
     Mutation {
         name: "ZCL: colour taken while off only when asked",
@@ -676,8 +676,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: stored entry too short for two sinks and two groups",
         file: "stack/gp.rs",
-        old: "const ENTRY_MAX: usize = 38 + 10 * SINKS + 4 * SINK_GROUPS;",
-        new: "const ENTRY_MAX: usize = 64;",
+        old: "let mut b: Buffer<ENTRY_MAX> = Buffer::new();",
+        new: "let mut b: Buffer<{ ENTRY_MAX - 2 }> = Buffer::new();",
     },
     Mutation {
         name: "NWK: replayed frames accepted",
@@ -754,8 +754,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "parent: a child that aged out is reported as having left",
         file: "stack/parent.rs",
-        old: "                // would take a \"device left\" for the device leaving the network.\n                self.remove_child(i);",
-        new: "                self.child_left(i);",
+        old: "silent > c.timeout_ms() {\n                self.remove_child(i);",
+        new: "silent > c.timeout_ms() {\n                self.child_left(i);",
     },
     Mutation {
         name: "parent: a child that leaves to rejoin is reported as having left",
@@ -1138,8 +1138,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: new PAN identifier never taken",
         file: "stack/mod.rs",
-        old: "                self.nib.pan = pan;\n                self.hal.set_filter(pan, self.nib.short);\n                self.store_network();",
-        new: "",
+        old: "                self.nib.pan = pan;\n                self.log_event(diag::ev::PAN, pan, 0);\n                self.hal.set_filter(pan, self.nib.short);\n                self.store_network();\n",
+        new: "                self.log_event(diag::ev::PAN, pan, 0);\n",
     },
     Mutation {
         name: "NWK: update id taken from a node that is not the network manager",
@@ -1192,13 +1192,13 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "ZCL: manufacturer-specific frames answered with the retired status",
         file: "stack/zcl.rs",
-        old: "            // no other manufacturer's commands or attributes here, whatever the code\n            Some(UNSUP_COMMAND)",
-        new: "            Some(0x83)",
+        old: "        let status = if manufacturer.is_some() && !ours {\n            Some(UNSUP_COMMAND)",
+        new: "        let status = if manufacturer.is_some() && !ours {\n            Some(0x83)",
     },
     Mutation {
         name: "ZCL: default response to a manufacturer-specific frame without the code",
         file: "stack/zcl.rs",
-        old: "                        f.u8(FC_GLOBAL_RSP | 0x04);\n                        f.u16(code);",
+        old: "                        f.u8(FC_GLOBAL_RSP_MFR);\n                        f.u16(code);",
         new: "                        f.u8(FC_GLOBAL_RSP);\n                        let _ = code;",
     },
     Mutation {
@@ -1228,8 +1228,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "groups: Add Group If Identifying hides what went wrong",
         file: "stack/zcl.rs",
-        old: "                    return Some(Some(if self.identify_until.is_none() { SUCCESS } else { self.group_add(group) }));",
-        new: "                    if self.identify_until.is_some() {\n                        self.group_add(group);\n                    }\n                    return Some(Some(SUCCESS));",
+        old: "                    return Some(Some(if self.identify_left().is_none() { SUCCESS } else { self.group_add(group) }));",
+        new: "                    if self.identify_left().is_some() {\n                        self.group_add(group);\n                    }\n                    return Some(Some(SUCCESS));",
     },
     Mutation {
         name: "scenes: a group identifier out of range is an unknown group",
@@ -1246,7 +1246,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "scenes: field sets a scene was not given are made up",
         file: "stack/zcl.rs",
-        old: "                    omitted: SCENE_NO_ON_OFF | SCENE_NO_LEVEL | SCENE_NO_COLOR,",
+        old: "                    omitted: SCENE_NO_STATE,",
         new: "                    omitted: 0,",
     },
     Mutation {
@@ -1276,8 +1276,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "scenes: the field sets a scene has are forgotten over a power cut",
         file: "stack/nv.rs",
-        old: "            b.u8(s.on as u8 | s.omitted << 1);",
-        new: "            b.u8(s.on as u8);",
+        old: "b.u8(pack(&[(s.on as u16, 0), (s.omitted as u16, 1)]) as u8);",
+        new: "b.u8(pack(&[(s.on as u16, 0)]) as u8);",
     },
     Mutation {
         name: "On/Off: a level command that turns the light on does not tell On/Off",
@@ -1318,8 +1318,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "On/Off: On with Timed Off leaves GlobalSceneControl",
         file: "stack/zcl.rs",
-        old: "                    // like every command that turns the light on\n                    self.global_scene_control = true;\n",
-        new: "",
+        old: "                    self.scene_valid = false;\n                    self.global_scene_control = true;\n                    self.push_command(Command::On);",
+        new: "                    self.scene_valid = false;\n                    self.push_command(Command::On);",
     },
     Mutation {
         name: "Level: with On/Off the lowest level leaves the light on",
@@ -1390,14 +1390,14 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "colour: move mode \"stop\" stops the brightness, not the colour",
         file: "stack/zcl.rs",
-        old: "                    0 => Command::StopColorTransition,",
-        new: "                    0 => Command::StopTransition,",
+        old: "                    0 => Command::StopColorTransition,\n                    1 | 3 => {",
+        new: "                    0 => Command::StopTransition,\n                    1 | 3 => {",
     },
     Mutation {
         name: "colour: RemainingTime runs on after the colour was stopped",
         file: "stack/mod.rs",
-        old: "            Command::StopColorTransition => self.color_until = now,",
-        new: "            Command::StopColorTransition => {}",
+        old: "            Command::StopColorTransition => (self.color_until, self.light.color_temp, self.light.hue, self.hue_move) = (None, ct, hue, None),",
+        new: "            Command::StopColorTransition => (self.light.color_temp, self.light.hue, self.hue_move) = (ct, hue, None),",
     },
     Mutation {
         name: "touchlink: responses addressed to the PAN they come from",
@@ -1450,8 +1450,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "OTA: the server is asked before it is found",
         file: "stack/ota.rs",
-        old: "        if self.ota.server.is_none() {\n            // where it usually is: on the coordinator",
-        new: "        self.ota.server = self.ota.server.or(Some((0x0000, 1)));\n        if self.ota.server.is_none() {\n            // where it usually is: on the coordinator",
+        old: "        if self.ota.server.is_none() {\n            self.ota.discovery = 1;",
+        new: "        self.ota.server = self.ota.server.or(Some((0x0000, 1)));\n        if self.ota.server.is_none() {\n            self.ota.discovery = 1;",
     },
     Mutation {
         name: "OTA: only the coordinator is asked where the server is",
@@ -1510,8 +1510,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "OTA: a server that said wait is asked again too often",
         file: "stack/ota.rs",
-        old: "const HELD_PERIOD_MS: u32 = 3600 * 1000;",
-        new: "const HELD_PERIOD_MS: u32 = 600 * 1000;",
+        old: "self.ota.at = now.wrapping_add(HELD_PERIOD_MS);",
+        new: "self.ota.at = now.wrapping_add(HELD_PERIOD_MS / 6);",
     },
     Mutation {
         name: "OTA: a server that said wait is not asked again",
@@ -1552,8 +1552,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "OTA: the stored progress stays when the image is in use",
         file: "stack/ota.rs",
-        old: "                self.ota_forget();\n                // the counters of the last second, for after the restart\n",
-        new: "                // the counters of the last second, for after the restart\n",
+        old: "            OtaState::Waiting => {\n                self.ota_forget();\n",
+        new: "            OtaState::Waiting => {\n",
     },
     Mutation {
         name: "GP: a channel request the device does not listen after is answered",
@@ -1564,7 +1564,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: commands for devices under encryption get through",
         file: "stack/gp.rs",
-        old: "        if f.security == 3 && processed.is_some_and(|n| n > 0 && plain[0] >= GPD_TO_DEVICE) {\n            return None;\n        }\n",
+        old: "        if f.security == 3 && processed.is_some() && plain[0] >= GPD_TO_DEVICE {\n            return None;\n        }\n",
         new: "",
     },
     Mutation {
@@ -1630,8 +1630,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: a proxy picked in an earlier session still goes first",
         file: "stack/gp.rs",
-        old: "                // a new session: no proxy has been picked to answer a device yet\n                self.gp_first = false;\n",
-        new: "",
+        old: "                self.gp_first = false;\n                let window",
+        new: "                let window",
     },
     Mutation {
         name: "GP: notifications of a paired device sent at once",
@@ -1738,8 +1738,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "GP: a table request to every proxy answered with \"not found\"",
         file: "stack/gp.rs",
-        old: " && rsp.len() > 3 && rsp.get(3) == SUCCESS;",
-        new: " && rsp.len() > 3;",
+        old: "&& rsp.as_slice().get(3) == Some(&SUCCESS);",
+        new: "&& rsp.len() > 3;",
     },
     Mutation {
         name: "NWK: route requests taken from a neighbor that may not hear us",
@@ -1840,8 +1840,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: a delivered frame does not reset the failure counter",
         file: "stack/net.rs",
-        old: "                n.failures = if status == TxStatus::Ok { 0 } else { n.failures.saturating_add(1) };",
-        new: "                n.failures = if status == TxStatus::Ok { n.failures } else { n.failures.saturating_add(1) };",
+        old: "                    TxStatus::Ok => 0,\n                    TxStatus::NoAck => n.failures.saturating_add(1),",
+        new: "                    TxStatus::Ok => n.failures,\n                    TxStatus::NoAck => n.failures.saturating_add(1),",
     },
     Mutation {
         name: "NWK: a neighbor heard again stays a failed link",
@@ -2116,8 +2116,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "NWK: broadcast data frames ask for route discovery",
         file: "stack/net.rs",
-        old: "        if !nwk::is_broadcast(dst) {\n            // (a broadcast has \"discover route\" 0: R22 Table 3-45)\n            h.discover = 1;",
-        new: "        h.discover = 1;\n        if !nwk::is_broadcast(dst) {",
+        old: "        if !nwk::is_broadcast(dst) {\n            h.discover = 1;\n",
+        new: "        h.discover = 1;\n        if !nwk::is_broadcast(dst) {\n",
     },
     Mutation {
         name: "NWK: destination IEEE address of frames for us not checked",
@@ -2266,14 +2266,14 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "ZDO: a Mgmt_Leave_req sent to everyone is obeyed",
         file: "stack/zdo.rs",
-        old: "                // a leave request sent to everyone is dropped (R22 3.6.1.10.3.1 step 1)\n                if !unicast {\n                    return None;\n                }\n",
-        new: "",
+        old: "            MGMT_LEAVE_REQ => {\n                if !unicast {\n                    return None;\n                }\n",
+        new: "            MGMT_LEAVE_REQ => {\n",
     },
     Mutation {
         name: "ZDO: a binding request sent to everyone is carried out",
         file: "stack/zdo.rs",
-        old: "                // not processed (R22 2.4.3.2.2, 2.4.3.2.3)\n                if !unicast {\n                    return None;\n                }\n",
-        new: "",
+        old: "            BIND_REQ | UNBIND_REQ => {\n                if !unicast {\n                    return None;\n                }\n",
+        new: "            BIND_REQ | UNBIND_REQ => {\n",
     },
     Mutation {
         name: "ZDO: an endpoint not in use is called invalid",
@@ -2290,8 +2290,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "ZDO: simple descriptor errors sent in answer to broadcasts",
         file: "stack/zdo.rs",
-        old: "                            // an error is for the one who asked this node (R22 2.4.4.1)\n                            if !unicast {\n                                return None;\n                            }\n",
-        new: "",
+        old: "                        if endpoint != ENDPOINT {\n                            if !unicast {\n                                return None;\n                            }\n",
+        new: "                        if endpoint != ENDPOINT {\n",
     },
     Mutation {
         name: "APS: Remove Device naming the router itself is ignored",
@@ -2320,20 +2320,20 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "parent: the Leave for a removed child names no device",
         file: "stack/parent.rs",
-        old: "        h.dst_ext = Some(c.ext);\n        let leave = [nwk::CMD_LEAVE, 0x40 | options & 0xA0];",
-        new: "        h.dst_ext = None;\n        let leave = [nwk::CMD_LEAVE, 0x40 | options & 0xA0];",
+        old: "        h.dst_ext = Some(c.ext);\n        let leave = [nwk::CMD_LEAVE, pack(",
+        new: "        h.dst_ext = None;\n        let leave = [nwk::CMD_LEAVE, pack(",
     },
     Mutation {
         name: "ZDO: Mgmt_Leave_req about a child is not carried out",
         file: "stack/zdo.rs",
-        old: "                    self.dismiss_child(i, (flags & 0x80) >> 2 | (flags & 0x40) << 1);\n",
+        old: "                    self.dismiss_child(i, pack(&[((flags & 0x80 != 0) as u16, 5), ((flags & 0x40 != 0) as u16, 7)]) as u8);\n",
         new: "",
     },
     Mutation {
         name: "ZDO: Mgmt_Leave_req about a child loses its rejoin bit",
         file: "stack/zdo.rs",
-        old: "                    self.dismiss_child(i, (flags & 0x80) >> 2 | (flags & 0x40) << 1);",
-        new: "                    self.dismiss_child(i, (flags & 0x40) << 1);",
+        old: "                    self.dismiss_child(i, pack(&[((flags & 0x80 != 0) as u16, 5), ((flags & 0x40 != 0) as u16, 7)]) as u8);",
+        new: "                    self.dismiss_child(i, pack(&[((flags & 0x40 != 0) as u16, 7)]) as u8);",
     },
     Mutation {
         name: "ZDO: Mgmt_Leave_req about an unknown device makes the router leave",
@@ -2350,8 +2350,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "join: a failed link key exchange leaves the node on the network",
         file: "stack/join.rs",
-        old: "            // (announced and done by the main timers, like any other leave)\n            self.leave_at = Some(now);\n",
-        new: "",
+        old: "            self.leave_rejoin = false;\n            self.leave_at = Some(now);\n",
+        new: "            self.leave_rejoin = false;\n",
     },
     Mutation {
         name: "join: link key exchange steps repeated after 3 s",
@@ -2470,8 +2470,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "join: a refused rejoin is not asked of the next router",
         file: "stack/join.rs",
-        old: "            // refused: on to the next router that could be the parent\n            self.rejoin_next(now, secure);\n",
-        new: "",
+        old: "        if p[3] != 0 || short >= 0xFFF8 {\n            self.rejoin_next(now, secure);\n",
+        new: "        if p[3] != 0 || short >= 0xFFF8 {\n",
     },
     Mutation {
         name: "join: an unanswered rejoin is not asked of the next router",
@@ -2500,7 +2500,7 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "APS: secured commands taken whoever secured them",
         file: "stack/aps.rs",
-        old: "            if !joining && (tc == super::NO_TRUST_CENTER || ext != tc) {\n                // no key of ours is authorised for this sender\n                self.diag.add(k::APS_UNAUTHORIZED_KEY);\n                return None;\n            }\n",
+        old: "            if !joining && (tc == super::NO_TRUST_CENTER || ext != tc) {\n                self.diag.add(k::APS_UNAUTHORIZED_KEY);\n                return None;\n            }\n",
         new: "",
     },
     Mutation {

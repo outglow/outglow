@@ -112,8 +112,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "link: own termination given up after half a second",
         file: "ll.rs",
-        old: "let timeout = self.link.p.timeout as u32 * 10 * TICKS_PER_MS;\n            self.link.closing",
-        new: "let timeout = 500 * TICKS_PER_MS;\n            self.link.closing",
+        old: "        let timeout = self.link.p.timeout as u32 * 10 * TICKS_PER_MS;\n        self.link.closing",
+        new: "        let timeout = 500 * TICKS_PER_MS;\n        self.link.closing",
     },
     Mutation {
         name: "link: parameter request right after connecting",
@@ -214,8 +214,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "att: writes to read-only attributes accepted",
         file: "att.rs",
-        old: "        if !a.writable {\n            return Err(ERR_WRITE_NOT_PERMITTED);\n        }",
-        new: "",
+        old: "            _ => return Err(ERR_WRITE_NOT_PERMITTED),\n        }\n        Ok(())",
+        new: "            _ => {}\n        }\n        Ok(())",
     },
     Mutation {
         name: "att: errors sent for commands",
@@ -250,8 +250,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "l2cap: only the first fragment of a response is sent",
         file: "att.rs",
-        old: "        for (i, fragment) in frame.chunks(LL_PAYLOAD_MAX).enumerate() {",
-        new: "        for (i, fragment) in frame.chunks(LL_PAYLOAD_MAX).enumerate().take(1) {",
+        old: ".chunks(LL_PAYLOAD_MAX).enumerate() {",
+        new: ".chunks(LL_PAYLOAD_MAX).enumerate().take(1) {",
     },
     Mutation {
         name: "l2cap: pairing requests ignored",
@@ -292,14 +292,14 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "l2cap: a frame whose header is split is lost",
         file: "att.rs",
-        old: "        if h.have < 4 {\n            return;\n        }",
-        new: "        if h.have < 4 {\n            h.open = false;\n            return;\n        }",
+        old: "        let len = 4 + u16_at(&h.frame, 0) as usize;\n        if h.have < len {",
+        new: "        if h.have < 4 {\n            h.open = false;\n            return;\n        }\n        let len = 4 + u16_at(&h.frame, 0) as usize;\n        if h.have < len {",
     },
     Mutation {
         name: "l2cap: a frame with surplus octets processed",
         file: "att.rs",
-        old: "        if h.have > h.want {\n            return;\n        }\n",
-        new: "",
+        old: "        h.open = false;\n        if h.have > len {\n            return;\n        }\n",
+        new: "        h.open = false;\n",
     },
     Mutation {
         name: "l2cap: a signalling packet over MTUsig dropped silently",
@@ -376,8 +376,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "command: repeated packets carried out again",
         file: "mesh.rs",
-        old: "        if packet[..3] == self.mesh.last_sn {\n            return;\n        }",
-        new: "",
+        old: "        if self.mesh.last_sn.replace(sn) == Some(sn) {\n            return;\n        }\n",
+        new: "        self.mesh.last_sn = Some(sn);\n",
     },
     Mutation {
         name: "command: other bulbs' commands carried out",
@@ -406,8 +406,8 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "command: block format without its checksum",
         file: "mesh.rs",
-        old: "        if !(1..=14).contains(&len) || crc8_6c(&plain[1..2 + len]) != plain[0] {",
-        new: "        if !(1..=14).contains(&len) {",
+        old: "        if crc8_6c(&whole[..1 + len]) != plain[0] {\n            return false;\n        }\n",
+        new: "",
     },
     Mutation {
         name: "command: tunnelled ZCL for another bulb carried out",
@@ -484,13 +484,13 @@ pub const MUTATIONS: &[Mutation] = &[
     Mutation {
         name: "OTA: blocks out of order accepted",
         file: "ota.rs",
-        old: "        if index != self.ota.next || block.len()",
-        new: "        if block.len()",
+        old: "if index != self.ota.next || index == u16::MAX ||",
+        new: "if index == u16::MAX ||",
     },
     Mutation {
         name: "OTA: a repeated block is an error",
         file: "ota.rs",
-        old: "        if index.wrapping_add(1) == self.ota.next {\n            // the last block again\n            return;\n        }",
+        old: "        if index.wrapping_add(1) == self.ota.next {\n            return;\n        }\n",
         new: "",
     },
     Mutation {
