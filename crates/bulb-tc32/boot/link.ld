@@ -58,6 +58,10 @@ SECTIONS
         _end_bss_ = .;
     }
     _bin_size_ = _dstored_bin_ + (_end_data_ - _start_data_);
+    /* The image must fit the OTA staging area (400 KB): past it, from
+     * FW_OFFSET + 0x64000, the flash holds data (the power-on counter, the
+     * settings sectors; src/board.rs). */
+    ASSERT(_bin_size_ <= 0x64000, "the image is larger than the 400 KB OTA staging area")
 
     /* Stacks: the interrupt stack is the top 1 KB; the main (SVC) stack
      * grows down from below it towards .bss. */

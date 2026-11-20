@@ -23,39 +23,67 @@ pub(crate) const RADIO_QUIET: u32 = 3 * 16_000;
 
 const MAC_SECTOR: usize = crate::board::BOARD.flash.mac;
 
-pub const MESH_SECTOR: usize = crate::board::BOARD.flash.store + 0x3000;
+pub const MESH_SECTORS: [usize; 2] = [crate::board::BOARD.flash.store + 0x3000, crate::board::BOARD.flash.mesh_spare];
 const SECTOR_SIZE: usize = 0x1000;
 const RECORD_MAX: usize = 64;
 const RECORD_BUF: usize = 67;
 const _: () = assert!(RECORD_BUF == RECORD_MAX + 3);
+const MAIN: usize = MESH_SECTORS[0];
+const SPARE: usize = MESH_SECTORS[1];
+const BACKUP: [u8; 4] = [0x5a, b'M', b'S', 0x02];
+const BACKUP_LEN: usize = 4;
 
 fn checksum(data: &[u8]) -> u8 {
     data.iter().fold(0x5a, |c, b| c.rotate_left(1) ^ *b)
 }
 
-fn scan() -> (Option<(usize, usize)>, usize) {
+fn backed_up() -> bool {
+    let mut h = [0u8; BACKUP_LEN];
+    flash::read(SPARE, &mut h);
+    h == BACKUP
+}
+
+fn current() -> Option<(usize, usize)> {
+    scan(MAIN, 0).0.or_else(|| backed_up().then(|| scan(SPARE, BACKUP_LEN).0).flatten())
+}
+
+fn blank_at(addr: usize, len: usize) -> bool {
+    let mut b = [0u8; RECORD_BUF];
+    flash::read(addr, &mut b[..len]);
+    b[..len].iter().all(|&x| x == 0xff)
+}
+
+fn scan(sector: usize, start: usize) -> (Option<(usize, usize)>, usize) {
     let mut last = None;
-    let mut off = 0;
+    let mut off = start;
     while off + 3 <= SECTOR_SIZE {
         let mut head = [0u8; 2];
-        flash::read(MESH_SECTOR + off, &mut head);
+        flash::read(sector + off, &mut head);
         let len = head[1] as usize;
         if head[0] != 0xa5 || len > RECORD_MAX || off + 3 + len > SECTOR_SIZE {
             break;
         }
         let mut rec = [0u8; RECORD_MAX + 1];
-        flash::read(MESH_SECTOR + off + 2, &mut rec[..len + 1]);
+        flash::read(sector + off + 2, &mut rec[..len + 1]);
         if checksum(&rec[..len]) == rec[len] {
-            last = Some((off + 2, len));
+            last = Some((sector + off + 2, len));
         }
         off += 3 + len;
     }
     (last, off)
 }
 
+fn drop_backup() {
+    if backed_up() {
+        flash::write(SPARE, &[0]);
+    }
+}
+
 pub fn erase_settings() {
-    if !flash::blank(MESH_SECTOR) {
-        flash::erase_sector(MESH_SECTOR);
+    drop_backup();
+    if !flash::blank(MAIN) {
+        flash::write(MAIN, &[0]);
+        flash::erase_sector(MAIN);
     }
 }
 
@@ -118,25 +146,37 @@ impl Hal for BleHal {
     }
 
     fn nv_load(&mut self, buf: &mut [u8]) -> Option<usize> {
-        let (off, len) = scan().0?;
+        let (at, len) = current()?;
         let n = len.min(buf.len());
-        flash::read(MESH_SECTOR + off, &mut buf[..n]);
+        flash::read(at, &mut buf[..n]);
         Some(n)
     }
 
     fn nv_store(&mut self, data: &[u8]) {
         let len = data.len().min(RECORD_MAX);
-        let mut free = scan().1;
-        if free + 3 + len > SECTOR_SIZE {
-            flash::erase_sector(MESH_SECTOR);
-            free = 0;
-        }
         let mut rec = [0u8; RECORD_BUF];
         rec[0] = 0xa5;
         rec[1] = len as u8;
         rec[2..2 + len].copy_from_slice(&data[..len]);
         rec[2 + len] = checksum(&data[..len]);
-        flash::write(MESH_SECTOR + free, &rec[..3 + len]);
+        let rec = &rec[..3 + len];
+        let (last, free) = scan(MAIN, 0);
+        if free + rec.len() <= SECTOR_SIZE && blank_at(MAIN + free, rec.len()) {
+            flash::write(MAIN + free, rec);
+            drop_backup();
+            return;
+        }
+        if last.is_some() {
+            if !flash::blank(SPARE) {
+                flash::erase_sector(SPARE);
+            }
+            flash::write(SPARE + BACKUP_LEN, rec);
+            flash::write(SPARE, &BACKUP);
+            flash::write(MAIN, &[0]);
+        }
+        flash::erase_sector(MAIN);
+        flash::write(MAIN, rec);
+        drop_backup();
     }
 
     fn ota_capacity(&mut self) -> u32 {

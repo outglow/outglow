@@ -1,6 +1,8 @@
 use super::*;
 use crate::sim::{self, Op};
 
+const MESH_SECTOR: usize = MAIN;
+
 fn mesh_sector() -> Vec<u8> {
     sim::with(|c| c.flash[MESH_SECTOR..MESH_SECTOR + SECTOR_SIZE].to_vec())
 }
@@ -56,25 +58,29 @@ fn a_record_is_at_most_64_octets_and_a_longer_length_ends_the_records() {
         c.flash[MESH_SECTOR + 3 + RECORD_MAX + 1] = RECORD_MAX as u8 + 1;
     });
     assert_eq!(hal.nv_load(&mut buf), Some(RECORD_MAX));
-    assert_eq!(scan().1, 3 + RECORD_MAX);
+    assert_eq!(scan(MESH_SECTOR, 0).1, 3 + RECORD_MAX);
     sim::with(|c| {
         c.flash[MESH_SECTOR + 3 + RECORD_MAX + 1] = 1;
         c.flash[MESH_SECTOR + 3 + RECORD_MAX] = 0xa4;
     });
     assert_eq!(hal.nv_load(&mut buf), Some(RECORD_MAX));
-    assert_eq!(scan().1, 3 + RECORD_MAX);
+    assert_eq!(scan(MESH_SECTOR, 0).1, 3 + RECORD_MAX);
 }
 
 fn fill_to(free: usize) {
+    fill(MESH_SECTOR, 0, free);
+}
+
+fn fill(sector: usize, start: usize, free: usize) {
     sim::with(|c| {
-        let mut off = 0;
+        let mut off = start;
         while off < free {
             let rem = free - off;
             let mut len = (rem - 3).min(RECORD_MAX);
             if (1..3).contains(&(rem - 3 - len)) {
                 len -= 3;
             }
-            let s = MESH_SECTOR + off;
+            let s = sector + off;
             c.flash[s] = 0xa5;
             c.flash[s + 1] = len as u8;
             c.flash[s + 2..s + 2 + len].fill(0x11);
@@ -85,22 +91,217 @@ fn fill_to(free: usize) {
 }
 
 #[test]
-fn a_record_that_would_pass_the_sector_end_starts_the_sector_over() {
-    for (free, len, erased) in [(SECTOR_SIZE - 6, 3usize, false), (SECTOR_SIZE - 6, 4, true), (SECTOR_SIZE - 3, 0, false)] {
+fn a_record_that_would_pass_the_sector_end_is_backed_up_in_the_spare_then_starts_the_sector_over() {
+    for (free, len, moved) in [(SECTOR_SIZE - 6, 3usize, false), (SECTOR_SIZE - 6, 4, true), (SECTOR_SIZE - 3, 0, false)] {
         let _s = sim::session();
         let mut hal = BleHal::new();
         fill_to(free);
-        assert_eq!(scan().1, free);
+        assert_eq!(scan(MESH_SECTOR, 0).1, free);
         let data = vec![0x22; len];
         hal.nv_store(&data);
-        let erases = sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).count());
-        assert_eq!(erases, erased as usize, "{free} {len}");
+        let erases: Vec<usize> = sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).map(|o| o.1).collect());
+        assert_eq!(erases, if moved { vec![MESH_SECTOR] } else { vec![] }, "{free} {len}");
         let mut buf = [0u8; 8];
         assert_eq!(hal.nv_load(&mut buf), Some(len));
-        let at = if erased { 0 } else { free };
+        let at = if moved { 0 } else { free };
         assert_eq!(mesh_sector()[at], 0xa5);
         assert_eq!(mesh_sector()[at + 2..at + 2 + len], data[..]);
+        assert!(!backed_up());
+        let spare = sim::with(|c| c.flash[SPARE..SPARE + 12].to_vec());
+        let expect: Vec<u8> = if moved { [&[0x00, b'M', b'S', 0x02, 0xa5, 4][..], &data[..], &[checksum(&data), 0xff]].concat() } else { vec![0xff; 12] };
+        assert_eq!(spare, expect);
     }
+}
+
+fn flash_copy() -> Vec<u8> {
+    sim::with(|c| c.flash.clone())
+}
+
+fn load_on(flash: &[u8]) -> Option<Vec<u8>> {
+    sim::with(|c| c.flash.copy_from_slice(flash));
+    let mut buf = [0u8; RECORD_MAX];
+    BleHal::new().nv_load(&mut buf).map(|n| buf[..n].to_vec())
+}
+
+#[derive(Clone, Debug)]
+enum Step {
+    Erase(usize),
+    Program(usize, Vec<u8>),
+}
+
+fn apply(f: &mut [u8], step: &Step) {
+    match step {
+        Step::Erase(a) => f[*a..*a + SECTOR_SIZE].fill(0xff),
+        Step::Program(a, d) => d.iter().enumerate().for_each(|(i, b)| f[a + i] &= b),
+    }
+}
+
+fn cut_states(f: &[u8], step: &Step) -> Vec<Vec<u8>> {
+    let mut out = vec![f.to_vec()];
+    match step {
+        Step::Erase(a) => {
+            for (from, to) in [(0, SECTOR_SIZE / 2), (SECTOR_SIZE / 2, SECTOR_SIZE), (0, 1), (1, SECTOR_SIZE), (0, 64)] {
+                let mut c = f.to_vec();
+                c[a + from..a + to].fill(0xff);
+                out.push(c);
+            }
+        }
+        Step::Program(a, d) => {
+            for k in 0..d.len() {
+                for mask in [0x00u8, 0x0f, 0xf0] {
+                    let mut c = f.to_vec();
+                    d[..k].iter().enumerate().for_each(|(i, b)| c[a + i] &= b);
+                    c[a + k] &= d[k] | mask;
+                    out.push(c);
+                }
+            }
+        }
+    }
+    let mut done = f.to_vec();
+    apply(&mut done, step);
+    out.push(done);
+    out
+}
+
+fn every_cut(pre: &[u8], steps: &[Step], post: &[u8], allowed: &[Option<Vec<u8>>]) -> usize {
+    let mut state = pre.to_vec();
+    let mut cuts = 0;
+    for step in steps {
+        for cut in cut_states(&state, step) {
+            let got = load_on(&cut);
+            assert!(allowed.contains(&got), "a cut in {step:x?} loads {got:02x?}");
+            BleHal::new().nv_store(&[0x77; 3]);
+            assert_eq!(load_on(&flash_copy()), Some(vec![0x77; 3]), "a store after a cut in {step:x?}");
+            cuts += 1;
+        }
+        apply(&mut state, step);
+    }
+    assert_eq!(state, post, "the steps are what the code did");
+    cuts
+}
+
+fn record_of(data: &[u8]) -> Vec<u8> {
+    [&[0xa5, data.len() as u8][..], data, &[checksum(data)]].concat()
+}
+
+fn erases() -> Vec<usize> {
+    sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).map(|o| o.1).collect())
+}
+
+#[test]
+fn settings_in_the_earlier_single_sector_format_stay_in_it_and_an_earlier_image_reads_them() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    fill_to(SECTOR_SIZE - 20);
+    hal.nv_store(&[7; 12]);
+    let mut buf = [0u8; RECORD_MAX];
+    assert_eq!(hal.nv_load(&mut buf), Some(12));
+    assert!(flash::blank(SPARE));
+    hal.nv_store(&[8; 12]);
+    assert_eq!(hal.nv_load(&mut buf), Some(12));
+    assert_eq!(buf[..12], [8; 12]);
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + 2, 12)), 15));
+    assert!(!backed_up());
+    hal.nv_store(&[9; 3]);
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + 15 + 2, 3)), 21));
+}
+
+#[test]
+fn settings_an_earlier_image_wrote_after_a_move_win_over_the_spare() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    fill_to(SECTOR_SIZE - 20);
+    hal.nv_store(&[1; 12]);
+    hal.nv_store(&[2; 12]);
+    flash::erase_sector(MESH_SECTOR);
+    flash::write(MESH_SECTOR, &record_of(&[9; 3]));
+    let mut buf = [0u8; RECORD_MAX];
+    assert_eq!(hal.nv_load(&mut buf), Some(3));
+    assert_eq!(buf[..3], [9; 3]);
+    flash::erase_sector(MESH_SECTOR);
+    assert_eq!(hal.nv_load(&mut buf), None, "a factory reset of an earlier image brings nothing back");
+}
+
+#[test]
+fn a_power_cut_anywhere_in_starting_the_sector_over_keeps_the_earlier_or_the_new_settings() {
+    let _s = sim::session();
+    fill_to(SECTOR_SIZE - 7);
+    sim::with(|c| c.flash[SPARE..SPARE + 40].fill(0x3c));
+    let pre = flash_copy();
+    let old = load_on(&pre);
+    assert_eq!(old, Some(vec![0x11; 2]));
+    sim::with(|c| c.flash_ops.clear());
+    BleHal::new().nv_store(&[0x42; 5]);
+    assert_eq!(erases(), [SPARE, MESH_SECTOR]);
+    let post = flash_copy();
+    let rec = record_of(&[0x42; 5]);
+    let steps = [
+        Step::Erase(SPARE),
+        Step::Program(SPARE + BACKUP_LEN, rec.clone()),
+        Step::Program(SPARE, BACKUP.to_vec()),
+        Step::Program(MESH_SECTOR, vec![0]),
+        Step::Erase(MESH_SECTOR),
+        Step::Program(MESH_SECTOR, rec),
+        Step::Program(SPARE, vec![0]),
+    ];
+    let cuts = every_cut(&pre, &steps, &post, &[old, Some(vec![0x42; 5])]);
+    assert!(cuts > 60, "{cuts}");
+}
+
+#[test]
+fn a_cut_left_behind_with_only_the_spare_valid_keeps_it_until_the_next_record_is_in_place() {
+    let _s = sim::session();
+    let rec = record_of(&[0x31; 4]);
+    sim::with(|c| {
+        c.flash[SPARE..SPARE + BACKUP_LEN].copy_from_slice(&BACKUP);
+        c.flash[SPARE + BACKUP_LEN..SPARE + BACKUP_LEN + rec.len()].copy_from_slice(&rec);
+        c.flash[MESH_SECTOR..MESH_SECTOR + 8].fill(0x00);
+    });
+    let pre = flash_copy();
+    assert_eq!(load_on(&pre), Some(vec![0x31; 4]));
+    sim::with(|c| c.flash_ops.clear());
+    BleHal::new().nv_store(&[0x52; 2]);
+    assert_eq!(erases(), [MESH_SECTOR]);
+    let post = flash_copy();
+    let steps = [Step::Erase(MESH_SECTOR), Step::Program(MESH_SECTOR, record_of(&[0x52; 2])), Step::Program(SPARE, vec![0])];
+    every_cut(&pre, &steps, &post, &[Some(vec![0x31; 4]), Some(vec![0x52; 2])]);
+    sim::with(|c| {
+        c.flash[MESH_SECTOR..MESH_SECTOR + SECTOR_SIZE].fill(0xff);
+        c.flash[SPARE..SPARE + BACKUP_LEN].copy_from_slice(&BACKUP);
+    });
+    BleHal::new().nv_store(&[0x34; 1]);
+    assert_eq!(scan(MESH_SECTOR, 0).0, Some((MESH_SECTOR + 2, 1)));
+    assert!(!backed_up());
+}
+
+#[test]
+fn a_backup_is_its_magic_in_full() {
+    let _s = sim::session();
+    assert!(!backed_up());
+    flash::write(SPARE, &BACKUP);
+    assert!(backed_up());
+    for k in 0..BACKUP_LEN {
+        let mut h = BACKUP;
+        h[k] ^= 0x01;
+        sim::with(|c| c.flash[SPARE..SPARE + BACKUP_LEN].copy_from_slice(&h));
+        assert!(!backed_up(), "{k}");
+    }
+}
+
+#[test]
+fn a_record_after_garbage_in_the_free_space_starts_the_sector_over() {
+    let _s = sim::session();
+    let mut hal = BleHal::new();
+    hal.nv_store(&[1, 2]);
+    sim::with(|c| c.flash[MESH_SECTOR + 5 + 4] = 0x00);
+    hal.nv_store(&[3, 4]);
+    assert_eq!(erases(), [MESH_SECTOR]);
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + 2, 2)), 5));
+    sim::with(|c| c.flash[MESH_SECTOR + 5 + 4] = 0xff);
+    sim::with(|c| c.flash[MESH_SECTOR + 5 + 3] = 0x00);
+    sim::with(|c| c.flash_ops.clear());
+    hal.nv_store(&[5, 6]);
+    assert_eq!(erases(), [SPARE, MESH_SECTOR]);
 }
 
 #[test]
@@ -109,25 +310,53 @@ fn a_record_ending_exactly_at_the_sector_end_is_read() {
     let mut hal = BleHal::new();
     fill_to(SECTOR_SIZE - 7);
     hal.nv_store(&[5, 6, 7, 8]);
-    assert_eq!(scan(), (Some((SECTOR_SIZE - 5, 4)), SECTOR_SIZE));
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + SECTOR_SIZE - 5, 4)), SECTOR_SIZE));
     let mut buf = [0u8; 8];
     assert_eq!(hal.nv_load(&mut buf), Some(4));
     assert_eq!(buf[..4], [5, 6, 7, 8]);
     sim::with(|c| {
         c.flash[MESH_SECTOR + SECTOR_SIZE - 6] = 5;
     });
-    assert_eq!(scan(), (Some((SECTOR_SIZE - 10, 2)), SECTOR_SIZE - 7));
+    assert_eq!(scan(MESH_SECTOR, 0), (Some((MESH_SECTOR + SECTOR_SIZE - 10, 2)), SECTOR_SIZE - 7));
 }
 
 #[test]
-fn erasing_the_settings_erases_their_sector_only_when_it_holds_something() {
+fn erasing_the_settings_invalidates_both_sectors_before_erasing_the_main_one() {
     let _s = sim::session();
     erase_settings();
     assert!(sim::with(|c| c.flash_ops.is_empty()));
     BleHal::new().nv_store(&[1]);
+    sim::with(|c| c.flash_ops.clear());
     erase_settings();
-    assert_eq!(sim::with(|c| c.flash_ops.last().copied()), Some((0x20, MESH_SECTOR)));
+    assert_eq!(sim::with(|c| c.flash_ops.clone()), [(0x02, MESH_SECTOR), (0x20, MESH_SECTOR)]);
     assert!(flash::blank(MESH_SECTOR));
+    flash::write(SPARE + BACKUP_LEN, &[0xa5, 0, 0x5a]);
+    sim::with(|c| c.flash_ops.clear());
+    erase_settings();
+    assert!(sim::with(|c| c.flash_ops.is_empty()), "records without a backup mark are never read and wait for the next move");
+    flash::write(SPARE, &BACKUP);
+    flash::write(MESH_SECTOR, &record_of(&[4]));
+    sim::with(|c| c.flash_ops.clear());
+    erase_settings();
+    assert_eq!(sim::with(|c| c.flash_ops.clone()), [(0x02, SPARE), (0x02, MESH_SECTOR), (0x20, MESH_SECTOR)]);
+    assert_eq!(load_on(&flash_copy()), None);
+}
+
+#[test]
+fn a_power_cut_anywhere_in_erasing_the_settings_loads_the_newest_or_nothing() {
+    let _s = sim::session();
+    let rec = record_of(&[0x61; 3]);
+    sim::with(|c| {
+        c.flash[SPARE..SPARE + BACKUP_LEN].copy_from_slice(&BACKUP);
+        c.flash[SPARE + BACKUP_LEN..SPARE + BACKUP_LEN + rec.len()].copy_from_slice(&record_of(&[0x60; 3]));
+        c.flash[MESH_SECTOR..MESH_SECTOR + rec.len()].copy_from_slice(&rec);
+    });
+    let pre = flash_copy();
+    assert_eq!(load_on(&pre), Some(vec![0x61; 3]));
+    erase_settings();
+    let post = flash_copy();
+    let steps = [Step::Program(SPARE, vec![0]), Step::Program(MESH_SECTOR, vec![0]), Step::Erase(MESH_SECTOR)];
+    every_cut(&pre, &steps, &post, &[Some(vec![0x61; 3]), None]);
 }
 
 #[test]
@@ -270,4 +499,23 @@ fn the_hal_hands_the_radio_calls_to_the_ble_driver() {
     let r = hal.connection_event(&ConnEvent { channel: 3, access_address: 1, crc_init: 2, start, window: 0, deadline: start });
     assert_eq!(r.anchor, None);
     assert!(sim::with(|c| c.writes()).contains(&Op::W8(0xf00, 0x82)));
+}
+
+#[test]
+fn the_second_settings_sector_is_used_by_nothing_else_and_lies_past_the_image_and_the_staging_area() {
+    use crate::board::{AWOX_1M, BARE_512K, BOARD, COLOUR_SECTORS, CONFIG_SECTORS};
+    let f = BOARD.flash;
+    let mut used: Vec<usize> = [CONFIG_SECTORS, crate::nv::SECTORS, COLOUR_SECTORS].concat();
+    used.extend([MESH_SECTOR, f.reset, f.mac, f.cap_trim]);
+    assert_eq!(MESH_SECTORS, [0xf_3000, 0xf_7000]);
+    assert!(!used.contains(&MESH_SECTORS[1]), "{used:x?}");
+    for (layout, image) in [(AWOX_1M, 0x6_a000..0x6_a000 + 0x6_4000), (BARE_512K, 0..0x6_4000)] {
+        let spare = layout.mesh_spare;
+        let taken: Vec<usize> = (0..7).map(|k| layout.store + k * 0x1000).chain([layout.reset, layout.mac, layout.cap_trim]).collect();
+        assert!(!taken.contains(&spare), "{spare:x} in {taken:x?}");
+        assert!(!image.contains(&spare) && spare >= image.end, "{spare:x}");
+        assert!(!(0x6000..0x6000 + layout.staging as usize).contains(&spare));
+        assert_eq!(spare % SECTOR_SIZE, 0);
+    }
+    assert_eq!(BARE_512K.mesh_spare, 0x7_5000);
 }

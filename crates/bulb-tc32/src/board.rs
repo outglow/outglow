@@ -28,10 +28,11 @@ pub struct Flash {
     pub mac: usize,
     pub cap_trim: usize,
     pub staging: u32,
+    pub mesh_spare: usize,
 }
 
-pub const AWOX_1M: Flash = Flash { store: 0xf_0000, reset: 0xc_f000, mac: 0xf_f000, cap_trim: 0xf_e000, staging: 0x6_4000 };
-pub const BARE_512K: Flash = Flash { store: 0x7_8000, reset: 0x7_f000, mac: 0x7_6000, cap_trim: 0x7_7000, staging: 0 };
+pub const AWOX_1M: Flash = Flash { store: 0xf_0000, reset: 0xc_f000, mac: 0xf_f000, cap_trim: 0xf_e000, staging: 0x6_4000, mesh_spare: 0xf_7000 };
+pub const BARE_512K: Flash = Flash { store: 0x7_8000, reset: 0x7_f000, mac: 0x7_6000, cap_trim: 0x7_7000, staging: 0, mesh_spare: 0x7_5000 };
 
 #[derive(Clone, Copy)]
 pub struct Board {

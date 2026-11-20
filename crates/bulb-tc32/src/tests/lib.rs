@@ -60,7 +60,9 @@ fn a_factory_reset_keeps_only_the_frame_counters() {
     nv.store(NvItem::Counters as u8, &[4, 5]);
     board::FlashStore::new().store(&bulb_core::config::Config::default().encode());
     #[cfg(feature = "ble")]
-    crate::flash::write(crate::ble::MESH_SECTOR, &[0]);
+    crate::flash::write(crate::ble::MESH_SECTORS[0], &[0]);
+    #[cfg(feature = "ble")]
+    crate::flash::write(crate::ble::MESH_SECTORS[1], &[0x5a, b'M', b'S', 0x02, 0xa5, 0x00, 0x5a]);
     factory_reset();
     let nv = nv::open();
     let mut buf = [0u8; 8];
@@ -68,7 +70,9 @@ fn a_factory_reset_keeps_only_the_frame_counters() {
     assert_eq!(nv.load(NvItem::Counters as u8, &mut buf), Some(2));
     assert_eq!(board::FlashStore::new().load(&mut buf), None);
     #[cfg(feature = "ble")]
-    assert!(crate::flash::blank(crate::ble::MESH_SECTOR));
+    assert!(crate::flash::blank(crate::ble::MESH_SECTORS[0]));
+    #[cfg(feature = "ble")]
+    assert_eq!(::ble::hal::Hal::nv_load(&mut crate::ble::BleHal::new(), &mut buf), None);
 }
 
 const STOP: &str = "the test stops the main loop";
@@ -183,7 +187,7 @@ fn the_fifth_quick_power_cycle_resets_the_bulb_to_factory_settings() {
     });
     nv::open().store(NvItem::Network as u8, &[1, 2, 3]);
     nv::open().store(NvItem::Counters as u8, &[0xe8, 0x03, 0, 0, 0xd0, 0x07, 0, 0]);
-    run_main(3);
+    run_main(5);
     assert_eq!(link::BULB_NET.read(5), 1);
     let mut buf = [0u8; 8];
     assert_eq!(nv::open().load(NvItem::Network as u8, &mut buf), None);
@@ -221,4 +225,38 @@ fn every_zigbee_item_up_to_the_last_is_kept_in_flash() {
         assert_eq!(nv.load(id, &mut buf), Some(2), "item {id}");
         assert_eq!(buf[..2], [id, 0x5a]);
     }
+}
+
+#[test]
+fn a_factory_reset_feeds_the_watchdog_at_most_four_sector_erases_apart() {
+    let _s = sim::session();
+    let mut nv = nv::open();
+    for k in 0..200u8 {
+        nv.store(NvItem::Network as u8, &[k; 40]);
+    }
+    sim::with(|c| {
+        for s in board::CONFIG_SECTORS.into_iter().chain(board::COLOUR_SECTORS) {
+            c.flash[s] = 0;
+        }
+        #[cfg(feature = "ble")]
+        {
+            c.flash[crate::ble::MESH_SECTORS[0]] = 0;
+        }
+    });
+    let feeds = std::rc::Rc::new(std::cell::RefCell::new(vec![0usize]));
+    let seen = feeds.clone();
+    sim::with(|c| {
+        c.flash_ops.clear();
+        c.on(move |c, op| {
+            if op == sim::Op::W8(reg::TIMER_STATUS, 0x08) {
+                seen.borrow_mut().push(c.flash_ops.iter().filter(|o| o.0 == 0x20).count());
+            }
+        })
+    });
+    factory_reset();
+    let mut at = feeds.borrow().clone();
+    let erased = sim::with(|c| c.flash_ops.iter().filter(|o| o.0 == 0x20).count());
+    at.push(erased);
+    assert!(erased >= 4, "{erased} erases");
+    assert!(at.windows(2).all(|w| w[1] - w[0] <= 4), "erases at the feeds: {at:?}");
 }

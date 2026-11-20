@@ -91,7 +91,9 @@ pub extern "C" fn bulb_idle(until: u32) {
 
 pub(crate) fn factory_reset() {
     nv::open().forget_all_but(zigbee::hal::NvItem::Counters as u8);
+    board::watchdog_feed();
     board::FlashStore::erase();
+    board::watchdog_feed();
     #[cfg(feature = "ble")]
     ble::erase_settings();
 }
