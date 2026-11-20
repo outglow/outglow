@@ -1249,14 +1249,17 @@ pub fn queue(mpdu: &[u8], rssi: u8, end: u32) {
     crate::radio::HEAD.set(((head + 1) % crate::radio::SLOTS) as u8);
 }
 
+#[cfg(feature = "ble")]
 pub fn forget_rx() {
     crate::radio::LAST_RX.set(0);
 }
 
+#[cfg(feature = "ble")]
 pub fn heard_now() {
     crate::radio::LAST_RX.set(crate::reg::tick());
 }
 
+#[cfg(feature = "ble")]
 pub fn heard_at(t: u32) {
     crate::radio::LAST_RX.set(t);
 }

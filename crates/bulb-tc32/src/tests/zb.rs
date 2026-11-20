@@ -1023,7 +1023,9 @@ fn cut_at(writes: usize) -> std::rc::Rc<std::cell::RefCell<Option<Vec<u8>>>> {
 fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
     let mut r = FuzzRng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let mut zhal = Tc32Hal::new();
+    #[cfg(feature = "ble")]
     let mut bhal = crate::ble::BleHal::new();
+    #[cfg(feature = "ble")]
     use ble::Hal as _;
     let ty = crate::board::BOARD.image_type;
     let mut images: Vec<Vec<u8>> = (0..4)
@@ -1046,7 +1048,9 @@ fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
     let i = 0x20 + r.below((broken.len() - 0x24) as u64) as usize;
     broken[i] ^= 1;
     images.push(broken);
-    let (mut zimg, mut zoff, mut bimg, mut boff) = (0usize, 0usize, 0usize, 0usize);
+    let (mut zimg, mut zoff) = (0usize, 0usize);
+    #[cfg(feature = "ble")]
+    let (mut bimg, mut boff) = (0usize, 0usize);
     let (mut cuts, mut marks, mut ops) = (0, 0, 0);
     for _ in 0..60 + r.below(200) {
         ops += 1;
@@ -1075,6 +1079,7 @@ fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
                 }
             }
             4 => zhal.ota_activate(),
+            #[cfg(feature = "ble")]
             5 => {
                 if r.below(2) == 0 {
                     bimg = r.below(images.len() as u64) as usize;
@@ -1082,7 +1087,9 @@ fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
                 }
                 let _ = bhal.ota_capacity();
             }
+            #[cfg(feature = "ble")]
             6 => bhal.ota_erase((r.below(staging::SIZE as u64 + 0x2000) as u32) & !0xfff),
+            #[cfg(feature = "ble")]
             7 | 8 => {
                 let img = &images[bimg];
                 let n = (if r.below(3) == 0 { 0x1000 - boff % 0x1000 } else { 1 + r.below(64) as usize }).min(img.len() - boff.min(img.len()));
@@ -1098,9 +1105,12 @@ fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
                     boff += n;
                 }
             }
+            #[cfg(feature = "ble")]
             9 => {
                 let _ = bhal.ota_activate();
             }
+            #[cfg(not(feature = "ble"))]
+            5..=9 => {}
             10 => staging::release(Owner::Zigbee),
             _ => staging::release(Owner::Ble),
         });
@@ -1120,7 +1130,10 @@ fn staging_case(seed: u64) -> Result<(usize, usize, usize), String> {
             }
             crate::tests::reset_statics();
             zhal = Tc32Hal::new();
-            bhal = crate::ble::BleHal::new();
+            #[cfg(feature = "ble")]
+            {
+                bhal = crate::ble::BleHal::new();
+            }
         }
     }
     Ok((ops, cuts, marks))
