@@ -453,3 +453,27 @@ fn an_expired_permit_join_window_is_closed_by_the_timers_and_does_not_reopen_whe
     s.hal.now = 1_000 + 180_000 + 0x8000_0000;
     assert!(!s.permit_open());
 }
+
+#[test]
+fn a_sleepy_device_rejoining_on_a_taken_address_gets_its_answer_at_its_poll() {
+    let mut s = up_parent();
+    let n = &mut s.neighbors[0];
+    n.used = true;
+    n.short = 0x5000;
+    n.ext = 0x99;
+    s.hal.random = [0x0777].to_vec();
+    s.hal.sent.clear();
+    let mut h = crate::nwk::Header::new(crate::nwk::FRAME_CMD, 0x0042, 0x5000, 1, 1);
+    h.src_ext = Some(EXT);
+    s.on_rejoin_request(&h, 0x5000, &[crate::nwk::CMD_REJOIN_REQUEST, 0x80], false);
+    let c = s.children.iter().find(|c| c.used).copied().unwrap();
+    assert_eq!(c.short, 0x0777);
+    let answer = [crate::nwk::CMD_REJOIN_RESPONSE, 0x77, 0x07, 0x00];
+    let on_air = |s: &Stack<Scripted>| s.hal.sent.iter().filter(|f| f.ends_with(&answer)).count();
+    let held = s.indirect.iter().filter(|e| e.used).count();
+    assert_eq!((on_air(&s), held), (0, 1), "the rejoin response to a sleepy child went straight on air instead of waiting for its poll");
+    s.hal.sent.clear();
+    s.on_data_request(crate::mac::Addr::Short(0x5000));
+    assert_eq!(on_air(&s), 1, "the poll from the old address takes the held response");
+    assert_eq!(&s.hal.sent[0][5..7], &[0x00, 0x50]);
+}

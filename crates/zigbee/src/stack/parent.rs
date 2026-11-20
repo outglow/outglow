@@ -556,7 +556,7 @@ impl<H: Hal> Stack<H> {
         rh.dst_ext = Some(ext);
         rh.security = secured;
         let s = short.to_le_bytes();
-        self.transmit_nwk(mac_src, &rh, &[nwk::CMD_REJOIN_RESPONSE, s[0], s[1], 0x00]);
+        self.rejoin_answer(mac_src, &rh, capability, &[nwk::CMD_REJOIN_RESPONSE, s[0], s[1], 0x00]);
         self.update_device(i, if secured { UPDATE_DEVICE_SECURED_REJOIN } else { UPDATE_DEVICE_TC_REJOIN });
         if secured {
             self.store_children();
@@ -568,14 +568,17 @@ impl<H: Hal> Stack<H> {
         rh.dst_ext = Some(ext);
         rh.security = secured;
         let s = h.src.to_le_bytes();
-        let response = [nwk::CMD_REJOIN_RESPONSE, s[0], s[1], status];
+        self.rejoin_answer(mac_src, &rh, capability, &[nwk::CMD_REJOIN_RESPONSE, s[0], s[1], status]);
+    }
+
+    fn rejoin_answer(&mut self, mac_src: u16, rh: &Header, capability: u8, response: &[u8]) {
         if capability & CAP_RX_ON != 0 || self.child_index(mac_src).is_some() {
-            self.transmit_nwk(mac_src, &rh, &response);
+            self.transmit_nwk(mac_src, rh, response);
             return;
         }
         let now = self.hal.now_ms();
         if self.indirect.iter().any(|e| !e.used || due(now, e.expires)) {
-            let f = self.nwk_frame(mac_src, &rh, &response);
+            let f = self.nwk_frame(mac_src, rh, response);
             if f.ok() {
                 self.indirect_put(false, mac_src as u64, &f, false);
             }
