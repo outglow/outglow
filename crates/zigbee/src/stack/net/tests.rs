@@ -1251,3 +1251,31 @@ fn a_conflict_about_the_same_address_waits_out_its_quiet_time_and_is_handled_aga
     s.address_conflict(0x1234);
     assert!(s.conflict_due.is_some(), "24.9 days later");
 }
+
+#[test]
+fn a_broadcast_remembered_long_ago_does_not_make_a_new_one_with_the_same_number_a_duplicate() {
+    let mut s = up();
+    let t = s.hal.now;
+    assert_eq!(s.seen_before(0x0000, 5, t, false), Some(false));
+    assert_eq!(s.seen_before(0x0000, 5, t + 1_000, false), Some(true), "a copy");
+    s.net_timers(t + 8_999);
+    assert!(s.broadcast_seen(0x0000, 5, t + 8_999), "still remembered");
+    assert!(s.seen.iter().any(|e| e.used), "the timers keep a transaction still remembered");
+    s.net_timers(t + 9_000);
+    assert!(s.seen.iter().all(|e| !e.used), "the timers forget an expired transaction");
+    let later = t + 9_000 + 0x8000_0000;
+    assert!(!s.broadcast_seen(0x0000, 5, later), "24.9 days later the transaction is long gone");
+    assert_eq!(s.seen_before(0x0000, 5, later, false), Some(false), "24.9 days later it is a new broadcast");
+}
+
+#[test]
+fn a_broadcast_table_filled_long_ago_takes_new_broadcasts() {
+    let mut s = up();
+    let t = s.hal.now;
+    for i in 0..crate::stack::BTT as u16 {
+        assert_eq!(s.seen_before(0x0100 + i, 1, t, false), Some(false));
+    }
+    s.net_timers(t + 9_000);
+    let later = t + 9_000 + 0x8000_0000;
+    assert_eq!(s.seen_before(0x7777, 1, later, false), Some(false), "24.9 days later the table is free");
+}

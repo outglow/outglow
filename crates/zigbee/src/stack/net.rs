@@ -1459,6 +1459,9 @@ impl<H: Hal> Stack<H> {
         if due(now, self.conflict.1) {
             self.conflict.0 = nwk::BROADCAST_ALL;
         }
+        if self.pan_report_at.is_some_and(|at| due(now, at)) {
+            self.pan_report_at = None;
+        }
         for i in 0..self.bcast.len() {
             if self.bcast[i].used && due(now, self.bcast[i].at) {
                 let e = self.bcast[i];
@@ -1497,6 +1500,11 @@ impl<H: Hal> Stack<H> {
         for d in self.discoveries.iter_mut() {
             if d.used && due(now, d.expires) {
                 d.used = false;
+            }
+        }
+        for e in self.seen.iter_mut() {
+            if due(now, e.expires) {
+                e.used = false;
             }
         }
     }

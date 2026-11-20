@@ -385,3 +385,36 @@ fn a_poll_for_another_address_or_an_orphan_notice_before_the_bulb_is_up_is_not_a
     mac_cmd(&mut s, Addr::Short(0xFFFF), 0xFFFF, Addr::Ext(0x77), &[mac::CMD_ORPHAN]);
     assert!(s.hal.sent.is_empty(), "an orphan notice while scanning");
 }
+
+#[test]
+fn a_pan_conflict_heard_long_after_the_last_report_is_reported_again() {
+    let mut s = stack();
+    s.state = crate::stack::State::Up;
+    s.nib.pan = 0x1A62;
+    s.nib.ext_pan = 9;
+    s.nib.short = 0x1234;
+    s.manager = 0x0000;
+    let beacon = |s: &mut Stack<Scripted>| {
+        let c = candidate(1, 200, true, 1).beacon;
+        let mut f = crate::util::Buf::new();
+        c.write(7, &mut f);
+        let (h, off) = crate::mac::Header::parse(f.as_slice()).unwrap();
+        s.on_beacon(&h, &f.as_slice()[off..], 200);
+    };
+    let t = s.hal.now;
+    beacon(&mut s);
+    assert_eq!(s.pan_report_at, Some(t + 60_000), "the first conflict is reported");
+    s.net_timers(t + 59_999);
+    s.hal.now = t + 59_999;
+    beacon(&mut s);
+    assert_eq!(s.pan_report_at, Some(t + 60_000), "quiet");
+    s.net_timers(t + 60_000);
+    assert_eq!(s.pan_report_at, None, "the quiet minute is over");
+    s.hal.now = t + 60_000;
+    beacon(&mut s);
+    assert_eq!(s.pan_report_at, Some(t + 120_000), "after the quiet minute");
+    s.net_timers(t + 120_000);
+    s.hal.now = t + 120_000 + 0x8000_0000;
+    beacon(&mut s);
+    assert_eq!(s.pan_report_at, Some(s.hal.now + 60_000), "24.9 days later the conflict is reported again");
+}

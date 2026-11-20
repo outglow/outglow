@@ -384,10 +384,10 @@ impl<H: Hal> Stack<H> {
 
     fn report_pan_conflict(&mut self) {
         let now = self.hal.now_ms();
-        if !due(now, self.pan_report_at) || self.manager == self.nib.short {
+        if self.pan_report_at.is_some() || self.manager == self.nib.short {
             return;
         }
-        self.pan_report_at = now.wrapping_add(PAN_REPORT_QUIET_MS);
+        self.pan_report_at = Some(now.wrapping_add(PAN_REPORT_QUIET_MS));
         let h = self.new_header(nwk::FRAME_CMD, self.manager, nwk::DEFAULT_RADIUS);
         let mut p = Buf::new();
         p.u8(nwk::CMD_NETWORK_REPORT);
