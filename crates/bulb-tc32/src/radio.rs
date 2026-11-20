@@ -681,7 +681,7 @@ fn transmit_frame(mpdu: &[u8], random: &mut dyn FnMut() -> u32) -> TxStatus {
         #[cfg(feature = "trace")]
         LAST_TX.update(|[a, b, t]| [a + 1, b + busy as u32, t]);
         if busy {
-            continue;
+            break;
         }
         if !wants_ack {
             return TxStatus::Ok;

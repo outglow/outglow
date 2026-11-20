@@ -205,13 +205,13 @@ fn an_unacknowledged_frame_is_sent_four_times() {
 }
 
 #[test]
-fn a_busy_channel_ends_in_channel_busy_without_sending() {
+fn a_busy_channel_ends_in_channel_busy_after_one_csma_ca_without_sending() {
     let _s = sim::session();
     reset_radio_state();
     sim::with(|c| c.poke8(RF_RSSI, 0x40));
     assert_eq!(transmit(&[0x41, 0x88, 0x01, 0x62, 0x1a, 0xff, 0xff, 0x00, 0x00], &mut || 7), TxStatus::ChannelBusy);
     assert_eq!(sim::with(|c| c.tx_kicks), 0);
-    assert_eq!(CCA_BUSY.get(), 4 * MAX_CCA_ATTEMPTS);
+    assert_eq!(CCA_BUSY.get(), MAX_CCA_ATTEMPTS);
     assert!(receiving());
 }
 
@@ -1372,11 +1372,11 @@ fn the_trace_of_a_transmission_counts_its_attempts_and_the_busy_clear_channel_ch
     sim::with(|c| c.poke8(RF_RSSI, 0x40));
     crate::trace::tests::rewind();
     assert_eq!(transmit(&mpdu, &mut || 0), TxStatus::ChannelBusy);
-    assert_eq!(LAST_TX.get()[..2], [4, 4 * (MAX_CCA_ATTEMPTS - 1) + 4]);
+    assert_eq!(LAST_TX.get()[..2], [1, MAX_CCA_ATTEMPTS]);
     let e = crate::trace::tests::entry(0);
     assert_eq!(e[1] & 0x00ff_ffff, 0x005c_0000 | (TxStatus::ChannelBusy as u32) << 8 | crate::trace::MAC as u32);
     assert_eq!(e[2], 0x1234_0000 | mpdu.len() as u32);
-    assert_eq!(e[3] & 0xffff, 4 | 20 << 8);
+    assert_eq!(e[3] & 0xffff, 1 | 5 << 8);
 }
 
 pub fn filter() -> (u16, u16, u64) {
