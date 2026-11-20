@@ -261,6 +261,20 @@ fn a_many_to_one_route_learned_through_another_hop_wants_a_route_record() {
     assert_eq!((s.routes[0].status, s.routes[0].many_to_one, s.routes[0].record_due), (super::ROUTE_ACTIVE, false, false));
 }
 
+#[test]
+fn a_route_record_goes_before_every_frame_to_a_concentrator_further_away_and_once_to_one_next_door() {
+    for (next, sent) in [(0x1000, [2, 4, 6]), (0x0000, [2, 3, 4])] {
+        let mut s = relaying();
+        route(&mut s, 0, 0x0000, next, true, 0);
+        s.routes[0].record_due = true;
+        let counts = [0; 3].map(|_| {
+            s.nwk_data(0x0000, &[1, 2, 3]);
+            s.hal.sent.len()
+        });
+        assert_eq!(counts, sent, "{next:04X}");
+    }
+}
+
 fn via_table(s: &mut Stack<Scripted>) {
     route(s, 0, 0x5000, 0x1000, true, 0);
     route(s, 1, 0x5001, 0x1000, false, 0);

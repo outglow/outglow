@@ -60,6 +60,24 @@ fn a_network_update_is_taken_only_when_newer_by_less_than_half_the_count() {
 }
 
 #[test]
+fn a_command_after_the_transactions_lifetime_is_ignored_before_any_timer_runs() {
+    for (now, taken) in [(8_999, true), (9_000, false)] {
+        let mut s = stack(Vec::new());
+        s.state = State::Up;
+        s.nib.tc_ext = NO_TRUST_CENTER;
+        s.nib.ext_pan = 0xDD;
+        s.nib.pan = 0x1A62;
+        s.nib.channel = 11;
+        s.hal.now = now;
+        in_transaction(&mut s);
+        let mut f = 0xDDu64.to_le_bytes().to_vec();
+        f.extend_from_slice(&[1, 20, 0x62, 0x1A]);
+        interpan(&mut s, NETWORK_UPDATE_REQUEST, &f);
+        assert_eq!(s.nib.channel == 20, taken, "{now}");
+    }
+}
+
+#[test]
 fn a_network_start_makes_up_an_odd_extended_pan_from_the_bulbs_and_needs_a_short_address_below_0xfff8() {
     let start = |short: u16| {
         let mut f = 0u64.to_le_bytes().to_vec();

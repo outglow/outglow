@@ -15,6 +15,16 @@ fn a_full_duplicate_table_gives_up_the_first_of_the_entries_that_end_soonest() {
 }
 
 #[test]
+fn a_frame_is_forgotten_when_it_expires_even_before_the_timers_run() {
+    let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
+    assert!(!s.aps_duplicate(0x0000, 7));
+    s.hal.now = 1_000 + 6_399;
+    assert!(s.aps_duplicate(0x0000, 7));
+    s.hal.now = 1_000 + 6_400;
+    assert!(!s.aps_duplicate(0x0000, 7));
+}
+
+#[test]
 fn a_frame_remembered_long_ago_does_not_make_a_new_one_with_the_same_counter_a_duplicate() {
     let mut s = Stack::new(Scripted { random: Vec::new(), now: 1_000, sent: Vec::new(), deaf: Vec::new(), busy: false, attempts: 0, bx: None }, IDENTITY);
     assert!(!s.aps_duplicate(0x0000, 7));
