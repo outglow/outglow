@@ -546,7 +546,6 @@ impl<H: Hal> Stack<H> {
         match (cluster, id) {
             (ON_OFF, 0x4003) => {
                 self.push_command(Command::SetPowerOnBehavior(PowerOnBehavior::from_u8(v as u8)));
-                self.light.power_on = v as u8;
             }
             (LEVEL, 0x000F) => {
                 self.level_options = v as u8;
@@ -570,12 +569,10 @@ impl<H: Hal> Stack<H> {
             }
             (LEVEL, 0x4000) => {
                 self.push_command(Command::SetStartupLevel(v as u8));
-                self.light.startup_level = v as u8;
             }
             (IDENTIFY, 0x0000) => self.identify(v),
             (COLOR, 0x4010) => {
                 self.push_command(Command::SetStartupColorTemperature(v));
-                self.light.startup_color_temp = v;
             }
             (SETTINGS, 0x0000) => {
                 self.ble_mode = BleMode::from_u8(v as u8).unwrap_or(BleMode::On);
@@ -1095,8 +1092,6 @@ impl<H: Hal> Stack<H> {
                 }
                 self.tables_dirty = true;
                 self.identify(0);
-                self.light.power_on = 0xFF;
-                self.light.startup_level = 0xFF;
                 self.light.startup_color_temp = 0xFFFF;
                 if self.identity.ble {
                     self.ble_mode = BleMode::On;

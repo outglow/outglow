@@ -631,8 +631,11 @@ pub struct Stack<H: Hal> {
     pub(crate) color_until: Option<u32>,
     pub(crate) level_from: u8,
     pub(crate) level_to: u8,
+    pub(crate) stopped_level: Option<u8>,
+    pub(crate) stopped_colour: (u16, u8, u8),
     pub(crate) level_since: u32,
     pub(crate) ct_from: u16,
+    pub(crate) sat_from: u8,
     pub(crate) color_since: u32,
     pub(crate) hue_move: Option<(u8, u32, i32)>,
     pub(crate) scenes_dirty: bool,
@@ -764,8 +767,11 @@ impl<H: Hal> Stack<H> {
             color_until: None,
             level_from: 0,
             level_to: 0,
+            stopped_level: None,
+            stopped_colour: (0, 0, 0),
             level_since: now,
             ct_from: 0,
+            sat_from: 0,
             color_since: now,
             hue_move: None,
             scenes_dirty: false,
@@ -905,7 +911,7 @@ impl<H: Hal> Stack<H> {
         self.light = l;
         let now = self.hal.now_ms();
         for c in self.cmds.into_iter().flatten() {
-            self.predict(c, self.level_now(now), self.ct_now(now), self.hue_now(now));
+            self.predict(c, self.hue_now(now), self.sat_now(now));
         }
         if was_on && !self.light.on {
             self.on_time = 0;
@@ -963,7 +969,7 @@ impl<H: Hal> Stack<H> {
 
     pub(crate) fn push_command(&mut self, c: Command) {
         let now = self.hal.now_ms();
-        let (level, ct, hue) = (self.level_now(now), self.ct_now(now), self.hue_now(now));
+        let (level, ct, hue, sat) = (self.level_now(now), self.ct_now(now), self.hue_now(now), self.sat_now(now));
         match c {
             Command::MoveToLevel { level: to, transition_ms } => {
                 self.level_from = if self.light.on { level } else { 0 };
@@ -971,16 +977,22 @@ impl<H: Hal> Stack<H> {
                 self.level_until = (transition_ms != 0).then(|| now.wrapping_add(transition_ms));
                 self.level_to = to;
             }
-            Command::MoveToColorTemperature { transition_ms, .. } | Command::MoveToHueSaturation { transition_ms, .. } => self.colour_fade(now, ct, transition_ms),
+            Command::MoveToColorTemperature { transition_ms, .. } | Command::MoveToHueSaturation { transition_ms, .. } => self.colour_fade(now, ct, sat, transition_ms),
             Command::MoveToXy { x: 0, y: 0, .. } => {}
-            Command::MoveToXy { transition_ms, .. } => self.colour_fade(now, ct, transition_ms),
+            Command::MoveToXy { transition_ms, .. } => self.colour_fade(now, ct, sat, transition_ms),
             Command::MoveHue { up, rate } => self.hue_move = Some((hue, now, if up { rate as i32 } else { -(rate as i32) })),
-            Command::StopTransition | Command::FadeOff { .. } => self.level_until = None,
-            Command::StopColorTransition => (self.color_until, self.hue_move) = (None, None),
-            Command::Off | Command::On => (self.level_until, self.color_until) = (None, None),
+            Command::StopTransition => {
+                self.level_until = None;
+                self.stopped_level = match (level, self.level_to) {
+                    (0, 0) => None,
+                    (reached, _) => Some(reached.max(1)),
+                };
+            }
+            Command::FadeOff { .. } | Command::Off | Command::On => self.level_until = None,
+            Command::StopColorTransition => (self.color_until, self.hue_move, self.stopped_colour) = (None, None, (ct, hue, sat)),
             _ => {}
         }
-        self.predict(c, level, ct, hue);
+        self.predict(c, hue, sat);
         if matches!(c, Command::SetPowerOnBehavior(_) | Command::SetStartupLevel(_) | Command::SetStartupColorTemperature(_) | Command::Identify { .. }) {
             let same = core::mem::discriminant(&c);
             if let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| core::mem::discriminant(&q) == same)) {
@@ -993,29 +1005,41 @@ impl<H: Hal> Stack<H> {
         }
     }
 
-    fn predict(&mut self, c: Command, level: u8, ct: u16, hue: u8) {
+    fn predict(&mut self, c: Command, hue: u8, sat: u8) {
         match c {
             Command::MoveToLevel { level: 0, transition_ms } => self.light.on &= transition_ms != 0,
             Command::MoveToLevel { level: to, .. } => (self.light.on, self.light.level) = (true, to),
-            Command::MoveToColorTemperature { mireds, .. } => (self.light.color_temp, self.light.hue, self.light.color_mode) = (mireds, hue, 2),
+            Command::MoveToColorTemperature { mireds, .. } => {
+                if self.light.color_mode == 1 {
+                    (self.light.x, self.light.y) = (0, 0);
+                }
+                (self.light.color_temp, self.light.hue, self.light.color_mode) = (mireds, hue, 2);
+            }
             Command::MoveToHueSaturation { hue, sat, .. } => (self.light.hue, self.light.sat, self.light.color_mode) = (hue, sat, 0),
             Command::MoveToXy { x: 0, y: 0, .. } => {}
             Command::MoveToXy { x, y, .. } => {
                 (self.light.hue, self.light.sat) = bulb_core::colour::xy_hue_sat(x, y);
                 (self.light.x, self.light.y, self.light.color_mode) = (x, y, 1);
             }
-            Command::MoveHue { .. } => self.light.color_mode = 0,
+            Command::MoveHue { .. } => (self.light.color_mode, self.light.sat, self.sat_from) = (0, sat, sat),
             Command::SetLevelWhileOff(to) => self.light.level = to,
-            Command::StopTransition => self.light.level = level,
-            Command::StopColorTransition => (self.light.color_temp, self.light.hue) = (ct, hue),
+            Command::StopTransition => match self.stopped_level {
+                None => self.light.on = false,
+                Some(reached) => self.light.level = reached,
+            },
+            Command::StopColorTransition => (self.light.color_temp, self.light.hue, self.light.sat) = self.stopped_colour,
             Command::FadeOff { .. } | Command::Off => self.light.on = false,
             Command::On => self.light.on = true,
+            Command::SetPowerOnBehavior(b) => self.light.power_on = b.to_u8(),
+            Command::SetStartupLevel(v) => self.light.startup_level = v,
+            Command::SetStartupColorTemperature(v) => self.light.startup_color_temp = v,
             _ => {}
         }
     }
 
-    fn colour_fade(&mut self, now: u32, ct: u16, transition_ms: u32) {
+    fn colour_fade(&mut self, now: u32, ct: u16, sat: u8, transition_ms: u32) {
         self.ct_from = ct;
+        self.sat_from = sat;
         self.color_since = now;
         self.color_until = Some(now.wrapping_add(transition_ms));
         self.hue_move = None;
@@ -1030,6 +1054,10 @@ impl<H: Hal> Stack<H> {
 
     pub(crate) fn ct_now(&self, now: u32) -> u16 {
         fade(self.ct_from, self.light.color_temp, self.color_since, self.color_until, now)
+    }
+
+    pub(crate) fn sat_now(&self, now: u32) -> u8 {
+        fade(self.sat_from as u16, self.light.sat as u16, self.color_since, self.color_until, now) as u8
     }
 
     pub(crate) fn hue_now(&self, now: u32) -> u8 {

@@ -334,14 +334,15 @@ impl Light {
         if !self.on || !self.is_fading() {
             return;
         }
-        let reached = self.current_level();
-        if reached == 0 {
-            self.on = false;
-            self.cur_centi = 0;
-        } else {
-            self.on = true;
-            self.level = reached;
-            self.cur_centi = reached as i32 * CENTI;
+        match (self.current_level(), self.target_centi) {
+            (0, 0) => {
+                self.on = false;
+                self.cur_centi = 0;
+            }
+            (reached, _) => {
+                self.level = reached.max(1);
+                self.cur_centi = self.level as i32 * CENTI;
+            }
         }
         self.target_centi = self.cur_centi;
         self.render(pwm);
@@ -911,6 +912,19 @@ mod tests {
         l.stop(&mut p);
         assert!(!l.is_on() && !l.is_fading());
         assert_eq!(p.0, 0);
+    }
+
+    #[test]
+    fn stopping_a_fade_from_off_before_it_shows_1_keeps_the_light_on_at_1() {
+        let mut p = TestPwm(0);
+        let mut l = Light::default();
+        l.turn_on(&mut p, 0, 200, 0);
+        l.turn_off(&mut p, 0, 0);
+        l.turn_on(&mut p, 10, 254, 3000);
+        l.stop(&mut p);
+        assert!(l.is_on() && !l.is_fading());
+        assert_eq!((l.level(), l.current_level()), (1, 1));
+        assert_ne!(p.0, 0);
     }
 
     #[test]

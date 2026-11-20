@@ -15,6 +15,7 @@ mod hal_defaults;
 mod joining;
 mod keys;
 mod light_bursts;
+mod light_model;
 mod mac_rx;
 mod neighbors;
 mod network;
