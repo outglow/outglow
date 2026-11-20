@@ -3,6 +3,19 @@ pub const HEADER_VERSION: u16 = 0x0100;
 pub const STACK_PRO: u16 = 0x0002;
 pub const TAG_UPGRADE_IMAGE: u16 = 0x0000;
 pub const BASE_HEADER_LEN: usize = 56;
+pub const SUB_ELEMENT_HEADER_LEN: usize = 6;
+pub const IMAGE_LIMIT: usize = (crate::telink::STAGING_SIZE - BASE_HEADER_LEN - SUB_ELEMENT_HEADER_LEN - 4) / 16 * 16;
+
+pub fn fits_staging(file: &[u8]) -> Result<(), String> {
+    match file.len() <= crate::telink::STAGING_SIZE {
+        true => Ok(()),
+        false => Err(format!(
+            "the OTA file is {} B and a bulb takes at most {} B (the firmware at most {IMAGE_LIMIT} B before the padding and the CRC)",
+            file.len(),
+            crate::telink::STAGING_SIZE
+        )),
+    }
+}
 
 const FC_SECURITY_CREDENTIAL: u16 = 0x01;
 const FC_DEVICE_SPECIFIC: u16 = 0x02;
@@ -159,6 +172,25 @@ impl File {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn packed(raw_len: usize) -> Vec<u8> {
+        let mut raw = vec![0x5Au8; raw_len];
+        raw[8..12].copy_from_slice(b"KNLT");
+        File::with_image(Header::new(0x1141, 0x0390, 0x0100_0000, "outglow ESMLFzm_w6_Dimm-4.63"), crate::telink::finalize(&raw)).pack()
+    }
+
+    #[test]
+    fn the_largest_image_the_linker_allows_fits_the_staging_area_as_an_ota_file() {
+        assert_eq!(IMAGE_LIMIT, 0x64000 - 80);
+        assert_eq!(packed(IMAGE_LIMIT).len(), 0x64000 - 14);
+        assert_eq!(fits_staging(&packed(IMAGE_LIMIT)), Ok(()));
+        assert_eq!(
+            fits_staging(&packed(IMAGE_LIMIT + 1)),
+            Err(format!("the OTA file is {} B and a bulb takes at most 409600 B (the firmware at most 409520 B before the padding and the CRC)", 0x64000 + 2))
+        );
+        assert_eq!(fits_staging(&vec![0; 0x64000]), Ok(()));
+        assert!(fits_staging(&vec![0; 0x64001]).is_err());
+    }
 
     #[test]
     fn round_trip_and_layout() {

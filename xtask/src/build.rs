@@ -330,7 +330,8 @@ fn build(c: &mut Ctx, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
 
     println!("== link");
     let elf_path = out.join("bulb-tc32.elf");
-    c.run(Command::new(llvm.join("ld.lld")).arg("-T").arg(here.join("boot/link.ld")).arg(format!("--defsym=FW_OFFSET={:#x}", known.fw_offset)).arg("--gc-sections")
+    c.run(Command::new(llvm.join("ld.lld")).arg("-T").arg(here.join("boot/link.ld")).arg(format!("--defsym=FW_OFFSET={:#x}", known.fw_offset))
+        .arg(format!("--defsym=IMAGE_LIMIT={:#x}", ota::IMAGE_LIMIT)).arg("--gc-sections")
         .arg(format!("-Map={}", out.join("bulb-tc32.map").display()))
         .arg(out.join("start.o")).arg(out.join("rust.o")).arg("-o").arg(&elf_path))?;
     let (image, segments) = elf::image_of(&std::fs::read(&elf_path)?).map_err(|e| anyhow!("{}: {e}", elf_path.display()))?;
@@ -344,6 +345,7 @@ fn build(c: &mut Ctx, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
     std::fs::write(out.join("bulb-tc32-ota.bin"), &staged)?;
     let file = ota::File::with_image(ota::Header::new(MANUFACTURER, known.image_type, file_version, &format!("outglow {board_name}")), staged.clone());
     let packed = file.pack();
+    ota::fits_staging(&packed).map_err(|e| anyhow!("{}: {e}", out.join("bulb-tc32.ota").display()))?;
     std::fs::write(out.join("bulb-tc32.ota"), &packed)?;
     println!("OK: {} ({} B), firmware {} B, mfg={MANUFACTURER:#06x} imageType={:#06x} fileVersion={file_version:#010x}",
              out.join("bulb-tc32.ota").display(), packed.len(), staged.len(), known.image_type);

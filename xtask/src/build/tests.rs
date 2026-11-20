@@ -220,7 +220,7 @@ fn a_build_runs_the_toolchain_in_order() {
             ),
             format!("ROOT/llvm/clang {flags} -DIMAGE_TYPE=0x0390 -c ROOT/crates/bulb-tc32/boot/start.S -o {out}/start.o"),
             format!(
-                "ROOT/llvm/ld.lld -T ROOT/crates/bulb-tc32/boot/link.ld --defsym=FW_OFFSET=0x6a000 --gc-sections -Map={out}/bulb-tc32.map \
+                "ROOT/llvm/ld.lld -T ROOT/crates/bulb-tc32/boot/link.ld --defsym=FW_OFFSET=0x6a000 --defsym=IMAGE_LIMIT=0x63fb0 --gc-sections -Map={out}/bulb-tc32.map \
                  {out}/start.o {out}/rust.o -o {out}/bulb-tc32.elf"
             ),
             format!("ROOT/llvm/llvm-size {out}/bulb-tc32.elf"),
@@ -499,4 +499,15 @@ fn the_real_context() {
     })
     .unwrap();
     assert_eq!(root, crate::root());
+}
+
+#[test]
+fn the_bulb_and_the_build_agree_on_the_staging_area() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let board = std::fs::read_to_string(root.join("crates/bulb-tc32/src/board.rs")).unwrap();
+    let line = board.lines().find(|l| l.starts_with("pub const AWOX_1M: Flash")).unwrap();
+    let field = line.split("staging: 0x").nth(1).unwrap().split(',').next().unwrap().replace('_', "");
+    assert_eq!(usize::from_str_radix(&field, 16).unwrap(), telink::STAGING_SIZE);
+    let link = std::fs::read_to_string(root.join("crates/bulb-tc32/boot/link.ld")).unwrap();
+    assert!(link.contains("ASSERT(_bin_size_ <= IMAGE_LIMIT,"));
 }

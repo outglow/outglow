@@ -84,6 +84,16 @@ For each `bulb-tc32.ota` (one per board, `cargo xtask build --all`) it:
 Entries of other versions stay, so the previous release remains available for
 a downgrade (Zigbee2MQTT's downgrade topics).
 
+Pre-releases (a tag with a suffix, `v1.1.0-rc.1`) are not merged into the published
+index: their file version is that of the final release, so Zigbee2MQTT would offer
+one as a normal update and a bulb on it would never take the final release (the
+same version). Install a pre-release by hand.
+
+`cargo xtask build` fails when a `.ota` file is larger than the bulb's 400 KB
+staging area (`0x64000` bytes, the whole file with its headers): the bulb refuses
+such an update. The linker already stops a firmware larger than
+`outglow_image::ota::IMAGE_LIMIT`.
+
 `modelId` makes Zigbee2MQTT match only devices that report that model. Bulbs on
 the original firmware never match. They have no Zigbee OTA client anyway: the
 first install is over Bluetooth.

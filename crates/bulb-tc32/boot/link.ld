@@ -60,8 +60,11 @@ SECTIONS
     _bin_size_ = _dstored_bin_ + (_end_data_ - _start_data_);
     /* The image must fit the OTA staging area (400 KB): past it, from
      * FW_OFFSET + 0x64000, the flash holds data (the power-on counter, the
-     * settings sectors; src/board.rs). */
-    ASSERT(_bin_size_ <= 0x64000, "the image is larger than the 400 KB OTA staging area")
+     * settings sectors; src/board.rs). A bulb takes an update only when the
+     * whole .ota file (its header, the sub-element header, the image padded
+     * to 16 bytes and its CRC) fits, so the limit is IMAGE_LIMIT, given by
+     * `cargo xtask build` with --defsym (outglow_image::ota::IMAGE_LIMIT). */
+    ASSERT(_bin_size_ <= IMAGE_LIMIT, "the image is too large for an OTA file that fits the 400 KB OTA staging area")
 
     /* Stacks: the interrupt stack is the top 1 KB; the main (SVC) stack
      * grows down from below it towards .bss. */
