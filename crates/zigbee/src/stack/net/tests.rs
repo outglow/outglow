@@ -1464,3 +1464,19 @@ fn a_router_child_whose_link_fails_is_no_longer_a_child_and_an_end_device_child_
         assert_eq!(s.children[0].used, kept, "{capability:02X}");
     }
 }
+
+#[test]
+fn an_unsecured_rejoin_request_not_sent_straight_to_the_bulb_is_not_answered() {
+    for (mac_src, unicast, answered) in [(0x7001, true, true), (0x7001, false, false), (0x4444, true, false)] {
+        let mut s = up();
+        s.nib.tc_ext = 0x00124B00_0000_0001;
+        let mut h = nwk::Header::new(nwk::FRAME_CMD, 0x0042, 0x7001, 1, 9);
+        h.src_ext = Some(0x00124B00_0000_7777);
+        h.security = false;
+        let mut f = crate::util::Buf::new();
+        h.write(&mut f);
+        f.bytes(&[nwk::CMD_REJOIN_REQUEST, 0x8E]);
+        s.on_nwk(mac_src, unicast, f.as_slice(), 200);
+        assert_eq!((!s.hal.sent.is_empty(), s.child_by_ext(0x00124B00_0000_7777).is_some()), (answered, answered), "{mac_src:04X} {unicast}");
+    }
+}
