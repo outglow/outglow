@@ -190,6 +190,8 @@ impl Line {
         self.cal_s = 100;
         self.cal_n = 0;
         self.cal_sum = 0;
+        self.hour_cal_s = 100;
+        self.day_cal_s = 0;
         self.set_s(s, 0);
         self.restart();
     }

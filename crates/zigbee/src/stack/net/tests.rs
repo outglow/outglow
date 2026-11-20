@@ -1232,3 +1232,22 @@ fn a_full_table_keeps_the_next_hop_of_a_route_even_when_it_is_the_oldest() {
     all.neighbor_heard(0x2222, 0x00124B00_0000_2222, 200, 7, 0);
     assert_eq!(all.neighbors[7].short, 0x2222, "the oldest when every one carries a route");
 }
+
+#[test]
+fn a_conflict_about_the_same_address_waits_out_its_quiet_time_and_is_handled_again_however_long_after() {
+    let mut s = up();
+    let t = s.hal.now;
+    s.address_conflict(0x1234);
+    assert!(s.conflict_due.is_some());
+    s.net_timers(t + 100);
+    assert!(s.conflict_due.is_none(), "reported");
+    s.hal.now = t + 4_999;
+    s.net_timers(s.hal.now);
+    s.address_conflict(0x1234);
+    assert!(s.conflict_due.is_none(), "still quiet");
+    s.hal.now = t + 5_000;
+    s.net_timers(s.hal.now);
+    s.hal.now = t + 5_000 + 0x8000_0000;
+    s.address_conflict(0x1234);
+    assert!(s.conflict_due.is_some(), "24.9 days later");
+}

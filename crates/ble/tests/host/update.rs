@@ -250,7 +250,7 @@ fn an_image_larger_than_the_staging_area_is_refused() {
 }
 
 #[test]
-fn a_block_while_erasing_finishes_the_erase_first() {
+fn a_block_while_erasing_stops_the_erase_and_each_block_erases_only_its_own_sector() {
     let mut rig = Rig::new(DIMMABLE);
     rig.connect();
     let image = make_image(20000, 3);
@@ -259,15 +259,16 @@ fn a_block_while_erasing_finishes_the_erase_first() {
     rig.central().send_att(&[&[0x52, OTA as u8, 0][..], &erase].concat());
     rig.central().send_att(&[&[0x52, OTA as u8, 0][..], &ota_packet(0, &image[..16])].concat());
     rig.run(100);
-    assert_eq!(rig.world.borrow().erased_sectors, [0, 0x1000, 0x2000, 0x3000, 0x4000, 0x5000], "all six before the block was written");
+    assert_eq!(rig.world.borrow().erased_sectors, [0], "only the sector the block went to");
     assert_eq!(status(&mut rig), (3, 0, 1));
     rig.run(500);
-    assert_eq!(rig.world.borrow().erased_sectors.len(), 6, "and no more afterwards");
+    assert_eq!(rig.world.borrow().erased_sectors, [0], "the erase does not go on afterwards");
     for (i, block) in image.chunks(16).enumerate().skip(1) {
         let mut b = block.to_vec();
         b.resize(16, 0xff);
         rig.write(OTA, &ota_packet(i as u16, &b));
     }
+    assert_eq!(rig.world.borrow().erased_sectors, [0, 0x1000, 0x2000, 0x3000, 0x4000], "one sector at a time, as the blocks reach it");
     let blocks = image.len().div_ceil(16) as u16;
     rig.write(OTA, &ota_packet(blocks, &[]));
     rig.run(1200);

@@ -441,3 +441,15 @@ fn a_new_child_rejoining_takes_away_only_the_frames_kept_for_its_short_address()
     rejoin(&mut s, 0x5000, 0x8E, true);
     assert_eq!([s.indirect[0].used, s.indirect[1].used, s.indirect[2].used], [false, true, true]);
 }
+
+#[test]
+fn an_expired_permit_join_window_is_closed_by_the_timers_and_does_not_reopen_when_the_clock_wraps() {
+    let mut s = stack();
+    s.state = crate::stack::State::Up;
+    s.permit_until = Some(1_000 + 180_000);
+    s.parent_timers(1_000 + 179_999);
+    assert!(s.permit_until.is_some());
+    s.parent_timers(1_000 + 180_000);
+    s.hal.now = 1_000 + 180_000 + 0x8000_0000;
+    assert!(!s.permit_open());
+}

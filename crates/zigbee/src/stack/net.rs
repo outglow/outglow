@@ -1456,6 +1456,9 @@ impl<H: Hal> Stack<H> {
         if self.conflict_due.is_some_and(|at| due(now, at)) {
             self.address_conflict_report();
         }
+        if due(now, self.conflict.1) {
+            self.conflict.0 = nwk::BROADCAST_ALL;
+        }
         for i in 0..self.bcast.len() {
             if self.bcast[i].used && due(now, self.bcast[i].at) {
                 let e = self.bcast[i];

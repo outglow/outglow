@@ -803,3 +803,38 @@ fn a_download_whose_staged_part_is_gone_after_a_power_cut_starts_again_from_the_
     assert_eq!(staged(&net, n, image.len()), image);
     assert!(net.coord.ota_blocks - before >= whole, "from the beginning");
 }
+
+fn resume_with_progress_record(seed: u8, edit: impl FnOnce(&mut Vec<u8>)) {
+    let mut net = Net::new();
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    let image = make_image(9500, seed);
+    offer(&mut net, &image, NEW);
+    net.coord.ota_notify(short);
+    net.run_until(60_000, "past a checkpoint", |net| net.coord.ota_blocks >= 6000 / 48);
+    net.power_cycle(n);
+    let id = net.nodes[n].id;
+    edit(net.air.borrow_mut().ports[id].nv.get_mut(&7).expect("a progress record"));
+    net.run(2_000);
+    net.coord.ota_notify(short);
+    net.run_until(120_000, "upgrade end", |net| net.coord.ota_end.is_some());
+    net.run(2_000);
+    assert_eq!(net.coord.ota_end, Some(0x00));
+    assert_eq!(staged(&net, n, image.len()), image);
+}
+
+#[test]
+fn a_progress_record_whose_crc_tail_is_longer_than_four_bytes_is_dropped_and_the_download_starts_again() {
+    resume_with_progress_record(41, |rec| {
+        assert_eq!(rec[43], 4);
+        rec[43] = 5;
+    });
+}
+
+#[test]
+fn a_progress_record_whose_partial_header_is_longer_than_its_buffer_is_dropped_and_the_download_starts_again() {
+    resume_with_progress_record(42, |rec| {
+        rec[17..21].copy_from_slice(&0u32.to_le_bytes());
+        rec[30] = 8;
+    });
+}

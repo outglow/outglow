@@ -380,11 +380,11 @@ impl<H: Hal> Stack<H> {
             o.seen_file_header = true;
             o.marker_ok = flags & 4 != 0;
             o.head.copy_from_slice(r.take(8)?);
-            o.head_len = r.u8()?;
+            o.head_len = r.u8().filter(|n| usize::from(*n) < o.head.len())?;
             o.image_len = r.u32()?;
             o.crc = r.u32()?;
             o.tail.copy_from_slice(r.take(4)?);
-            o.tail_len = r.u8()?;
+            o.tail_len = r.u8().filter(|n| usize::from(*n) <= o.tail.len())?;
             o.declared = r.u32()?;
             Some(())
         })();

@@ -711,6 +711,9 @@ impl<H: Hal> Stack<H> {
     }
 
     pub(crate) fn parent_timers(&mut self, now: u32) {
+        if self.permit_until.is_some_and(|until| due(now, until)) {
+            self.permit_until = None;
+        }
         for i in 0..CHILDREN {
             let c = self.children[i];
             if !c.used {

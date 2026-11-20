@@ -186,8 +186,6 @@ impl<H: Hal> Ble<H> {
                 self.ota.state = State::Ready;
             }
             State::Erasing => {
-                let goal = self.ota.erase_goal;
-                self.ota_erase_to(goal);
                 self.ota.state = State::Ready;
                 self.ota.timer = None;
             }
@@ -207,7 +205,7 @@ impl<H: Hal> Ble<H> {
         }
         let offset = index as u32 * self.ota.block as u32;
         let end = offset + block.len() as u32;
-        if index != self.ota.next || block.len() > self.ota.block as usize || end > self.hal.ota_capacity() {
+        if index != self.ota.next || index == u16::MAX || block.len() > self.ota.block as usize || end > self.hal.ota_capacity() {
             self.ota.fail();
             return;
         }
@@ -228,3 +226,6 @@ impl<H: Hal> Ble<H> {
         self.ota.received += 1;
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -132,3 +132,34 @@ fn without_it_the_first_day_only_sets_the_anchor_noise() {
     assert_eq!(room.core.line[0].s, START_S);
     assert!(room.core.line[0].anchor_noise != 0);
 }
+
+fn evicted_into_a_used_line(with_earlier_source: bool) -> u8 {
+    const HOUR: u32 = 3_600_000;
+    let mut c = sense::Core::new(0, START_S, 5);
+    c.auto_cal = true;
+    c.start(0);
+    let mut k: u32 = 0;
+    let mut t: u32 = 0;
+    while t <= 24 * HOUR + 1000 {
+        for f in 3..12u16 {
+            c.frame(t, f, -60, Some(0));
+        }
+        if with_earlier_source && t < HOUR + 30_000 {
+            c.frame(t, 1, -60, Some(0));
+        }
+        if t >= HOUR + 120_000 {
+            let rssi = if k % 16 == 0 { -54 } else { -60 };
+            c.frame(t, 2, rssi, Some(0));
+            k += 1;
+        }
+        c.tick(t);
+        t += 100;
+    }
+    c.line.iter().find(|l| l.src == 2).expect("the new source has a line").s
+}
+
+#[test]
+fn a_line_given_to_a_new_source_mid_day_calibrates_from_that_source_only() {
+    let alone = evicted_into_a_used_line(false);
+    assert_eq!(evicted_into_a_used_line(true), alone);
+}
