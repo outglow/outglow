@@ -738,7 +738,7 @@ mod home;
 #[ignore = "a comparison to read, not a check"]
 fn link_eval_home() {
     use home::{Algo, Floor};
-    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured };
+    let firmware = Algo { shift: 7, margin: 0.06, expire: 0, floor: Floor::Measured, explore_s: 0 };
     let mut algos = std::vec![
         Algo { floor: Floor::Oracle, ..firmware },
         Algo { floor: Floor::LqiOnly, ..firmware },
@@ -748,14 +748,24 @@ fn link_eval_home() {
     for shift in [4, 5, 6, 7] {
         for margin in [0.06, 0.12, 0.18] {
             for expire in [0u8, 120, 240] {
-                algos.push(Algo { shift, margin, expire, floor: Floor::Measured });
+                algos.push(Algo { shift, margin, expire, ..firmware });
             }
+        }
+    }
+    for shift in [4, 7] {
+        for explore_s in [15, 30, 60, 300] {
+            algos.push(Algo { shift, margin: if shift == 4 { 0.12 } else { 0.06 }, explore_s, ..firmware });
         }
     }
     let seeds = std::env::var("HOME_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(6);
     let hours = std::env::var("HOME_HOURS").ok().and_then(|s| s.parse().ok()).unwrap_or(6.0);
-    println!("\nthe owner's home: links replayed from the black boxes of nine bulbs, {seeds} runs of {hours} h each");
-    for (a, o) in home::table(&algos, seeds, hours) {
-        o.row(&a.name());
+    for fades in [false, true] {
+        println!(
+            "\nthe owner's home: links replayed from the black boxes of nine bulbs, {seeds} runs of {hours} h each{}",
+            if fades { ", and every link fades to half its delivery for 6-30 min about every 2 h" } else { "" }
+        );
+        for (a, o) in home::table(&algos, seeds, hours, fades) {
+            o.row(&a.name());
+        }
     }
 }

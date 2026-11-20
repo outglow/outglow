@@ -13,6 +13,8 @@ const MTORR_MS: u64 = 60_000;
 const WINDOW_MS: u64 = 120_000;
 const BLOCK: usize = 16;
 const MAX_HOPS: usize = 5;
+const FADE_PER_WINDOW: f64 = 1.0 / 60.0;
+const FADE_DEPTH: f64 = 0.5;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Floor {
@@ -28,11 +30,16 @@ pub(super) struct Algo {
     pub margin: f64,
     pub expire: u8,
     pub floor: Floor,
+    pub explore_s: u32,
 }
 
 impl Algo {
     pub(super) fn name(&self) -> String {
-        match self.floor {
+        let explore = match self.explore_s {
+            0 => String::new(),
+            s => format!(" direct every {s:>3} s"),
+        };
+        let base: String = match self.floor {
             Floor::LqiOnly => "LQI and link status only".into(),
             Floor::Oracle => "oracle (true mean p)".into(),
             f => format!(
@@ -42,7 +49,8 @@ impl Algo {
                 if self.expire == 0 { "kept       ".into() } else { format!("forget {:>3}min", self.expire as u32 * LINK_STATUS_MS / 60_000) },
                 if f == Floor::Lqi { "max LQI" } else { "       " }
             ),
-        }
+        };
+        base + &explore
     }
 }
 
@@ -143,17 +151,19 @@ pub(super) struct Outcome {
     pub hours: f64,
     pub stuck: u64,
     pub mtorrs: u64,
+    pub direct: u64,
 }
 
 impl Outcome {
     pub(super) fn row(&self, name: &str) {
         println!(
-            "{name:40} lost {:>6.3}%  attempts/frame {:>5.3}  hops {:>4.2}  route changes/h {:>5.1}  off the oracle {:>5.1}%",
+            "{name:58} lost {:>6.3}%  attempts/frame {:>5.3}  hops {:>4.2}  route changes/h {:>5.1}  off the oracle {:>5.1}%  direct {:>4.2}%",
             100.0 * self.lost as f64 / self.frames as f64,
             self.attempts as f64 / (self.frames - self.lost).max(1) as f64,
             self.hops as f64 / self.frames as f64,
             self.changes as f64 / self.hours,
             100.0 * self.stuck as f64 / self.mtorrs.max(1) as f64,
+            100.0 * self.direct as f64 / self.frames.max(1) as f64,
         );
     }
     pub(super) fn add(&mut self, o: &Outcome) {
@@ -165,6 +175,7 @@ impl Outcome {
         self.hours += o.hours;
         self.stuck += o.stuck;
         self.mtorrs += o.mtorrs;
+        self.direct += o.direct;
     }
 }
 
@@ -223,6 +234,19 @@ impl Home {
         Home { usable, channel, est, windows }
     }
 
+    fn hop(&mut self, rng: &mut Rng, a: usize, b: usize, mult: f64, o: &mut Outcome) -> bool {
+        let ch = self.channel[a][b].as_mut().unwrap();
+        let mut n = 0u8;
+        let mut ok = false;
+        while n < MAC_ATTEMPTS && !ok {
+            n += 1;
+            ok = ch.attempt(rng, mult);
+        }
+        o.attempts += n as u64;
+        self.est[a][b].as_mut().unwrap().sample(n, ok);
+        ok
+    }
+
     fn routes(&self, oracle: bool) -> [Option<usize>; NODES] {
         let mut pc = [(u32::MAX, 0usize); NODES];
         let mut next = [None; NODES];
@@ -247,7 +271,7 @@ impl Home {
     }
 }
 
-pub(super) fn simulate(algo: Algo, seed: u64, hours: f64) -> Outcome {
+pub(super) fn simulate(algo: Algo, seed: u64, hours: f64, fades: bool) -> Outcome {
     let mut rng = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
     let mut h = Home::new(algo);
     let mut o = Outcome { hours, ..Outcome::default() };
@@ -258,6 +282,9 @@ pub(super) fn simulate(algo: Algo, seed: u64, hours: f64) -> Outcome {
         *w = (rng.f() * h.windows[n].0.len() as f64) as usize + n;
     }
     let mut mult = [1.0f64; NODES];
+    let mut fade = [[0u32; NODES]; NODES];
+    let mut explored = [0u64; NODES];
+    let explore_ms = algo.explore_s as u64 * 1000;
     let mut t = 0u64;
     while t < end {
         if t % WINDOW_MS == 0 {
@@ -266,6 +293,16 @@ pub(super) fn simulate(algo: Algo, seed: u64, hours: f64) -> Outcome {
                 let r = w[window_at[n] % w.len()] as f64;
                 window_at[n] += 1;
                 mult[n] = ((1000.0 + *m as f64) / (1000.0 + r)).min(1.0);
+            }
+            for a in 0..NODES {
+                for b in a + 1..NODES {
+                    if fade[a][b] > 0 {
+                        fade[a][b] -= 1;
+                    } else if fades && h.usable[a][b] && rng.f() < FADE_PER_WINDOW {
+                        fade[a][b] = 3 + (rng.f() * 12.0) as u32;
+                    }
+                    fade[b][a] = fade[a][b];
+                }
             }
         }
         if t % MTORR_MS == 0 {
@@ -292,22 +329,20 @@ pub(super) fn simulate(algo: Algo, seed: u64, hours: f64) -> Outcome {
                 continue;
             }
             o.frames += 1;
+            let depth = |a: usize, b: usize| if fade[a][b] > 0 { FADE_DEPTH } else { 1.0 };
             let mut at = src;
             let mut hops = 0;
             let mut delivered = false;
-            while hops < MAX_HOPS {
+            if explore_ms > 0 && route[src] != Some(0) && h.usable[src][0] && t >= explored[src] + explore_ms {
+                explored[src] = t;
+                o.direct += 1;
+                hops += 1;
+                delivered = h.hop(&mut rng, src, 0, mult[src] * depth(src, 0), &mut o);
+            }
+            while hops < MAX_HOPS && !delivered {
                 let Some(b) = route[at] else { break };
                 hops += 1;
-                let ch = h.channel[at][b].as_mut().unwrap();
-                let mut n = 0u8;
-                let mut ok = false;
-                while n < MAC_ATTEMPTS && !ok {
-                    n += 1;
-                    ok = ch.attempt(&mut rng, mult[at]);
-                }
-                o.attempts += n as u64;
-                h.est[at][b].as_mut().unwrap().sample(n, ok);
-                if !ok {
+                if !h.hop(&mut rng, at, b, mult[at] * depth(at, b), &mut o) {
                     break;
                 }
                 if b == 0 {
@@ -324,14 +359,14 @@ pub(super) fn simulate(algo: Algo, seed: u64, hours: f64) -> Outcome {
     o
 }
 
-pub(super) fn table(algos: &[Algo], seeds: u64, hours: f64) -> Vec<(Algo, Outcome)> {
+pub(super) fn table(algos: &[Algo], seeds: u64, hours: f64, fades: bool) -> Vec<(Algo, Outcome)> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let jobs: Vec<(usize, u64)> = (0..algos.len()).flat_map(|i| (1..=seeds).map(move |s| (i, s))).collect();
     let chunk = jobs.len().div_ceil(threads);
     let parts: Vec<Vec<(usize, Outcome)>> = std::thread::scope(|sc| {
         let hs: Vec<_> = jobs
             .chunks(chunk)
-            .map(|part| sc.spawn(move || part.iter().map(|&(i, s)| (i, simulate(algos[i], s, hours))).collect::<Vec<_>>()))
+            .map(|part| sc.spawn(move || part.iter().map(|&(i, s)| (i, simulate(algos[i], s, hours, fades))).collect::<Vec<_>>()))
             .collect();
         hs.into_iter().map(|h| h.join().unwrap()).collect()
     });
