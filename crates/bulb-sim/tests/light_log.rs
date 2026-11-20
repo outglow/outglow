@@ -69,19 +69,52 @@ fn a_header_needs_its_start_and_its_end() {
     }
 }
 
+fn program(addr: usize, data: &[u8]) -> FlashOp {
+    FlashOp::Program { addr, data: data.to_vec() }
+}
+
 #[test]
-fn erasing_clears_the_record_and_skips_a_blank_sector() {
+fn erasing_starts_an_empty_newer_sector_before_it_spoils_and_erases_the_old_one() {
     let f = medium();
     open(&f).store(&rec(10));
     f.clear_ops();
     let mut log = open(&f);
     log.erase();
-    assert_eq!(f.erases(), 1);
-    assert!(matches!(f.ops().as_slice(), [FlashOp::Erase { addr }] if *addr == A));
+    assert_eq!(f.ops(), [program(B, &slot(&header(1, [0, 0, 0x5A]))), program(A, &[0]), FlashOp::Erase { addr: A }]);
     assert_eq!(log.current(), None);
     assert_eq!(open(&f).current(), None);
+    f.clear_ops();
     log.store(&rec(30));
+    assert_eq!(f.ops(), [program(B + SLOT, &slot(&rec(30)))]);
     assert_eq!(open(&f).current(), Some(rec(30)));
+    f.clear_ops();
+    let mut log = open(&f);
+    log.erase();
+    assert_eq!(f.ops(), [program(A, &slot(&header(2, [0, 0, 0x5A]))), program(B, &[0]), FlashOp::Erase { addr: B }]);
+    assert_eq!(open(&f).current(), None);
+}
+
+#[test]
+fn erasing_a_blank_log_only_writes_a_header() {
+    let f = medium();
+    let mut log = open(&f);
+    log.erase();
+    assert_eq!(f.ops(), [program(B, &slot(&header(0, [0, 0, 0x5A])))]);
+    assert_eq!(open(&f).current(), None);
+    f.clear_ops();
+    log.store(&rec(40));
+    assert_eq!(f.ops(), [program(B + SLOT, &slot(&rec(40)))]);
+}
+
+#[test]
+fn erasing_a_legacy_log_starts_the_second_sector_and_erases_the_first() {
+    let f = medium();
+    f.poke(A + 3 * BLOCK_LEN, &rec(50));
+    assert_eq!(open(&f).current(), Some(rec(50)));
+    let mut log = open(&f);
+    log.erase();
+    assert_eq!(f.ops(), [program(B, &slot(&header(0, [0, 0, 0x5A]))), program(A, &[0]), FlashOp::Erase { addr: A }]);
+    assert_eq!(open(&f).current(), None);
 }
 
 #[test]

@@ -136,11 +136,9 @@ impl<F: Flash> LightLog<F> {
                 return;
             }
         }
-        let (target, gen) = self.active.map_or((1, 0), |(idx, g)| (1 - idx, g.wrapping_add(1)));
+        let (target, gen) = self.next();
         let base = self.sectors[target];
-        if !self.blank(base) {
-            self.flash.erase(base);
-        }
+        self.clear(base);
         self.flash.program(base + SLOT, &slot_of(data));
         self.flash.program(base, &slot_of(&header(gen)));
         self.active = Some((target, gen));
@@ -148,24 +146,35 @@ impl<F: Flash> LightLog<F> {
         self.current = Some(base + SLOT);
     }
 
-    fn start(&mut self) {
-        let base = self.sectors[0];
+    fn next(&self) -> (usize, u8) {
+        self.active.map_or((1, 0), |(idx, g)| (1 - idx, g.wrapping_add(1)))
+    }
+
+    fn clear(&mut self, base: usize) {
         if !self.blank(base) {
             self.flash.erase(base);
         }
+    }
+
+    fn start(&mut self) {
+        let base = self.sectors[0];
+        self.clear(base);
         self.flash.program(base, &slot_of(&header(0)));
         self.active = Some((0, 0));
         self.free = SLOT;
     }
 
     pub fn erase(&mut self) {
-        for base in self.sectors {
-            if !self.blank(base) {
-                self.flash.erase(base);
-            }
+        let (target, gen) = self.next();
+        let (base, old) = (self.sectors[target], self.sectors[1 - target]);
+        self.clear(base);
+        self.flash.program(base, &slot_of(&header(gen)));
+        if !self.blank(old) {
+            self.flash.program(old, &[0]);
+            self.flash.erase(old);
         }
-        self.active = None;
-        self.free = self.size;
+        self.active = Some((target, gen));
+        self.free = SLOT;
         self.current = None;
     }
 }

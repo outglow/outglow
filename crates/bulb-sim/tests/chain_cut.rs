@@ -198,7 +198,7 @@ fn light_log_chained_cuts() {
             ops_done += 1;
             let after = if erase { None } else { Some(r) };
             let fops = f.ops();
-            if fops.is_empty() || erase || rng.next() % 3 != 0 {
+            if fops.is_empty() || rng.next() % 3 != 0 {
                 model = after;
                 continue;
             }
