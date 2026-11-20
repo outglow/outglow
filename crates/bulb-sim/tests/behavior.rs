@@ -390,3 +390,15 @@ fn a_fade_off_is_off_at_once_and_dark_at_the_end() {
     h.command(Command::On);
     assert_eq!(h.level(), 200);
 }
+
+#[test]
+fn a_dim_to_level_0_reports_off_when_the_level_ends_even_during_a_longer_colour_temperature_fade() {
+    let mut h = Harness::new_tunable();
+    h.command(Command::MoveToColorTemperature { mireds: 153, transition_ms: 0 });
+    h.command(Command::MoveToLevel { level: 200, transition_ms: 0 });
+    h.command(Command::MoveToColorTemperature { mireds: 454, transition_ms: 10_000 });
+    h.command(Command::MoveToLevel { level: 0, transition_ms: 1000 });
+    h.run_for(1100, 10);
+    assert!(!h.is_on());
+    assert!(!h.radio.last_report().unwrap().on, "the stack would still see OnOff=1 and nothing reported until the CT fade ends");
+}

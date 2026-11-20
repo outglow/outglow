@@ -222,6 +222,23 @@ fn hue_and_x_are_reported_once_configured_and_no_sooner_than_the_minimum_interva
 }
 
 #[test]
+fn the_hue_reached_during_a_move_hue_is_reported() {
+    let mut net = Net::new();
+    net.identity = IDENTITY_COLOR;
+    let n = net.join_node();
+    let short = net.nodes[n].short();
+    bind(&mut net, n, 1, COLOR);
+    net.coord.zcl(short, COLOR, 0x00, 0x06, &[0x00, 0x00, 0x00, 0x20, 1, 0, 0x10, 0x0E, 1]);
+    net.run(50);
+    net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
+    net.run(2_000);
+    net.coord.zcl(short, COLOR, 0x11, 0x01, &[1, 10]);
+    net.run(5_000);
+    let hue = net.coord.zcl_rx.iter().filter(|e| e.0 == short && e.1 == COLOR && e.2[2] == 0x0A && e.2[3] == 0x00).map(|e| e.2[6]).last();
+    assert!(matches!(hue, Some(75..=90)), "CurrentHue, 40 + 10/s for 5 s, reported every second or so; got {hue:?}");
+}
+
+#[test]
 fn after_a_restart_a_configured_colour_is_reported_only_when_it_changes() {
     let mut net = Net::new();
     net.identity = IDENTITY_COLOR;

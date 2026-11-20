@@ -219,9 +219,9 @@ where
             self.handle(cmd);
         }
         let now = self.now();
-        let moving = self.light.in_transition();
+        let (moving, was_on) = (self.light.in_transition(), self.light.is_on());
         self.light.tick(&mut self.pwm, now);
-        if moving && !self.light.in_transition() {
+        if moving && !self.light.in_transition() || was_on != self.light.is_on() {
             self.report();
         }
         if let Some(until) = self.identify_until {

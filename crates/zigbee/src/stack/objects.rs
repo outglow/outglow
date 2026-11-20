@@ -180,9 +180,11 @@ impl<H: Hal> Stack<H> {
 
     pub(crate) fn xreport_value(&mut self, r: &XReport) -> Option<(u32, u8)> {
         if r.ep == super::aps::ENDPOINT && !r.mfr && self.colour_reportable(r.cluster, r.attr) {
+            let now = self.hal.now_ms();
+            let hue = self.hue_now(now);
             let l = &self.light;
             return Some(match r.attr {
-                0x0000 => (l.hue as u32, diag::T_U8),
+                0x0000 => (hue as u32, diag::T_U8),
                 0x0001 => (l.sat as u32, diag::T_U8),
                 0x0003 => (l.x as u32, diag::T_U16),
                 0x0004 => (l.y as u32, diag::T_U16),
