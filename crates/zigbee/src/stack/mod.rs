@@ -44,7 +44,10 @@ pub(crate) const APS_DUPS: usize = 16;
 pub(crate) const GROUPS: usize = 8;
 pub(crate) const BINDINGS: usize = 8;
 pub(crate) const ADDR_MAP: usize = 4;
-pub(crate) const CMDS: usize = 6;
+pub(crate) const CMDS: usize = 8;
+const CMDS_PER_POLL: usize = 5;
+const READ_ROOM_SLOT: usize = 3;
+const _: () = assert!(READ_ROOM_SLOT + CMDS_PER_POLL == CMDS, "a frame is read only while the commands one poll can queue still fit");
 pub const CHILDREN: usize = 32;
 pub const INDIRECT: usize = 24;
 pub const INDIRECT_PER_CHILD: usize = 4;
@@ -927,6 +930,9 @@ impl<H: Hal> Stack<H> {
             self.sense.drained = false;
         }
         for _ in 0..4 {
+            if self.cmds[READ_ROOM_SLOT].is_some() {
+                break;
+            }
             let mut buf = [0u8; 127];
             match self.hal.receive(&mut buf) {
                 Some(meta) => {
@@ -962,7 +968,7 @@ impl<H: Hal> Stack<H> {
             Command::MoveToLevel { level: to, transition_ms } => {
                 self.level_from = if self.light.on { level } else { 0 };
                 self.level_since = now;
-                self.level_until = Some(now.wrapping_add(transition_ms));
+                self.level_until = (transition_ms != 0).then(|| now.wrapping_add(transition_ms));
                 self.level_to = to;
             }
             Command::MoveToColorTemperature { transition_ms, .. } | Command::MoveToHueSaturation { transition_ms, .. } => self.colour_fade(now, ct, transition_ms),
@@ -975,11 +981,15 @@ impl<H: Hal> Stack<H> {
             _ => {}
         }
         self.predict(c, level, ct, hue);
-        for slot in self.cmds.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(c);
-                return;
+        if matches!(c, Command::SetPowerOnBehavior(_) | Command::SetStartupLevel(_) | Command::SetStartupColorTemperature(_) | Command::Identify { .. }) {
+            let same = core::mem::discriminant(&c);
+            if let Some(i) = self.cmds.iter().position(|q| q.is_some_and(|q| core::mem::discriminant(&q) == same)) {
+                self.cmds[i] = None;
+                self.cmds[i..].rotate_left(1);
             }
+        }
+        if let Some(slot) = self.cmds.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(c);
         }
     }
 
@@ -990,7 +1000,10 @@ impl<H: Hal> Stack<H> {
             Command::MoveToColorTemperature { mireds, .. } => (self.light.color_temp, self.light.hue, self.light.color_mode) = (mireds, hue, 2),
             Command::MoveToHueSaturation { hue, sat, .. } => (self.light.hue, self.light.sat, self.light.color_mode) = (hue, sat, 0),
             Command::MoveToXy { x: 0, y: 0, .. } => {}
-            Command::MoveToXy { x, y, .. } => (self.light.x, self.light.y, self.light.hue, self.light.color_mode) = (x, y, hue, 1),
+            Command::MoveToXy { x, y, .. } => {
+                (self.light.hue, self.light.sat) = bulb_core::colour::xy_hue_sat(x, y);
+                (self.light.x, self.light.y, self.light.color_mode) = (x, y, 1);
+            }
             Command::MoveHue { .. } => self.light.color_mode = 0,
             Command::SetLevelWhileOff(to) => self.light.level = to,
             Command::StopTransition => self.light.level = level,

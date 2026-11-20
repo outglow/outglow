@@ -497,7 +497,7 @@ fn a_move_to_colour_0_0_still_queued_leaves_the_colour_and_its_mode_as_they_were
 }
 
 #[test]
-fn a_move_to_colour_the_bulb_has_not_reported_yet_ends_the_move_hue() {
+fn a_move_to_colour_the_bulb_has_not_reported_yet_ends_the_move_hue_at_the_hue_of_the_colour() {
     let (mut net, n, short) = colour_bulb();
     net.coord.zcl(short, COLOR, 0x11, 0x06, &[40, 254, 0, 0]);
     net.run(50);
@@ -508,5 +508,6 @@ fn a_move_to_colour_the_bulb_has_not_reported_yet_ends_the_move_hue() {
     assert_eq!(net.nodes[n].stack.poll(), Some(Command::MoveToXy { x: 0x3000, y: 0x2000, transition_ms: 0 }));
     net.air.borrow_mut().now += 3_000;
     let hue = read_now(&mut net, n, short, &[0x0000]);
-    assert!(matches!(hue[..], [0x00, 0x00, 0x00, 0x20, 49..=51]), "ZCL 8 5.2.2.3: a new colour stops the hue at 40 + 10/s for 1 s; got {hue:?}");
+    let xy_hue = bulb_core::colour::xy_hue_sat(0x3000, 0x2000).0;
+    assert_eq!(hue, [0x00, 0x00, 0x00, 0x20, xy_hue], "ZCL 8 5.2.2.3: a new colour stops the move hue, the hue is the one of the colour");
 }

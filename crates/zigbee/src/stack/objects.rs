@@ -185,7 +185,7 @@ impl<H: Hal> Stack<H> {
             let l = &self.light;
             return Some(match r.attr {
                 0x0000 => (hue as u32, diag::T_U8),
-                0x0001 => (l.sat as u32, diag::T_U8),
+                0x0001 => (super::zcl::shown_sat(l.sat) as u32, diag::T_U8),
                 0x0003 => (l.x as u32, diag::T_U16),
                 0x0004 => (l.y as u32, diag::T_U16),
                 _ => (l.color_mode as u32, diag::T_ENUM8),

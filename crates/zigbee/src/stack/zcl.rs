@@ -164,6 +164,10 @@ const ATTRIBUTES: [(u16, u16, u8); 60] = [
     (SETTINGS, CLUSTER_REVISION, T_U16),
 ];
 
+pub(crate) fn shown_sat(sat: u8) -> u8 {
+    sat.min(254)
+}
+
 fn execute_if_off(attribute: u8, r: &mut Reader) -> bool {
     let (mask, over) = match (r.u8(), r.u8()) {
         (Some(mask), Some(over)) => (mask, over),
@@ -494,7 +498,7 @@ impl<H: Hal> Stack<H> {
                 let now = self.hal.now_ms();
                 out.u8(self.hue_now(now));
             }
-            (COLOR, 0x0001) => out.u8(self.light.sat),
+            (COLOR, 0x0001) => out.u8(shown_sat(self.light.sat)),
             (COLOR, 0x0003) => out.u16(self.light.x),
             (COLOR, 0x0004) => out.u16(self.light.y),
             (COLOR, 0x000F) => out.u8(self.color_options),
@@ -1581,7 +1585,7 @@ impl<H: Hal> Stack<H> {
                             rsp.u16(c.x);
                             rsp.u16(c.y);
                             rsp.u16((c.hue as u16) << 8);
-                            rsp.bytes(&[c.sat, 0, 0, 0, 0]);
+                            rsp.bytes(&[shown_sat(c.sat), 0, 0, 0, 0]);
                             rsp.u16(s.color_temp);
                             rsp.u8(c.mode);
                         } else {
@@ -1737,8 +1741,8 @@ impl<H: Hal> Stack<H> {
                 match mode {
                     0 => Command::StopColorTransition,
                     1 | 3 if rate == 0 => return Some(Some(INVALID_FIELD)),
-                    1 => hue_sat(l.hue, 254, HueDirection::Shortest, at_rate(254u8.abs_diff(l.sat) as u32, rate)),
-                    3 => hue_sat(l.hue, 0, HueDirection::Shortest, at_rate(l.sat as u32, rate)),
+                    1 => hue_sat(l.hue, 254, HueDirection::Shortest, at_rate(254u8.abs_diff(shown_sat(l.sat)) as u32, rate)),
+                    3 => hue_sat(l.hue, 0, HueDirection::Shortest, at_rate(shown_sat(l.sat) as u32, rate)),
                     _ => return Some(Some(INVALID_FIELD)),
                 }
             }
@@ -1748,7 +1752,7 @@ impl<H: Hal> Stack<H> {
                 let time = r.u8()? as u16;
                 let sat = match mode {
                     1 => l.sat.saturating_add(step).min(254),
-                    3 => l.sat.saturating_sub(step),
+                    3 => shown_sat(l.sat).saturating_sub(step),
                     _ => return Some(Some(INVALID_FIELD)),
                 };
                 hue_sat(l.hue, sat, HueDirection::Shortest, time_ms(time))
