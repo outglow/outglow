@@ -297,6 +297,9 @@ impl<H: Hal> Ble<H> {
     }
 
     pub(crate) fn send_l2cap(&mut self, cid: u16, data: &[u8]) {
+        if self.link_closing() {
+            return;
+        }
         let mut frame = [0u8; FRAME_MAX];
         let n = data.len().min(MTU_MAX);
         frame[..2].copy_from_slice(&(n as u16).to_le_bytes());

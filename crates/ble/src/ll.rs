@@ -195,6 +195,10 @@ impl<H: Hal> Ble<H> {
         }
     }
 
+    pub(crate) fn link_closing(&self) -> bool {
+        self.link.closing.is_some()
+    }
+
     pub(crate) fn link_connected(&self) -> bool {
         self.link.state == LinkState::Connected
     }
@@ -369,12 +373,13 @@ impl<H: Hal> Ble<H> {
 
     fn link_receive(&mut self) {
         let mut payload = [0u8; LL_PAYLOAD_MAX];
-        while self.hal.tx_free() >= TX_RESERVE {
+        while self.link_closing() || self.hal.tx_free() >= TX_RESERVE {
             let Some((llid, len)) = self.hal.rx_pop(&mut payload) else { return };
             let data = &payload[..len.min(LL_PAYLOAD_MAX)];
-            match llid {
-                pdu::LLID_CONTROL => self.on_control(data),
-                pdu::LLID_START | pdu::LLID_CONTINUE => self.on_l2cap_fragment(llid == pdu::LLID_START, data),
+            match (llid, self.link.closing, data.first()) {
+                (pdu::LLID_CONTROL, Some(_), Some(&LL_TERMINATE_IND)) => self.link.terminated = true,
+                (pdu::LLID_CONTROL, None, _) => self.on_control(data),
+                (pdu::LLID_START | pdu::LLID_CONTINUE, None, _) => self.on_l2cap_fragment(llid == pdu::LLID_START, data),
                 _ => {}
             }
         }

@@ -85,11 +85,12 @@ struct Case {
 
 impl Case {
     fn ensure_connected(&mut self) {
-        if self.rig.state() != LinkState::Connected {
+        if !self.rig.central().connected || self.rig.state() != LinkState::Connected {
             self.rig.central().silent = false;
             self.rig.central().connected = false;
             self.rig.central().connect = true;
             self.rig.run(1500);
+            assert!(self.rig.central().connected && self.rig.state() == LinkState::Connected, "the bulb takes a new connection within 1.5 s of the central asking");
         }
     }
 

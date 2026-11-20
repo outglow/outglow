@@ -1,7 +1,7 @@
 
 use ble::crypto::{crc8_6c, tl_aes_encrypt};
 use ble::LinkState;
-use crate::sim::{Rig, ADDRESS, COLOUR, DIMMABLE, TUNABLE};
+use crate::sim::{Rig, ADDRESS, COLOUR, DIMMABLE, MS, TUNABLE};
 
 const STATUS: u16 = 0x12;
 const COMMAND: u16 = 0x15;
@@ -1633,4 +1633,101 @@ fn a_switch_replacing_a_queued_toggle_keeps_the_brightness_before_it_dark_when_t
     assert_eq!(rig.world.borrow().commands[before..], [SetLevelWhileOff(64), Off, ReadState]);
     assert!(!rig.is_on());
     assert_eq!(rig.level(), 64);
+}
+
+#[test]
+fn the_bulb_leaves_once_its_terminate_is_acknowledged_even_with_a_reply_queued_behind_it() {
+    let mut rig = logged_in(DIMMABLE);
+    let packet = rig.command_packet(0xffff, OP_RESET, &[0]);
+    rig.write(COMMAND, &packet);
+    let mut ended_at = None;
+    for i in 0..400 {
+        if !rig.central().ended {
+            rig.central().send_att(&[0x0a, 0x03, 0x00]);
+        } else if ended_at.is_none() {
+            ended_at = Some(i);
+        }
+        rig.run(5);
+    }
+    let ended_at = ended_at.expect("the bulb sent LL_TERMINATE_IND and the central acknowledged it");
+    assert!(ended_at < 100, "terminate went out within 500 ms: {ended_at}");
+    assert_eq!(rig.state(), LinkState::Advertising, "the bulb left the connection once the central acknowledged LL_TERMINATE_IND");
+}
+
+#[test]
+fn the_bulb_leaves_once_its_terminate_is_acknowledged_even_with_a_control_reply_queued_behind_it() {
+    let mut rig = logged_in(DIMMABLE);
+    let packet = rig.command_packet(0xffff, OP_RESET, &[0]);
+    rig.write(COMMAND, &packet);
+    let mut ended_at = None;
+    for i in 0..400 {
+        if !rig.central().ended {
+            rig.central().send_control(&[0x08, 0, 0, 0, 0, 0, 0, 0, 0]);
+        } else if ended_at.is_none() {
+            ended_at = Some(i);
+        }
+        rig.run(5);
+    }
+    let ended_at = ended_at.expect("the bulb sent LL_TERMINATE_IND and the central acknowledged it");
+    assert!(ended_at < 100, "terminate went out within 500 ms: {ended_at}");
+    assert_eq!(rig.state(), LinkState::Advertising, "the bulb left the connection once the central acknowledged LL_TERMINATE_IND");
+}
+
+#[test]
+fn a_parameter_request_falling_due_while_the_bulb_leaves_does_not_hold_its_terminate_back() {
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    let connected_at = rig.world.borrow().now;
+    assert!(rig.login(b"unpaired", &Rig::secure_password()));
+    rig.run_until(connected_at + 3900 * MS);
+    let packet = rig.command_packet(0xffff, OP_RESET, &[0]);
+    rig.write(COMMAND, &packet);
+    rig.central().silent = true;
+    rig.run(1300);
+    assert_eq!(rig.state(), LinkState::Connected, "LL_TERMINATE_IND waits for the central");
+    rig.central().silent = false;
+    rig.run(300);
+    assert!(rig.central().ended, "the central acknowledged LL_TERMINATE_IND");
+    assert!(rig.central().signaling.is_empty(), "nothing queued behind LL_TERMINATE_IND");
+    assert_eq!(rig.state(), LinkState::Advertising, "the bulb left the connection once the central acknowledged LL_TERMINATE_IND");
+}
+
+#[test]
+fn a_central_streaming_writes_while_the_bulb_leaves_still_gets_its_terminate_acknowledged() {
+    let mut rig = logged_in(DIMMABLE);
+    rig.central().deaf = true;
+    let packet = rig.command_packet(0xffff, OP_RESET, &[0]);
+    rig.central().send_att(&[&[0x52, 0x15, 0x00][..], &packet].concat());
+    let write = [0x52, 0x15, 0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+    for i in 0..200 {
+        if i == 100 {
+            rig.central().deaf = false;
+        }
+        if !rig.central().ended {
+            for _ in 0..4 {
+                rig.central().send_att(&write);
+            }
+        }
+        rig.run(5);
+    }
+    assert!(rig.central().ended, "the central got LL_TERMINATE_IND");
+    assert_eq!(rig.state(), LinkState::Advertising, "the bulb left the connection once the central acknowledged LL_TERMINATE_IND");
+    assert_eq!(rig.world.borrow().rx_overflows, 0, "the bulb kept taking the central's packets");
+}
+
+#[test]
+fn the_bulb_leaves_on_the_centrals_terminate_while_its_own_waits_for_an_acknowledgement() {
+    let mut rig = logged_in(DIMMABLE);
+    rig.central().deaf = true;
+    let packet = rig.command_packet(0xffff, OP_RESET, &[0]);
+    rig.central().send_att(&[&[0x52, 0x15, 0x00][..], &packet].concat());
+    rig.run(400);
+    for _ in 0..40 {
+        rig.central().send_control(&[0x08, 0, 0, 0, 0, 0, 0, 0, 0]);
+        rig.run(5);
+    }
+    assert_eq!(rig.state(), LinkState::Connected, "LL_TERMINATE_IND not yet acknowledged, other control PDUs do not end the link");
+    rig.central().terminate();
+    rig.run(100);
+    assert_eq!(rig.state(), LinkState::Advertising, "the central's LL_TERMINATE_IND ends the link");
 }

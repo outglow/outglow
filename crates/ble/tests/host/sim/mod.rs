@@ -58,6 +58,7 @@ pub struct Central {
     pub place_in_window: u64,
     pub ppm: i64,
     pub silent: bool,
+    pub deaf: bool,
     next_event: u64,
     pub event: u16,
     unmapped: u8,
@@ -91,6 +92,7 @@ impl Central {
             place_in_window: 0,
             ppm: 0,
             silent: false,
+            deaf: false,
             next_event: 0,
             event: 0,
             unmapped: 0,
@@ -289,6 +291,7 @@ pub struct World {
     sn: u8,
     nesn: u8,
     in_flight: bool,
+    pub rx_overflows: u32,
     txq: VecDeque<(u8, Vec<u8>)>,
     rxq: VecDeque<(u8, Vec<u8>)>,
     pub events: Vec<(u8, bool)>,
@@ -512,7 +515,8 @@ impl Hal for SimHal {
             return EventResult { anchor: None };
         }
         w.now = at;
-        for _ in 0..8 {
+        let mut anchor = Some(at as u32);
+        for exchange in 0..8 {
             let c = &mut w.central;
             let (llid, payload) = c.txq.front().cloned().unwrap_or((1, vec![]));
             let central_more = c.txq.len() > 1;
@@ -520,6 +524,12 @@ impl Hal for SimHal {
             let mut on_air = vec![llid | c_nesn << 2 | c_sn << 3 | (central_more as u8) << 4, payload.len() as u8];
             on_air.extend_from_slice(&payload);
             w.capture.push((w.now, channel, ev.access_address, 2, on_air));
+            let fresh = c_sn == w.nesn;
+            if fresh && !payload.is_empty() && w.rxq.len() >= RX_SLOTS {
+                w.rx_overflows += 1;
+                anchor = anchor.filter(|_| exchange > 0);
+                break;
+            }
             if c_nesn != w.sn {
                 w.sn ^= 1;
                 if w.in_flight {
@@ -527,7 +537,7 @@ impl Hal for SimHal {
                     w.in_flight = false;
                 }
             }
-            if c_sn == w.nesn && w.rxq.len() < RX_SLOTS {
+            if fresh {
                 w.nesn ^= 1;
                 if !payload.is_empty() {
                     w.rxq.push_back((llid, payload));
@@ -548,7 +558,7 @@ impl Hal for SimHal {
                     }
                 }
             }
-            if w.sn == c.nesn {
+            if w.sn == c.nesn && !c.deaf {
                 c.nesn ^= 1;
                 c.received(llid, &payload);
                 if llid == 3 && payload[0] == 0x02 {
@@ -571,7 +581,7 @@ impl Hal for SimHal {
         }
         w.events.push((ev.channel, true));
         w.anchors.push(at);
-        EventResult { anchor: Some(at as u32) }
+        EventResult { anchor }
     }
 
     fn tx_free(&mut self) -> usize {
@@ -767,6 +777,7 @@ impl Rig {
             sn: 0,
             nesn: 0,
             in_flight: false,
+            rx_overflows: 0,
             txq: VecDeque::new(),
             rxq: VecDeque::new(),
             events: vec![],
