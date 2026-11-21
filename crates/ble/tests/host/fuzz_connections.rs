@@ -92,7 +92,7 @@ fn run_centrals(seed: u64) -> Result<(usize, usize, usize), String> {
                     let cur = rig.central().params;
                     let interval = [6u16, 7, 8, 12, 24, 40, 80][r.below(7) as usize];
                     let win_size = 1 + r.below((interval.min(9) - 1) as u64) as u8;
-                    let win_offset = r.below(cur.interval as u64 + 1) as u16;
+                    let win_offset = r.below(interval as u64 + 1) as u16;
                     let timeout = (interval / 4 + 20).max(50 + r.below(400) as u16);
                     let lead = [6u16, 6, 7, 10, 20, 100][r.below(6) as usize];
                     let place = r.below(win_size as u64 * UNIT);

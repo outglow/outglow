@@ -381,6 +381,25 @@ fn a_change_whose_instant_has_passed_ends_the_connection() {
     assert_eq!(rig.state(), LinkState::Advertising);
 }
 
+#[test]
+fn a_connection_update_with_a_window_beyond_the_interval_ends_the_connection() {
+    for (size, offset) in [(2, 41), (9, 0)] {
+        let mut rig = Rig::new(DIMMABLE);
+        rig.connect();
+        rig.run(300);
+        rig.central().update_connection(size, offset, 40, 400, 6);
+        rig.run(300);
+        assert_eq!(rig.state(), LinkState::Advertising, "window {size} offset {offset}");
+    }
+    let mut rig = Rig::new(DIMMABLE);
+    rig.connect();
+    rig.run(300);
+    rig.central().update_connection(8, 40, 40, 400, 6);
+    rig.run(1000);
+    assert_eq!(rig.state(), LinkState::Connected);
+    assert_eq!(rig.central().missed, 0);
+}
+
 fn zigbee_traffic(rig: &mut Rig, from: u64, ms: u64, every: u64, neighbours: bool) {
     let mut w = rig.world.borrow_mut();
     if every == 0 {

@@ -49,13 +49,18 @@ pub fn parse_connect(p: &[u8; CONNECT_LEN]) -> Option<ConnectInd> {
         hop: d[21] & 0x1f,
         sca: d[21] >> 5,
     };
-    let valid = (6..=3200).contains(&c.interval)
-        && (10..=3200).contains(&c.timeout)
-        && c.latency <= 499
+    let valid = timing_valid(c.win_size, c.win_offset, c.interval, c.latency, c.timeout)
         && (5..=16).contains(&c.hop)
-        && c.win_size >= 1
         && used_channels(&c.channel_map) >= 2;
     valid.then_some(c)
+}
+
+pub fn timing_valid(win_size: u8, win_offset: u16, interval: u16, latency: u16, timeout: u16) -> bool {
+    (6..=3200).contains(&interval)
+        && (10..=3200).contains(&timeout)
+        && latency <= 499
+        && (1..=8.min(interval - 1)).contains(&u16::from(win_size))
+        && win_offset <= interval
 }
 
 pub fn used_channels(map: &[u8; 5]) -> u8 {
@@ -117,5 +122,31 @@ mod tests {
         let mut bad = p;
         bad[28..33].copy_from_slice(&[1, 0, 0, 0, 0]);
         assert!(parse_connect(&bad).is_none(), "one channel");
+    }
+
+    #[test]
+    fn connection_timing_within_the_limits_of_the_specification() {
+        let cases = [
+            ((2, 0, 24, 0, 500), true),
+            ((2, 0, 5, 0, 500), false),
+            ((5, 6, 6, 0, 500), true),
+            ((6, 0, 6, 0, 500), false),
+            ((2, 0, 3200, 0, 3200), true),
+            ((2, 0, 3201, 0, 3200), false),
+            ((2, 0, 24, 0, 9), false),
+            ((2, 0, 24, 0, 10), true),
+            ((2, 0, 24, 0, 3201), false),
+            ((2, 0, 24, 499, 500), true),
+            ((2, 0, 24, 500, 500), false),
+            ((0, 0, 24, 0, 500), false),
+            ((1, 0, 24, 0, 500), true),
+            ((8, 0, 24, 0, 500), true),
+            ((9, 0, 24, 0, 500), false),
+            ((2, 24, 24, 0, 500), true),
+            ((2, 25, 24, 0, 500), false),
+        ];
+        for ((size, offset, interval, latency, timeout), ok) in cases {
+            assert_eq!(timing_valid(size, offset, interval, latency, timeout), ok, "{size} {offset} {interval} {latency} {timeout}");
+        }
     }
 }

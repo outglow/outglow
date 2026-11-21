@@ -419,7 +419,7 @@ impl<H: Hal> Ble<H> {
                     instant: u16_at(10),
                 };
                 let ahead = u.instant.wrapping_sub(self.link.last_event);
-                if ahead >= 32767 || !(6..=3200).contains(&u.interval) {
+                if ahead >= 32767 || !pdu::timing_valid(u.win_size, u.win_offset, u.interval, u.latency, u.timeout) {
                     self.link.terminated = true;
                 } else if ahead == 0 {
                     self.link.p.interval = u.interval;
