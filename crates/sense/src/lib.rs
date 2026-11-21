@@ -351,7 +351,7 @@ impl Core {
             l.flags |= F_CHG;
         }
         if l.blank {
-            if (now.wrapping_sub(l.t_blank) as i32) < 0 {
+            if (1..=BLANK_MS).contains(&l.t_blank.wrapping_sub(now)) {
                 return;
             }
             l.blank = false;

@@ -4,7 +4,7 @@ mod model;
 
 use harness::{Room, Sender};
 use model::{Channel, Crossing};
-use sense::{params, Core, HIST, LINES, NO_SRC};
+use sense::{params, Core, BLANK_MS, HIST, LINES, NO_SRC};
 
 fn calm(src: u16) -> Sender {
     Sender::new(src, Channel::new(-60.0, 0.3, 0.0))
@@ -66,6 +66,24 @@ fn a_change_of_the_own_light_blanks_every_line() {
     r.core.blank(t);
     r.run(20_000);
     assert!(r.log.is_empty(), "{:?}", r.log);
+}
+
+#[test]
+fn a_blank_ends_after_1_5_s_even_for_a_sender_back_weeks_later() {
+    let kept = |away: u32| {
+        let mut c = Core::new(0, 50, 30);
+        c.frame(1000, 7, -60, Some(0));
+        c.blank(2000);
+        let t = 2000u32.wrapping_add(away);
+        c.frame(t, 7, -60, Some(0));
+        c.line[0].t_kept == t
+    };
+    assert!(!kept(0) && !kept(BLANK_MS - 1), "blanked for 1.5 s");
+    assert!(kept(BLANK_MS));
+    for days in [1u32, 24, 25, 30, 45, 49] {
+        assert!(kept(days * 86_400_000), "back after {days} days");
+    }
+    assert!(kept(u32::MAX), "back a millisecond before the clock comes round");
 }
 
 #[test]
