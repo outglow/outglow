@@ -573,7 +573,7 @@ const settingsCluster = m.deviceAddCustomCluster("outglowSettings", {
     attributes: {
         // ZCL types: 0x30 enum8, 0x21 uint16, 0x10 boolean
         bleMode: {name: "bleMode", ID: 0x0000, type: 0x30, write: true, max: 0xff},
-        bleWindow: {name: "bleWindow", ID: 0x0001, type: 0x21, write: true, max: 0xffff},
+        bleWindow: {name: "bleWindow", ID: 0x0001, type: 0x21, write: true, min: 1, max: 1440},
         bleActive: {name: "bleActive", ID: 0x0002, type: 0x10},
     },
     commands: {},
@@ -590,7 +590,7 @@ async function applyBluetooth(device, options) {
     const write = {};
     if (options.bluetooth in BLE_MODES) write.bleMode = BLE_MODES[options.bluetooth];
     if (options.bluetooth_window !== undefined && options.bluetooth_window !== null && options.bluetooth_window !== "") {
-        write.bleWindow = Math.max(0, Math.min(1440, Math.round(Number(options.bluetooth_window))));
+        write.bleWindow = Math.max(1, Math.min(1440, Math.round(Number(options.bluetooth_window))));
     }
     if (Object.keys(write).length) await ep.write("outglowSettings", write, mfr);
 }
@@ -599,7 +599,7 @@ const bluetooth = {
         e.enum("bluetooth", ea.SET, Object.keys(BLE_MODES))
             .withDescription("When Bluetooth runs: always (the vendor app and Bluetooth updates work), only for a window after power-on, or off (the steadiest Zigbee). A factory reset turns it back to always."),
         e.numeric("bluetooth_window", ea.SET)
-            .withValueMin(0)
+            .withValueMin(1)
             .withValueMax(1440)
             .withUnit("min")
             .withDescription("With bluetooth window_after_power_on: minutes it stays on after power-on"),
@@ -869,7 +869,7 @@ const sense = [
             cluster: "msOccupancySensing",
             attribute: "pirOToUDelay",
             valueMin: 1,
-            valueMax: 3600,
+            valueMax: 65535,
             unit: "s",
             description: "How long nothing must move before occupancy goes back to false",
             access: "ALL",
