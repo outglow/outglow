@@ -80,7 +80,11 @@ Other tasks: `cargo xtask boards` (the board table from the stock profiles),
 and `cargo xtask mutants` (coverage and mutation tests, under Testing).
 
 Output in `target/tc32*/`: `bulb-tc32-ota.bin` (BLE update image) and
-`bulb-tc32.ota` (Zigbee OTA file).
+`bulb-tc32.ota` (Zigbee OTA file). Only `bulb-tc32` reads the board, so the
+crates under it (`core`, `zigbee`, `ble`, ...) compile once per set of
+features into `target/tc32-cargo/`, for every board; `--all` then compiles
+`bulb-tc32` for the other boards side by side, each in a copy of that
+directory.
 
 ## Testing
 

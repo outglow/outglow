@@ -68,16 +68,17 @@ struct Toolchain {
     deps_bc: bool,
     elf: Vec<u8>,
     fail: &'static str,
+    fail_ending: Option<&'static str>,
 }
 
 impl Toolchain {
     fn good() -> Toolchain {
-        Toolchain { vv: PINNED_VV.into(), machine_code: true, deps_bc: true, elf: tc32_elf(&code()), fail: "" }
+        Toolchain { vv: PINNED_VV.into(), machine_code: true, deps_bc: true, elf: tc32_elf(&code()), fail: "", fail_ending: None }
     }
 
     fn answer(&self, c: &Command) -> (i32, String) {
         let p = program(c);
-        if p == self.fail {
+        if p == self.fail || self.fail_ending.is_some_and(|e| describe(c).ends_with(e)) {
             return (1, "broken".into());
         }
         let first = c.get_args().next().map(|a| a.to_string_lossy().into_owned()).unwrap_or_default();
@@ -123,6 +124,12 @@ impl Toolchain {
                 (0, String::new())
             }
             ("llvm-size", _) => (0, String::new()),
+            ("cp", "-Rp") => {
+                let a: Vec<_> = c.get_args().collect();
+                assert!(Path::new(a[1]).join("outglow.lock").exists());
+                std::fs::create_dir_all(a[2]).unwrap();
+                (0, String::new())
+            }
             _ => (127, format!("unexpected {}", describe(c))),
         }
     }
@@ -170,6 +177,13 @@ impl Rig {
     }
 }
 
+fn program_of(line: &str) -> String {
+    let cmd = line.rsplit(" && ").next().unwrap();
+    let words: Vec<&str> = cmd.split(' ').collect();
+    let at = words.iter().position(|w| w.starts_with('/') || w.starts_with("ROOT/") || *w == "cp").unwrap();
+    words[at].rsplit('/').next().unwrap().to_string()
+}
+
 fn cargo_id(log: &[String]) -> String {
     let l = log.iter().find(|l| l.contains("CARGO_TARGET_DIR=")).unwrap();
     let at = l.find("/cargo-").unwrap() + 1;
@@ -179,39 +193,43 @@ fn cargo_id(log: &[String]) -> String {
 #[test]
 fn a_build_runs_the_toolchain_in_order() {
     let r = Rig::new("build");
+    let id = cache_id(PINNED_VV);
     std::fs::create_dir_all(r.t.path("target/tc32/cargo-0000000000000000")).unwrap();
     std::fs::create_dir_all(r.t.path("target/tc32/cargo")).unwrap();
+    std::fs::create_dir_all(r.t.path("target/tc32-cargo/cargo-0000000000000000")).unwrap();
+    std::fs::create_dir_all(r.t.path(&format!("target/tc32-cargo/cargo-noble-{id}"))).unwrap();
+    r.t.put("target/tc32-cargo/notes", "");
     r.t.put("target/tc32/keep", "");
     r.t.put("target/tc32/cargo-file", "");
     r.t.put("target/tc32/bc/stale.o", "BC");
     let (res, log) = r.build(&[]);
     res.unwrap();
-    let id = cargo_id(&log);
-    assert!(id.starts_with("cargo-") && id[6..].chars().all(|c| c.is_ascii_hexdigit()), "{id}");
-    let log: Vec<String> = log.iter().map(|l| l.replace(&id, "cargo-ID")).collect();
+    assert_eq!(cargo_id(&log), format!("cargo-{id}"));
+    assert_eq!(id.len(), 16);
+    assert!(id.chars().all(|c| c.is_ascii_hexdigit()), "{id}");
+    assert_ne!(cache_id("rustc 1.98.0"), id);
+    let log: Vec<String> = log.iter().map(|l| l.replace(&id, "ID")).collect();
     let out = "ROOT/target/tc32";
-    let rel = format!("{out}/cargo-ID/thumbv4t-none-eabi/release");
+    let rel = "ROOT/target/tc32-cargo/cargo-ID/thumbv4t-none-eabi/release";
     let flags = "--target=thumbv4t-none-eabi -mcpu=tc32 -mthumb -mfloat-abi=soft";
     assert_eq!(
         log,
         [
             "rustc -vV".to_string(),
             "sh -c command -v \"$0\" rustc".into(),
-            "rustc -vV".into(),
-            format!(
-                "cd ROOT/crates/bulb-tc32 && BULB_BOARD=ESMLFzm_w6_Dimm-4.63 BULB_FILE_VERSION=01000000 BULB_VERSION=1.0.0 \
-                 -u CARGO_ENCODED_RUSTFLAGS CARGO_TARGET_DIR={out}/cargo-ID OUTGLOW_RUSTC_WRAPPER=1 RUSTC_BOOTSTRAP=1 \
-                 -u RUSTC_WORKSPACE_WRAPPER RUSTC_WRAPPER=/bin/xtask \
-                 RUSTFLAGS=-C linker-plugin-lto -C force-frame-pointers=no --emit=llvm-bc --remap-path-prefix=/home/u=~ \
-                 --remap-path-prefix=/rust/library=rust --remap-path-prefix=ROOT=outglow \
-                 -u TOUCHLINK_MASTER_KEY __CARGO_TESTS_ONLY_SRC_ROOT=/rust/library /bin/cargo build \
-                 --release --target thumbv4t-none-eabi --no-default-features --features=ble,sense -Zbuild-std=core \
-                 -Zbuild-std-features=compiler-builtins-mem"
-            ),
             "ROOT/llvm/clang --version".into(),
+            "cd ROOT/crates/bulb-tc32 && BULB_BOARD=ESMLFzm_w6_Dimm-4.63 BULB_FILE_VERSION=01000000 BULB_VERSION=1.0.0 \
+             -u CARGO_ENCODED_RUSTFLAGS CARGO_TARGET_DIR=ROOT/target/tc32-cargo/cargo-ID OUTGLOW_RUSTC_WRAPPER=1 RUSTC_BOOTSTRAP=1 \
+             -u RUSTC_WORKSPACE_WRAPPER RUSTC_WRAPPER=/bin/xtask \
+             RUSTFLAGS=-C linker-plugin-lto -C force-frame-pointers=no --emit=llvm-bc --remap-path-prefix=/home/u=~ \
+             --remap-path-prefix=/rust/library=rust --remap-path-prefix=ROOT=outglow \
+             -u TOUCHLINK_MASTER_KEY __CARGO_TESTS_ONLY_SRC_ROOT=/rust/library /bin/cargo build \
+             --release --target thumbv4t-none-eabi --no-default-features --features=ble,sense -Zbuild-std=core \
+             -Zbuild-std-features=compiler-builtins-mem"
+                .into(),
             format!("cd {out}/bc && ROOT/llvm/llvm-ar x {rel}/libbulb_tc32.a"),
             format!(
-                "ROOT/llvm/llvm-link {out}/bc/bulb_tc32-1.a.rcgu.o {out}/bc/bulb_tc32-1.b.rcgu.o {rel}/deps/compiler_builtins-9.bc -o {out}/rust.bc"
+                "ROOT/llvm/llvm-link {out}/bc/bulb_tc32-1.a.rcgu.o {out}/bc/bulb_tc32-1.b.rcgu.o {out}/bc/compiler_builtins-9.bc -o {out}/rust.bc"
             ),
             format!("ROOT/llvm/llvm-dis {out}/rust.bc -o {out}/rust.thumb.ll"),
             format!(
@@ -226,6 +244,12 @@ fn a_build_runs_the_toolchain_in_order() {
             format!("ROOT/llvm/llvm-size {out}/bulb-tc32.elf"),
         ]
     );
+    let mut shared: Vec<String> =
+        std::fs::read_dir(r.t.path("target/tc32-cargo")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    shared.sort();
+    assert_eq!(shared, [format!("cargo-{id}"), format!("cargo-noble-{id}"), "notes".into()]);
+    assert_eq!(std::fs::read(r.t.path("target/tc32/bc/compiler_builtins-9.bc")).unwrap(), b"BC");
+    assert!(r.t.path(&format!("target/tc32-cargo/cargo-{id}/outglow.lock")).exists());
     let dir = r.t.path("target/tc32");
     assert_eq!(std::fs::read(dir.join("bulb-tc32.bin")).unwrap(), code());
     let staged = std::fs::read(dir.join("bulb-tc32-ota.bin")).unwrap();
@@ -280,19 +304,58 @@ fn a_variant_with_a_key_a_version_and_its_own_directory() {
     assert!(fake.log.iter().any(|l| l.ends_with("-DIMAGE_TYPE=0x0395 -c ") || l.contains("-DIMAGE_TYPE=0x0395 -c ")));
     let f = ota::File::parse(&std::fs::read(r.t.path("out/bulb-tc32.ota")).unwrap()).unwrap();
     assert_eq!((f.header.image_type, f.header.file_version), (0x0395, 0x0102_0003));
-    assert!(!r.t.path("target").exists());
+    let target: Vec<_> = std::fs::read_dir(r.t.path("target")).unwrap().map(|e| e.unwrap().file_name()).collect();
+    assert_eq!(target, ["tc32-cargo"]);
+    assert!(cargo.contains(&format!(" CARGO_TARGET_DIR={}/cargo-noble-nosense-trace-{} ", r.t.path("target/tc32-cargo").display(), cache_id(PINNED_VV))));
 }
 
 #[test]
 fn every_board_of_the_table() {
     let r = Rig::new("all");
+    r.t.put("target/tc32-eglo_zm_tw-4.62/cargo/stale", "");
     let (res, log) = r.build(&["--all"]);
     res.unwrap();
     let boards: Vec<&String> = log.iter().filter(|l| l.contains(" build --release")).collect();
     assert_eq!(boards.len(), 2);
-    assert!(boards[1].contains("BULB_BOARD=EGLO_ZM_TW-4.62"));
+    let shared = format!("ROOT/target/tc32-cargo/cargo-{}", cache_id(PINNED_VV));
+    let own = "ROOT/target/tc32-eglo_zm_tw-4.62/cargo";
+    assert!(boards[0].contains(&format!(" CARGO_TARGET_DIR={shared} ")), "{}", boards[0]);
+    let tw = boards[0].replace("ESMLFzm_w6_Dimm-4.63", "EGLO_ZM_TW-4.62").replace(&shared, own);
+    assert_eq!(tw, *boards[1]);
+    assert!(log.contains(&format!("cp -Rp {shared} {own}")));
+    assert!(log.contains(&format!("cd ROOT/target/tc32-eglo_zm_tw-4.62/bc && ROOT/llvm/llvm-ar x {own}/thumbv4t-none-eabi/release/libbulb_tc32.a")));
+    let tools: Vec<String> = log.iter().skip(3).map(|l| program_of(l)).collect();
+    assert_eq!(
+        tools,
+        [
+            "cargo", "llvm-ar", "cp", "cargo", "llvm-ar", "llvm-link", "llvm-link", "llvm-dis", "llvm-dis", "clang", "clang", "clang", "clang",
+            "ld.lld", "ld.lld", "llvm-size"
+        ]
+    );
+    assert!(log.last().unwrap().ends_with("/target/tc32/bulb-tc32.elf ROOT/target/tc32-eglo_zm_tw-4.62/bulb-tc32.elf"));
     assert!(r.t.path("target/tc32/bulb-tc32.ota").exists());
     assert!(r.t.path("target/tc32-eglo_zm_tw-4.62/bulb-tc32.ota").exists());
+    assert!(r.t.path("target/tc32-eglo_zm_tw-4.62/bc/compiler_builtins-9.bc").exists());
+    assert!(!r.t.path("target/tc32-eglo_zm_tw-4.62/cargo").exists());
+    {
+        let vars: Vec<(&str, &str)> = r.vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let e = env(&vars);
+        let mut fake = Fake::new(|c| match program(c) == "cargo" && env_of(c, "CARGO_TARGET_DIR").ends_with("cargo") {
+            true => (1, "broken".into()),
+            false => r.tools.answer(c),
+        });
+        let mut c = Ctx { root: r.t.0.clone(), sh: &mut fake, env: &e, exe: "/bin/xtask".into(), toolchain: r.t.path("cached") };
+        assert_eq!(run_in(&mut c, &args(&["--all"])).unwrap_err().to_string(), "\"/bin/cargo\" failed (exit status: 1)");
+        assert_eq!(fake.log.iter().filter(|l| l.contains(" build --release")).count(), 2);
+        assert!(!fake.log.iter().any(|l| l.contains("llvm-ar x ROOT")));
+    }
+    let mut r = r;
+    r.tools.fail = "cp";
+    assert_eq!(r.build(&["--all"]).0.unwrap_err().to_string(), "\"cp\" failed (exit status: 1)");
+    r.t.put("crates/bulb-tc32/boards.tsv", "# name\n");
+    let (res, log) = r.build(&["--all"]);
+    res.unwrap();
+    assert!(!log.iter().any(|l| l.contains(" build --release")));
     std::fs::remove_file(r.t.path("crates/bulb-tc32/boards.tsv")).unwrap();
     assert!(r.build(&["--all"]).0.is_err());
 }
@@ -348,6 +411,20 @@ fn a_broken_tool_or_image_stops_the_build() {
         let e = r.build(&[]).0.unwrap_err().to_string();
         assert!(e.contains(&format!("{tool}\" failed")), "{tool}: {e}");
     }
+    let mut r = Rig::new("object");
+    r.tools.fail_ending = Some("/target/tc32/rust.o");
+    let (res, log) = r.build(&[]);
+    assert!(res.unwrap_err().to_string().ends_with("/llvm/clang\" failed (exit status: 1)"));
+    assert!(!log.iter().any(|l| l.contains("ld.lld")));
+    let r = Rig::new("blocked");
+    r.t.put("blocked", "");
+    let e = r.build(&["--out-dir", r.t.path("blocked").to_str().unwrap()]).0.unwrap_err();
+    assert_eq!(e.downcast_ref::<std::io::Error>().map(std::io::Error::kind), Some(std::io::ErrorKind::NotADirectory), "{e:?}");
+    let r = Rig::new("nolock");
+    r.t.put("target/tc32-cargo", "");
+    let (res, log) = r.build(&[]);
+    assert_eq!(res.unwrap_err().downcast_ref::<std::io::Error>().map(std::io::Error::kind), Some(std::io::ErrorKind::NotADirectory));
+    assert!(!log.iter().any(|l| l.contains(" build --release")));
     let mut r = Rig::new("elf");
     r.tools.elf = b"not an elf".to_vec();
     let e = r.build(&[]).0.unwrap_err().to_string();

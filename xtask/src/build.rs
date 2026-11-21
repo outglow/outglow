@@ -15,7 +15,7 @@ pub struct Args {
     #[doc = " the board (crates/bulb-tc32/boards.tsv), e.g. EGLO_ZM_TW-4.62; default the dimmable filament bulb"]
     #[arg(long)]
     board: Option<String>,
-    #[doc = " all boards of boards.tsv, one after another"]
+    #[doc = " all boards of boards.tsv: the crates they share compiled once, the boards side by side"]
     #[arg(long, conflicts_with = "board")]
     all: bool,
     #[doc = " Zigbee only: no Bluetooth LE (output directory suffix -noble)"]
@@ -61,6 +61,10 @@ impl Ctx<'_> {
         sh::run(self.sh, cmd)
     }
 
+    fn run_all(&mut self, cmds: impl IntoIterator<Item = Command>) -> Result<()> {
+        sh::run_all(self.sh, &mut cmds.into_iter().collect::<Vec<_>>())
+    }
+
     fn output(&mut self, cmd: &mut Command) -> Result<String> {
         sh::output(self.sh, cmd)
     }
@@ -90,14 +94,14 @@ pub fn unpinned(vv: &str) -> Vec<String> {
         .collect()
 }
 
-fn check_rustc(c: &mut Ctx) -> Result<()> {
+fn check_rustc(c: &mut Ctx) -> Result<String> {
     let vv = c.output(Command::new(c.rustc()).arg("-vV"))?;
     let path = c.output(Command::new("sh").arg("-c").arg("command -v \"$0\"").arg(c.rustc())).unwrap_or_default();
     println!("== rustc: {} (LLVM {}) {}", vv.lines().next().unwrap_or("?"), rustc_field(&vv, "LLVM version"), path.trim());
     if let Some(w) = rustc_warning(&vv) {
         eprintln!("{w}");
     }
-    Ok(())
+    Ok(vv)
 }
 
 pub fn rustc_warning(vv: &str) -> Option<String> {
@@ -179,19 +183,16 @@ pub fn run(a: Args) -> Result<()> {
 }
 
 pub fn run_in(c: &mut Ctx, a: &Args) -> Result<()> {
-    if a.all {
-        for b in boards_tsv(&c.root)? {
-            build(c, &b, a, None)?;
-        }
-        return Ok(());
-    }
-    let b = a.board.clone().unwrap_or_else(|| "ESMLFzm_w6_Dimm-4.63".into());
-    build(c, &b, a, a.out_dir.clone())
+    let boards = match a.all {
+        true => boards_tsv(&c.root)?,
+        false => vec![a.board.clone().unwrap_or_else(|| "ESMLFzm_w6_Dimm-4.63".into())],
+    };
+    build(c, &boards, a)
 }
 
 pub fn board_default(c: &mut Ctx, board_name: &str) -> Result<PathBuf> {
     let a = Args { board: Some(board_name.into()), all: false, no_ble: false, trace: false, no_sense: false, file_version: None, out_dir: None };
-    build(c, board_name, &a, None)?;
+    build(c, &[board_name.into()], &a)?;
     Ok(default_dir(&c.root, board_name))
 }
 
@@ -223,13 +224,49 @@ pub fn member_order(p: &Path) -> String {
     n.split_once('.').map_or(n.clone(), |(_, rest)| rest.to_string())
 }
 
-fn build(c: &mut Ctx, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> Result<()> {
-    let root = c.root.clone();
-    let here = root.join("crates/bulb-tc32");
-    let known = board::known(board_name).ok_or_else(|| {
-        let names: Vec<&str> = board::BOARDS.iter().map(|b| b.name).collect();
-        anyhow!("unknown board {board_name}; the boards: {}", names.join(", "))
-    })?;
+pub fn cache_id(vv: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    vv.hash(&mut h);
+    WRAPPER_RULES.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+pub fn prune(dir: &Path, keep: &str) {
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        if (n == "cargo" || n.starts_with("cargo-")) && !n.ends_with(keep) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+fn lock(dir: &Path) -> Result<std::fs::File> {
+    std::fs::create_dir_all(dir)?;
+    let f = std::fs::File::create(dir.join("outglow.lock"))?;
+    f.lock().map(|()| f).map_err(anyhow::Error::from)
+}
+
+struct Plan {
+    llvm: PathBuf,
+    clang: String,
+    file_version: u32,
+    version: String,
+    release: String,
+    features: Vec<&'static str>,
+    suffix: String,
+    rust_src: PathBuf,
+    key: Option<String>,
+    cargo_dir: PathBuf,
+}
+
+struct Unit<'a> {
+    known: &'a board::Known,
+    out: PathBuf,
+    modules: Vec<PathBuf>,
+}
+
+fn plan(c: &mut Ctx, a: &Args) -> Result<Plan> {
     let llvm = (c.env)("TC32_LLVM").map(PathBuf::from).unwrap_or_else(|| {
         if c.toolchain.join("clang").exists() { c.toolchain.clone() } else { c.home().join("oss/llvm-tc32/build/bin") }
     });
@@ -237,66 +274,118 @@ fn build(c: &mut Ctx, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         bail!("no clang in {}: run `cargo xtask toolchain` (downloads llvm-tc32) or set TC32_LLVM", llvm.display());
     }
     let file_version = file_version(a, c.env)?;
-    let version = format!("{file_version:08x}");
-    let release = format!("{}.{}.{}", file_version >> 24, (file_version >> 16) & 0xff, file_version & 0xffff);
     let (features, suffix) = features(a);
-    let out = out_dir.unwrap_or_else(|| root.join("target").join(format!("{}{suffix}", dir_name(board_name))));
-    check_rustc(c)?;
+    let vv = check_rustc(c)?;
     let rust_src = rust_lib_src(c)?;
-    std::fs::create_dir_all(&out)?;
-    let bc_dir = out.join("bc");
-    let _ = std::fs::remove_dir_all(&bc_dir);
-    std::fs::create_dir_all(&bc_dir)?;
-
     let key = c.var("TOUCHLINK_MASTER_KEY").filter(|k| !k.is_empty());
     println!("== touchlink: {}", if key.is_some() { "key index 4 enabled (key given to the build)" } else { "no master key (key indices 0 and 15 only)" });
+    let clang = c.output(Command::new(llvm.join("clang")).arg("--version"))?.lines().next().unwrap_or("").to_string();
+    let id = cache_id(&vv);
+    let shared = c.root.join("target/tc32-cargo");
+    let cargo_dir = shared.join(format!("cargo{suffix}-{id}"));
+    prune(&shared, &format!("-{id}"));
+    Ok(Plan {
+        llvm,
+        clang,
+        file_version,
+        version: format!("{file_version:08x}"),
+        release: format!("{}.{}.{}", file_version >> 24, (file_version >> 16) & 0xff, file_version & 0xffff),
+        features,
+        suffix,
+        rust_src,
+        key,
+        cargo_dir,
+    })
+}
 
-    println!("== rustc -> bitcode ({TARGET}, board {board_name}, OTA image type {:#06x}, version {version})", known.image_type);
+fn build(c: &mut Ctx, boards: &[String], a: &Args) -> Result<()> {
+    let known = boards
+        .iter()
+        .map(|b| {
+            board::known(b).ok_or_else(|| {
+                let names: Vec<&str> = board::BOARDS.iter().map(|b| b.name).collect();
+                anyhow!("unknown board {b}; the boards: {}", names.join(", "))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let p = plan(c, a)?;
+    let Some((first, rest)) = known.split_first() else { return Ok(()) };
+    let target = c.root.join("target");
+    let out_of = |k: &board::Known| a.out_dir.clone().unwrap_or_else(|| target.join(format!("{}{}", dir_name(k.name), p.suffix)));
+    let first = Job { known: first, out: out_of(first), target: p.cargo_dir.clone() };
+    let rest: Vec<Job> = rest.iter().map(|k| Job { known: k, out: out_of(k), target: out_of(k).join("cargo") }).collect();
+    std::iter::once(&first).chain(&rest).try_for_each(|j| fresh_out(&j.out))?;
+    let held = lock(&p.cargo_dir)?;
+    let mut units = compile(c, &p, std::slice::from_ref(&first))?;
+    c.run_all(rest.iter().map(|j| {
+        let mut cp = Command::new("cp");
+        cp.arg("-Rp").arg(&p.cargo_dir).arg(&j.target);
+        cp
+    }))?;
+    drop(held);
+    units.extend(compile(c, &p, &rest)?);
+    for j in &rest {
+        let _ = std::fs::remove_dir_all(&j.target);
+    }
+    link(c, &p, &units)
+}
+
+fn fresh_out(out: &Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_dir_all(out.join("bc"));
+    prune(out, "/");
+    std::fs::create_dir_all(out.join("bc"))
+}
+
+struct Job<'a> {
+    known: &'a board::Known,
+    out: PathBuf,
+    target: PathBuf,
+}
+
+fn compile<'a>(c: &mut Ctx, p: &Plan, jobs: &[Job<'a>]) -> Result<Vec<Unit<'a>>> {
+    let root = c.root.clone();
+    for j in jobs {
+        println!("== rustc -> bitcode ({TARGET}, board {}, OTA image type {:#06x}, version {})", j.known.name, j.known.image_type, p.version);
+    }
     let rustflags = format!(
         "-C linker-plugin-lto -C force-frame-pointers=no --emit=llvm-bc --remap-path-prefix={}=~ --remap-path-prefix={}=rust --remap-path-prefix={}=outglow",
-        c.home().display(), rust_src.display(), root.display()
+        c.home().display(), p.rust_src.display(), root.display()
     );
-    let cache_id = {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        c.output(Command::new(c.rustc()).arg("-vV"))?.hash(&mut h);
-        WRAPPER_RULES.hash(&mut h);
-        h.finish()
-    };
-    let cargo_dir = out.join(format!("cargo-{cache_id:016x}"));
-    for e in std::fs::read_dir(&out)?.flatten() {
-        let n = e.file_name().to_string_lossy().to_string();
-        if (n == "cargo" || n.starts_with("cargo-")) && e.path() != cargo_dir {
-            let _ = std::fs::remove_dir_all(e.path());
-        }
-    }
-    let mut cargo = Command::new((c.env)("CARGO").unwrap_or_else(|| "cargo".into()));
-    cargo.current_dir(&here)
-        .env("RUSTC_BOOTSTRAP", "1")
-        .env("__CARGO_TESTS_ONLY_SRC_ROOT", &rust_src)
-        .env("BULB_FILE_VERSION", &version)
-        .env("BULB_VERSION", &release)
-        .env("BULB_BOARD", board_name)
-        .env("RUSTFLAGS", rustflags)
-        .env("CARGO_TARGET_DIR", &cargo_dir)
-        .env("RUSTC_WRAPPER", &c.exe)
-        .env(WRAPPER_ENV, "1")
-        .env_remove("RUSTC_WORKSPACE_WRAPPER")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .args(["build", "--release", "--target", TARGET, "--no-default-features"])
-        .arg(format!("--features={}", features.join(",")))
-        .args(["-Zbuild-std=core", "-Zbuild-std-features=compiler-builtins-mem"]);
-    match &key {
-        Some(k) => cargo.env("TOUCHLINK_MASTER_KEY", k),
-        None => cargo.env_remove("TOUCHLINK_MASTER_KEY"),
-    };
-    c.run(&mut cargo)?;
+    let cargo_bin = (c.env)("CARGO").unwrap_or_else(|| "cargo".into());
+    let exe = c.exe.clone();
+    c.run_all(jobs.iter().map(|j| {
+        let mut cargo = Command::new(&cargo_bin);
+        cargo.current_dir(root.join("crates/bulb-tc32"))
+            .env("RUSTC_BOOTSTRAP", "1")
+            .env("__CARGO_TESTS_ONLY_SRC_ROOT", &p.rust_src)
+            .env("BULB_FILE_VERSION", &p.version)
+            .env("BULB_VERSION", &p.release)
+            .env("BULB_BOARD", j.known.name)
+            .env("RUSTFLAGS", &rustflags)
+            .env("CARGO_TARGET_DIR", &j.target)
+            .env("RUSTC_WRAPPER", &exe)
+            .env(WRAPPER_ENV, "1")
+            .env_remove("RUSTC_WORKSPACE_WRAPPER")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .args(["build", "--release", "--target", TARGET, "--no-default-features"])
+            .arg(format!("--features={}", p.features.join(",")))
+            .args(["-Zbuild-std=core", "-Zbuild-std-features=compiler-builtins-mem"]);
+        match &p.key {
+            Some(k) => cargo.env("TOUCHLINK_MASTER_KEY", k),
+            None => cargo.env_remove("TOUCHLINK_MASTER_KEY"),
+        };
+        cargo
+    }))?;
+    c.run_all(jobs.iter().map(|j| {
+        let mut ar = Command::new(p.llvm.join("llvm-ar"));
+        ar.current_dir(j.out.join("bc")).arg("x").arg(j.target.join(TARGET).join("release/libbulb_tc32.a"));
+        ar
+    }))?;
+    jobs.iter().map(|j| Ok(Unit { known: j.known, out: j.out.clone(), modules: modules(&j.target.join(TARGET).join("release"), &j.out.join("bc"))? })).collect()
+}
 
-    let clang_version = c.output(Command::new(llvm.join("clang")).arg("--version"))?;
-    println!("== bitcode -> TC32 object (llvm-tc32 {})", clang_version.lines().next().unwrap_or(""));
-    let release = cargo_dir.join(TARGET).join("release");
-    c.run(Command::new(llvm.join("llvm-ar")).current_dir(&bc_dir).arg("x").arg(release.join("libbulb_tc32.a")))?;
-    let mut members: Vec<PathBuf> = std::fs::read_dir(&bc_dir)?.filter_map(|e| e.ok().map(|e| e.path()))
+fn modules(release: &Path, bc_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut members: Vec<PathBuf> = std::fs::read_dir(bc_dir)?.filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "o")).collect();
     members.sort_by_key(|p| member_order(p));
     let mut modules: Vec<PathBuf> = Vec::new();
@@ -309,46 +398,82 @@ fn build(c: &mut Ctx, board_name: &str, a: &Args, out_dir: Option<PathBuf>) -> R
         let name = m.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let krate = name.split('.').next().unwrap_or(&name);
         let bc = release.join("deps").join(format!("{krate}.bc"));
-        if !bc.exists() {
-            bail!("{} is machine code and {} does not exist", m.display(), bc.display());
-        }
-        if !modules.contains(&bc) {
-            modules.push(bc);
+        let copy = bc_dir.join(format!("{krate}.bc"));
+        if !modules.contains(&copy) {
+            std::fs::copy(&bc, &copy).with_context(|| format!("{} is machine code and {} does not exist", m.display(), bc.display()))?;
+            modules.push(copy);
         }
     }
-    c.run(Command::new(llvm.join("llvm-link")).args(&modules).arg("-o").arg(out.join("rust.bc")))?;
-    c.run(Command::new(llvm.join("llvm-dis")).arg(out.join("rust.bc")).arg("-o").arg(out.join("rust.thumb.ll")))?;
-    let ll = retarget(&std::fs::read_to_string(out.join("rust.thumb.ll"))?)?;
-    std::fs::write(out.join("rust.ll"), ll)?;
+    Ok(modules)
+}
 
+fn link(c: &mut Ctx, p: &Plan, units: &[Unit]) -> Result<()> {
+    let llvm = &p.llvm;
+    let here = c.root.join("crates/bulb-tc32");
+    println!("== bitcode -> TC32 object (llvm-tc32 {}): {} board(s)", p.clang, units.len());
+    c.run_all(units.iter().map(|u| {
+        let mut cmd = Command::new(llvm.join("llvm-link"));
+        cmd.args(&u.modules).arg("-o").arg(u.out.join("rust.bc"));
+        cmd
+    }))?;
+    c.run_all(units.iter().map(|u| {
+        let mut cmd = Command::new(llvm.join("llvm-dis"));
+        cmd.arg(u.out.join("rust.bc")).arg("-o").arg(u.out.join("rust.thumb.ll"));
+        cmd
+    }))?;
+    for u in units {
+        let ll = retarget(&std::fs::read_to_string(u.out.join("rust.thumb.ll"))?)?;
+        std::fs::write(u.out.join("rust.ll"), ll)?;
+    }
     let cflags = [format!("--target={TARGET}"), "-mcpu=tc32".into(), "-mthumb".into(), "-mfloat-abi=soft".into()];
-    c.run(Command::new(llvm.join("clang")).args(&cflags)
-        .args(["-Oz", "-ffunction-sections", "-fdata-sections", "-mllvm", "-arm-load-store-opt=false", "-Wno-override-module", "-c"])
-        .arg(out.join("rust.ll")).arg("-o").arg(out.join("rust.o")))?;
-    c.run(Command::new(llvm.join("clang")).args(&cflags).arg(format!("-DIMAGE_TYPE={:#06x}", known.image_type))
-        .arg("-c").arg(here.join("boot/start.S")).arg("-o").arg(out.join("start.o")))?;
+    c.run_all(units.iter().flat_map(|u| {
+        let mut code = Command::new(llvm.join("clang"));
+        code.args(&cflags)
+            .args(["-Oz", "-ffunction-sections", "-fdata-sections", "-mllvm", "-arm-load-store-opt=false", "-Wno-override-module", "-c"])
+            .arg(u.out.join("rust.ll")).arg("-o").arg(u.out.join("rust.o"));
+        let mut start = Command::new(llvm.join("clang"));
+        start.args(&cflags).arg(format!("-DIMAGE_TYPE={:#06x}", u.known.image_type))
+            .arg("-c").arg(here.join("boot/start.S")).arg("-o").arg(u.out.join("start.o"));
+        [code, start]
+    }))?;
 
     println!("== link");
-    let elf_path = out.join("bulb-tc32.elf");
-    c.run(Command::new(llvm.join("ld.lld")).arg("-T").arg(here.join("boot/link.ld")).arg(format!("--defsym=FW_OFFSET={:#x}", known.fw_offset))
-        .arg(format!("--defsym=IMAGE_LIMIT={:#x}", ota::IMAGE_LIMIT)).arg("--gc-sections")
-        .arg(format!("-Map={}", out.join("bulb-tc32.map").display()))
-        .arg(out.join("start.o")).arg(out.join("rust.o")).arg("-o").arg(&elf_path))?;
-    let (image, segments) = elf::image_of(&std::fs::read(&elf_path)?).map_err(|e| anyhow!("{}: {e}", elf_path.display()))?;
-    std::fs::write(out.join("bulb-tc32.bin"), &image)?;
-    println!("{}: {} bytes from {segments} segment(s)", out.join("bulb-tc32.bin").display(), image.len());
-    c.run(Command::new(llvm.join("llvm-size")).arg(&elf_path))?;
+    c.run_all(units.iter().map(|u| {
+        let mut cmd = Command::new(llvm.join("ld.lld"));
+        cmd.arg("-T").arg(here.join("boot/link.ld")).arg(format!("--defsym=FW_OFFSET={:#x}", u.known.fw_offset))
+            .arg(format!("--defsym=IMAGE_LIMIT={:#x}", ota::IMAGE_LIMIT)).arg("--gc-sections")
+            .arg(format!("-Map={}", u.out.join("bulb-tc32.map").display()))
+            .arg(u.out.join("start.o")).arg(u.out.join("rust.o")).arg("-o").arg(u.out.join("bulb-tc32.elf"));
+        cmd
+    }))?;
+    let images = units
+        .iter()
+        .map(|u| {
+            let elf_path = u.out.join("bulb-tc32.elf");
+            let (image, segments) = elf::image_of(&std::fs::read(&elf_path)?).map_err(|e| anyhow!("{}: {e}", elf_path.display()))?;
+            std::fs::write(u.out.join("bulb-tc32.bin"), &image)?;
+            println!("{}: {} bytes from {segments} segment(s)", u.out.join("bulb-tc32.bin").display(), image.len());
+            Ok(image)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    c.run(Command::new(llvm.join("llvm-size")).args(units.iter().map(|u| u.out.join("bulb-tc32.elf"))))?;
 
     println!("== OTA image");
-    let staged = telink::finalize(&image);
+    units.iter().zip(images).try_for_each(|(u, image)| ota_file(p, u, &image))
+}
+
+fn ota_file(p: &Plan, u: &Unit, image: &[u8]) -> Result<()> {
+    let staged = telink::finalize(image);
     telink::check(&staged).map_err(|e| anyhow!("the finished image fails its own check: {e}"))?;
-    std::fs::write(out.join("bulb-tc32-ota.bin"), &staged)?;
-    let file = ota::File::with_image(ota::Header::new(MANUFACTURER, known.image_type, file_version, &format!("outglow {board_name}")), staged.clone());
+    std::fs::write(u.out.join("bulb-tc32-ota.bin"), &staged)?;
+    let (image_type, file_version) = (u.known.image_type, p.file_version);
+    let file = ota::File::with_image(ota::Header::new(MANUFACTURER, image_type, file_version, &format!("outglow {}", u.known.name)), staged.clone());
     let packed = file.pack();
-    ota::fits_staging(&packed).map_err(|e| anyhow!("{}: {e}", out.join("bulb-tc32.ota").display()))?;
-    std::fs::write(out.join("bulb-tc32.ota"), &packed)?;
-    println!("OK: {} ({} B), firmware {} B, mfg={MANUFACTURER:#06x} imageType={:#06x} fileVersion={file_version:#010x}",
-             out.join("bulb-tc32.ota").display(), packed.len(), staged.len(), known.image_type);
+    let at = u.out.join("bulb-tc32.ota");
+    ota::fits_staging(&packed).map_err(|e| anyhow!("{}: {e}", at.display()))?;
+    std::fs::write(&at, &packed)?;
+    println!("OK: {} ({} B), firmware {} B, mfg={MANUFACTURER:#06x} imageType={image_type:#06x} fileVersion={file_version:#010x}",
+             at.display(), packed.len(), staged.len());
     Ok(())
 }
 

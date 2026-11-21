@@ -6,6 +6,10 @@ use anyhow::{bail, Context, Result};
 pub trait Sh {
     fn status(&mut self, cmd: &mut Command) -> std::io::Result<ExitStatus>;
     fn output(&mut self, cmd: &mut Command) -> std::io::Result<Output>;
+
+    fn statuses(&mut self, cmds: &mut [Command]) -> Vec<std::io::Result<ExitStatus>> {
+        cmds.iter_mut().map(|c| self.status(c)).collect()
+    }
 }
 
 pub struct Real;
@@ -17,6 +21,16 @@ impl Sh for Real {
 
     fn output(&mut self, cmd: &mut Command) -> std::io::Result<Output> {
         cmd.output()
+    }
+
+    fn statuses(&mut self, cmds: &mut [Command]) -> Vec<std::io::Result<ExitStatus>> {
+        let n = std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::MIN).get();
+        cmds.chunks_mut(n)
+            .flat_map(|chunk| {
+                let children: Vec<_> = chunk.iter_mut().map(Command::spawn).collect();
+                children.into_iter().map(|c| c.and_then(|mut c| c.wait())).collect::<Vec<_>>()
+            })
+            .collect()
     }
 }
 
@@ -30,12 +44,22 @@ pub fn var(env: Env, k: &str) -> Option<String> {
     env(k).map(|v| v.to_string_lossy().into_owned())
 }
 
-pub fn run(sh: &mut dyn Sh, cmd: &mut Command) -> Result<()> {
-    let st = sh.status(cmd).with_context(|| format!("{cmd:?}"))?;
+fn checked(cmd: &Command, st: std::io::Result<ExitStatus>) -> Result<()> {
+    let st = st.with_context(|| format!("{cmd:?}"))?;
     if !st.success() {
         bail!("{:?} failed ({st})", cmd.get_program());
     }
     Ok(())
+}
+
+pub fn run(sh: &mut dyn Sh, cmd: &mut Command) -> Result<()> {
+    let st = sh.status(cmd);
+    checked(cmd, st)
+}
+
+pub fn run_all(sh: &mut dyn Sh, cmds: &mut [Command]) -> Result<()> {
+    let st = sh.statuses(cmds);
+    cmds.iter().zip(st).try_for_each(|(cmd, st)| checked(cmd, st))
 }
 
 pub fn output(sh: &mut dyn Sh, cmd: &mut Command) -> Result<String> {
@@ -158,6 +182,28 @@ mod tests {
         assert_eq!(e, "\"/nonexistent/tool\"");
         let e = output(&mut Real, &mut Command::new("/nonexistent/tool")).unwrap_err().to_string();
         assert_eq!(e, "\"/nonexistent/tool\"");
+    }
+
+    #[test]
+    fn real_commands_side_by_side() {
+        let n = std::thread::available_parallelism().unwrap().get();
+        let t = super::fake::Tmp::new("par");
+        let mark = |i: usize| {
+            let mut c = Command::new("sh");
+            c.args(["-c", &format!("echo $$ > {}/{i}; exit $(( {i} % 3 ))", t.0.display())]);
+            c
+        };
+        let mut cmds: Vec<Command> = (0..n + 2).map(mark).collect();
+        let st = Real.statuses(&mut cmds);
+        let codes: Vec<i32> = st.iter().map(|s| s.as_ref().unwrap().code().unwrap()).collect();
+        assert_eq!(codes, (0..n + 2).map(|i| (i % 3) as i32).collect::<Vec<_>>());
+        assert!((0..n + 2).all(|i| t.path(&i.to_string()).exists()));
+        let e = run_all(&mut Real, &mut cmds).unwrap_err().to_string();
+        assert_eq!(e, "\"sh\" failed (exit status: 1)");
+        let mut gone = [Command::new("/nonexistent/tool"), Command::new("true")];
+        assert_eq!(run_all(&mut Real, &mut gone).unwrap_err().to_string(), "\"/nonexistent/tool\"");
+        let mut fine = [Command::new("true"), Command::new("true")];
+        run_all(&mut Real, &mut fine).unwrap();
     }
 
     #[test]
