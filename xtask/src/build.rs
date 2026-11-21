@@ -61,8 +61,8 @@ impl Ctx<'_> {
         sh::run(self.sh, cmd)
     }
 
-    fn run_all(&mut self, cmds: impl IntoIterator<Item = Command>) -> Result<()> {
-        sh::run_all(self.sh, &mut cmds.into_iter().collect::<Vec<_>>())
+    fn run_all(&mut self, jobs: impl IntoIterator<Item = (String, Command)>) -> Result<()> {
+        sh::run_all(self.sh, jobs.into_iter().collect())
     }
 
     fn output(&mut self, cmd: &mut Command) -> Result<String> {
@@ -232,18 +232,37 @@ pub fn cache_id(vv: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
+const LOCK: &str = "outglow.lock";
+
+fn cargo_dirs(dir: &Path) -> impl Iterator<Item = PathBuf> {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| {
+        let n = p.file_name().unwrap_or_default().to_string_lossy();
+        n == "cargo" || n.starts_with("cargo-")
+    })
+}
+
+pub fn remove_cargo_dirs(dir: &Path) {
+    cargo_dirs(dir).for_each(|d| {
+        let _ = std::fs::remove_dir_all(d);
+    });
+}
+
+fn idle(dir: &Path) -> Option<std::fs::File> {
+    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(LOCK)).ok()?;
+    f.try_lock().ok().map(|()| f)
+}
+
 pub fn prune(dir: &Path, keep: &str) {
-    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let n = e.file_name().to_string_lossy().to_string();
-        if (n == "cargo" || n.starts_with("cargo-")) && !n.ends_with(keep) {
-            let _ = std::fs::remove_dir_all(e.path());
+    cargo_dirs(dir).filter(|d| !d.to_string_lossy().ends_with(keep)).for_each(|d| {
+        if let Some(_held) = idle(&d) {
+            let _ = std::fs::remove_dir_all(&d);
         }
-    }
+    });
 }
 
 fn lock(dir: &Path) -> Result<std::fs::File> {
     std::fs::create_dir_all(dir)?;
-    let f = std::fs::File::create(dir.join("outglow.lock"))?;
+    let f = std::fs::File::create(dir.join(LOCK))?;
     f.lock().map(|()| f).map_err(anyhow::Error::from)
 }
 
@@ -262,8 +281,15 @@ struct Plan {
 
 struct Unit<'a> {
     known: &'a board::Known,
+    tag: String,
     out: PathBuf,
     modules: Vec<PathBuf>,
+}
+
+impl Plan {
+    fn tag(&self, k: &board::Known) -> String {
+        format!("board {} [{}]", k.name, self.features.join(","))
+    }
 }
 
 fn plan(c: &mut Ctx, a: &Args) -> Result<Plan> {
@@ -312,32 +338,35 @@ fn build(c: &mut Ctx, boards: &[String], a: &Args) -> Result<()> {
     let Some((first, rest)) = known.split_first() else { return Ok(()) };
     let target = c.root.join("target");
     let out_of = |k: &board::Known| a.out_dir.clone().unwrap_or_else(|| target.join(format!("{}{}", dir_name(k.name), p.suffix)));
-    let first = Job { known: first, out: out_of(first), target: p.cargo_dir.clone() };
-    let rest: Vec<Job> = rest.iter().map(|k| Job { known: k, out: out_of(k), target: out_of(k).join("cargo") }).collect();
+    let job = |k, target| Job { known: k, tag: p.tag(k), out: out_of(k), target };
+    let first = job(first, p.cargo_dir.clone());
+    let rest: Vec<Job> = rest.iter().map(|k| job(k, out_of(k).join("cargo"))).collect();
     std::iter::once(&first).chain(&rest).try_for_each(|j| fresh_out(&j.out))?;
     let held = lock(&p.cargo_dir)?;
     let mut units = compile(c, &p, std::slice::from_ref(&first))?;
-    c.run_all(rest.iter().map(|j| {
+    let copied = c.run_all(rest.iter().map(|j| {
         let mut cp = Command::new("cp");
         cp.arg("-Rp").arg(&p.cargo_dir).arg(&j.target);
-        cp
-    }))?;
+        (j.tag.clone(), cp)
+    }));
     drop(held);
-    units.extend(compile(c, &p, &rest)?);
-    for j in &rest {
+    let compiled = copied.and_then(|()| compile(c, &p, &rest));
+    rest.iter().for_each(|j| {
         let _ = std::fs::remove_dir_all(&j.target);
-    }
+    });
+    units.extend(compiled?);
     link(c, &p, &units)
 }
 
 fn fresh_out(out: &Path) -> std::io::Result<()> {
     let _ = std::fs::remove_dir_all(out.join("bc"));
-    prune(out, "/");
+    remove_cargo_dirs(out);
     std::fs::create_dir_all(out.join("bc"))
 }
 
 struct Job<'a> {
     known: &'a board::Known,
+    tag: String,
     out: PathBuf,
     target: PathBuf,
 }
@@ -374,14 +403,19 @@ fn compile<'a>(c: &mut Ctx, p: &Plan, jobs: &[Job<'a>]) -> Result<Vec<Unit<'a>>>
             Some(k) => cargo.env("TOUCHLINK_MASTER_KEY", k),
             None => cargo.env_remove("TOUCHLINK_MASTER_KEY"),
         };
-        cargo
+        (j.tag.clone(), cargo)
     }))?;
     c.run_all(jobs.iter().map(|j| {
         let mut ar = Command::new(p.llvm.join("llvm-ar"));
         ar.current_dir(j.out.join("bc")).arg("x").arg(j.target.join(TARGET).join("release/libbulb_tc32.a"));
-        ar
+        (j.tag.clone(), ar)
     }))?;
-    jobs.iter().map(|j| Ok(Unit { known: j.known, out: j.out.clone(), modules: modules(&j.target.join(TARGET).join("release"), &j.out.join("bc"))? })).collect()
+    jobs.iter()
+        .map(|j| {
+            let modules = modules(&j.target.join(TARGET).join("release"), &j.out.join("bc")).context(j.tag.clone())?;
+            Ok(Unit { known: j.known, tag: j.tag.clone(), out: j.out.clone(), modules })
+        })
+        .collect()
 }
 
 fn modules(release: &Path, bc_dir: &Path) -> Result<Vec<PathBuf>> {
@@ -414,17 +448,14 @@ fn link(c: &mut Ctx, p: &Plan, units: &[Unit]) -> Result<()> {
     c.run_all(units.iter().map(|u| {
         let mut cmd = Command::new(llvm.join("llvm-link"));
         cmd.args(&u.modules).arg("-o").arg(u.out.join("rust.bc"));
-        cmd
+        (u.tag.clone(), cmd)
     }))?;
     c.run_all(units.iter().map(|u| {
         let mut cmd = Command::new(llvm.join("llvm-dis"));
         cmd.arg(u.out.join("rust.bc")).arg("-o").arg(u.out.join("rust.thumb.ll"));
-        cmd
+        (u.tag.clone(), cmd)
     }))?;
-    for u in units {
-        let ll = retarget(&std::fs::read_to_string(u.out.join("rust.thumb.ll"))?)?;
-        std::fs::write(u.out.join("rust.ll"), ll)?;
-    }
+    units.iter().try_for_each(|u| ll_file(u).context(u.tag.clone()))?;
     let cflags = [format!("--target={TARGET}"), "-mcpu=tc32".into(), "-mthumb".into(), "-mfloat-abi=soft".into()];
     c.run_all(units.iter().flat_map(|u| {
         let mut code = Command::new(llvm.join("clang"));
@@ -434,7 +465,7 @@ fn link(c: &mut Ctx, p: &Plan, units: &[Unit]) -> Result<()> {
         let mut start = Command::new(llvm.join("clang"));
         start.args(&cflags).arg(format!("-DIMAGE_TYPE={:#06x}", u.known.image_type))
             .arg("-c").arg(here.join("boot/start.S")).arg("-o").arg(u.out.join("start.o"));
-        [code, start]
+        [(u.tag.clone(), code), (u.tag.clone(), start)]
     }))?;
 
     println!("== link");
@@ -444,22 +475,26 @@ fn link(c: &mut Ctx, p: &Plan, units: &[Unit]) -> Result<()> {
             .arg(format!("--defsym=IMAGE_LIMIT={:#x}", ota::IMAGE_LIMIT)).arg("--gc-sections")
             .arg(format!("-Map={}", u.out.join("bulb-tc32.map").display()))
             .arg(u.out.join("start.o")).arg(u.out.join("rust.o")).arg("-o").arg(u.out.join("bulb-tc32.elf"));
-        cmd
+        (u.tag.clone(), cmd)
     }))?;
-    let images = units
-        .iter()
-        .map(|u| {
-            let elf_path = u.out.join("bulb-tc32.elf");
-            let (image, segments) = elf::image_of(&std::fs::read(&elf_path)?).map_err(|e| anyhow!("{}: {e}", elf_path.display()))?;
-            std::fs::write(u.out.join("bulb-tc32.bin"), &image)?;
-            println!("{}: {} bytes from {segments} segment(s)", u.out.join("bulb-tc32.bin").display(), image.len());
-            Ok(image)
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let images = units.iter().map(|u| bin_file(u).context(u.tag.clone())).collect::<Result<Vec<_>>>()?;
     c.run(Command::new(llvm.join("llvm-size")).args(units.iter().map(|u| u.out.join("bulb-tc32.elf"))))?;
 
     println!("== OTA image");
-    units.iter().zip(images).try_for_each(|(u, image)| ota_file(p, u, &image))
+    units.iter().zip(images).try_for_each(|(u, image)| ota_file(p, u, &image).context(u.tag.clone()))
+}
+
+fn ll_file(u: &Unit) -> Result<()> {
+    let ll = retarget(&std::fs::read_to_string(u.out.join("rust.thumb.ll"))?)?;
+    Ok(std::fs::write(u.out.join("rust.ll"), ll)?)
+}
+
+fn bin_file(u: &Unit) -> Result<Vec<u8>> {
+    let elf_path = u.out.join("bulb-tc32.elf");
+    let (image, segments) = elf::image_of(&std::fs::read(&elf_path)?).map_err(|e| anyhow!("{}: {e}", elf_path.display()))?;
+    std::fs::write(u.out.join("bulb-tc32.bin"), &image)?;
+    println!("{}: {} bytes from {segments} segment(s)", u.out.join("bulb-tc32.bin").display(), image.len());
+    Ok(image)
 }
 
 fn ota_file(p: &Plan, u: &Unit, image: &[u8]) -> Result<()> {

@@ -67,13 +67,22 @@ struct Toolchain {
     machine_code: bool,
     deps_bc: bool,
     elf: Vec<u8>,
+    ll: &'static str,
     fail: &'static str,
     fail_ending: Option<&'static str>,
 }
 
 impl Toolchain {
     fn good() -> Toolchain {
-        Toolchain { vv: PINNED_VV.into(), machine_code: true, deps_bc: true, elf: tc32_elf(&code()), fail: "", fail_ending: None }
+        Toolchain {
+            vv: PINNED_VV.into(),
+            machine_code: true,
+            deps_bc: true,
+            elf: tc32_elf(&code()),
+            ll: "attributes #0 = { \"target-cpu\"=\"generic\" }\n",
+            fail: "",
+            fail_ending: None,
+        }
     }
 
     fn answer(&self, c: &Command) -> (i32, String) {
@@ -112,7 +121,7 @@ impl Toolchain {
                 (0, String::new())
             }
             ("llvm-dis", _) => {
-                std::fs::write(arg_after(c, "-o"), "attributes #0 = { \"target-cpu\"=\"generic\" }\n").unwrap();
+                std::fs::write(arg_after(c, "-o"), self.ll).unwrap();
                 (0, String::new())
             }
             ("clang", _) => {
@@ -345,19 +354,58 @@ fn every_board_of_the_table() {
             false => r.tools.answer(c),
         });
         let mut c = Ctx { root: r.t.0.clone(), sh: &mut fake, env: &e, exe: "/bin/xtask".into(), toolchain: r.t.path("cached") };
-        assert_eq!(run_in(&mut c, &args(&["--all"])).unwrap_err().to_string(), "\"/bin/cargo\" failed (exit status: 1)");
+        let e = run_in(&mut c, &args(&["--all", "--no-ble"])).unwrap_err();
+        assert_eq!(format!("{e:#}"), "board EGLO_ZM_TW-4.62 [sense]: \"/bin/cargo\" failed (exit status: 1)");
         assert_eq!(fake.log.iter().filter(|l| l.contains(" build --release")).count(), 2);
         assert!(!fake.log.iter().any(|l| l.contains("llvm-ar x ROOT")));
+        let root = r.t.0.display();
+        let noble = format!("{root}/target/tc32-cargo/cargo-noble-{}", cache_id(PINNED_VV));
+        assert!(fake.log.contains(&format!("cp -Rp {noble} {root}/target/tc32-eglo_zm_tw-4.62-noble/cargo")));
+        assert!(!r.t.path("target/tc32-eglo_zm_tw-4.62-noble/cargo").exists());
+    }
+    {
+        let vars: Vec<(&str, &str)> = r.vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let e = env(&vars);
+        let mut fake = Fake::new(|c| match program(c).as_str() {
+            "cp" => {
+                std::fs::create_dir_all(c.get_args().nth(2).unwrap()).unwrap();
+                (1, "disk full".into())
+            }
+            _ => r.tools.answer(c),
+        });
+        let mut c = Ctx { root: r.t.0.clone(), sh: &mut fake, env: &e, exe: "/bin/xtask".into(), toolchain: r.t.path("cached") };
+        let e = run_in(&mut c, &args(&["--all"])).unwrap_err();
+        assert_eq!(format!("{e:#}"), "board EGLO_ZM_TW-4.62 [ble,sense]: \"cp\" failed (exit status: 1)");
+        assert_eq!(fake.log.iter().filter(|l| l.contains(" build --release")).count(), 1);
+        assert!(!r.t.path("target/tc32-eglo_zm_tw-4.62/cargo").exists());
     }
     let mut r = r;
     r.tools.fail = "cp";
-    assert_eq!(r.build(&["--all"]).0.unwrap_err().to_string(), "\"cp\" failed (exit status: 1)");
+    assert_eq!(format!("{:#}", r.build(&["--all"]).0.unwrap_err()), "board EGLO_ZM_TW-4.62 [ble,sense]: \"cp\" failed (exit status: 1)");
     r.t.put("crates/bulb-tc32/boards.tsv", "# name\n");
     let (res, log) = r.build(&["--all"]);
     res.unwrap();
     assert!(!log.iter().any(|l| l.contains(" build --release")));
     std::fs::remove_file(r.t.path("crates/bulb-tc32/boards.tsv")).unwrap();
     assert!(r.build(&["--all"]).0.is_err());
+}
+
+#[test]
+fn a_directory_another_rustc_builds_in_stays() {
+    let r = Rig::new("busy");
+    let busy = r.t.put("target/tc32-cargo/cargo-1111111111111111/outglow.lock", "");
+    let held = std::fs::File::open(&busy).unwrap();
+    held.lock().unwrap();
+    r.t.put("target/tc32-cargo/cargo-2222222222222222/outglow.lock", "");
+    r.t.put("target/tc32-cargo/cargo-3333333333333333/thumbv4t-none-eabi/x", "");
+    r.t.put("target/tc32-cargo/cargo-file", "");
+    r.build(&[]).0.unwrap();
+    assert!(busy.exists());
+    assert!(!r.t.path("target/tc32-cargo/cargo-2222222222222222").exists());
+    assert!(!r.t.path("target/tc32-cargo/cargo-3333333333333333").exists());
+    assert!(r.t.path("target/tc32-cargo/cargo-file").is_file());
+    assert!(r.t.path(&format!("target/tc32-cargo/cargo-{}/outglow.lock", cache_id(PINNED_VV))).exists());
+    drop(held);
 }
 
 #[test]
@@ -394,8 +442,9 @@ fn what_stops_a_build() {
 fn machine_code_without_its_bitcode() {
     let mut r = Rig::new("nobc");
     r.tools.deps_bc = false;
-    let e = r.build(&[]).0.unwrap_err().to_string();
-    assert!(e.ends_with("/release/deps/compiler_builtins-9.bc does not exist"), "{e}");
+    let e = format!("{:#}", r.build(&["--no-sense"]).0.unwrap_err());
+    assert!(e.starts_with("board ESMLFzm_w6_Dimm-4.63 [ble]: "), "{e}");
+    assert!(e.contains("/release/deps/compiler_builtins-9.bc does not exist: "), "{e}");
     assert!(e.contains("/bc/compiler_builtins-9.x1.o is machine code and "), "{e}");
     r.tools.machine_code = false;
     let (res, log) = r.build(&[]);
@@ -405,16 +454,21 @@ fn machine_code_without_its_bitcode() {
 
 #[test]
 fn a_broken_tool_or_image_stops_the_build() {
-    for tool in ["cargo", "llvm-ar", "llvm-link", "llvm-dis", "clang", "ld.lld", "llvm-size", "rustc"] {
+    let board = "board ESMLFzm_w6_Dimm-4.63 [ble,sense]: ";
+    for (tool, of_board) in
+        [("cargo", true), ("llvm-ar", true), ("llvm-link", true), ("llvm-dis", true), ("clang", false), ("ld.lld", true), ("llvm-size", false), ("rustc", false)]
+    {
         let mut r = Rig::new("broken");
         r.tools.fail = tool;
-        let e = r.build(&[]).0.unwrap_err().to_string();
+        let e = format!("{:#}", r.build(&[]).0.unwrap_err());
         assert!(e.contains(&format!("{tool}\" failed")), "{tool}: {e}");
+        assert_eq!(e.starts_with(board), of_board, "{tool}: {e}");
     }
     let mut r = Rig::new("object");
     r.tools.fail_ending = Some("/target/tc32/rust.o");
     let (res, log) = r.build(&[]);
-    assert!(res.unwrap_err().to_string().ends_with("/llvm/clang\" failed (exit status: 1)"));
+    let e = format!("{:#}", res.unwrap_err());
+    assert!(e.starts_with(board) && e.ends_with("/llvm/clang\" failed (exit status: 1)"), "{e}");
     assert!(!log.iter().any(|l| l.contains("ld.lld")));
     let r = Rig::new("blocked");
     r.t.put("blocked", "");
@@ -425,21 +479,26 @@ fn a_broken_tool_or_image_stops_the_build() {
     let (res, log) = r.build(&[]);
     assert_eq!(res.unwrap_err().downcast_ref::<std::io::Error>().map(std::io::Error::kind), Some(std::io::ErrorKind::NotADirectory));
     assert!(!log.iter().any(|l| l.contains(" build --release")));
+    let mut r = Rig::new("ll");
+    r.tools.ll = "no attributes";
+    let (res, log) = r.build(&[]);
+    assert_eq!(format!("{:#}", res.unwrap_err()), format!("{board}could not retarget the bitcode to tc32"));
+    assert!(!log.iter().any(|l| l.contains("-Oz")));
     let mut r = Rig::new("elf");
     r.tools.elf = b"not an elf".to_vec();
-    let e = r.build(&[]).0.unwrap_err().to_string();
-    assert!(e.ends_with("/target/tc32/bulb-tc32.elf: not a 32-bit little-endian ELF"), "{e}");
+    let e = format!("{:#}", r.build(&[]).0.unwrap_err());
+    assert!(e.starts_with(board) && e.ends_with("/target/tc32/bulb-tc32.elf: not a 32-bit little-endian ELF"), "{e}");
     let mut r = Rig::new("short");
     r.tools.elf = tc32_elf(&[0; 32]);
-    let e = r.build(&[]).0.unwrap_err().to_string();
-    assert_eq!(e, "the finished image fails its own check: no KNLT marker at 0x08");
+    let e = format!("{:#}", r.build(&[]).0.unwrap_err());
+    assert_eq!(e, format!("{board}the finished image fails its own check: no KNLT marker at 0x08"));
     let mut r = Rig::new("large");
     let mut large = code();
     large.resize(ota::IMAGE_LIMIT + 1, 0);
     r.tools.elf = tc32_elf(&large);
-    let e = r.build(&[]).0.unwrap_err().to_string();
+    let e = format!("{:#}", r.build(&[]).0.unwrap_err());
     let out = r.t.path("target/tc32/bulb-tc32.ota");
-    assert!(e.starts_with(&format!("{}: the OTA file is ", out.display())) && e.contains("a bulb takes at most 409600 B"), "{e}");
+    assert!(e.starts_with(&format!("{board}{}: the OTA file is ", out.display())) && e.contains("a bulb takes at most 409600 B"), "{e}");
     assert!(!out.exists());
 }
 

@@ -26,10 +26,15 @@ impl Sh for Real {
     fn statuses(&mut self, cmds: &mut [Command]) -> Vec<std::io::Result<ExitStatus>> {
         let n = std::thread::available_parallelism().unwrap_or(std::num::NonZeroUsize::MIN).get();
         cmds.chunks_mut(n)
-            .flat_map(|chunk| {
-                let children: Vec<_> = chunk.iter_mut().map(Command::spawn).collect();
-                children.into_iter().map(|c| c.and_then(|mut c| c.wait())).collect::<Vec<_>>()
+            .scan(false, |failed, chunk| {
+                (!*failed).then(|| {
+                    let children: Vec<_> = chunk.iter_mut().map(Command::spawn).collect();
+                    let st: Vec<_> = children.into_iter().map(|c| c.and_then(|mut c| c.wait())).collect();
+                    *failed = !st.iter().all(|s| s.as_ref().is_ok_and(ExitStatus::success));
+                    st
+                })
             })
+            .flatten()
             .collect()
     }
 }
@@ -57,9 +62,10 @@ pub fn run(sh: &mut dyn Sh, cmd: &mut Command) -> Result<()> {
     checked(cmd, st)
 }
 
-pub fn run_all(sh: &mut dyn Sh, cmds: &mut [Command]) -> Result<()> {
-    let st = sh.statuses(cmds);
-    cmds.iter().zip(st).try_for_each(|(cmd, st)| checked(cmd, st))
+pub fn run_all(sh: &mut dyn Sh, jobs: Vec<(String, Command)>) -> Result<()> {
+    let (tags, mut cmds): (Vec<String>, Vec<Command>) = jobs.into_iter().unzip();
+    let st = sh.statuses(&mut cmds);
+    tags.into_iter().zip(&cmds).zip(st).try_for_each(|((tag, cmd), st)| checked(cmd, st).context(tag))
 }
 
 pub fn output(sh: &mut dyn Sh, cmd: &mut Command) -> Result<String> {
@@ -190,20 +196,45 @@ mod tests {
         let t = super::fake::Tmp::new("par");
         let mark = |i: usize| {
             let mut c = Command::new("sh");
-            c.args(["-c", &format!("echo $$ > {}/{i}; exit $(( {i} % 3 ))", t.0.display())]);
+            c.args(["-c", &format!("echo $$ > {}/{i}; exit {}", t.0.display(), 3 * usize::from(i == n + 1))]);
             c
         };
         let mut cmds: Vec<Command> = (0..n + 2).map(mark).collect();
         let st = Real.statuses(&mut cmds);
         let codes: Vec<i32> = st.iter().map(|s| s.as_ref().unwrap().code().unwrap()).collect();
-        assert_eq!(codes, (0..n + 2).map(|i| (i % 3) as i32).collect::<Vec<_>>());
+        assert_eq!(codes, (0..n + 2).map(|i| 3 * i32::from(i == n + 1)).collect::<Vec<_>>());
         assert!((0..n + 2).all(|i| t.path(&i.to_string()).exists()));
-        let e = run_all(&mut Real, &mut cmds).unwrap_err().to_string();
-        assert_eq!(e, "\"sh\" failed (exit status: 1)");
-        let mut gone = [Command::new("/nonexistent/tool"), Command::new("true")];
-        assert_eq!(run_all(&mut Real, &mut gone).unwrap_err().to_string(), "\"/nonexistent/tool\"");
-        let mut fine = [Command::new("true"), Command::new("true")];
-        run_all(&mut Real, &mut fine).unwrap();
+        let tagged = |cmds: Vec<Command>| cmds.into_iter().enumerate().map(|(i, c)| (format!("job {i}"), c)).collect::<Vec<_>>();
+        let e = run_all(&mut Real, tagged(cmds)).unwrap_err();
+        assert_eq!(format!("{e:#}"), format!("job {}: \"sh\" failed (exit status: 3)", n + 1));
+        let gone = vec![Command::new("true"), Command::new("/nonexistent/tool")];
+        let e = run_all(&mut Real, tagged(gone)).unwrap_err();
+        assert_eq!(format!("{e:#}"), format!("job 1: \"/nonexistent/tool\": {}", e.root_cause()));
+        assert_eq!(e.root_cause().downcast_ref::<std::io::Error>().map(std::io::Error::kind), Some(std::io::ErrorKind::NotFound));
+        run_all(&mut Real, tagged(vec![Command::new("true"), Command::new("true")])).unwrap();
+    }
+
+    #[test]
+    fn a_failed_group_is_the_last() {
+        let n = std::thread::available_parallelism().unwrap().get();
+        let t = super::fake::Tmp::new("stop");
+        let mark = |i: usize, code: usize| {
+            let mut c = Command::new("sh");
+            c.args(["-c", &format!("echo $$ > {}/{i}; exit {code}", t.0.display())]);
+            c
+        };
+        let mut cmds: Vec<Command> = (0..3 * n).map(|i| mark(i, usize::from(i == n))).collect();
+        let st = Real.statuses(&mut cmds);
+        let codes: Vec<i32> = st.iter().map(|s| s.as_ref().unwrap().code().unwrap()).collect();
+        assert_eq!(codes, (0..2 * n).map(|i| i32::from(i == n)).collect::<Vec<_>>());
+        assert!((0..2 * n).all(|i| t.path(&i.to_string()).exists()));
+        assert!(!(2 * n..3 * n).any(|i| t.path(&i.to_string()).exists()));
+        let mut gone: Vec<Command> = (0..2 * n).map(|i| mark(i + 3 * n, 0)).collect();
+        gone[n - 1] = Command::new("/nonexistent/tool");
+        let st = Real.statuses(&mut gone);
+        assert_eq!(st.len(), n);
+        assert!(st[n - 1].is_err());
+        assert!(!(4 * n..5 * n).any(|i| t.path(&i.to_string()).exists()));
     }
 
     #[test]
