@@ -31,7 +31,7 @@ fn main() {
     }
     let t0 = Instant::now();
     if build {
-        for (name, _, _) in boards().expect("boards.tsv") {
+        for (name, _, _, _) in boards().expect("boards.tsv") {
             if only.as_deref().is_some_and(|o| !name.contains(o)) {
                 continue;
             }

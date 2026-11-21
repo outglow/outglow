@@ -10,7 +10,8 @@ fn run(cx: &mut SimCtx) -> R<()> {
     let missing: Vec<String> = crate::profile::boards()
         .map_err(Stop::Error)?
         .into_iter()
-        .map(|(name, _, _)| crate::profile::image_dir(&name).join("bulb-tc32.bin"))
+        .filter(|b| b.3)
+        .map(|(name, _, _, _)| crate::profile::image_dir(&name).join("bulb-tc32.bin"))
         .filter(|p| !p.exists())
         .map(|p| p.strip_prefix(crate::runner::repo_root()).unwrap_or(&p).display().to_string())
         .collect();

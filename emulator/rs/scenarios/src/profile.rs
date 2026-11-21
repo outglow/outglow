@@ -576,14 +576,14 @@ pub fn default_jobs() -> usize {
     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
 }
 
-pub fn boards() -> Result<Vec<(String, bool, String)>, String> {
+pub fn boards() -> Result<Vec<(String, bool, String, bool)>, String> {
     let p = repo_root().join("crates/bulb-tc32/boards.tsv");
     let t = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
     Ok(t.lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            (f[0].to_string(), f.get(1) == Some(&"1"), f.get(2).unwrap_or(&"").to_string())
+            (f[0].to_string(), f.get(1) == Some(&"1"), f.get(2).unwrap_or(&"").to_string(), f.get(3) == Some(&"1"))
         })
         .collect())
 }
@@ -745,7 +745,11 @@ pub fn build_board(name: &str) -> Result<(), String> {
 
 pub fn board_check(only: Option<&str>, a: &Opts, jobs: usize, out: Option<&Path>, mut say: impl FnMut(&str))
                    -> Result<Vec<(String, Vec<Row>)>, String> {
-    let todo: Vec<String> = boards()?.into_iter().map(|b| b.0).filter(|n| only.map_or(true, |o| n.contains(o))).collect();
+    let (todo, skipped): (Vec<_>, Vec<_>) = boards()?.into_iter().filter(|b| only.map_or(true, |o| b.0.contains(o))).partition(|b| b.3);
+    for b in &skipped {
+        say(&format!("== {}\n  SKIP  no stock firmware to compare with", b.0));
+    }
+    let todo: Vec<String> = todo.into_iter().map(|b| b.0).collect();
     let mut pending: Vec<Option<Vec<Row>>> = vec![None; todo.len()];
     let mut next = 0;
     let res = pool(&todo, jobs, |name| check_board(name, a), |i, name, (rows, ours)| {
