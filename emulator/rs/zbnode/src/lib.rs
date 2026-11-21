@@ -497,6 +497,15 @@ impl Node {
     }
 
     pub fn write_flash(&mut self, a: usize, data: &[u8]) {
+        let code = |m: &Machine, r: &tc32emu::Range| m.flash.mem.get(r.lo as usize..r.hi as usize).map(<[u8]>::to_vec);
+        let before: Vec<_> = self.idle.iter().map(|r| code(&self.m, r)).collect();
+        self.write_flash_bytes(a, data);
+        let m = &self.m;
+        let mut was = before.into_iter();
+        self.idle.retain(|r| was.next().flatten() == code(m, r));
+    }
+
+    fn write_flash_bytes(&mut self, a: usize, data: &[u8]) {
         let m = &mut self.m;
         let end = a + data.len();
         let mut sec = a & !0xFFF;
@@ -557,4 +566,23 @@ pub enum CallOutcome {
     Done { r: [u32; 4], pc: u32, steps: i64 },
     Timeout { r0: u32, steps: i64, pc: u32 },
     Err { r0: u32, steps: i64, pc: u32, err: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn another_image_over_the_idle_loop_drops_it() {
+        let mut img = vec![0u8; 0x200];
+        img[8] = 0x4B;
+        let mut node = Node::new(&img, 1, 0).unwrap();
+        node.idle = vec![tc32emu::Range { lo: 0x100, hi: 0x120 }];
+        node.write_flash(0xFF000, &[1, 2, 3]);
+        node.write_flash(0, &img);
+        assert_eq!(node.idle.len(), 1);
+        img[0x110] = 0x46;
+        node.write_flash(0, &img);
+        assert!(node.idle.is_empty());
+    }
 }
